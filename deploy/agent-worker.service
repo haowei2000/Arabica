@@ -1,0 +1,19 @@
+[Unit]
+Description=AIWen Agent Worker
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=aiwen
+Group=aiwen
+WorkingDirectory=/opt/aiwen
+Environment=PYTHONPATH=/opt/aiwen
+Environment=ENV_FILE=/opt/aiwen/.env
+ExecStart=/opt/aiwen/.venv/bin/python -m src.aiwen.workers
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
