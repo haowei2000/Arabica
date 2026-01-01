@@ -157,6 +157,8 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: aiwen-ollama
+    profiles:
+      - ollama
     ports:
       - "${OLLAMA_EXPOSE_PORT:-11434}:11434"
     volumes:
@@ -187,6 +189,8 @@ services:
   # Optional: Redis Commander for Redis management
   redis-commander:
     image: rediscommander/redis-commander:latest
+    profiles:
+      - redis-commander
     container_name: aiwen-redis-commander
     ports:
       - "${REDIS_COMMANDER_PORT:-8081}:8081"

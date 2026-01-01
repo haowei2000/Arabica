@@ -10,13 +10,14 @@ from aiwen.config.components.ollama import OllamaConfig
 from aiwen.config.components.openai import OpenAIConfig
 from aiwen.config.components.postgres import PostgresConfig
 from aiwen.config.components.redis import RedisConfig
+from aiwen.constants.path import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=PROJECT_ROOT / "src" / ".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="allow",
@@ -35,15 +36,25 @@ class AppSettings(BaseSettings):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not self.dashscope_api_key:
-            logger.warning("DashScope API Key is not set. Some features may not work properly.")
+            logger.warning(
+                "DashScope API Key is not set. Some features may not work properly."
+            )
         if not self.postgres:
-            logging.warning("PostgreSQL configuration is not set. Database features may not work properly.")
+            logging.warning(
+                "PostgreSQL configuration is not set. Database features may not work properly."
+            )
         if not self.mysql:
-            logging.warning("MySQL configuration is not set. Database features may not work properly.")
+            logging.warning(
+                "MySQL configuration is not set. Database features may not work properly."
+            )
         if not self.redis:
-            logging.warning("Redis configuration is not set. Cache features may not work properly.")
+            logging.warning(
+                "Redis configuration is not set. Cache features may not work properly."
+            )
         if not self.auth:
-            logging.warning("Auth configuration is not set. Authentication features may not work properly.")
+            logging.warning(
+                "Auth configuration is not set. Authentication features may not work properly."
+            )
 
     postgres: PostgresConfig
     mysql: MysqlConfig

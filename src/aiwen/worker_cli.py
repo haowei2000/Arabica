@@ -35,7 +35,7 @@ from aiwen.workers.agent_worker import start_worker
 logger = logging.getLogger(__name__)
 
 
-async def main():
+async def run():
     """主函数 - 初始化并启动 Agent Worker"""
     logger.info("=" * 60)
     logger.info("🔧 Agent Worker Starting...")
@@ -89,7 +89,7 @@ async def main():
 
 def main_sync():
     """同步包装函数，用于命令行入口点"""
-    asyncio.run(main())
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

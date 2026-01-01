@@ -5,4 +5,7 @@
   </component>
   <component name="KubernetesApiProvider">{}</component>
   <component name="ProjectRootManager" version="2" project-jdk-name="uv (agent_chat)" project-jdk-type="Python SDK" />
+  <component name="RuffConfiguration">
+    <option name="enabled" value="true" />
+  </component>
 </project>

@@ -130,7 +130,7 @@ def get_mcp() -> FastMCP:
 mcp = _create_mcp_instance()
 
 
-def main() -> None:
+def run() -> None:
     """
     启动 MCP 服务器
 
@@ -154,4 +154,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run()
