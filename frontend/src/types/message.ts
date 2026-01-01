@@ -1,0 +1,61 @@
+// 消息角色枚举
+export enum MessageRole {
+  USER = 'user',
+  ASSISTANT = 'assistant',
+  SYSTEM = 'system',
+}
+
+// 消息状态
+export type MessageStatus = 'normal' | 'deleted' | 'error';
+
+// 消息
+export interface Message {
+  id: string;
+  app_id: string;
+  conversation_id: string;
+  query: string;
+  answer: string;
+  message: Record<string, any>;
+  status: MessageStatus;
+  message_tokens: number;
+  answer_tokens: number;
+  from_source: string;
+  from_end_user_id?: string;
+  from_account_id?: string;
+  model_provider?: string;
+  model_id?: string;
+  currency: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// 创建消息请求
+export interface MessageCreate {
+  app_id: string;
+  conversation_id: string;
+  query: string;
+  message: Record<string, any>;
+  answer?: string;
+  status?: MessageStatus;
+  from_source: string;
+  from_end_user_id?: string;
+  from_account_id?: string;
+}
+
+// 更新消息请求
+export interface MessageUpdate {
+  answer?: string;
+  status?: MessageStatus;
+  error?: string;
+  answer_tokens?: number;
+  total_price?: number;
+}
+
+// 简化的消息类型（用于 UI 显示）
+export interface SimpleMessage {
+  id: string;
+  role: MessageRole;
+  content: string;
+  timestamp: Date;
+  isStreaming?: boolean;
+}
