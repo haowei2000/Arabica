@@ -72,7 +72,10 @@ class AgentWorker:
     async def start(self):
         logger.info("Starting AgentWorker...")
         self.pubsub = self.redis_client.pubsub()
+
+        # Subscribe to both task queue and cancellation pattern
         await self.pubsub.subscribe("agent_tasks")
+        await self.pubsub.psubscribe("agent:task:*:cancel")
 
         try:
             async for message in self.pubsub.listen():
@@ -81,11 +84,18 @@ class AgentWorker:
                         await self.process_task(message["data"])
                     except Exception as e:
                         logger.error(f"Error processing task: {e}", exc_info=True)
+                elif message["type"] == "pmessage":
+                    # Handle cancellation messages
+                    try:
+                        await self._handle_cancel_message(message["data"])
+                    except Exception as e:
+                        logger.error(f"Error handling cancellation: {e}", exc_info=True)
         except asyncio.CancelledError:
             logger.info("AgentWorker cancelled")
         except Exception as e:
             logger.error(f"AgentWorker error: {e}", exc_info=True)
         finally:
+            await self.pubsub.punsubscribe("agent:task:*:cancel")
             await self.pubsub.unsubscribe("agent_tasks")
 
     async def process_task(self, message_data):
@@ -354,6 +364,31 @@ class AgentWorker:
             运行中的任务数量
         """
         return len(self.runtime._instances)
+
+    async def _handle_cancel_message(self, message_data):
+        """
+        处理取消消息.
+
+        Args:
+            message_data: Redis 消息数据 (bytes 或 str)
+        """
+        try:
+            # 解析消息数据
+            data = json.loads(message_data.decode() if isinstance(message_data, bytes) else message_data)
+            task_id = UUID(data.get("task_id"))
+
+            logger.info(f"Received cancellation request for task {task_id}")
+
+            # 取消任务
+            success = await self.cancel_task(task_id)
+
+            if success:
+                logger.info(f"Successfully cancelled task {task_id}")
+            else:
+                logger.warning(f"Task {task_id} not found or already completed")
+
+        except Exception as e:
+            logger.error(f"Error handling cancel message: {e}", exc_info=True)
 
     async def cancel_task(self, task_id: UUID) -> bool:
         """

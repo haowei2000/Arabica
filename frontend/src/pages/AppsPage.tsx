@@ -22,7 +22,7 @@ export default function AppsPage() {
     e.preventDefault();
 
     try {
-      const newApp = await createAppMutation.mutateAsync({
+      await createAppMutation.mutateAsync({
         app_code: appCode,
         agent_template_code: templateCode,
         enabled: true,

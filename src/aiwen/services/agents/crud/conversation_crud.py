@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from aiwen.models.agents.conversation import Conversation
 from aiwen.schemas.agents.conversation import ConversationCreate, ConversationUpdate
@@ -67,6 +68,10 @@ class ConversationCRUD:
         if data.from_end_user_id:
             data_dict['from_end_user_id'] = normalize_uuid_to_str(data.from_end_user_id)
 
+        # Handle optional ID (if provided, use it; otherwise let the model generate one)
+        if data.id:
+            data_dict['id'] = normalize_uuid_to_str(data.id)
+
         # Remove API layer field names that don't exist in the model
         if 'from_account_id' in data_dict:
             del data_dict['from_account_id']
@@ -104,6 +109,32 @@ class ConversationCRUD:
         """
         normalized_id = normalize_uuid_to_str(conversation_id)
         stmt = select(Conversation).where(Conversation.id == normalized_id)
+
+        if not include_deleted:
+            stmt = stmt.where(Conversation.is_deleted == False)
+
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_id_with_messages(
+        self,
+        conversation_id: str | UUID,
+        include_deleted: bool = False
+    ) -> Conversation | None:
+        """
+        Get conversation by ID with messages eagerly loaded.
+
+        Args:
+            conversation_id: The conversation ID to search for
+            include_deleted: Whether to include deleted conversations
+
+        Returns:
+            Conversation instance with messages or None if not found
+        """
+        normalized_id = normalize_uuid_to_str(conversation_id)
+        stmt = select(Conversation).options(
+            selectinload(Conversation.messages)
+        ).where(Conversation.id == normalized_id)
 
         if not include_deleted:
             stmt = stmt.where(Conversation.is_deleted == False)

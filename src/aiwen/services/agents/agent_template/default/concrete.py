@@ -188,6 +188,17 @@ class DefaultAgentTemplate(BaseAgentTemplate):
             else:
                 pass
         
-        # Add user message and assistant response to history
-        await add_message_to_history({"role": "user", "content": input_data.query}, input_data.conversation_id)
-        await add_message_to_history({"role": "assistant", "content": full_response}, input_data.conversation_id)
+        # Add user message and assistant response to history if conversation_id exists
+        if input_data.conversation_id:
+            await add_message_to_history(
+                {"role": "user", "content": input_data.query},
+                input_data.conversation_id,
+                input_data.app_id
+            )
+            await add_message_to_history(
+                {"role": "assistant", "content": full_response},
+                input_data.conversation_id,
+                input_data.app_id
+            )
+        else:
+            logger.debug("No conversation_id provided, skipping message history save")

@@ -42,6 +42,44 @@ from aiwen.services.agents.runtime import AgentRuntime
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+# ---------- Cancel task ----------
+
+@router.post("/{task_id}/cancel")
+async def cancel_chat_task(
+    task_id: UUID,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    redis_client=Depends(get_redis_client_dep),
+    runtime: AgentRuntime = Depends(get_agent_runtime),
+):
+    """
+    取消正在运行的聊天任务
+
+    支持队列模式和直接模式的任务取消。
+
+    Args:
+        task_id: 任务 ID
+        current_user: 当前用户
+        redis_client: Redis 客户端
+        runtime: Agent 运行时
+
+    Returns:
+        取消结果
+    """
+    from aiwen.services.agents.chat.chat_service import ChatService
+
+    chat_service = ChatService()
+    success = await chat_service.cancel_task(
+        task_id=task_id,
+        redis_client=redis_client,
+        runtime=runtime,
+    )
+
+    if success:
+        return {"status": "success", "message": f"Task {task_id} cancelled successfully"}
+    else:
+        return {"status": "not_found", "message": f"Task {task_id} not found or already completed"}
+
+
 # ---------- Queue-based chat ----------
 
 @router.post("/{app_id}")

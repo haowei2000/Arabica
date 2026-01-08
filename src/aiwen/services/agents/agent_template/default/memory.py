@@ -23,17 +23,66 @@ from aiwen.services.agents.crud.message_crud import MessageCRUD
 logger = logging.getLogger(__name__)
 
 
-async def add_message_to_history(message: dict, conversation_id: UUID):
+async def add_message_to_history(
+    message: dict,
+    conversation_id: UUID,
+    app_id: Optional[UUID] = None
+):
     """
     Add a message to the memory.
 
+    Ensures the conversation exists before adding the message.
+    If the conversation doesn't exist, it will be created automatically.
+
     Args:
         message: Message dictionary to add to memory
+        conversation_id: UUID of the conversation
+        app_id: Optional UUID of the app/agent (used when creating conversation)
     """
+    from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
+    from aiwen.schemas.agents.conversation import ConversationCreate
+    from aiwen.utils.time import utc_now
+
     async with get_session("aiwen") as db:
+        # First, ensure the conversation exists
+        conversation_crud = ConversationCRUD(db)
+        conversation = await conversation_crud.get_by_id(conversation_id)
+
+        if not conversation:
+            logger.warning(
+                f"Conversation {conversation_id} not found. "
+                f"Creating new conversation for message history."
+            )
+
+            # Ensure we have an app_id for creating the conversation
+            if not app_id:
+                raise ValueError(
+                    f"Cannot create conversation {conversation_id}: "
+                    f"conversation does not exist and no app_id provided"
+                )
+
+            # Create a new conversation if it doesn't exist, using the provided conversation_id
+            conversation = await conversation_crud.create(
+                ConversationCreate(
+                    id=conversation_id,  # Use the provided conversation_id
+                    app_id=app_id,
+                    name=f"Auto-created conversation - {utc_now().strftime('%Y-%m-%d %H:%M')}",
+                    status="normal",
+                    from_source="system",
+                ),
+                auto_commit=False
+            )
+            logger.info(f"Created conversation {conversation.id} with app_id {app_id}")
+
+        # Now add the message
         crud = MessageCRUD(db)
         await crud.create(
-            MessageCreate(conversation_id=conversation_id, message=message))
+            MessageCreate(
+                conversation_id=conversation_id,
+                message=message,
+                app_id=app_id or conversation.app_id  # Use app_id from conversation if not provided
+            )
+        )
         logger.debug(f"Added message to memory: {message}")
 
 

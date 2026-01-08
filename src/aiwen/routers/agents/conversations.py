@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from aiwen.dependencies.agents import get_conversation_crud
 from aiwen.schemas.agents.conversation import (
     ConversationCreate,
+    ConversationDetailResponse,
     ConversationListResponse,
     ConversationResponse,
     ConversationUpdate,
@@ -40,25 +41,25 @@ async def create_conversation(
     return conversation
 
 
-@router.get("/{conversation_id}", response_model=ConversationResponse)
+@router.get("/{conversation_id}", response_model=ConversationDetailResponse)
 async def get_conversation(
     conversation_id: str,
     crud: ConversationCRUD = Depends(get_conversation_crud)
 ):
     """
-    Get conversation by ID.
+    Get conversation by ID with messages.
 
     Args:
         conversation_id: The conversation ID
         crud: Conversation CRUD service
 
     Returns:
-        Conversation details
+        Conversation details with messages
 
     Raises:
         HTTPException: If conversation not found
     """
-    conversation = await crud.get_by_id(conversation_id)
+    conversation = await crud.get_by_id_with_messages(conversation_id)
     if not conversation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

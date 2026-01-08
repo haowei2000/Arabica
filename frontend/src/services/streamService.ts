@@ -23,6 +23,7 @@ interface MetadataEvent {
 
 class StreamService {
   private controller: AbortController | null = null;
+  private currentTaskId: string | null = null;
 
   /**
    * 发送流式消息
@@ -78,6 +79,7 @@ class StreamService {
         const { done, value } = await reader.read();
 
         if (done) {
+          this.currentTaskId = null; // Clear task ID on completion
           onComplete(returnedConversationId);
           break;
         }
@@ -99,6 +101,7 @@ class StreamService {
             const data = trimmedLine.slice(6).trim();
 
             if (data === '[DONE]') {
+              this.currentTaskId = null; // Clear task ID
               onComplete(returnedConversationId);
               return;
             }
@@ -109,11 +112,15 @@ class StreamService {
 
               switch (parsed.event) {
                 case 'metadata':
-                  // 提取 conversation_id
+                  // 提取 conversation_id 和 message_id (task_id)
                   const metadata = parsed.data as MetadataEvent;
                   if (metadata.conversation_id && !conversationId) {
                     returnedConversationId = metadata.conversation_id;
                     console.log('✅ Conversation ID:', returnedConversationId);
+                  }
+                  if (metadata.message_id) {
+                    this.currentTaskId = metadata.message_id;
+                    console.log('✅ Task ID (message_id):', this.currentTaskId);
                   }
                   break;
 
@@ -153,6 +160,7 @@ class StreamService {
                 case 'success':
                   // 成功完成
                   console.log('✅ Stream completed successfully');
+                  this.currentTaskId = null; // Clear task ID on success
                   onComplete(returnedConversationId);
                   return;
 
@@ -160,6 +168,13 @@ class StreamService {
                   // 错误事件
                   console.error('❌ Stream error:', parsed.data);
                   throw new Error(typeof parsed.data === 'string' ? parsed.data : 'Stream error');
+
+                case 'cancelled':
+                  // 任务被取消
+                  console.log('🛑 Task cancelled:', parsed.data);
+                  this.currentTaskId = null; // Clear task ID
+                  onComplete(returnedConversationId);
+                  return;
 
                 default:
                   console.warn('⚠️  Unknown event type:', parsed.event);
@@ -182,9 +197,38 @@ class StreamService {
   }
 
   /**
-   * 中止当前流式请求
+   * 中止当前流式请求并取消后端任务
    */
-  abort(): void {
+  async abort(): Promise<void> {
+    // 1. Send cancel request to backend if we have a task ID
+    if (this.currentTaskId) {
+      try {
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(
+          `${API_BASE_URL}/api/chat/${this.currentTaskId}/cancel`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('✅ Task cancelled on backend:', result);
+        } else {
+          console.warn('⚠️ Failed to cancel task on backend:', response.status);
+        }
+      } catch (error) {
+        console.error('❌ Error cancelling task on backend:', error);
+      } finally {
+        this.currentTaskId = null;
+      }
+    }
+
+    // 2. Abort the fetch request
     if (this.controller) {
       this.controller.abort();
       this.controller = null;

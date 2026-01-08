@@ -5,6 +5,12 @@ export interface APIResponse<T> {
   error?: string;
 }
 
+// 分页参数
+export interface PaginationParams {
+  page?: number;
+  page_size?: number;
+}
+
 // 分页响应
 export interface PaginatedResponse<T> {
   total: number;

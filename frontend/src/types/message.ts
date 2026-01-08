@@ -1,9 +1,11 @@
 // 消息角色枚举
-export enum MessageRole {
-  USER = 'user',
-  ASSISTANT = 'assistant',
-  SYSTEM = 'system',
-}
+export const MessageRole = {
+  USER: 'user',
+  ASSISTANT: 'assistant',
+  SYSTEM: 'system',
+} as const;
+
+export type MessageRoleType = typeof MessageRole[keyof typeof MessageRole];
 
 // 消息状态
 export type MessageStatus = 'normal' | 'deleted' | 'error';
@@ -16,6 +18,8 @@ export interface Message {
   query: string;
   answer: string;
   message: Record<string, any>;
+  role?: MessageRoleType;
+  content?: string;
   status: MessageStatus;
   message_tokens: number;
   answer_tokens: number;
@@ -54,7 +58,7 @@ export interface MessageUpdate {
 // 简化的消息类型（用于 UI 显示）
 export interface SimpleMessage {
   id: string;
-  role: MessageRole;
+  role: MessageRoleType;
   content: string;
   timestamp: Date;
   isStreaming?: boolean;

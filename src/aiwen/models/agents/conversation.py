@@ -21,6 +21,7 @@ class Conversation(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     app_id = mapped_column(UUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mode: Mapped[str] = mapped_column(String(50), nullable=False, default="chat")
     summary = mapped_column(LongText)
     status: Mapped[str] = mapped_column(String(255), nullable=False)
 

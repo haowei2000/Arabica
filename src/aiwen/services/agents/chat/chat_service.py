@@ -225,6 +225,65 @@ class ChatService:
         ):
             yield event
 
+    async def cancel_task(
+        self,
+        *,
+        task_id: UUID,
+        redis_client: Any,
+        runtime: AgentRuntime,
+    ) -> bool:
+        """
+        取消正在运行的任务
+
+        支持队列模式和直接模式的任务取消。
+
+        Args:
+            task_id: 任务 ID
+            redis_client: Redis 客户端
+            runtime: Agent 运行时
+
+        Returns:
+            True if task was found and cancelled, False otherwise
+        """
+        try:
+            # 1. Check if task is running in direct mode (runtime)
+            try:
+                agent = runtime.get(task_id)
+                if agent:
+                    # Release the agent from runtime
+                    runtime.release(task_id)
+                    logger.info(f"Cancelled task {task_id} from runtime (direct mode)")
+
+                    # Publish cancellation event
+                    await redis_client.publish(
+                        f"agent:task:{task_id}",
+                        json_dumps({"event": "cancelled", "data": "Task was cancelled by user"})
+                    )
+                    return True
+            except KeyError:
+                # Task not in runtime, might be in queue mode
+                pass
+
+            # 2. Try to cancel in queue mode by publishing cancel event
+            # The worker will handle the cancellation
+            await redis_client.publish(
+                f"agent:task:{task_id}:cancel",
+                json_dumps({"action": "cancel", "task_id": str(task_id)})
+            )
+
+            # Also publish to the main task channel
+            await redis_client.publish(
+                f"agent:task:{task_id}",
+                json_dumps({"event": "cancelled", "data": "Task was cancelled by user"})
+            )
+
+            logger.info(f"Sent cancellation signal for task {task_id} (queue mode)")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error cancelling task {task_id}: {e}", exc_info=True)
+            return False
+
     # ----------------- Private Helper Methods -----------------
 
     def _prepare_payload_dict(

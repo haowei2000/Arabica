@@ -100,10 +100,16 @@ export const useStreamingChat = (appId: string) => {
     ]
   );
 
-  const stopStreaming = useCallback(() => {
-    streamService.abort();
+  const stopStreaming = useCallback(async () => {
+    // Abort the stream and cancel the backend task
+    await streamService.abort();
     setIsStreaming(false);
-  }, [setIsStreaming]);
+
+    // Clear any partial streaming message
+    clearStreamingMessage();
+
+    console.log('🛑 Streaming stopped and task cancelled');
+  }, [setIsStreaming, clearStreamingMessage]);
 
   return {
     sendMessage,

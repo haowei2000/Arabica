@@ -9,10 +9,11 @@ class TextMessage(BaseModel):
     Chat message input schema.
 
     Note: Agent and App are merged into a single concept.
-    The agent_id is passed via the URL path, not in the message body.
+    The agent_id (app_id) can be passed in the payload or via the URL path.
     """
     query: str = Field(..., description="User query/input message")
     conversation_id: UUID | None = Field(default=None, description="Existing conversation ID (optional)")
+    app_id: UUID | None = Field(default=None, description="Agent/App ID (optional, may be in URL path)")
 
     # Optional metadata for conversation creation
     conversation_name: str | None = Field(None, description="Name for new conversation")
