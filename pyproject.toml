@@ -69,15 +69,10 @@ dependencies = [
     "fuzzywuzzy[speedup]>=0.18.0",
     "pypinyin>=0.55.0",
     "click>=8.1.0",
-    "pip>=25.3",
-    "pgvector>=0.4.2",
-    # Task Queue
-    "celery[redis]",
-    "boto3>=1.42.32",
-    "pypdf>=6.6.0",
-    "beautifulsoup4>=4.14.3",
+    "ty>=0.0.7",
 ]
-[dependency-groups]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=9.0.1",
     "pytest-asyncio>=0.24.0",
@@ -88,22 +83,20 @@ dev = [
     "faker>=30.0.0",
     "ty>=0.0.7",
     "types-redis>=4.6.0",
-    "celery-types>=0.24.0",
-    "boto3-stubs>=1.42.33",
 ]
 
 [project.scripts]
+# 统一服务管理（推荐使用）
+aiwen = "aiwen.service_manager:main"
 # 单独服务入口（保留向后兼容）
 aiwen-api = "aiwen.api_cli:run"
 aiwen-mcp = "aiwen.mcp_cli:main"
 aiwen-worker = "aiwen.worker_cli:main_sync"
-aiwen-celery = "aiwen.celery_cli:main"
 # 工具
 sync-env = "scripts.sync_env:main"
 
 [tool.uv]
-#index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-index-url = "https://mirrors.aliyun.com/pypi/simple/"
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aiwen", "src/scripts"]
@@ -168,4 +161,3 @@ exclude_lines = [
     "@(abc\\.)?abstractmethod",
 ]
 precision = 2
-
