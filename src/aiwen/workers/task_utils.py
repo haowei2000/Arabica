@@ -9,8 +9,6 @@ Task Utilities - 任务工具模块
 创建日期: 2025/12/30
 版本: v1.0.0
 
-公司名称: 艾普工华(武汉)有限责任公司
-版权信息: © 2025 艾普工华(武汉)有限责任公司. 保留所有权利.
 """
 import json
 from typing import Any, Dict, Union

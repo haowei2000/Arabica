@@ -2,16 +2,6 @@
 """
 Chat Router - 聊天路由
 
-功能描述:
-    提供聊天 API 端点，支持队列模式和直接模式。
-    路由层仅处理 HTTP 相关逻辑，业务逻辑委托给 ChatService。
-
-作者: Claude
-创建日期: 2025/12/30
-版本: v2.0.0
-
-公司名称: 艾普工华(武汉)有限责任公司
-版权信息: © 2025 艾普工华(武汉)有限责任公司. 保留所有权利.
 """
 from typing import Annotated
 from uuid import UUID

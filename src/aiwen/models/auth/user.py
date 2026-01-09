@@ -1,8 +1,7 @@
 """User model for authentication system."""
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String

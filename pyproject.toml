@@ -69,6 +69,8 @@ dependencies = [
     "fuzzywuzzy[speedup]>=0.18.0",
     "pypinyin>=0.55.0",
     "click>=8.1.0",
+    "ty>=0.0.7",
+    "pip>=25.3",
 ]
 
 [project.optional-dependencies]
