@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Black">
+    <option name="sdkName" value="3.12 WSL (Ubuntu): (/home/whw/projects/agent_chat/.venv/bin/python)" />
+  </component>
+  <component name="KubernetesApiProvider">{}</component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="3.12 WSL (Ubuntu): (/home/whw/projects/agent_chat/.venv/bin/python)" project-jdk-type="Python SDK" />
+  <component name="TyConfiguration">
+    <option name="enabled" value="true" />
+  </component>
+</project>

@@ -41,7 +41,7 @@ from aiwen.services.agents.agent_registry import AgentRegistry
 from aiwen.services.agents.app_factory import AppAgentFactory
 from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.agents.crud.app_crud import AppCRUD
-from aiwen.services.agents.crud.task_crud import TaskCRUD
+from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.utils.json_utils import dumps as json_dumps
 
@@ -70,45 +70,89 @@ class AgentWorker:
 
     async def start(self):
         logger.info("Starting AgentWorker...")
-        self.pubsub = self.redis_client.pubsub()
 
-        # Subscribe to both task queue and cancellation pattern
-        await self.pubsub.subscribe("agent_tasks")
-        await self.pubsub.psubscribe("agent:task:*:cancel")
+        # Start cancellation listener in background
+        cancel_task = asyncio.create_task(self._listen_for_cancellations())
 
         try:
-            async for message in self.pubsub.listen():
-                if message["type"] == "message":
-                    try:
-                        await self.process_task(message["data"])
-                    except Exception as e:
-                        logger.error(f"Error processing task: {e}", exc_info=True)
-                elif message["type"] == "pmessage":
-                    # Handle cancellation messages
-                    try:
-                        await self._handle_cancel_message(message["data"])
-                    except Exception as e:
-                        logger.error(f"Error handling cancellation: {e}", exc_info=True)
+            # Consume tasks from Redis Stream
+            await self._consume_task_stream()
         except asyncio.CancelledError:
             logger.info("AgentWorker cancelled")
         except Exception as e:
             logger.error(f"AgentWorker error: {e}", exc_info=True)
         finally:
+            cancel_task.cancel()
+            try:
+                await cancel_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _listen_for_cancellations(self):
+        """Listen for task cancellation requests via Pub/Sub"""
+        self.pubsub = self.redis_client.pubsub()
+        await self.pubsub.psubscribe("agent:task:*:cancel")
+
+        try:
+            async for message in self.pubsub.listen():
+                if message["type"] == "pmessage":
+                    try:
+                        await self._handle_cancel_message(message["data"])
+                    except Exception as e:
+                        logger.error(f"Error handling cancellation: {e}", exc_info=True)
+        except asyncio.CancelledError:
+            pass
+        finally:
             await self.pubsub.punsubscribe("agent:task:*:cancel")
-            await self.pubsub.unsubscribe("agent_tasks")
+
+    async def _consume_task_stream(self):
+        """Consume tasks from Redis Stream using XREAD"""
+        stream_name = "agent_tasks"
+        last_id = "$"  # Start from new messages only
+
+        logger.info(f"Starting to consume tasks from stream '{stream_name}'")
+
+        while True:
+            try:
+                # Read from stream with blocking
+                messages = await self.redis_client.xread(
+                    streams={stream_name: last_id},
+                    count=1,
+                    block=1000  # Block for 1 second
+                )
+
+                if not messages:
+                    continue
+
+                for stream_key, msgs in messages:
+                    for message_id, data in msgs:
+                        # Update last_id for next iteration
+                        last_id = message_id.decode() if isinstance(message_id, bytes) else message_id
+
+                        try:
+                            # Process the task
+                            await self.process_task(data)
+                        except Exception as e:
+                            logger.error(f"Error processing task: {e}", exc_info=True)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error reading from stream: {e}", exc_info=True)
+                await asyncio.sleep(1)  # Wait before retry
 
     async def process_task(self, message_data):
         """
         处理单个 agent 任务.
 
         Args:
-            message_data: Redis 消息数据 (bytes 或 str)
+            message_data: Redis Stream 消息数据 (dict with bytes keys from XREAD)
         """
         task_id = None
 
         try:
-            # 解析消息数据
-            data = self._parse_message_data(message_data)
+            # 解析消息数据 (from Redis Stream)
+            data = self._parse_stream_message(message_data)
             task_id = data["task_id"]
             app_id = data["app_id"]
             payload = data.get("payload", {})
@@ -117,9 +161,9 @@ class AgentWorker:
 
             # 获取数据库会话
 
-            task_crud = TaskCRUD(self.db)
+            task_crud = AgentTaskCRUD(self.db)
             # 更新任务状态为 running
-            await task_crud.update_task_status(task_id, "running")
+            await task_crud.update_agent_task_status(task_id, "running")
 
             # 执行任务的主要逻辑
             await self._execute_task_logic(task_id, app_id, payload, task_crud)
@@ -132,36 +176,46 @@ class AgentWorker:
             if task_id:
                 await self._handle_task_error(task_id, str(e))
 
-    def _parse_message_data(self, message_data):
+    def _parse_stream_message(self, message_data: dict) -> dict:
         """
-        解析消息数据并返回任务相关信息
+        解析 Redis Stream 消息数据
 
-        新格式 (v1.2.0+): app_id 在 payload 内部
+        Stream 消息格式 (from XREAD):
         {
-            "task_id": "...",
-            "payload": {
-                "app_id": "...",
-                ...
-            }
+            b"task_id": b"...",
+            b"payload": b'{"app_id": "...", ...}'
         }
+
+        Args:
+            message_data: Redis Stream 消息字典 (bytes keys/values)
+
+        Returns:
+            解析后的任务数据
 
         Raises:
             ValueError: 如果消息格式无效或缺少必需字段
         """
-        # 解析 JSON 数据
-        data = json.loads(message_data.decode() if isinstance(message_data, bytes) else message_data)
+        # Decode bytes keys and values
+        decoded_data = {}
+        for key, value in message_data.items():
+            k = key.decode() if isinstance(key, bytes) else key
+            v = value.decode() if isinstance(value, bytes) else value
+            decoded_data[k] = v
 
-        # 详细日志记录
-        logger.info(f"Received message data: {data}")
-        logger.info(f"Data type: {type(data)}")
-
-        payload = data.get("payload", {})
-        logger.info(f"Extracted payload: {payload}")
-        logger.info(f"Payload type: {type(payload)}")
+        logger.info(f"Decoded stream message: {decoded_data}")
 
         # Validate required fields
-        if "task_id" not in data:
+        if "task_id" not in decoded_data:
             raise ValueError("Missing required field: task_id")
+
+        # Parse payload JSON
+        payload_str = decoded_data.get("payload", "{}")
+        try:
+            payload = json.loads(payload_str)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in payload: {e}")
+
+        logger.info(f"Extracted payload: {payload}")
 
         app_id = payload.get("app_id")
         if not app_id:
@@ -171,7 +225,7 @@ class AgentWorker:
             )
 
         parsed_result = {
-            "task_id": UUID(data["task_id"]),
+            "task_id": UUID(decoded_data["task_id"]),
             "app_id": app_id,
             "payload": payload
         }
@@ -205,7 +259,7 @@ class AgentWorker:
                 result_data = await self._execute_agent_stream(agent_instance, payload, task_id)
 
                 # 6. 更新任务状态为成功
-                await task_crud.update_task_status(task_id, "success", result=result_data)
+                await task_crud.update_agent_task_status(task_id, "success", result=result_data)
                 await self.publish_event(task_id, {"event": "success", "data": json_dumps(result_data)})
 
                 logger.info(f"Task {task_id} completed successfully with {len(result_data.get('chunks', []))} chunks")
@@ -306,10 +360,10 @@ class AgentWorker:
         try:
             # 获取数据库会话来更新任务状态
             session_gen, db_session = await self._get_db_session()
-            task_crud = TaskCRUD(db_session)
+            task_crud = AgentTaskCRUD(db_session)
 
             try:
-                await task_crud.update_task_status(task_id, "failed", error=error_msg)
+                await task_crud.update_agent_task_status(task_id, "failed", error=error_msg)
                 await self.publish_event(task_id, {"event": "failed", "data": error_msg})
                 logger.error(f"Task {task_id} failed: {error_msg}")
             finally:
@@ -328,15 +382,31 @@ class AgentWorker:
 
     async def publish_event(self, task_id: UUID, event_data: dict[str, Any]):
         """
-        发布任务事件到 Redis.
+        发布任务事件到 Redis Stream.
 
         Args:
             task_id: 任务 ID
-            event_data: 事件数据
+            event_data: 事件数据 (包含 event 和 data 字段)
         """
         try:
-            channel = f"agent:task:{task_id}"
-            await self.redis_client.publish(channel, json_dumps(event_data))
+            # 使用与 TaskConsumer 一致的 Stream 名称格式
+            stream_name = f"agent:task:chat:{task_id}:events"
+
+            # 准备 Stream 消息字段
+            fields = {
+                "event": event_data.get("event", "chunk"),
+                "payload": json_dumps(event_data.get("data", ""))
+            }
+
+            # 使用 XADD 发布到 Stream
+            await self.redis_client.xadd(
+                name=stream_name,
+                fields=fields,
+                maxlen=1000,  # 限制每个任务 Stream 的最大长度
+                approximate=True
+            )
+
+            logger.debug(f"Published event '{fields['event']}' to stream {stream_name}")
         except Exception as e:
             logger.error(f"Error publishing event for task {task_id}: {e}")
 
@@ -428,9 +498,9 @@ class AgentWorker:
                 self.runtime.release(task_id)
                 logger.info(f"Released agent instance for task {task_id}")
 
-            # 关闭 pubsub 连接
+            # 关闭 pubsub 连接 (用于取消订阅)
             if self.pubsub:
-                await self.pubsub.unsubscribe("agent_tasks")
+                await self.pubsub.punsubscribe("agent:task:*:cancel")
                 await self.pubsub.close()
 
             logger.info("AgentWorker cleanup completed")

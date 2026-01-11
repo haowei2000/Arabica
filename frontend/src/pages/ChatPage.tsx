@@ -108,8 +108,8 @@ export default function ChatPage() {
             <div className="flex items-center gap-4">
               <button
                 onClick={toggleSidebar}
-                className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 md:hidden"
-                title="Toggle sidebar"
+                className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+                title="切换侧边栏"
               >
                 <Menu className="w-6 h-6" />
               </button>

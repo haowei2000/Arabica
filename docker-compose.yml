@@ -82,9 +82,9 @@ services:
     networks:
       - aiwen-network
 
-  # PostgreSQL Database
+  # PostgreSQL Database with pgvector
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: aiwen-postgres
     ports:
       - "${POSTGRES_EXPOSE_PORT:-5432}:5432"

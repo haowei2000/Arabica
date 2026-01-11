@@ -10,7 +10,7 @@ from aiwen.models.agents.agent_task import AgentTask
 from aiwen.schemas.agents.input import TextMessage
 
 
-class TaskCRUD:
+class AgentTaskCRUD:
     """CRUD operations for AgentTask model."""
 
     def __init__(self, db_session: AsyncSession):
@@ -22,9 +22,10 @@ class TaskCRUD:
         """
         self.db_session = db_session
 
-    async def create_task(
+    async def create_agent_task(
         self,
         app_id: UUID,
+        user_id: UUID,
         task_type: str | None = None,
         payload: dict[str, Any] | TextMessage | None = None,
         auto_commit: bool = False
@@ -34,6 +35,7 @@ class TaskCRUD:
 
         Args:
             app_id: Associated app identifier
+            user_id: Associated user identifier
             task_type: Type of task
             payload: Task input data
             auto_commit: If True, immediately commit the transaction.
@@ -45,6 +47,7 @@ class TaskCRUD:
         task = AgentTask(
             id=uuid4(),
             app_id=app_id,
+            user_id=user_id,
             task_type=task_type,
             payload=payload,
             created_at=datetime.now(UTC)  # 保留时区信息
@@ -59,7 +62,7 @@ class TaskCRUD:
 
         return task
 
-    async def get_task_by_id(self, task_id: UUID) -> AgentTask | None:
+    async def get_agent_task_by_task_id(self, task_id: UUID) -> AgentTask | None:
         """
         Get task by UUID.
 
@@ -73,7 +76,7 @@ class TaskCRUD:
         result = await self.db_session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def update_task_status(
+    async def update_agent_task_status(
         self,
         task_id: UUID,
         status: str,
@@ -124,11 +127,12 @@ class TaskCRUD:
             await self.db_session.flush()
 
         # Return updated task
-        return await self.get_task_by_id(task_id)
+        return await self.get_agent_task_by_task_id(task_id)
 
-    async def list_tasks(
+    async def list_agent_tasks(
         self,
         app_id: str | None = None,
+        user_id: UUID | None = None,
         status: str | None = None,
         skip: int = 0,
         limit: int = 100
@@ -138,6 +142,7 @@ class TaskCRUD:
 
         Args:
             app_id: Filter by app_id
+            user_id: Filter by user_id
             status: Filter by status
             skip: Number of records to skip
             limit: Maximum number of records to return
@@ -150,6 +155,9 @@ class TaskCRUD:
         if app_id:
             stmt = stmt.where(AgentTask.app_id == app_id)
 
+        if user_id:
+            stmt = stmt.where(AgentTask.user_id == user_id)
+
         if status:
             stmt = stmt.where(AgentTask.status == status)
 
@@ -158,7 +166,7 @@ class TaskCRUD:
         result = await self.db_session.execute(stmt)
         return list(result.scalars().all())
 
-    async def delete_task(self, task_id: UUID, auto_commit: bool = False) -> bool:
+    async def delete_agent_task(self, task_id: UUID, auto_commit: bool = False) -> bool:
         """
         Delete a task by UUID.
 

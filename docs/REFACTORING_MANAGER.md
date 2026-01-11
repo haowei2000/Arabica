@@ -326,13 +326,13 @@ all_instances = runtime._instances
 
 ```python
 from aiwen.services.agents.chat.chat_helper import (
-   prepare_conversation,
+   create_conversation,
    create_message,
    stream_and_finalize
 )
 
 # 准备会话
-conversation = await prepare_conversation(
+conversation = await create_conversation(
    app_id=app_id,
    payload=payload,
    conversation_crud=conversation_crud
@@ -350,9 +350,7 @@ message = await create_message(
 async for event in stream_and_finalize(
         stream_iter=agent.stream(payload),
         conversation=conversation,
-        message=message,
-        message_crud=message_crud,
-        conversation_crud=conversation_crud
+        message=message
 ):
    yield event
 ```

@@ -9,8 +9,10 @@ from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.agents.crud.app_crud import AppCRUD
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
 from aiwen.services.agents.crud.message_crud import MessageCRUD
-from aiwen.services.agents.crud.task_crud import TaskCRUD
+from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
+from aiwen.workers.task_consumer import TaskConsumer
+from aiwen.workers.task_producer import TaskProducer
 
 
 async def get_app_crud(
@@ -71,8 +73,8 @@ async def get_template_crud(
 
 async def get_task_crud(
         db: AsyncSession = Depends(get_aiwen_db),
-) -> TaskCRUD:
-    return TaskCRUD(db)
+) -> AgentTaskCRUD:
+    return AgentTaskCRUD(db)
 
 
 async def get_redis_client_dep():
@@ -91,3 +93,33 @@ def get_agent_runtime() -> AgentRuntime:
         Global AgentRuntime singleton
     """
     return _agent_runtime
+
+
+async def get_task_producer(
+    redis_client=Depends(get_redis_client_dep),
+) -> TaskProducer:
+    """
+    Get TaskProducer instance.
+
+    Args:
+        redis_client: Redis async client from dependency injection
+
+    Returns:
+        TaskProducer instance
+    """
+    return TaskProducer(redis_client)
+
+
+async def get_task_consumer(
+    redis_client=Depends(get_redis_client_dep),
+) -> TaskConsumer:
+    """
+    Get TaskConsumer instance.
+
+    Args:
+        redis_client: Redis async client from dependency injection
+
+    Returns:
+        TaskConsumer instance
+    """
+    return TaskConsumer(redis_client)

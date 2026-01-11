@@ -8,7 +8,7 @@ from aiwen.utils.sse import sse
 from aiwen.utils.time import utc_now
 
 
-async def prepare_conversation(
+async def create_conversation(
         *,
         app_id: UUID,  # Note: agent_id is used as app_id (agent and app are merged concepts)
         payload:TextMessage,
@@ -63,8 +63,6 @@ async def stream_and_finalize(
         stream_iter,
         conversation,
         message,
-        message_crud,
-        conversation_crud,
 ):
     """Unified SSE streaming + DB finalize logic"""
     collected_chunks: list[str] = []

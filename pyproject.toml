@@ -71,6 +71,7 @@ dependencies = [
     "click>=8.1.0",
     "ty>=0.0.7",
     "pip>=25.3",
+    "pgvector>=0.4.2",
 ]
 
 [project.optional-dependencies]

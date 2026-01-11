@@ -17,9 +17,9 @@ Task Consumer - 任务消费者
     - task_utils: 消息编码/解码工具
 """
 import asyncio
-from collections.abc import AsyncGenerator
 import logging
-from typing import Any, Dict, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import redis.asyncio as aioredis
 

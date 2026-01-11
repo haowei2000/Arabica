@@ -13,6 +13,11 @@ export const API_ENDPOINTS = {
 
   // 流式对话
   CHAT: {
+    // Split endpoints (recommended)
+    START: (appId: string) => `/chat/${appId}/start`,
+    MESSAGES: (taskId: string) => `/chat/${taskId}/messages`,
+    CANCEL: (taskId: string) => `/chat/${taskId}/cancel`,
+    // Combined endpoints (legacy, kept for compatibility)
     STREAM: (appId: string) => `/chat/${appId}`,
     DIRECT: (appId: string) => `/chat/${appId}/direct`,
   },

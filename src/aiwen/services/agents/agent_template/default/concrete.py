@@ -38,6 +38,24 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         "enabled": True,
         "version": 1,
         "config": {
+            "context": {
+                "enabled": True,
+                "sources":
+                    {
+                        "conversation_history": {
+                            "enabled": True,
+                            "max_conversations": 20
+                        },
+                        "message_history": {
+                            "enabled": True,
+                            "max_messages": 20
+                        },
+                        "knowledge_base": {
+                            "enabled": True,
+                            "kb_ids": []
+                        }
+                }
+            },
             "model_provider": "ollama",
             "model_name": "qwen3:30b",
             "max_history_messages": 20,  # Maximum number of historical messages to load
@@ -102,7 +120,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         """
         Execute the agent with conversation memory.
 
-        Loads conversation history from database, appends the new message,
+        Loads conversation history from a database, appends the new message,
         and generates a response using the LLM.
 
         Args:
@@ -187,18 +205,3 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                 yield f"Full message: {event['data']['output'].content}"
             else:
                 pass
-        
-        # Add user message and assistant response to history if conversation_id exists
-        if input_data.conversation_id:
-            await add_message_to_history(
-                {"role": "user", "content": input_data.query},
-                input_data.conversation_id,
-                input_data.app_id
-            )
-            await add_message_to_history(
-                {"role": "assistant", "content": full_response},
-                input_data.conversation_id,
-                input_data.app_id
-            )
-        else:
-            logger.debug("No conversation_id provided, skipping message history save")

@@ -70,6 +70,7 @@ class AgentTask(Base):
 
     # Task identification
     app_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, comment='关联的agent标识')
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, comment='关联的用户标识')
     task_type: Mapped[str | None] = mapped_column(String, comment='任务类型')
 
     # Status and data
@@ -99,4 +100,4 @@ class AgentTask(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment='完成时间')
 
     def __repr__(self) -> str:
-        return f"<AgentTask(id={self.id}, app_id='{self.app_id}', status='{self.status}')>"
+        return f"<AgentTask(id={self.id}, app_id='{self.app_id}', user_id='{self.user_id}', status='{self.status}')>"

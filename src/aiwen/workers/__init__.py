@@ -14,12 +14,10 @@ Workers Module - 工作器模块
 from . import task_utils
 from .task_consumer import TaskConsumer
 from .task_producer import TaskProducer, get_task_producer
-from .task_queue import TaskQueueService
 
 __all__ = [
     "TaskConsumer",
     "TaskProducer",
-    "TaskQueueService",
     "get_task_producer",
     "task_utils",
 ]
