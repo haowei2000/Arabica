@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _run_celery_worker(
     loglevel: str = "info",
     concurrency: int = 4,
-    queues: str = "agent_tasks",
+    queues: str = "celery_agent_tasks",
 ):
     """Start Celery worker."""
     from aiwen.celery_app import celery_app
@@ -66,7 +66,7 @@ def _run_celery_worker(
 )
 @click.option(
     "--queues",
-    default="agent_tasks",
+    default="celery_agent_tasks",
     help="Comma-separated list of queues to consume from",
 )
 def main(loglevel: str, concurrency: int, queues: str):

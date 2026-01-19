@@ -4,16 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="56c350f4-0616-4e41-9a4b-cef0b92a9c17" name="Changes" comment="">
+    <list default="true" id="56c350f4-0616-4e41-9a4b-cef0b92a9c17" name="Changes" comment="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/celery_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/celery_app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/worker_cli.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/worker_cli.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/agent_worker.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/scripts/run_agent_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/run_agent_worker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/uv.lock" beforeDir="false" afterPath="$PROJECT_DIR$/uv.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/tasks.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/tasks.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -60,6 +55,7 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "Python.api_cli.executor": "Run",
+    "Python.worker_cli.executor": "Run",
     "RunOnceActivity.MCP Project settings loaded": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
@@ -82,9 +78,9 @@
     <option name="endsOfQuotaMs" value="1769760064844" />
   </component>
   <component name="RecapUselessUpdatesCounter">
-    <option name="suspendCountdown" value="9" />
+    <option name="suspendCountdown" value="7" />
   </component>
-  <component name="RunManager" selected="Python.api_cli" />
+  <component name="RunManager" selected="Python.worker_cli" />
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -101,15 +97,29 @@
       <option name="presentableId" value="Default" />
       <updated>1768831361093</updated>
       <workItem from="1768831363853" duration="355000" />
-      <workItem from="1768831743804" duration="1344000" />
+      <workItem from="1768831743804" duration="3267000" />
     </task>
+    <task id="LOCAL-00001" summary="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序">
+      <option name="closed" value="true" />
+      <created>1768835897810</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1768835897810</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
   </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序" />
+    <option name="LAST_COMMIT_MESSAGE" value="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序" />
+  </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768832230114" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768838709968" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768838883108" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>
