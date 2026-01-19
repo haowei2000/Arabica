@@ -1,265 +1,219 @@
 #!/usr/bin/env python3
 """
-Task Producer - 任务生产者
+Task Producer - Celery Task Dispatcher
 
-功能描述:
-    发布任务到 Redis Streams，供 Worker 消费处理。
-    支持 FastAPI 路由和 Scheduler 调用。
-
-作者: haowei
-创建日期: 2025/12/24
-最后修改: 2025/12/24 10:30
-修改人员: haowei
-版本: v1.0.0
-
-
-依赖模块:
-    - redis.asyncio: Redis 异步客户端
+Dispatches tasks to Celery for async processing.
+Maintains backward-compatible interface.
 """
-import json
+
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import UUID
 
-import redis.asyncio as redis_async
+from celery.result import AsyncResult
+
+from aiwen.workers.tasks import process_agent_task
 
 logger = logging.getLogger(__name__)
 
 
 class TaskProducer:
     """
-    任务生产者
+    Task producer using Celery for task dispatch.
 
-    使用 XADD 将任务发布到 Redis Stream，供 Worker 消费。
-
-    使用示例:
+    Usage:
         ```python
         from aiwen.workers.task_producer import TaskProducer
-        from aiwen.middleware.cache_middleware import get_redis_client
 
-        redis_client = get_redis_client(is_async=True)
-        producer = TaskProducer(redis_client)
+        producer = TaskProducer()
 
-        # 发布任务
-        message_id = await producer.publish_task(
+        # Publish task
+        celery_task_id = await producer.publish_task(
             task_id=task.id,
-            app_id=app.id,
-            payload={"query": "Hello"}
+            payload={"app_id": "...", "query": "Hello"}
         )
         ```
     """
 
-    # 与 AgentWorker 保持一致
-    STREAM_NAME = "agent_tasks"
-
-    def __init__(self, redis_client: redis_async.Redis):
+    def __init__(self, redis_client: Any = None):
         """
-        初始化任务生产者
+        Initialize task producer.
 
         Args:
-            redis_client: Redis 异步客户端
+            redis_client: Kept for backward compatibility, not used with Celery
         """
-        self.redis_client = redis_client
+        # redis_client is kept for backward compatibility but not used
+        pass
 
     async def publish_task(
         self,
         task_id: UUID,
-        payload: dict[str, Any] | None = None
+        payload: dict[str, Any] | None = None,
     ) -> str:
         """
-        发布任务到 Redis Stream
+        Publish task via Celery.
 
         Args:
-            task_id: 任务 ID
-            payload: 任务载荷数据
+            task_id: Task ID
+            payload: Task payload (must contain app_id)
 
         Returns:
-            消息 ID (Redis Stream message ID)
+            Celery task ID
 
         Raises:
-            Exception: 发布失败时抛出异常
+            ValueError: If payload is missing app_id
+            Exception: If task dispatch fails
         """
         try:
-            # 准备消息数据
-            message_data = {
-                "task_id": str(task_id),
-                "payload": json.dumps(payload or {})
-            }
+            payload = payload or {}
+            app_id = payload.get("app_id")
 
-            # XADD 发布到 Stream
-            task_message_id = await self.redis_client.xadd(
-                name=self.STREAM_NAME,
-                fields=message_data,
-                maxlen=10000,  # 限制 Stream 最大长度（可选）
-                approximate=True  # 使用近似修剪以提高性能
+            if not app_id:
+                raise ValueError("Missing required field: app_id in payload")
+
+            # Dispatch task via Celery
+            result: AsyncResult = process_agent_task.apply_async(
+                kwargs={
+                    "task_id": str(task_id),
+                    "app_id": str(app_id),
+                    "payload": payload,
+                },
+                task_id=str(task_id),  # Use our task_id as Celery task_id
             )
 
-            logger.info(
-                f"Published task {task_id} to stream (message: {task_message_id})"
-            )
-
-            return task_message_id
+            logger.info(f"Published task {task_id} via Celery (celery_id: {result.id})")
+            return result.id
 
         except Exception as e:
-            logger.error(
-                f"Error publishing task {task_id} to stream: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error publishing task {task_id}: {e}", exc_info=True)
             raise
 
     async def publish_scheduled_task(
         self,
         task_id: UUID,
         payload: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """
-        发布调度任务到 Redis Stream
-
-        与普通任务类似，但可以附加调度元数据。
+        Publish scheduled task via Celery.
 
         Args:
-            task_id: 任务 ID
-            payload: 任务载荷数据
-            metadata: 调度元数据（如调度时间、触发器等）
+            task_id: Task ID
+            payload: Task payload
+            metadata: Schedule metadata (countdown, eta, etc.)
 
         Returns:
-            消息 ID
+            Celery task ID
         """
         try:
-            # 准备消息数据
-            message_data = {
-                "task_id": str(task_id),
-                "payload": json.dumps(payload or {}),
-                "scheduled": "true"
-            }
+            payload = payload or {}
+            app_id = payload.get("app_id")
 
-            # 添加元数据
+            if not app_id:
+                raise ValueError("Missing required field: app_id in payload")
+
+            # Extract scheduling options from metadata
+            countdown = None
+            eta = None
             if metadata:
-                message_data["metadata"] = json.dumps(metadata)
+                countdown = metadata.get("countdown")
+                eta = metadata.get("eta")
 
-            # XADD 发布到 Stream
-            task_message_id = await self.redis_client.xadd(
-                name=self.STREAM_NAME,
-                fields=message_data,
-                maxlen=10000,
-                approximate=True
+            # Dispatch scheduled task via Celery
+            result: AsyncResult = process_agent_task.apply_async(
+                kwargs={
+                    "task_id": str(task_id),
+                    "app_id": str(app_id),
+                    "payload": payload,
+                },
+                task_id=str(task_id),
+                countdown=countdown,
+                eta=eta,
             )
 
-            logger.info(
-                f"Published scheduled task {task_id} to stream "
-                f"(message: {task_message_id})"
-            )
-
-            return task_message_id
+            logger.info(f"Published scheduled task {task_id} via Celery (celery_id: {result.id})")
+            return result.id
 
         except Exception as e:
-            logger.error(
-                f"Error publishing scheduled task {task_id}: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error publishing scheduled task {task_id}: {e}", exc_info=True)
             raise
 
-    async def get_stream_length(self) -> int:
+    async def get_task_status(self, task_id: str) -> dict[str, Any]:
         """
-        获取 Stream 长度
-
-        Returns:
-            Stream 中的消息数量
-        """
-        try:
-            length = await self.redis_client.xlen(self.STREAM_NAME)
-            return length
-        except Exception as e:
-            logger.error(f"Error getting stream length: {e}")
-            return 0
-
-    async def get_stream_info(self) -> dict[str, Any] | None:
-        """
-        获取 Stream 信息
-
-        Returns:
-            Stream 信息字典或 None
-        """
-        try:
-            info = await self.redis_client.xinfo_stream(self.STREAM_NAME)
-            return info
-        except Exception as e:
-            logger.error(f"Error getting stream info: {e}")
-            return None
-
-    async def get_pending_count(
-        self,
-        consumer_group: str = "agent_workers"
-    ) -> int:
-        """
-        获取待处理消息数量
+        Get Celery task status.
 
         Args:
-            consumer_group: 消费者组名称
+            task_id: Task ID (also used as Celery task ID)
 
         Returns:
-            待处理消息数量
+            Task status dict
         """
         try:
-            pending = await self.redis_client.xpending(
-                self.STREAM_NAME,
-                consumer_group
-            )
-            if pending:
-                return pending['pending']
-            return 0
+            result = AsyncResult(task_id)
+            return {
+                "task_id": task_id,
+                "status": result.status,
+                "ready": result.ready(),
+                "successful": result.successful() if result.ready() else None,
+                "result": result.result if result.ready() else None,
+            }
         except Exception as e:
-            logger.error(f"Error getting pending count: {e}")
-            return 0
+            logger.error(f"Error getting task status {task_id}: {e}")
+            return {"task_id": task_id, "status": "UNKNOWN", "error": str(e)}
+
+    async def revoke_task(self, task_id: str, terminate: bool = True) -> bool:
+        """
+        Revoke/cancel a Celery task.
+
+        Args:
+            task_id: Task ID to cancel
+            terminate: Whether to terminate running task
+
+        Returns:
+            True if revoke signal sent successfully
+        """
+        try:
+            from aiwen.celery_app import celery_app
+
+            celery_app.control.revoke(task_id, terminate=terminate)
+            logger.info(f"Revoked task {task_id} (terminate={terminate})")
+            return True
+        except Exception as e:
+            logger.error(f"Error revoking task {task_id}: {e}")
+            return False
 
 
-# 全局单例（可选）
+# Global singleton
 _producer_instance: TaskProducer | None = None
 
 
-def get_task_producer(redis_client: redis_async.Redis) -> TaskProducer:
+def get_task_producer(redis_client: Any = None) -> TaskProducer:
     """
-    获取任务生产者单例
+    Get task producer singleton.
 
     Args:
-        redis_client: Redis 异步客户端
+        redis_client: Kept for backward compatibility, not used
 
     Returns:
-        TaskProducer 实例
+        TaskProducer instance
     """
     global _producer_instance
 
     if _producer_instance is None:
-        _producer_instance = TaskProducer(redis_client)
+        _producer_instance = TaskProducer()
 
     return _producer_instance
 
 
-# FastAPI 依赖注入示例函数
-async def get_producer_dependency(
-    redis_client: redis_async.Redis
-) -> TaskProducer:
+# FastAPI dependency injection
+async def get_producer_dependency(redis_client: Any = None) -> TaskProducer:
     """
-    FastAPI 依赖注入函数
-
-    使用示例:
-        ```python
-        from fastapi import Depends
-        from aiwen.workers.task_producer import get_producer_dependency
-
-        @app.post("/tasks")
-        async def create_task(
-            producer: TaskProducer = Depends(get_producer_dependency)
-        ):
-            message_id = await producer.publish_task(...)
-            return {"message_id": message_id}
-        ```
+    FastAPI dependency injection function.
 
     Args:
-        redis_client: Redis 客户端（通过依赖注入）
+        redis_client: Kept for backward compatibility
 
     Returns:
-        TaskProducer 实例
+        TaskProducer instance
     """
-    return get_task_producer(redis_client)
+    return get_task_producer()
