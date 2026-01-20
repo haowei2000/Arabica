@@ -49,8 +49,6 @@ class TaskProducer:
         ```
     """
 
-    # 与 AgentWorker 保持一致
-    STREAM_NAME = "agent_tasks"
 
     def __init__(self, redis_client: redis_async.Redis):
         """
@@ -64,6 +62,7 @@ class TaskProducer:
     async def publish_task(
         self,
         task_id: UUID,
+        task_name: str = "agent:streams",
         payload: dict[str, Any] | None = None
     ) -> str:
         """
@@ -88,7 +87,7 @@ class TaskProducer:
 
             # XADD 发布到 Stream
             task_message_id = await self.redis_client.xadd(
-                name=self.STREAM_NAME,
+                name=task_name,
                 fields=message_data,
                 maxlen=10000,  # 限制 Stream 最大长度（可选）
                 approximate=True  # 使用近似修剪以提高性能
@@ -110,6 +109,7 @@ class TaskProducer:
     async def publish_scheduled_task(
         self,
         task_id: UUID,
+        task_name: str = "scheduled_tasks",
         payload: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None
     ) -> str:
@@ -140,7 +140,7 @@ class TaskProducer:
 
             # XADD 发布到 Stream
             task_message_id = await self.redis_client.xadd(
-                name=self.STREAM_NAME,
+                name=task_name,
                 fields=message_data,
                 maxlen=10000,
                 approximate=True
@@ -160,7 +160,7 @@ class TaskProducer:
             )
             raise
 
-    async def get_stream_length(self) -> int:
+    async def get_stream_length(self,task_name: str="agent:chat") -> int:
         """
         获取 Stream 长度
 
@@ -168,13 +168,13 @@ class TaskProducer:
             Stream 中的消息数量
         """
         try:
-            length = await self.redis_client.xlen(self.STREAM_NAME)
+            length = await self.redis_client.xlen(task_name)
             return length
         except Exception as e:
             logger.error(f"Error getting stream length: {e}")
             return 0
 
-    async def get_stream_info(self) -> dict[str, Any] | None:
+    async def get_stream_info(self,task_name: str="agent:chat") -> dict[str, Any] | None:
         """
         获取 Stream 信息
 
@@ -182,7 +182,7 @@ class TaskProducer:
             Stream 信息字典或 None
         """
         try:
-            info = await self.redis_client.xinfo_stream(self.STREAM_NAME)
+            info = await self.redis_client.xinfo_stream(task_name)
             return info
         except Exception as e:
             logger.error(f"Error getting stream info: {e}")
@@ -190,7 +190,8 @@ class TaskProducer:
 
     async def get_pending_count(
         self,
-        consumer_group: str = "agent_workers"
+        consumer_group: str = "agent_workers",
+        task_name: str = "agent:chat"
     ) -> int:
         """
         获取待处理消息数量
@@ -203,7 +204,7 @@ class TaskProducer:
         """
         try:
             pending = await self.redis_client.xpending(
-                self.STREAM_NAME,
+                task_name,
                 consumer_group
             )
             if pending:

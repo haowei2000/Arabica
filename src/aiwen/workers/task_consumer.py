@@ -28,6 +28,20 @@ from .task_utils import decode_message_field, decode_message_id, parse_json_fiel
 logger = logging.getLogger(__name__)
 
 
+def _build_stream_name(task_type: str, task_id: str, task_name:str= "agent:chat") -> str:
+    """
+    构建 Stream 名称
+
+    Args:
+        task_type: 任务类型
+        task_id: 任务 ID
+
+    Returns:
+        完整的 Stream 名称
+    """
+    return f"{task_name}:{task_type}:{task_id}:events"
+
+
 class TaskConsumer:
     """
     任务消费者
@@ -55,7 +69,6 @@ class TaskConsumer:
     def __init__(
         self,
         redis_client: aioredis.Redis,
-        stream_prefix: str = "agent:task",
         read_count: int = 10,
         read_block_ms: int = 1000
     ):
@@ -64,32 +77,18 @@ class TaskConsumer:
 
         Args:
             redis_client: Redis 异步客户端
-            stream_prefix: Stream 名称前缀
             read_count: 每次读取的最大消息数
             read_block_ms: 读取阻塞时间（毫秒）
         """
         self.redis = redis_client
-        self.stream_prefix = stream_prefix
         self.read_count = read_count
         self.read_block_ms = read_block_ms
-
-    def _build_stream_name(self, task_type: str, task_id: str) -> str:
-        """
-        构建 Stream 名称
-
-        Args:
-            task_type: 任务类型
-            task_id: 任务 ID
-
-        Returns:
-            完整的 Stream 名称
-        """
-        return f"{self.stream_prefix}:{task_type}:{task_id}:events"
 
     async def consume_task_events(
         self,
         task_id: str,
         task_type: str,
+        task_name: str = "agent:chat",
         last_id: str = "0-0",
         timeout_seconds: float | None = None
     ) -> AsyncGenerator[Any, None]:
@@ -115,7 +114,7 @@ class TaskConsumer:
             Exception: 任务失败时抛出包含错误信息的异常
             asyncio.TimeoutError: 超时时抛出
         """
-        stream_name = self._build_stream_name(task_type, task_id)
+        stream_name = _build_stream_name(task_type, task_id)
         start_time = asyncio.get_event_loop().time()
 
         logger.info(
@@ -214,7 +213,8 @@ class TaskConsumer:
     async def get_stream_length(
         self,
         task_type: str,
-        task_id: str
+        task_id: str,
+        task_name: str = "agent:chat"
     ) -> int:
         """
         获取任务事件流的长度
@@ -226,7 +226,7 @@ class TaskConsumer:
         Returns:
             Stream 中的消息数量
         """
-        stream_name = self._build_stream_name(task_type, task_id)
+        stream_name = _build_stream_name(task_type, task_id, task_name)
         try:
             length = await self.redis.xlen(stream_name)
             return length
@@ -239,7 +239,8 @@ class TaskConsumer:
     async def stream_exists(
         self,
         task_type: str,
-        task_id: str
+        task_id: str,
+        task_name: str = "agent:chat"
     ) -> bool:
         """
         检查任务事件流是否存在
@@ -251,7 +252,7 @@ class TaskConsumer:
         Returns:
             流是否存在
         """
-        stream_name = self._build_stream_name(task_type, task_id)
+        stream_name = _build_stream_name(task_type, task_id, task_name)
         try:
             exists = await self.redis.exists(stream_name)
             return bool(exists)
@@ -264,7 +265,8 @@ class TaskConsumer:
     async def delete_stream(
         self,
         task_type: str,
-        task_id: str
+        task_id: str,
+        task_name: str = "agent:chat"
     ) -> bool:
         """
         删除任务事件流
@@ -276,7 +278,7 @@ class TaskConsumer:
         Returns:
             是否成功删除
         """
-        stream_name = self._build_stream_name(task_type, task_id)
+        stream_name = _build_stream_name(task_type, task_id,task_name)
         try:
             deleted = await self.redis.delete(stream_name)
             logger.info(f"Deleted stream {stream_name}")

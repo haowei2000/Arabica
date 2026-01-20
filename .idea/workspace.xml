@@ -1,4 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PropertiesComponent">{}</component>
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "git-widget-placeholder": "fastapi",
+    "node.js.selected.package.tslint": "(autodetect)"
+  }
+}]]></component>
+  <component name="RunManager" selected="npm.run" />
+  <component name="TaskManager">
+    <servers />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
+    <option name="LAST_COMMIT_MESSAGE" value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768918180867" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768915163121" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+  </component>
 </project>
