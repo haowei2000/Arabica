@@ -263,7 +263,7 @@ async def cancel_task(
     """
     取消正在运行的任务
 
-    支持队列模式（Celery）和直接模式的任务取消。
+    支持队列模式和直接模式的任务取消。
 
     Args:
         task_id: 任务 ID
@@ -291,13 +291,13 @@ async def cancel_task(
             # Task not in runtime, might be in queue mode
             pass
 
-        # 2. Cancel in queue mode using Celery revoke
-        from aiwen.celery_app import celery_app
+        # 2. Try to cancel in queue mode by publishing cancel signal to worker via Pub/Sub
+        await redis_client.publish(
+            f"agent:task:{task_id}:cancel",
+            json_dumps({"action": "cancel", "task_id": str(task_id)})
+        )
 
-        celery_app.control.revoke(str(task_id), terminate=True)
-        logger.info(f"Revoked Celery task {task_id}")
-
-        # Publish cancelled event to Stream for consumer
+        # Also publish cancelled event to Stream for consumer
         await _publish_event_to_stream(
             redis_client, task_id, "cancelled", "Task was cancelled by user"
         )
