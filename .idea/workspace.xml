@@ -4,35 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="56c350f4-0616-4e41-9a4b-cef0b92a9c17" name="Changes" comment="chore(ide): 更新项目配置以使用 uv 作为 Python SDK&#10;&#10;- 将 .idea/agent_chat.iml 中的 Python SDK 从 WSL 版本更改为 uv (agent_chat)&#10;- 在 .idea/agent_chat.iml 中添加 .venv 目录到排除文件夹列表&#10;- 将 .idea/misc.xml 中的项目 JDK 名称更新为 uv (agent_chat)&#10;- 更新 .idea/workspace.xml 包含新的 IDE 配置和变更列表管理器设置&#10;- 添加自动导入设置和 Git 相关配置&#10;- 更新属性组件和运行管理器配置">
-      <change afterPath="$PROJECT_DIR$/docker/Dockerfile.frontend" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docker/docker-compose.yml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docker/nginx.frontend.conf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docker/redis/redis.conf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/.env.example" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+    <list default="true" id="56c350f4-0616-4e41-9a4b-cef0b92a9c17" name="Changes" comment="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Makefile" beforeDir="false" afterPath="$PROJECT_DIR$/Makefile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/Dockerfile.old" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/DockerfileArm.old" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/docker-compose-arm.old.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/docker-compose.old.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/docker-compose.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/constants/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/constants/api.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/vite.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/vite.config.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/.env.example" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/.env.test" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/config/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/base.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/env.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/env.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/b2c3d4e5f6a7_create_memory_table.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/conversation.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/conversation.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/memory.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/concrete.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/concrete.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/memory.py" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -45,7 +18,7 @@
     </persistenceIdMap>
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="30159" />
+    <option name="cachedIndexableFilesCount" value="32747" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="Git.Settings">
@@ -76,84 +49,35 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Docker.docker: Compose Deployment.executor": "Run",
-    "Makefile Target.docker-down.executor": "Run",
-    "Makefile Target.docker-up.executor": "Run",
-    "Python.api_cli.executor": "Run",
-    "Python.worker_cli.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "fastapi",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "/Users/haowei/projects/agent_chat",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "npm.run.executor": "Run",
-    "to.speed.mode.migration.done": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.api_cli.executor&quot;: &quot;Run&quot;,
+    &quot;Python.worker_cli.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;fastapi&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;npm.run.executor&quot;: &quot;Run&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecapSpentCounter">
     <option name="endsOfQuotaMs" value="1769760064844" />
-    <option name="spentUsd" value="0.023985151" />
   </component>
   <component name="RecapUselessUpdatesCounter">
-    <option name="suspendCountdown" value="0" />
+    <option name="suspendCountdown" value="6" />
   </component>
-  <component name="RecentsManager">
-    <key name="CopyFile.RECENT_KEYS">
-      <recent name="$PROJECT_DIR$" />
-      <recent name="$PROJECT_DIR$/docker" />
-      <recent name="$PROJECT_DIR$/src" />
-    </key>
-    <key name="MoveFile.RECENT_KEYS">
-      <recent name="$PROJECT_DIR$/docker" />
-    </key>
-  </component>
-  <component name="RunManager" selected="Makefile Target.docker-up">
-    <configuration name="docker-down" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
-      <makefile filename="$PROJECT_DIR$/Makefile" target="docker-down" workingDirectory="" arguments="">
-        <envs />
-      </makefile>
-      <method v="2" />
-    </configuration>
-    <configuration name="docker-up" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
-      <makefile filename="$PROJECT_DIR$/Makefile" target="docker-up" workingDirectory="" arguments="">
-        <envs />
-      </makefile>
-      <method v="2" />
-    </configuration>
-    <configuration default="true" type="docker-deploy" factoryName="docker-compose.yml" temporary="true">
-      <deployment type="docker-compose.yml" />
-      <method v="2" />
-    </configuration>
-    <configuration name="docker: Compose Deployment" type="docker-deploy" factoryName="docker-compose.yml" temporary="true" server-name="Docker">
-      <deployment type="docker-compose.yml">
-        <settings>
-          <option name="sourceFilePath" value="docker/docker-compose.yml" />
-        </settings>
-      </deployment>
-      <method v="2" />
-    </configuration>
-    <recent_temporary>
-      <list>
-        <item itemvalue="Makefile Target.docker-up" />
-        <item itemvalue="Makefile Target.docker-down" />
-        <item itemvalue="Makefile Target.docker-up" />
-        <item itemvalue="Makefile Target.docker-up" />
-        <item itemvalue="Makefile Target.docker-up" />
-      </list>
-    </recent_temporary>
-  </component>
+  <component name="RunManager" selected="Python.worker_cli" />
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -170,7 +94,8 @@
       <option name="presentableId" value="Default" />
       <updated>1768831361093</updated>
       <workItem from="1768831363853" duration="355000" />
-      <workItem from="1768831743804" duration="3267000" />
+      <workItem from="1768831743804" duration="4168000" />
+      <workItem from="1768912989075" duration="352000" />
     </task>
     <task id="LOCAL-00001" summary="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序">
       <option name="closed" value="true" />
@@ -180,13 +105,13 @@
       <option name="project" value="LOCAL" />
       <updated>1768835897810</updated>
     </task>
-    <task id="LOCAL-00002" summary="chore(ide): 更新项目配置以使用 uv 作为 Python SDK&#10;&#10;- 将 .idea/agent_chat.iml 中的 Python SDK 从 WSL 版本更改为 uv (agent_chat)&#10;- 在 .idea/agent_chat.iml 中添加 .venv 目录到排除文件夹列表&#10;- 将 .idea/misc.xml 中的项目 JDK 名称更新为 uv (agent_chat)&#10;- 更新 .idea/workspace.xml 包含新的 IDE 配置和变更列表管理器设置&#10;- 添加自动导入设置和 Git 相关配置&#10;- 更新属性组件和运行管理器配置">
+    <task id="LOCAL-00002" summary="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置">
       <option name="closed" value="true" />
-      <created>1768886978503</created>
+      <created>1768839181832</created>
       <option name="number" value="00002" />
       <option name="presentableId" value="LOCAL-00002" />
       <option name="project" value="LOCAL" />
-      <updated>1768886978503</updated>
+      <updated>1768839181832</updated>
     </task>
     <option name="localTasksCounter" value="3" />
     <servers />
@@ -196,12 +121,12 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序" />
-    <MESSAGE value="chore(ide): 更新项目配置以使用 uv 作为 Python SDK&#10;&#10;- 将 .idea/agent_chat.iml 中的 Python SDK 从 WSL 版本更改为 uv (agent_chat)&#10;- 在 .idea/agent_chat.iml 中添加 .venv 目录到排除文件夹列表&#10;- 将 .idea/misc.xml 中的项目 JDK 名称更新为 uv (agent_chat)&#10;- 更新 .idea/workspace.xml 包含新的 IDE 配置和变更列表管理器设置&#10;- 添加自动导入设置和 Git 相关配置&#10;- 更新属性组件和运行管理器配置" />
-    <option name="LAST_COMMIT_MESSAGE" value="chore(ide): 更新项目配置以使用 uv 作为 Python SDK&#10;&#10;- 将 .idea/agent_chat.iml 中的 Python SDK 从 WSL 版本更改为 uv (agent_chat)&#10;- 在 .idea/agent_chat.iml 中添加 .venv 目录到排除文件夹列表&#10;- 将 .idea/misc.xml 中的项目 JDK 名称更新为 uv (agent_chat)&#10;- 更新 .idea/workspace.xml 包含新的 IDE 配置和变更列表管理器设置&#10;- 添加自动导入设置和 Git 相关配置&#10;- 更新属性组件和运行管理器配置" />
+    <MESSAGE value="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置" />
+    <option name="LAST_COMMIT_MESSAGE" value="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768900123719" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
-    <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768838883108" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768838709968" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768839000361" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

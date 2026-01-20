@@ -1,0 +1,130 @@
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"56c350f4-0616-4e41-9a4b-cef0b92a9c17\" name=\"Changes\" comment=\"refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序\">\r\n      <change beforePath=\"$PROJECT_DIR$/.idea/workspace.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/workspace.xml\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/src/aiwen/celery_app.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/src/aiwen/celery_app.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/src/aiwen/worker_cli.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/src/aiwen/worker_cli.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/src/aiwen/workers/tasks.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/src/aiwen/workers/tasks.py\" afterDir=\"false\" />\r\n    </list>\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"CopilotPersistence\">\r\n    <persistenceIdMap>\r\n      <entry key=\"_//wsl.localhost/Ubuntu/home/whw/projects/agent_chat\" value=\"38TlHxQXxo7FEpJGPzJHqEAYNdr\" />\r\n    </persistenceIdMap>\r\n  </component>\r\n  <component name=\"EmbeddingIndexingInfo\">\r\n    <option name=\"cachedIndexableFilesCount\" value=\"30159\" />\r\n    <option name=\"fileBasedEmbeddingIndicesEnabled\" value=\"true\" />\r\n  </component>\r\n  <component name=\"Git.Settings\">\r\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\r\n  </component>\r\n  <component name=\"GitHubPullRequestSearchHistory\">{\r\n  &quot;lastFilter&quot;: {\r\n    &quot;state&quot;: &quot;OPEN&quot;,\r\n    &quot;assignee&quot;: &quot;haowei2000&quot;\r\n  }\r\n}</component>\r\n  <component name=\"GithubPullRequestsUISettings\">{\r\n  &quot;selectedUrlAndAccountId&quot;: {\r\n    &quot;url&quot;: &quot;git@github.com:haowei2000/agent_chat.git&quot;,\r\n    &quot;accountId&quot;: &quot;5b4319c8-94bb-42a3-bd6c-fc19e522fb90&quot;\r\n  }\r\n}</component>\r\n  <component name=\"McpProjectServerCommands\">\r\n    <commands />\r\n    <urls />\r\n  </component>\r\n  <component name=\"ProjectColorInfo\">{\r\n  &quot;customColor&quot;: &quot;&quot;,\r\n  &quot;associatedIndex&quot;: 3\r\n}</component>\r\n  <component name=\"ProjectId\" id=\"38TlHxQXxo7FEpJGPzJHqEAYNdr\" />\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\"><![CDATA[{\r\n  \"keyToString\": {\r\n    \"Python.api_cli.executor\": \"Run\",\r\n    \"Python.worker_cli.executor\": \"Run\",\r\n    \"RunOnceActivity.MCP Project settings loaded\": \"true\",\r\n    \"RunOnceActivity.ShowReadmeOnStart\": \"true\",\r\n    \"RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252\": \"true\",\r\n    \"RunOnceActivity.git.unshallow\": \"true\",\r\n    \"RunOnceActivity.typescript.service.memoryLimit.init\": \"true\",\r\n    \"ai.playground.ignore.import.keys.banner.in.settings\": \"true\",\r\n    \"com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1\": \"true\",\r\n    \"git-widget-placeholder\": \"fastapi\",\r\n    \"junie.onboarding.icon.badge.shown\": \"true\",\r\n    \"node.js.detected.package.eslint\": \"true\",\r\n    \"node.js.detected.package.tslint\": \"true\",\r\n    \"node.js.selected.package.eslint\": \"(autodetect)\",\r\n    \"node.js.selected.package.tslint\": \"(autodetect)\",\r\n    \"nodejs_package_manager_path\": \"npm\",\r\n    \"npm.run.executor\": \"Run\",\r\n    \"to.speed.mode.migration.done\": \"true\"\r\n  }\r\n}]]></component>\r\n  <component name=\"RecapSpentCounter\">\r\n    <option name=\"endsOfQuotaMs\" value=\"1769760064844\" />\r\n  </component>\r\n  <component name=\"RecapUselessUpdatesCounter\">\r\n    <option name=\"suspendCountdown\" value=\"7\" />\r\n  </component>\r\n  <component name=\"RunManager\" selected=\"Python.worker_cli\" />\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.29346.308\" />\r\n        <option value=\"bundled-python-sdk-ca5e2b39c7df-6e1f45a539f7-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.29346.308\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"TaskManager\">\r\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\r\n      <changelist id=\"56c350f4-0616-4e41-9a4b-cef0b92a9c17\" name=\"Changes\" comment=\"\" />\r\n      <created>1768831361093</created>\r\n      <option name=\"number\" value=\"Default\" />\r\n      <option name=\"presentableId\" value=\"Default\" />\r\n      <updated>1768831361093</updated>\r\n      <workItem from=\"1768831363853\" duration=\"355000\" />\r\n      <workItem from=\"1768831743804\" duration=\"3267000\" />\r\n    </task>\r\n    <task id=\"LOCAL-00001\" summary=\"refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1768835897810</created>\r\n      <option name=\"number\" value=\"00001\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00001\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1768835897810</updated>\r\n    </task>\r\n    <option name=\"localTasksCounter\" value=\"2\" />\r\n    <servers />\r\n  </component>\r\n  <component name=\"TypeScriptGeneratedFilesManager\">\r\n    <option name=\"version\" value=\"3\" />\r\n  </component>\r\n  <component name=\"VcsManagerConfiguration\">\r\n    <MESSAGE value=\"refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序\" />\r\n    <option name=\"LAST_COMMIT_MESSAGE\" value=\"refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序\" />\r\n  </component>\r\n  <component name=\"com.intellij.coverage.CoverageDataManagerImpl\">\r\n    <SUITE FILE_PATH=\"coverage/agent_chat$api_cli.coverage\" NAME=\"api_cli Coverage Results\" MODIFIED=\"1768838709968\" SOURCE_PROVIDER=\"com.intellij.coverage.DefaultCoverageFileProvider\" RUNNER=\"coverage.py\" COVERAGE_BY_TEST_ENABLED=\"false\" COVERAGE_TRACING_ENABLED=\"false\" WORKING_DIRECTORY=\"$Sourcepath$\" />\r\n    <SUITE FILE_PATH=\"coverage/agent_chat$worker_cli.coverage\" NAME=\"worker_cli Coverage Results\" MODIFIED=\"1768838883108\" SOURCE_PROVIDER=\"com.intellij.coverage.DefaultCoverageFileProvider\" RUNNER=\"coverage.py\" COVERAGE_BY_TEST_ENABLED=\"false\" COVERAGE_TRACING_ENABLED=\"false\" WORKING_DIRECTORY=\"$Sourcepath$\" />\r\n  </component>\r\n  <component name=\"github-copilot-workspace\">\r\n    <instructionFileLocations>\r\n      <option value=\".github/instructions\" />\r\n    </instructionFileLocations>\r\n    <promptFileLocations>\r\n      <option value=\".github/prompts\" />\r\n    </promptFileLocations>\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision e576dc083f2e9c3ed225d1c6a5030794795d7928)
++++ b/.idea/workspace.xml	(date 1768913344066)
+@@ -4,11 +4,8 @@
+     <option name="autoReloadType" value="SELECTIVE" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="56c350f4-0616-4e41-9a4b-cef0b92a9c17" name="Changes" comment="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序">
++    <list default="true" id="56c350f4-0616-4e41-9a4b-cef0b92a9c17" name="Changes" comment="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置">
+       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/src/aiwen/celery_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/celery_app.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/src/aiwen/worker_cli.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/worker_cli.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/tasks.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/tasks.py" afterDir="false" />
+     </list>
+     <option name="SHOW_DIALOG" value="false" />
+     <option name="HIGHLIGHT_CONFLICTS" value="true" />
+@@ -21,7 +18,7 @@
+     </persistenceIdMap>
+   </component>
+   <component name="EmbeddingIndexingInfo">
+-    <option name="cachedIndexableFilesCount" value="30159" />
++    <option name="cachedIndexableFilesCount" value="32747" />
+     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
+   </component>
+   <component name="Git.Settings">
+@@ -52,33 +49,33 @@
+     <option name="hideEmptyMiddlePackages" value="true" />
+     <option name="showLibraryContents" value="true" />
+   </component>
+-  <component name="PropertiesComponent"><![CDATA[{
+-  "keyToString": {
+-    "Python.api_cli.executor": "Run",
+-    "Python.worker_cli.executor": "Run",
+-    "RunOnceActivity.MCP Project settings loaded": "true",
+-    "RunOnceActivity.ShowReadmeOnStart": "true",
+-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+-    "RunOnceActivity.git.unshallow": "true",
+-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+-    "ai.playground.ignore.import.keys.banner.in.settings": "true",
+-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+-    "git-widget-placeholder": "fastapi",
+-    "junie.onboarding.icon.badge.shown": "true",
+-    "node.js.detected.package.eslint": "true",
+-    "node.js.detected.package.tslint": "true",
+-    "node.js.selected.package.eslint": "(autodetect)",
+-    "node.js.selected.package.tslint": "(autodetect)",
+-    "nodejs_package_manager_path": "npm",
+-    "npm.run.executor": "Run",
+-    "to.speed.mode.migration.done": "true"
++  <component name="PropertiesComponent">{
++  &quot;keyToString&quot;: {
++    &quot;Python.api_cli.executor&quot;: &quot;Run&quot;,
++    &quot;Python.worker_cli.executor&quot;: &quot;Run&quot;,
++    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
++    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
++    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
++    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
++    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
++    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
++    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
++    &quot;git-widget-placeholder&quot;: &quot;fastapi&quot;,
++    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
++    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
++    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
++    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
++    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
++    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
++    &quot;npm.run.executor&quot;: &quot;Run&quot;,
++    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;
+   }
+-}]]></component>
++}</component>
+   <component name="RecapSpentCounter">
+     <option name="endsOfQuotaMs" value="1769760064844" />
+   </component>
+   <component name="RecapUselessUpdatesCounter">
+-    <option name="suspendCountdown" value="7" />
++    <option name="suspendCountdown" value="6" />
+   </component>
+   <component name="RunManager" selected="Python.worker_cli" />
+   <component name="SharedIndexes">
+@@ -97,7 +94,8 @@
+       <option name="presentableId" value="Default" />
+       <updated>1768831361093</updated>
+       <workItem from="1768831363853" duration="355000" />
+-      <workItem from="1768831743804" duration="3267000" />
++      <workItem from="1768831743804" duration="4168000" />
++      <workItem from="1768912989075" duration="352000" />
+     </task>
+     <task id="LOCAL-00001" summary="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序">
+       <option name="closed" value="true" />
+@@ -107,7 +105,15 @@
+       <option name="project" value="LOCAL" />
+       <updated>1768835897810</updated>
+     </task>
+-    <option name="localTasksCounter" value="2" />
++    <task id="LOCAL-00002" summary="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置">
++      <option name="closed" value="true" />
++      <created>1768839181832</created>
++      <option name="number" value="00002" />
++      <option name="presentableId" value="LOCAL-00002" />
++      <option name="project" value="LOCAL" />
++      <updated>1768839181832</updated>
++    </task>
++    <option name="localTasksCounter" value="3" />
+     <servers />
+   </component>
+   <component name="TypeScriptGeneratedFilesManager">
+@@ -115,11 +121,12 @@
+   </component>
+   <component name="VcsManagerConfiguration">
+     <MESSAGE value="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序" />
+-    <option name="LAST_COMMIT_MESSAGE" value="refactor(workers): 将任务处理系统迁移至 Celery 框架&#10;&#10;- 移除旧的基于 Redis Streams 的 AgentWorker 实现&#10;- 添加 Celery 任务处理器 process_agent_task 替代原有工作器逻辑&#10;- 更新 TaskProducer 以使用 Celery 代替 Redis Streams 进行任务分发&#10;- 修改聊天服务中的任务取消逻辑以使用 Celery revoke 机制&#10;- 添加 Celery 依赖并更新项目配置文件&#10;- 更新启动脚本以使用 Celery worker 模式运行任务处理程序" />
++    <MESSAGE value="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置" />
++    <option name="LAST_COMMIT_MESSAGE" value="refactor(workers): 优化 Celery 工作器配置和数据库连接管理&#10;&#10;- 移除 asyncio 导入并调整 Agent 注册初始化方式&#10;- 将队列名称从 agent_tasks 更新为 celery_agent_tasks&#10;- 修改工作器初始化逻辑以避免事件循环问题&#10;- 在任务处理中实现新的数据库引擎创建机制&#10;- 添加数据库连接池配置和资源清理机制&#10;- 更新 CLI 工具中的默认队列设置&#10;- 调整 IDE 配置以支持新的工作器调试设置" />
+   </component>
+   <component name="com.intellij.coverage.CoverageDataManagerImpl">
+     <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768838709968" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+-    <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768838883108" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
++    <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768839000361" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+   </component>
+   <component name="github-copilot-workspace">
+     <instructionFileLocations>
