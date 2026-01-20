@@ -6,6 +6,7 @@ Configures Celery with Redis as broker for task queue management.
 Uses the existing config system to get Redis connection details.
 """
 
+import asyncio
 import logging
 
 from celery import Celery
@@ -59,11 +60,11 @@ celery_app.conf.update(
 
     # Task routing
     task_routes={
-        "aiwen.workers.tasks.*": {"queue": "celery_agent_tasks"},
+        "aiwen.workers.tasks.*": {"queue": "agent_tasks"},
     },
 
     # Default queue
-    task_default_queue="celery_agent_tasks",
+    task_default_queue="agent_tasks",
 )
 
 
@@ -73,25 +74,20 @@ def init_worker_process(**kwargs):
     Initialize worker process.
 
     Called when each worker process starts. Initializes the Agent Registry
-    (in-memory only, no database sync to avoid event loop issues).
+    and other dependencies needed for task processing.
     """
     logger.info("Initializing worker process...")
 
     try:
-        # Import agent modules to trigger @register_agent decorators
-        # This populates the in-memory registry without database access
-        from aiwen.services.agents.agent_registry import _import_all_agents, AgentRegistry
+        # Initialize Agent Registry
+        from aiwen.services.agents.agent_registry import init_agent_registry, AgentRegistry
 
-        logger.info("Importing agent modules...")
-        _import_all_agents()
+        asyncio.run(init_agent_registry())
 
         templates = AgentRegistry.list()
         logger.info(f"Agent Registry initialized with templates: {templates}")
 
-        if not templates:
-            logger.warning("No agents registered! Check that agent modules are being imported.")
-
-        # Initialize dimension registry (sync, no database)
+        # Initialize dimension registry
         try:
             import importlib
             import aiwen.services.nl2sql.dimension_registry.dimensions

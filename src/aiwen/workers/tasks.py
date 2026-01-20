@@ -12,11 +12,12 @@ from typing import Any
 from uuid import UUID
 
 import redis.asyncio as redis_async
+from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from aiwen.celery_app import celery_app, get_redis_url
 from aiwen.config.factory import get_settings
+from aiwen.extensions.database import get_session
 from aiwen.services.agents.agent_registry import AgentRegistry
 from aiwen.services.agents.app_factory import AppAgentFactory
 from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
@@ -25,12 +26,6 @@ from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.utils.json_utils import dumps as json_dumps
 
 logger = logging.getLogger(__name__)
-
-
-def _get_db_url() -> str:
-    """Get database URL from settings."""
-    settings = get_settings()
-    return settings.postgres.aiwen_sqlalchemy_bind.get("aiwen", "")
 
 
 async def _get_redis_client() -> redis_async.Redis:
@@ -87,22 +82,8 @@ async def _execute_agent_task(
     task_uuid = UUID(task_id)
     redis_client = await _get_redis_client()
 
-    # Create a fresh database engine for this task's event loop
-    db_url = _get_db_url()
-    engine = create_async_engine(
-        db_url,
-        pool_pre_ping=True,
-        pool_size=2,
-        max_overflow=3,
-    )
-    session_factory = async_sessionmaker(
-        bind=engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-
     try:
-        async with session_factory() as db:
+        async with get_session("aiwen") as db:
             task_crud = AgentTaskCRUD(db)
             app_crud = AppCRUD(db)
             template_crud = AgentTemplateCRUD(db)
@@ -179,14 +160,9 @@ async def _execute_agent_task(
                     {"event": "failed", "data": error_msg},
                 )
                 raise
-            finally:
-                # Commit or rollback handled by async context manager
-                await db.commit()
 
     finally:
-        # Clean up resources
         await redis_client.aclose()
-        await engine.dispose()
 
 
 @celery_app.task(
