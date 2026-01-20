@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Default Agent Template with Conversation Memory
+Default Agent Template with Conversation Context
 
-Provides a default agent implementation with short-term conversation memory
+Provides a default agent implementation with short-term conversation context
 loaded from database conversation and message tables.
 
-默认Agent模版，支持从数据库加载短期会话级记忆
+默认Agent模版，支持从数据库加载短期会话级上下文
 """
 
 import logging
@@ -16,7 +16,7 @@ from langchain.agents import create_agent
 from aiwen.schemas.agents.input import TextMessage
 from aiwen.services.agents.agent_registry import register_agent
 from aiwen.services.agents.base import BaseAgentTemplate
-from .memory import get_messages_from_history, add_message_to_history
+from .context import get_messages_from_context, add_message_to_context
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @register_agent
 class DefaultAgentTemplate(BaseAgentTemplate):
     """
-    Default agent with conversation memory support.
+    Default agent with conversation context support.
 
     This agent loads conversation history from the database and includes it
     in the context when processing new messages.
@@ -104,7 +104,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         # Load conversation history if conversation_id is provided
         if input_data.conversation_id:
             logger.info(f"Loading history for conversation {input_data.conversation_id}")
-            history = await get_messages_from_history(
+            history = await get_messages_from_context(
                 conversation_id=input_data.conversation_id,
                 max_messages=self.max_history_messages
             )
@@ -118,7 +118,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
     async def run(self, input_data: TextMessage | dict) -> dict[str, Any]:
         """
-        Execute the agent with conversation memory.
+        Execute the agent with conversation context.
 
         Loads conversation history from a database, appends the new message,
         and generates a response using the LLM.
@@ -131,7 +131,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         Returns:
             Dictionary with 'answer' key containing the agent's response
 
-        执行Agent，支持对话记忆。
+        执行Agent，支持对话上下文。
         从数据库加载对话历史，添加新消息，并生成响应。
         """
         # Convert to TextMessage if needed
@@ -151,7 +151,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
     async def stream(self, input_data: TextMessage | dict):
         """
-        Stream the agent's output with conversation memory.
+        Stream the agent's output with conversation context.
 
         Loads conversation history, appends the new message, and streams
         the agent's response as it is generated.
@@ -162,7 +162,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         Yields:
             Chunks of the agent's thinking process and response
 
-        流式输出Agent响应，支持对话记忆。
+        流式输出Agent响应，支持对话上下文。
         """
         # 验证输入数据类型
         logger.info(f"Agent.stream called with input_data type: {type(input_data)}")

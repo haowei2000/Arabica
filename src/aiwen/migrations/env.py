@@ -17,16 +17,6 @@ from sqlalchemy import engine_from_config, pool
 # Set default ENV if not provided
 os.environ.setdefault("ENV", "development")
 
-# Load environment variables from .env file only if not already set
-env_file_path = Path(__file__).parent.parent.parent / ".env"
-if env_file_path.exists():
-    # Load .env file but don't override existing environment variables
-    load_dotenv(env_file_path, override=False)
-    logging.info(f"✓ Loaded environment variables from: {env_file_path} (won't override existing)")
-else:
-    print(f"⚠ Warning: .env file not found at: {env_file_path}")
-
-# Try to get database URL from project configuration
 db_url = None
 try:
     from aiwen.config.factory import get_settings
@@ -37,8 +27,6 @@ try:
     if db_urls:
         # Convert async URL to sync URL for Alembic
         async_url = list(db_urls.values())[0]
-        # Replace asyncpg with psycopg2 for synchronous operations
-        db_url = async_url.replace("postgresql+asyncpg://", "postgresql://")
         # Or replace with psycopg2 specifically
         db_url = async_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
 except Exception as e:

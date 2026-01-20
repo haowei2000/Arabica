@@ -1,0 +1,318 @@
+# Common configurations
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 15s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+x-common-env: &common-env
+  TZ: ${TZ:-Asia/Shanghai}
+
+services:
+  # Main application service
+  aiwen-app:
+    profiles:
+      - app
+      - all
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+        UV_VERSION: ${UV_VERSION:-0.5.24}
+    image: aiwen-service:${VERSION:-latest}
+    container_name: aiwen-app
+    ports:
+      - "${EXPOSE_PORT_AIWEN_PY:-8000}:8000"
+      - "${EXPOSE_PORT_AIWEN_MCP:-9000}:9000"
+    volumes:
+      - aiwen-logs:/app/logs
+      # Uncomment for development to mount source code
+      # - ./src:/app/src:ro
+    env_file:
+      - ../.env
+    environment:
+      <<: *common-env
+      # Service Configuration
+      RELOAD: ${RELOAD:-false}
+      APP_PORT: 8000
+      APP_HOST: 0.0.0.0
+      MCP_PORT: 9000
+      MCP_HOST: 0.0.0.0
+      MCP_TRANSPORT: http
+      APP_NAME: ${APP_NAME:-Modular FastAPI App}
+      DEBUG: ${DEBUG:-false}
+      ENV: ${ENV:-production}
+      # Database Configuration - PostgreSQL
+      POSTGRES__HOST: postgres
+      POSTGRES__PORT: 5432
+      POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-aiwen123456}
+      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES__DIFY_DBNAME: ${POSTGRES__DIFY_DBNAME:-dify}
+      POSTGRES__DRIVER: postgresql+asyncpg
+      # Database Configuration - MySQL
+      MYSQL__HOST: mysql
+      MYSQL__PORT: 3306
+      MYSQL__USERNAME: ${MYSQL__USERNAME:-root}
+      MYSQL__PASSWORD: ${MYSQL__PASSWORD:-123456}
+      MYSQL__DBNAME: ${MYSQL__DBNAME:-agent_chat}
+      MYSQL__DRIVER: mysql+asyncmy
+      # Redis Configuration
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__USERNAME: ${REDIS__USERNAME:-}
+      # Authentication
+      AUTH__JWT_SECRET_KEY: ${AUTH__JWT_SECRET_KEY:-your-super-secret-jwt-key-here-change-in-production}
+      AUTH__JWT_ALGORITHM: ${AUTH__JWT_ALGORITHM:-HS256}
+      AUTH__ACCESS_TOKEN_EXPIRE_MINUTES: ${AUTH__ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      AUTH__REFRESH_TOKEN_EXPIRE_MINUTES: ${AUTH__REFRESH_TOKEN_EXPIRE_MINUTES:-10080}
+      AUTH__ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
+      AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-admin123}
+      # External Services
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      OLLAMA__HOST: ollama
+      OLLAMA__PORT: 11434
+      OLLAMA__PROTOCOL: http
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Frontend application (React + Vite)
+  aiwen-frontend:
+    profiles:
+      - frontend
+      - app
+      - all
+    env_file:
+      - ../.env
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-Aiwen}
+    image: aiwen-frontend:${VERSION:-latest}
+    container_name: aiwen-frontend
+    ports:
+      - "${FRONTEND_EXPOSE_PORT:-3000}:80"
+    environment:
+      <<: *common-env
+    depends_on:
+      aiwen-app:
+        condition: service_started
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/health || exit 1"]
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+  # PostgreSQL Database with pgvector
+  postgres:
+    profiles:
+      - postgres
+      - db
+      - infra
+      - all
+    image: pgvector/pgvector:pg15
+    container_name: aiwen-postgres
+    ports:
+      - "${EXPOSE_PORT_POSTGRES:-5432}:5432"
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+      - ./postgres/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      <<: *common-env
+      POSTGRES_DB: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES_USER: ${POSTGRES__USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-aiwen123456}
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__AIWEN_DBNAME:-aiwen}"]
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  # MySQL Database
+  mysql:
+    profiles:
+      - mysql
+      - db
+      - infra
+      - all
+    image: mysql:8.0
+    container_name: aiwen-mysql
+    ports:
+      - "${EXPOSE_PORT_MYSQL:-3306}:3306"
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./mysql/init-mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    env_file:
+      - ../.env
+    environment:
+      <<: *common-env
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: ${MYSQL__DBNAME:-default}
+      MYSQL_USER: ${MYSQL__USER:-default}
+      MYSQL_PASSWORD: ${MYSQL__PASSWORD:-123456}
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost --silent"]
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  # Redis Cache
+  redis:
+    profiles:
+      - redis
+      - infra
+      - all
+    image: redis:7-alpine
+    container_name: aiwen-redis
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+    ports:
+      - "${EXPOSE_PORT_REDIS:-6379}:6379"
+    volumes:
+      - ./redis/data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    environment:
+      <<: *common-env
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-redis123}", "--no-auth-warning", "ping"]
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # Ollama Service (for local LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aiwen-ollama
+    profiles:
+      - ollama
+      - llm
+      - all
+    ports:
+      - "${EXPOSE_PORT_OLLAMA:-11434}:11434"
+    volumes:
+      - ./ollama-models:/root/.ollama
+      - ./ollama:/app/ollama:ro
+    environment:
+      <<: *common-env
+      OLLAMA_HOST: 0.0.0.0
+      OLLAMA_MODELS: /app/ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+          # Uncomment for GPU support
+          # devices:
+          #   - driver: nvidia
+          #     count: all
+          #     capabilities: [gpu]
+
+  # Optional: Redis Commander for Redis management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    profiles:
+      - redis-commander
+      - tools
+      - all
+    container_name: aiwen-redis-commander
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"
+    environment:
+      <<: *common-env
+      REDIS_HOSTS: local:redis:6379:0:${REDIS__PASSWORD:-redis123}
+      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin123}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+networks:
+  aiwen-network:
+    driver: bridge
+    name: aiwen-network
+
+volumes:
+  aiwen-logs:
+    driver: local

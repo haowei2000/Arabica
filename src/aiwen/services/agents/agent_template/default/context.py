@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Memory Service for Default Agent Template
+Context Service for Default Agent Template
 
 Provides conversation history loading and formatting for the default agent.
 Loads messages from database and converts them to dictionary format.
 
-默认Agent模版的Memory服务
+默认Agent模版的Context服务
 从数据库加载对话历史并格式化为字典格式
 """
 
@@ -23,19 +23,19 @@ from aiwen.services.agents.crud.message_crud import MessageCRUD
 logger = logging.getLogger(__name__)
 
 
-async def add_message_to_history(
+async def add_message_to_context(
     message: dict,
     conversation_id: UUID,
     app_id: Optional[UUID] = None
 ):
     """
-    Add a message to the memory.
+    Add a message to the context.
 
     Ensures the conversation exists before adding the message.
     If the conversation doesn't exist, it will be created automatically.
 
     Args:
-        message: Message dictionary to add to memory
+        message: Message dictionary to add to context
         conversation_id: UUID of the conversation
         app_id: Optional UUID of the app/agent (used when creating conversation)
     """
@@ -83,10 +83,10 @@ async def add_message_to_history(
                 app_id=app_id or conversation.app_id  # Use app_id from conversation if not provided
             )
         )
-        logger.debug(f"Added message to memory: {message}")
+        logger.debug(f"Added message to context: {message}")
 
 
-async def get_messages_from_history(
+async def get_messages_from_context(
         conversation_id: Optional[UUID],
         max_messages: int = 20
 ) -> list[dict]:

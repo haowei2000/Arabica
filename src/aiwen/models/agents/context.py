@@ -1,5 +1,5 @@
-# aiwen/models/agents/memory.py
-"""Memory model for storing agent memories with vector embeddings."""
+# aiwen/models/agents/context.py
+"""Context model for storing agent context with vector embeddings."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -17,16 +17,16 @@ from aiwen.extensions.database import get_base
 Base = get_base("aiwen")
 
 
-class MemoryType(str, Enum):
-    """Memory type enumeration."""
-    HISTORY = "history"      # Conversation history memories
-    TOOL = "tool"            # Tool usage memories
-    KNOWLEDGE = "knowledge"  # Knowledge base memories
+class ContextType(str, Enum):
+    """Context type enumeration."""
+    HISTORY = "history"      # Conversation history context
+    TOOL = "tool"            # Tool usage context
+    KNOWLEDGE = "knowledge"  # Knowledge base context
 
 
-class Memory(Base):
-    """Memory table for storing agent memories with vector embeddings."""
-    __tablename__ = 'memory'
+class Context(Base):
+    """Context table for storing agent context with vector embeddings."""
+    __tablename__ = 'context'
 
     # Primary key
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -36,17 +36,17 @@ class Memory(Base):
     user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, comment='关联的用户ID')
     conversation_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, comment='关联的对话ID')
 
-    # Memory type
-    memory_type: Mapped[str] = mapped_column(
+    # Context type
+    context_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        default=MemoryType.HISTORY.value,
-        comment='记忆类型: history, tool, knowledge'
+        default=ContextType.HISTORY.value,
+        comment='上下文类型: history, tool, knowledge'
     )
 
-    # Memory content
-    content: Mapped[str] = mapped_column(Text, nullable=False, comment='记忆内容')
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment='记忆摘要')
+    # Context content
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment='上下文内容')
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment='上下文摘要')
 
     # Vector embedding for similarity search
     embedding: Mapped[list[float] | None] = mapped_column(
@@ -57,7 +57,7 @@ class Memory(Base):
 
     # Metadata
     metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True, comment='额外元数据')
-    source: Mapped[str | None] = mapped_column(String(255), nullable=True, comment='记忆来源')
+    source: Mapped[str | None] = mapped_column(String(255), nullable=True, comment='上下文来源')
     importance: Mapped[int | None] = mapped_column(Integer, default=0, comment='重要性评分 0-100')
 
     # Audit fields
@@ -75,13 +75,13 @@ class Memory(Base):
 
     # Indexes for vector similarity search
     __table_args__ = (
-        Index('ix_memory_app_id', 'app_id'),
-        Index('ix_memory_user_id', 'user_id'),
-        Index('ix_memory_type', 'memory_type'),
-        Index('ix_memory_conversation_id', 'conversation_id'),
+        Index('ix_context_app_id', 'app_id'),
+        Index('ix_context_user_id', 'user_id'),
+        Index('ix_context_type', 'context_type'),
+        Index('ix_context_conversation_id', 'conversation_id'),
         # Vector index using HNSW for fast similarity search
         Index(
-            'ix_memory_embedding_hnsw',
+            'ix_context_embedding_hnsw',
             'embedding',
             postgresql_using='hnsw',
             postgresql_with={'m': 16, 'ef_construction': 64},
@@ -90,4 +90,4 @@ class Memory(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Memory(id={self.id}, type='{self.memory_type}', user_id='{self.user_id}')>"
+        return f"<Context(id={self.id}, type='{self.context_type}', user_id='{self.user_id}')>"
