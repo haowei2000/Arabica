@@ -5,9 +5,9 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiUrl = env.VITE_API_BASE_URL || 'http://localhost:8001/api'
+  const apiUrl = env.VITE_API_BASE_URL || 'http://localhost:8000/api'
   // Extract base URL for proxy (remove /api suffix if present)
-  const proxyTarget = apiUrl.replace(/\/api\/?$/, '') || 'http://localhost:8001'
+  const proxyTarget = apiUrl.replace(/\/api\/?$/, '') || 'http://localhost:8000'
 
   return {
     plugins: [react()],

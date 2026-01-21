@@ -27,6 +27,7 @@ Agent Worker - 异步处理 Agent 任务
     - aiwen.services.agents: Agent 管理和运行时
 """
 # aiwen/workers/task_worker.py
+from cryptography.hazmat.asn1.asn1 import U
 import asyncio
 import json
 import logging
@@ -46,7 +47,7 @@ from aiwen.services.agents.crud.app_crud import AppCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.utils.json_utils import dumps as json_dumps
-from aiwen.workers.task_utils import decode_data_field, build_stream_name_key
+from aiwen.workers.task_utils import decode_data_field, parse_json_field, build_stream_name_key
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +135,10 @@ class AgentWorker:
                     for message_id, data in msg_list:
                         try:
                             task_id = decode_data_field(data, "task_id")
-                            payload = decode_data_field(data, "input")
+                            payload = parse_json_field(data, "input", default={})
                             payload = TaskPayload.model_validate(payload)
                             async with get_session("aiwen") as db:
-                                await self.process_task(task_id, payload, db)
+                                await self.process_task(UUID(task_id), payload, db)
                         except Exception as e:
                             logger.error(f"Error processing task: {e}", exc_info=True)
 
@@ -147,7 +148,7 @@ class AgentWorker:
                 logger.error(f"Error reading from stream: {e}", exc_info=True)
                 await asyncio.sleep(1)  # 等待后重试
 
-    async def process_task(self, task_id: UUID | str, task_payload: TaskPayload, db: AsyncSession):
+    async def process_task(self, task_id: UUID, task_payload: TaskPayload, db: AsyncSession):
         """
         处理单个 agent 任务.
 
@@ -157,7 +158,7 @@ class AgentWorker:
 
         try:
             # 解析消息数据 (from Redis Stream)
-            app_id = task_payload.input.app_id
+            app_id = task_payload.app_id
             if not app_id:
                 raise ValueError("App ID is required")
             input = task_payload.input
@@ -165,7 +166,7 @@ class AgentWorker:
             logger.info(f"Processing task {task_id} for app {app_id}")
 
             # 执行任务的主要逻辑
-            await self._execute_task_logic(task_id, app_id, input, db)
+            await self._execute_task_logic(task_id, UUID(app_id), input, db)
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in task message: {e}")
         except Exception as e:
@@ -231,7 +232,7 @@ class AgentWorker:
 
         return parsed_result
 
-    async def _execute_task_logic(self, task_id: str | UUID, app_id: str | UUID, input: TextInput, db: AsyncSession):
+    async def _execute_task_logic(self, task_id: UUID, app_id: UUID, input: TextInput, db: AsyncSession):
         """执行任务的主要逻辑"""
         try:
             # 获取数据库会话
@@ -281,13 +282,13 @@ class AgentWorker:
             template_code=template.template_code,
             app_config=app.config or {}
         )
-        agent_instance = factory.create(payload)
+        agent_instance = factory.create(payload.model_dump())
 
         # 5. 附加到运行时
         self.runtime.attach(task_id, agent_instance)
         return agent_instance
 
-    async def _execute_agent_stream(self, agent_instance, payload, task_id):
+    async def _execute_agent_stream(self, agent_instance, payload:TextInput, task_id):
         """
         执行agent流式处理并收集结果
 
@@ -326,26 +327,18 @@ class AgentWorker:
         """处理任务错误"""
         try:
             # 获取数据库会话来更新任务状态
-            session_gen, db_session = await self._get_db_session()
-            task_crud = AgentTaskCRUD(db_session)
+            async with get_session('aiwen') as db_session:
+                task_crud = AgentTaskCRUD(db_session)
 
             try:
                 await task_crud.update_agent_task_status(task_id, "failed", error=error_msg)
                 await self.publish_event(task_id, {"event": "failed", "data": error_msg})
                 logger.error(f"Task {task_id} failed: {error_msg}")
-            finally:
-                await self._close_db_session(session_gen)
+            except Exception as e:
+                logger.error(f"Task {task_id} failed (Exception): {e}")
         except Exception as e:
             logger.error(f"Error updating task status for {task_id}: {e}")
 
-    async def _close_db_session(self, session_gen):
-        """关闭数据库会话"""
-        try:
-            await session_gen.__anext__()  # 触发 finally 块
-        except StopAsyncIteration:
-            pass  # 正常结束
-        except Exception as e:
-            logger.error(f"Error closing database session: {e}")
 
     async def publish_event(self, task_id: UUID, event_data: dict[str, Any]):
         """
@@ -497,12 +490,10 @@ async def start_worker(redis_client: redis_async.Redis, db: AsyncSession):
         asyncio.run(main())
         ```
     """
-    worker = AgentWorker(redis_client, db)
+    worker = AgentWorker(redis_client,)
 
     try:
         await worker.start()
-    except asyncio.cancellederror:
-        logger.info("worker received cancellation signal")
     except KeyboardInterrupt:
         logger.info("worker interrupted by user")
     finally:

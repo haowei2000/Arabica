@@ -16,10 +16,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from aiwen.dependencies.agents import (
-    get_agent_runtime,
     get_conversation_crud,
     get_message_crud,
-    get_redis_client_dep,
     get_task_consumer,
     get_task_crud,
     get_task_producer,
@@ -29,14 +27,12 @@ from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.services.agents.chat.chat_service import (
     StartTaskResult,
-    cancel_task,
     get_task_messages,
     start_task,
 )
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
 from aiwen.services.agents.crud.message_crud import MessageCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
-from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
 
@@ -75,11 +71,11 @@ async def start_chat_task(
         StartTaskResult: 包含 task_id, conversation_id, message_id
     """
     payload.from_account_id = payload.from_account_id or current_user.id
-
+    print(payload)
     return await start_task(
         app_id=app_id,
         user_id=current_user.id,
-        text_message=payload,
+        text_input=payload,
         task_crud=task_crud,
         conversation_crud=conversation_crud,
         message_crud=message_crud,
@@ -126,34 +122,34 @@ async def stream_task_messages(
     )
 
 
-# ---------- Cancel task ----------
-
-@router.post("/{task_id}/cancel")
-async def cancel_chat_task(
-    task_id: UUID,
-        redis_client=Depends(get_redis_client_dep),
-    runtime: AgentRuntime = Depends(get_agent_runtime),
-):
-    """
-    取消正在运行的聊天任务
-
-    支持队列模式和直接模式的任务取消。
-
-    Args:
-        task_id: 任务 ID
-        redis_client: Redis 客户端
-        runtime: Agent 运行时
-
-    Returns:
-        取消结果
-    """
-    success = await cancel_task(
-        task_id=task_id,
-        redis_client=redis_client,
-        runtime=runtime,
-    )
-
-    if success:
-        return {"status": "success", "input": f"Task {task_id} cancelled successfully"}
-    else:
-        return {"status": "not_found", "input": f"Task {task_id} not found or already completed"}
+# # ---------- Cancel task ----------
+#
+# @router.post("/{task_id}/cancel")
+# async def cancel_chat_task(
+#     task_id: UUID,
+#         redis_client=Depends(get_redis_client_dep),
+#     runtime: AgentRuntime = Depends(get_agent_runtime),
+# ):
+#     """
+#     取消正在运行的聊天任务
+#
+#     支持队列模式和直接模式的任务取消。
+#
+#     Args:
+#         task_id: 任务 ID
+#         redis_client: Redis 客户端
+#         runtime: Agent 运行时
+#
+#     Returns:
+#         取消结果
+#     """
+#     success = await cancel_task(
+#         task_id=task_id,
+#         redis_client=redis_client,
+#         runtime=runtime,
+#     )
+#
+#     if success:
+#         return {"status": "success", "input": f"Task {task_id} cancelled successfully"}
+#     else:
+#         return {"status": "not_found", "input": f"Task {task_id} not found or already completed"}

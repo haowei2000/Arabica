@@ -26,7 +26,6 @@ from typing import Any
 import redis.asyncio as aioredis
 
 from .task_utils import decode_data_field, parse_json_field, build_stream_name_key, decode_bytes
-from ..schemas.task.payload import TaskPayload
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ class AgentTaskConsumer:
         consumer = AgentTaskConsumer(redis_client)
 
         # 消费任务事件流
-        async for event_data in consumer.consume_task_events(
+        async for event_data in consumer.get_task_events(
             task_id="123",
             task_type="chat"
         ):
@@ -118,25 +117,25 @@ class AgentTaskConsumer:
             raise
 
     @staticmethod
-    def _handle_event(event_type: str, payload: TaskPayload, task_id: str) -> EventResult:
+    def _handle_event(event_type: str, event_data: Any, task_id: str) -> EventResult:
         """处理事件，返回 EventResult"""
-        logger.debug(f"Received event '{event_type}' for task {task_id}: {payload}")
+        logger.debug(f"Received event '{event_type}' for task {task_id}: {event_data}")
 
         match event_type:
             case "chunk":
-                return EventResult(EventAction.YIELD, payload)
+                return EventResult(EventAction.YIELD, event_data)
             case "success":
                 logger.info(f"Task {task_id} completed successfully")
                 return EventResult(EventAction.RETURN)
             case "failed":
-                error_msg = payload if isinstance(payload, str) else str(payload)
+                error_msg = event_data if isinstance(event_data, str) else str(event_data)
                 logger.error(f"Task {task_id} failed: {error_msg}")
                 return EventResult(EventAction.RAISE, Exception(error_msg))
             case _:
                 logger.warning(f"Unknown event type '{event_type}' for task {task_id}")
                 return EventResult(EventAction.SKIP)
 
-    async def consume_task_events(
+    async def get_task_events(
             self,
             task_id: str,
             last_id: str = "0-0",
@@ -181,9 +180,8 @@ class AgentTaskConsumer:
                     for message_id, data in msgs:
                         last_id = decode_bytes(message_id)
                         event_type = decode_data_field(data, "event")
-                        payload = parse_json_field(data, "input", default={})
-                        payload = TaskPayload.model_validate(payload)
-                        event_result = self._handle_event(event_type, payload, task_id)
+                        event_data = parse_json_field(data, "data", default={})
+                        event_result = self._handle_event(event_type, event_data, task_id)
 
                         match event_result.action:
                             case EventAction.YIELD:

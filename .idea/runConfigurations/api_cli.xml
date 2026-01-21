@@ -1,11 +1,10 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="api_cli" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
     <module name="agent_chat" />
-    <option name="ENV_FILES" value="$PROJECT_DIR$/.env" />
+    <option name="ENV_FILES" value="" />
     <option name="INTERPRETER_OPTIONS" value="" />
-    <option name="PARENT_ENVS" value="false" />
+    <option name="PARENT_ENVS" value="true" />
     <envs>
-      <env name="AIWEN_APP_PORT" value="8001" />
       <env name="PYTHONUNBUFFERED" value="1" />
     </envs>
     <option name="SDK_HOME" value="" />

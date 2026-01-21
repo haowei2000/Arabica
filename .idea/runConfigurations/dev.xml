@@ -5,8 +5,14 @@
     <scripts>
       <script value="dev" />
     </scripts>
-    <node-interpreter value="/usr/local/bin/node" />
-    <envs />
+    <node-interpreter value="project" />
+    <envs>
+      <env name="all_proxy" value="" />
+      <env name="HTTP_PROXY" value="" />
+      <env name="http_proxy" value="" />
+      <env name="HTTPS_PROXY" value="" />
+      <env name="https_proxy" value="" />
+    </envs>
     <method v="2" />
   </configuration>
 </component>

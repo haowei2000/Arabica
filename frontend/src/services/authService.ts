@@ -16,7 +16,7 @@ export const authService = {
     formData.append('password', password);
 
     const response = await fetch(
-      `${import.meta.env.VITE_API_URL || 'http://localhost:8001/api'}${
+      `${import.meta.env.VITE_API_URL || 'http://localhost:8000/api'}${
         API_ENDPOINTS.AUTH.LOGIN
       }`,
       {

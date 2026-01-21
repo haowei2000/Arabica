@@ -88,8 +88,6 @@ dev = [
 ]
 
 [project.scripts]
-# 统一服务管理（推荐使用）
-aiwen = "aiwen.service_manager:main"
 # 单独服务入口（保留向后兼容）
 aiwen-api = "aiwen.api_cli:run"
 aiwen-mcp = "aiwen.mcp_cli:main"

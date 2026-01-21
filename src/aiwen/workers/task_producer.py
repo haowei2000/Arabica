@@ -17,13 +17,14 @@ Task Producer - 任务生产者
     - redis.asyncio: Redis 异步客户端
 """
 import logging
+from typing import Annotated
 from uuid import UUID
 
 import redis.asyncio as redis_async
+from fastapi import Depends
 
-from aiwen.schemas.task.field import TaskField
+from aiwen.middleware.cache_middleware import get_redis_client
 from aiwen.schemas.task.payload import TaskPayload
-from aiwen.workers.task_utils import build_stream_name_key
 
 logger = logging.getLogger(__name__)
 
@@ -80,15 +81,14 @@ class AgentTaskProducer:
             Exception: 发布失败时抛出异常
         """
         try:
-
-            field = TaskField(
-                task_id=str(task_id),
-                payload=payload,
-                status="pending"
-            )
+            # Build fields with flat string values for Redis Stream
+            fields = {
+                "task_id": str(task_id),
+                "input": payload.model_dump_json() if payload else "{}",
+            }
             task_message_id = await self.redis_client.xadd(
-                name=build_stream_name_key(str(task_id), self.task_name),
-                fields=field.model_dump(),
+                name=self.task_name,  # Write to "agent" stream directly
+                fields=fields,
                 maxlen=10000,  # 限制 Stream 最大长度（可选）
                 approximate=True  # 使用近似修剪以提高性能
             )
@@ -102,3 +102,26 @@ class AgentTaskProducer:
                 exc_info=True
             )
             raise
+
+
+async def _get_redis_client():
+    """获取 Redis 异步客户端"""
+    return get_redis_client(is_async=True)
+
+
+async def get_task_producer(
+    redis_client: redis_async.Redis = Depends(_get_redis_client),
+) -> AgentTaskProducer:
+    """
+    FastAPI 依赖函数，获取 AgentTaskProducer 实例
+
+    Args:
+        redis_client: Redis 异步客户端
+
+    Returns:
+        AgentTaskProducer 实例
+    """
+    return AgentTaskProducer(redis_client)
+
+
+TaskProducerDep = Annotated[AgentTaskProducer, Depends(get_task_producer)]

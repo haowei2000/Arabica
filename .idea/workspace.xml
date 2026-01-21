@@ -5,69 +5,277 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08">
-      <change afterPath="$PROJECT_DIR$/docker/postgres/init-postgres.sql" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/aiwen/schemas/chat.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/aiwen/schemas/task/field.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.ai/mcp/mcp.json" beforeDir="false" afterPath="$PROJECT_DIR$/.ai/mcp/mcp.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/agent_chat.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/agent_chat.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/copilot.data.migration.agent.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.agent.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/copilot.data.migration.ask.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.ask.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/copilot.data.migration.ask2agent.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.ask2agent.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/copilot.data.migration.edit.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/copilot.data.migration.edit.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/runConfigurations/api_cli.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/runConfigurations/api_cli.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/runConfigurations/run.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/runConfigurations/dev.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/runConfigurations/dev.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/runConfigurations/dev.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/runConfigurations/worker_cli.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_1_20_2026_8_49_PM_[Changes]/shelved.patch" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_1_20_2026_8_49_PM_[Changes]/shelved.patch" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_1_20_2026_8_49_PM__Changes_.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_1_20_2026_8_49_PM__Changes_.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_20,_13_29_[Changes]/shelved.patch" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_20,_13_29_[Changes]/shelved.patch" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_20__13_29__Changes_.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_20__13_29__Changes_.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_21,_14_21_[Changes]/shelved.patch" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_21,_14_21_[Changes]/shelved.patch" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_21__14_21__Changes_.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_2026_1_21__14_21__Changes_.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/CLAUDE.md" beforeDir="false" afterPath="$PROJECT_DIR$/CLAUDE.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Makefile" beforeDir="false" afterPath="$PROJECT_DIR$/Makefile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/alembic.ini" beforeDir="false" afterPath="$PROJECT_DIR$/alembic.ini" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/build.sh" beforeDir="false" afterPath="$PROJECT_DIR$/build.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/agent-worker.service" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/agent-worker.service" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/docker/Dockerfile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/Dockerfile.frontend" beforeDir="false" afterPath="$PROJECT_DIR$/docker/Dockerfile.frontend" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docker/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/docker-entrypoint.sh" beforeDir="false" afterPath="$PROJECT_DIR$/docker/docker-entrypoint.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/nginx.frontend.conf" beforeDir="false" afterPath="$PROJECT_DIR$/docker/nginx.frontend.conf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/postgres/init-postgres.sql" beforeDir="false" afterPath="$PROJECT_DIR$/docker/postgres/init-postgres.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/redis/redis.conf" beforeDir="false" afterPath="$PROJECT_DIR$/docker/redis/redis.conf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/AGENT_REGISTRY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/AGENT_REGISTRY.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/AGENT_REGISTRY_STATUS.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/AGENT_REGISTRY_STATUS.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/AGENT_WORKER.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/AGENT_WORKER.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/APP_OPTIMIZATION.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/APP_OPTIMIZATION.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/APP_ROUTER_MIGRATION.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/APP_ROUTER_MIGRATION.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/ARCHITECTURE_ANALYSIS.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/ARCHITECTURE_ANALYSIS.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/AUTHENTICATION.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/AUTHENTICATION.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/DOCKER_SETUP.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/DOCKER_SETUP.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/FIXES_SUMMARY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/FIXES_SUMMARY.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/GITLAB_CI.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/GITLAB_CI.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/GITLAB_CI_QUICKREF.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/GITLAB_CI_QUICKREF.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/MIDDLEWARE_CACHE.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/MIDDLEWARE_CACHE.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/REDIS_CACHE.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/REDIS_CACHE.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/REFACTORING_MANAGER.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/REFACTORING_MANAGER.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/TEST_QUICKSTART.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/TEST_QUICKSTART.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/WORKER_QUICKSTART.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/WORKER_QUICKSTART.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/database/alembic_migration.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/database/alembic_migration.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/worker_setup.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/worker_setup.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/agent_example.py" beforeDir="false" afterPath="$PROJECT_DIR$/examples/agent_example.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/streaming_chat_example.py" beforeDir="false" afterPath="$PROJECT_DIR$/examples/streaming_chat_example.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/DEBUG_SIDEBAR.md" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/DEBUG_SIDEBAR.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/eslint.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/eslint.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/index.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/postcss.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/postcss.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/public/vite.svg" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/public/vite.svg" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/App.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/App.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/assets/react.svg" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/assets/react.svg" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/Sidebar.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/Sidebar.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/constants/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/constants/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/constants/routes.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/constants/routes.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/hooks/useApps.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/hooks/useApps.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/hooks/useConversations.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/hooks/useConversations.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/hooks/useStreamingChat.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/hooks/useStreamingChat.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/index.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/main.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/main.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/AppsPage.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/AppsPage.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/ChatPage.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ChatPage.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/LoginPage.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/LoginPage.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/appService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/appService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/authService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/authService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/conversationService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/conversationService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/messageService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/messageService.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/services/streamService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/streamService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/stores/useAppStore.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/stores/useAppStore.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/stores/useAuthStore.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/stores/useAuthStore.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/stores/useChatStore.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/stores/useChatStore.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/stores/useUIStore.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/stores/useUIStore.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/app.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/app.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/auth.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/auth.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/conversation.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/conversation.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/message.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/message.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/utils/cn.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/utils/cn.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/utils/formatDate.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/utils/formatDate.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/utils/uuid.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/utils/uuid.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/vite-env.d.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/vite-env.d.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/tailwind.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/tailwind.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/tsconfig.app.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/tsconfig.app.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/tsconfig.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/tsconfig.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/tsconfig.node.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/tsconfig.node.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/vite.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/vite.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ruff.toml" beforeDir="false" afterPath="$PROJECT_DIR$/ruff.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/api_cli.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/api_cli.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/auth_README.md" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/auth_README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/config/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/mysql.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/mysql.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/ollama.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/ollama.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/openai.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/openai.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/postgres.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/postgres.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/components/redis.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/components/redis.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/config/factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/config/factory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/default_process_rule.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/default_process_rule.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/file_extension.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/file_extension.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/headers.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/headers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/http.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/http.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/constants/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/logger.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/path.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/path.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/constants/request_body.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/constants/request_body.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/core/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/core/bootstrap.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/bootstrap.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/core/exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/exceptions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/core/health.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/health.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/core/lifespan.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/lifespan.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/core/middleware.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/middleware.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/core/routers.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/routers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/dependencies/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/dependencies/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/dependencies/agents.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/dependencies/agents.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/dependencies/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/dependencies/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/extensions/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/extensions/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/extensions/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/extensions/database.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/extensions/llm/llm.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/extensions/llm/llm.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/extensions/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/extensions/logger.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/mcp_cli.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/mcp_cli.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/mcp_router/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/mcp_router/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/middleware/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/middleware/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/middleware/auth_middleware.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/middleware/auth_middleware.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/middleware/cache_middleware.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/middleware/cache_middleware.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/env.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/env.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/script.py.mako" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/script.py.mako" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/0001_initial_database_schema.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/0001_initial_database_schema.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/0430e7390877_make_admin_id_nullable_in_tenant.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/0430e7390877_make_admin_id_nullable_in_tenant.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/13a3d8021490_add_user_id_column_to_app_table.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/13a3d8021490_add_user_id_column_to_app_table.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/4f1d2a3b5c6d_make_app_id_column_nullable_in_messages_table.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/4f1d2a3b5c6d_make_app_id_column_nullable_in_messages_table.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/5183c154965d_add_mode_column_to_conversations.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/5183c154965d_add_mode_column_to_conversations.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/593829819d41_add_from_end_user_id_column_to_.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/593829819d41_add_from_end_user_id_column_to_.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/a1b2c3d4e5f6_add_user_id_column_to_agent_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/a1b2c3d4e5f6_add_user_id_column_to_agent_task.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/b2c3d4e5f6a7_create_context_table.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/b2c3d4e5f6a7_create_context_table.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/da790b82e86b_add_agent_template_id_column_and_remove_.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/da790b82e86b_add_agent_template_id_column_and_remove_.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/dd983e0a2018_add_foreign_key_to_messages_.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/dd983e0a2018_add_foreign_key_to_messages_.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/agent_task.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/agent_task.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/agent_template.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/agent_template.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/chunk.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/chunk.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/conversation.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/conversation.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/knowledge.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/knowledge.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/message.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/message.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/auth/tenant.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/auth/tenant.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/auth/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/auth/user.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/types.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/types.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/conversations.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/conversations.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/messages.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/messages.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/auth.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/routers/flush_redis.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/flush_redis.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/routers/test_auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/test_auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/user/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/user/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/routers/user/user_examples.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/user/user_examples.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/user/user_management.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/user/user_management.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/agent_template.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/agent_template.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/conversation.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/conversation.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/input.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/input.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/auth/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/auth/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/auth/tenant.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/auth/tenant.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/auth/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/auth/user.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/common.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/common.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/files/convert.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/files/convert.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/task/field.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/task/field.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_registry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_registry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/concrete.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/concrete.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/context.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/context.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/nl2sql/concrete.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/nl2sql/concrete.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/app_factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/app_factory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/chat/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/chat/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_helper.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_helper.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/agent_template_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/agent_template_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/app_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/app_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/conversation_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/conversation_crud.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/message_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/message_crud.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/task_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/task_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/runtime.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/runtime.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/auth/auth_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/auth/auth_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/auth/token_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/auth/token_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/auth/user_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/auth/user_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/files/convert.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/files/convert.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/utils/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/utils/current_user.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/current_user.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/utils/json_utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/json_utils.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/utils/jwt_utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/jwt_utils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/utils/permissions.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/permissions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/utils/security.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/security.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/utils/sse.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/sse.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/utils/time.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/utils/time.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/worker_cli.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/worker_cli.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/workers/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/agent_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_utils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/scripts/run_agent_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/run_agent_worker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/scripts/test_agent_registry.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/test_agent_registry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/clear_sql_cache.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/clear_sql_cache.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/sync_env.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/sync_env.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/test_cache_fix.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/test_cache_fix.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/test_cache_middleware.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/test_cache_middleware.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/test_permanent_cache.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/test_permanent_cache.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scripts/test_sql_cache.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/test_sql_cache.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/static/.gitkeep" beforeDir="false" afterPath="$PROJECT_DIR$/static/.gitkeep" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/.env.test" beforeDir="false" afterPath="$PROJECT_DIR$/tests/.env.test" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/tests/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/conftest.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/conftest.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/data/sample_indicators.json" beforeDir="false" afterPath="$PROJECT_DIR$/tests/data/sample_indicators.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agents/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agents/test_agent_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/test_agent_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agents/test_agent_factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/test_agent_factory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agents/test_agent_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/test_agent_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agents/test_agent_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/test_agent_model.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agents/test_agent_router.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/test_agent_router.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_agents/test_streaming.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agents/test_streaming.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_extensions/test_database.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_extensions/test_database.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_mcp/test_nl2sql_mcp.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_mcp/test_nl2sql_mcp.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_nl2sql/test_generate_sql.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_nl2sql/test_generate_sql.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_nl2sql/test_get_graph.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_nl2sql/test_get_graph.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_nl2sql/test_get_indicator_info.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_nl2sql/test_get_indicator_info.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_nl2sql/test_select_indicator.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_nl2sql/test_select_indicator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_services/test_select_indicator_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_services/test_select_indicator_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_workers/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_workers/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_workers/test_agent_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_workers/test_agent_worker.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_workers/test_entry_point.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_workers/test_entry_point.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/utils/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/utils/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/utils/assertions.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/utils/assertions.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/utils/builders.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/utils/builders.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/utils/helpers.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/utils/helpers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/uv.lock" beforeDir="false" afterPath="$PROJECT_DIR$/uv.lock" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -75,7 +283,8 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="1789" />
+    <option name="cachedIndexableFilesCount" value="1795" />
+    <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
@@ -87,24 +296,97 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="HighlightingSettingsPerFile">
+    <setting file="file://$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" root0="FORCE_HIGHLIGHTING" />
+  </component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Makefile Target.db-upgrade.executor": "Run",
-    "Makefile Target.docker-down.executor": "Run",
-    "Makefile Target.docker-up.executor": "Run",
-    "Python.api_cli.executor": "Run",
-    "Python.worker_cli.executor": "Run",
-    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "git-widget-placeholder": "fastapi",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "npm.dev.executor": "Run",
-    "ts.external.directory.path": "/Users/haowei/projects/agent_chat/frontend/node_modules/typescript/lib"
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 8
+}</component>
+  <component name="ProjectId" id="38ZT3rmG9TL6PlSYDdU7FGqaKci" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Makefile Target.db-upgrade.executor&quot;: &quot;Run&quot;,
+    &quot;Makefile Target.docker-down.executor&quot;: &quot;Run&quot;,
+    &quot;Makefile Target.docker-up.executor&quot;: &quot;Run&quot;,
+    &quot;Python.api_cli.executor&quot;: &quot;Run&quot;,
+    &quot;Python.work_cli.executor&quot;: &quot;Run&quot;,
+    &quot;Python.worker_cli.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;fastapi&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;npm.dev.executor&quot;: &quot;Run&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;ts.external.directory.path&quot;: &quot;/Users/haowei/projects/agent_chat/frontend/node_modules/typescript/lib&quot;
   }
-}]]></component>
+}</component>
+  <component name="RdControllerToolWindowsLayoutState" isNewUi="true">
+    <layout>
+      <window_info id="Bookmarks" side_tool="true" />
+      <window_info id="Merge Requests" />
+      <window_info id="AI Playground" side_tool="true" />
+      <window_info id="Backup and Sync History" />
+      <window_info id="Pull Requests" />
+      <window_info id="Learn" show_stripe_button="false" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" sideWeight="0.50204706" visible="true" weight="0.23867777" />
+      <window_info id="Commit" order="1" weight="0.23867777" />
+      <window_info active="true" id="Structure" order="2" sideWeight="0.49743852" side_tool="true" visible="true" weight="0.23867777" />
+      <window_info anchor="bottom" id="Database Changes" />
+      <window_info anchor="bottom" id="TypeScript" />
+      <window_info anchor="bottom" id="Educational.CheckDetails" />
+      <window_info anchor="bottom" id="GitHub Copilot MCP Log" />
+      <window_info anchor="bottom" id="TODO" />
+      <window_info anchor="bottom" id="File Transfer" />
+      <window_info anchor="bottom" id="HfCacheToolWindow" />
+      <window_info anchor="bottom" id="Serial Monitor" />
+      <window_info anchor="bottom" id="PythonProcessOutput" />
+      <window_info anchor="bottom" id="Version Control" order="0" />
+      <window_info anchor="bottom" id="Problems" order="1" />
+      <window_info anchor="bottom" id="Problems View" order="2" />
+      <window_info anchor="bottom" id="Terminal" order="3" weight="0.22023234" />
+      <window_info anchor="bottom" id="Services" order="4" weight="0.32962245" />
+      <window_info anchor="bottom" id="Python Packages" order="5" weight="0.1" />
+      <window_info anchor="bottom" id="Python Console" order="6" weight="0.1" />
+      <window_info active="true" anchor="bottom" id="Run" order="7" visible="true" weight="0.32962245" />
+      <window_info anchor="bottom" id="Debug" order="8" weight="0.570668" />
+      <window_info anchor="bottom" id="Find" order="9" weight="0.32962245" />
+      <window_info anchor="right" id="PR AI Assistant" />
+      <window_info anchor="right" id="Endpoints" />
+      <window_info anchor="right" id="make" side_tool="true" />
+      <window_info anchor="right" id="Translation.Wordbook" side_tool="true" />
+      <window_info anchor="right" id="github.copilotToolWindow" show_stripe_button="false" />
+      <window_info anchor="right" id="Coverage" side_tool="true" />
+      <window_info anchor="right" id="GitHub Copilot Chat" />
+      <window_info anchor="right" id="GitHub Coding Agent Jobs" />
+      <window_info anchor="right" id="SciView" />
+      <window_info anchor="right" id="Jupyter Variables" side_tool="true" />
+      <window_info anchor="right" content_ui="combo" id="Notifications" order="0" weight="0.25" />
+      <window_info anchor="right" id="AIAssistant" order="1" weight="0.25" />
+      <window_info anchor="right" id="Database" order="2" weight="0.25" />
+      <window_info anchor="right" id="Gradle" order="3" weight="0.25" />
+      <window_info anchor="right" id="Maven" order="4" weight="0.25" />
+      <window_info anchor="right" id="Plots" order="5" weight="0.1" />
+    </layout>
+  </component>
   <component name="RecapSpentCounter">
     <option name="endsOfQuotaMs" value="1769760064844" />
     <option name="spentUsd" value="0.0774573" />
@@ -112,7 +394,7 @@
   <component name="RecapUselessUpdatesCounter">
     <option name="suspendCountdown" value="6" />
   </component>
-  <component name="RunManager" selected="Python.api_cli">
+  <component name="RunManager" selected="Python.work_cli">
     <configuration name="db-upgrade" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
       <makefile filename="$PROJECT_DIR$/Makefile" target="db-upgrade" workingDirectory="" arguments="">
         <envs />
@@ -136,8 +418,8 @@
       <item itemvalue="Makefile Target.docker-down" />
       <item itemvalue="Makefile Target.docker-up" />
       <item itemvalue="npm.dev" />
+      <item itemvalue="Python.work_cli" />
       <item itemvalue="Python.api_cli" />
-      <item itemvalue="Python.worker_cli" />
     </list>
     <recent_temporary>
       <list>
@@ -149,15 +431,56 @@
       </list>
     </recent_temporary>
   </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.30387.25" />
+        <option value="bundled-python-sdk-89161513a3c2-6e1f45a539f7-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.30387.25" />
+      </set>
+    </attachedChunks>
+  </component>
   <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
+      <created>1769005897585</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1769005897585</updated>
+      <workItem from="1769005899185" duration="242000" />
+      <workItem from="1769006151913" duration="1041000" />
+      <workItem from="1769007206785" duration="688000" />
+    </task>
     <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
     <option name="LAST_COMMIT_MESSAGE" value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
   </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/src/aiwen/routers/agents/chat.py</url>
+          <line>74</line>
+          <option name="timeStamp" value="3" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1768980489765" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769007691796" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
     <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768980510907" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769007764615" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
   </component>
 </project>

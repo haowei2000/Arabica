@@ -14,16 +14,14 @@ Chat Service - 聊天服务
 """
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
 from uuid import UUID
-
-from pydantic import BaseModel
 
 from aiwen.models.agents.conversation import Conversation
 from aiwen.models.agents.message import Message
 from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.agents.message import MessageUpdate
 from aiwen.schemas.chat import StartTaskResult
+from aiwen.schemas.task.payload import TaskPayload
 from aiwen.services.agents.chat.chat_helper import (
     create_message,
     create_conversation,
@@ -32,8 +30,6 @@ from aiwen.services.agents.chat.chat_helper import (
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
 from aiwen.services.agents.crud.message_crud import MessageCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
-from aiwen.services.agents.runtime import AgentRuntime
-from aiwen.utils.json_utils import dumps as json_dumps
 from aiwen.utils.sse import sse
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
@@ -73,7 +69,7 @@ async def _stream_queue_events(
 
         async def consumer_stream():
             """内部 AgentTaskConsumer 消息流生成器"""
-            async for event_payload in task_consumer.consume_task_events(
+            async for event_payload in task_consumer.get_task_events(
                     task_id=str(task_id),
             ):
                 yield event_payload
@@ -96,116 +92,32 @@ async def _stream_queue_events(
 
 
 def _prepare_task_payload(
-        text_message: TextInput,
-        app_id: UUID,
+        text_input: TextInput,
         conversation: Conversation,
         message: Message,
-) -> dict:
+        app_id:str,
+) -> TaskPayload:
     """
     准备载荷字典
 
     Args:
-        text_message: 原始载荷
-        app_id: 应用 ID
+        text_input: 原始载荷
         conversation: 对话对象
         message: 消息对象
 
     Returns:
         包含应用、对话和消息 ID 的载荷字典
     """
-    payload_dict = (
-        text_message.model_dump(mode="json")
-        if isinstance(text_message, BaseModel)
-        else text_message
-    )
-    payload_dict.update(
-        {
-            "app_id": str(app_id),
-            "conversation_id": str(conversation.id),
-            "message_id": str(message.id),
-        }
-    )
-    return payload_dict
 
-
-async def _publish_event_to_stream(
-        redis_client: Any,
-        task_id: UUID,
-        event: str,
-        data: str,
-) -> None:
-    """
-    发布事件到 Redis Stream
-
-    Args:
-        redis_client: Redis 客户端
-        task_id: 任务 ID
-        event: 事件类型
-        data: 事件数据
-    """
-    stream_name = f"agent:task:chat:{task_id}:events"
-    await redis_client.xadd(
-        name=stream_name,
-        fields={"event": event, "text_message": json_dumps(data)},
-        maxlen=1000,
-        approximate=True
+    return TaskPayload(
+        conversation_id=str(conversation.id),
+        message_id=str(message.id),
+        input=text_input,
+        app_id=app_id
     )
 
 
-async def cancel_task(
-        *,
-        task_id: UUID,
-        redis_client: Any,
-        runtime: AgentRuntime,
-) -> bool:
-    """
-    取消正在运行的任务
 
-    支持队列模式和直接模式的任务取消。
-
-    Args:
-        task_id: 任务 ID
-        redis_client: Redis 客户端
-        runtime: Agent 运行时
-
-    Returns:
-        True if task was found and cancelled, False otherwise
-    """
-    try:
-        # 1. Check if task is running in direct mode (runtime)
-        try:
-            agent = runtime.get(task_id)
-            if agent:
-                # Release the agent from runtime
-                runtime.release(task_id)
-                logger.info(f"Cancelled task {task_id} from runtime (direct mode)")
-
-                # Publish cancellation event to Stream
-                await _publish_event_to_stream(
-                    redis_client, task_id, "cancelled", "Task was cancelled by user"
-                )
-                return True
-        except KeyError:
-            # Task not in runtime, might be in queue mode
-            pass
-
-        # 2. Try to cancel in queue mode by publishing cancel signal to worker via Pub/Sub
-        await redis_client.publish(
-            f"agent:task:{task_id}:cancel",
-            json_dumps({"action": "cancel", "task_id": str(task_id)})
-        )
-
-        # Also publish cancelled event to Stream for consumer
-        await _publish_event_to_stream(
-            redis_client, task_id, "cancelled", "Task was cancelled by user"
-        )
-
-        logger.info(f"Sent cancellation signal for task {task_id} (queue mode)")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error cancelling task {task_id}: {e}", exc_info=True)
-        return False
 
 
 async def get_task_messages(
@@ -231,12 +143,12 @@ async def get_task_messages(
         # Yield metadata event with task_id
         yield sse("metadata", {"task_id": str(task_id)})
 
-        async for event_payload in task_consumer.consume_task_events(
+        async for event_payload in task_consumer.get_task_events(
                 task_id=str(task_id),
         ):
             yield sse("chunk", event_payload)
 
-        # Task completed successfully (consume_task_events returns normally on success)
+        # Task completed successfully (get_task_events returns normally on success)
         logger.info(f"Task {task_id} completed successfully")
         yield sse("success", {"input": "Task completed"})
 
@@ -251,10 +163,9 @@ async def get_task_messages(
 
 
 async def start_task(
-        *,
         app_id: UUID,
         user_id: UUID,
-        text_message: TextInput,
+        text_input: TextInput,
         task_crud: AgentTaskCRUD,
         conversation_crud: ConversationCRUD,
         message_crud: MessageCRUD,
@@ -269,7 +180,7 @@ async def start_task(
     Args:
         app_id: 应用 ID
         user_id: 用户 ID
-        text_message: 聊天消息载荷
+        text_input: 聊天消息载荷
         task_crud: 任务 CRUD 服务
         conversation_crud: 对话 CRUD 服务
         message_crud: 消息 CRUD 服务
@@ -281,7 +192,7 @@ async def start_task(
     # 1. Prepare conversation
     conversation = await create_conversation(
         app_id=app_id,
-        text_message=text_message,
+        text_message=text_input,
         conversation_crud=conversation_crud,
     )
     logger.info(f"Prepared conversation {conversation.id} for app {app_id}")
@@ -290,7 +201,7 @@ async def start_task(
     message = await create_message(
         app_id=app_id,
         conversation_id=conversation.id,
-        text_message=text_message,
+        text_message=text_input,
         message_crud=message_crud,
     )
     logger.info(f"Created input {message.id} in conversation {conversation.id}")
@@ -300,16 +211,16 @@ async def start_task(
         app_id=app_id,
         user_id=user_id,
         task_type="agent:streams",
-        payload=text_message,
+        payload=text_input,
     )
     logger.info(f"Created task {task.id} for input {message.id}")
 
     # 4. Prepare a text_message with app, conversation and input IDs
-    task_payload = _prepare_task_payload(text_message, app_id, conversation, message)
+    task_payload = _prepare_task_payload(text_input, conversation, message,str(app_id))
 
     # 5. Publish a task using AgentTaskProducer
     await task_producer.publish_task(
-        task_id=UUID(str(task.id)),
+        task_id=task.id,
         payload=task_payload,
     )
 
