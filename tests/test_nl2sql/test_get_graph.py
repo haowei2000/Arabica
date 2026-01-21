@@ -15,7 +15,7 @@ def test_app():
     # 添加简化版的路由
     @app.post("/api/nl2sql/get_graph")
     async def get_graph():
-        return {"code": 200, "message": "Graph retrieved successfully", "data": {}}
+        return {"code": 200, "input": "Graph retrieved successfully", "data": {}}
 
     return app
 
@@ -72,7 +72,7 @@ class TestGetGraphEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
-        assert data["message"] == "Graph retrieved successfully"
+        assert data["input"] == "Graph retrieved successfully"
         assert "data" in data
         mock_get_indicator_graph.assert_called_once()
 

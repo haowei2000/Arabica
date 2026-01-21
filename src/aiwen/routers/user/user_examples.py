@@ -37,7 +37,7 @@ async def get_user_profile(
         "role": current_user.role,
         "tenant_id": str(current_user.tenant_id),
         "is_active": current_user.is_active,
-        "message": "Successfully retrieved user profile"
+        "input": "Successfully retrieved user profile"
     }
 
 
@@ -64,7 +64,7 @@ async def get_secure_profile(
         "role": current_user.role,
         "tenant_id": str(current_user.tenant_id),
         "status": "active",
-        "message": "Successfully retrieved secure profile"
+        "input": "Successfully retrieved secure profile"
     }
 
 
@@ -94,7 +94,7 @@ async def admin_panel(
         "user_id": str(current_user.id),
         "username": current_user.username,
         "role": current_user.role,
-        "message": "Welcome to admin panel",
+        "input": "Welcome to admin panel",
         "admin_data": "sensitive_admin_information"
     }
 
@@ -125,7 +125,7 @@ async def moderator_area(
         "user_id": str(current_user.id),
         "username": current_user.username,
         "role": current_user.role,
-        "message": "Welcome to moderator area",
+        "input": "Welcome to moderator area",
         "moderator_data": "moderation_tools"
     }
 
@@ -155,7 +155,7 @@ async def premium_content(
         "user_id": str(current_user.id),
         "username": current_user.username,
         "role": current_user.role,
-        "message": "Premium features unlocked",
+        "input": "Premium features unlocked",
         "premium_data": "exclusive_content"
     }
 
@@ -186,7 +186,7 @@ async def request_and_user_example(
         "request_method": request.method,
         "request_path": request.url.path,
         "client_host": request.client.host,
-        "message": "Successfully accessed request and user info"
+        "input": "Successfully accessed request and user info"
     }
 
 
@@ -209,5 +209,5 @@ async def token_only_example(
         "user_id": str(token_data.user_id),
         "role": token_data.role,
         "tenant_id": str(token_data.tenant_id),
-        "message": "Token data retrieved without database lookup"
+        "input": "Token data retrieved without database lookup"
     }

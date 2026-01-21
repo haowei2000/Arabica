@@ -346,7 +346,7 @@ async def check_database_health(bind_name: str = "primary") -> dict:
         available = ", ".join(_engines.keys())
         return {
             "status": "error",
-            "message": f"Database '{bind_name}' not found. Available: {available}"
+            "input": f"Database '{bind_name}' not found. Available: {available}"
         }
 
     engine = _engines[bind_name]

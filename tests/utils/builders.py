@@ -417,20 +417,20 @@ class ApiResponseBuilder(BaseBuilder):
         super().__init__()
         self._data = {
             "code": 200,
-            "message": "Success",
+            "input": "Success",
             "data": None,
         }
 
     def success(self, message: str = "Success") -> "ApiResponseBuilder":
         """设置为成功响应"""
         self._data["code"] = 200
-        self._data["message"] = message
+        self._data["input"] = message
         return self
 
     def error(self, code: int, message: str) -> "ApiResponseBuilder":
         """设置为错误响应"""
         self._data["code"] = code
-        self._data["message"] = message
+        self._data["input"] = message
         return self
 
     def with_code(self, code: int) -> "ApiResponseBuilder":
@@ -440,7 +440,7 @@ class ApiResponseBuilder(BaseBuilder):
 
     def with_message(self, message: str) -> "ApiResponseBuilder":
         """设置响应消息"""
-        self._data["message"] = message
+        self._data["input"] = message
         return self
 
     def with_data(self, data: Any) -> "ApiResponseBuilder":

@@ -13,11 +13,11 @@ Agent Worker - 异步处理 Agent 任务
 
 更新日志:
     v1.2.1 (2025/12/30):
-        - 修复 agent_instance.payload 属性不存在的错误
-        - 将 payload 作为参数传递给 stream 方法
+        - 修复 agent_instance.text_message 属性不存在的错误
+        - 将 text_message 作为参数传递给 stream 方法
 
     v1.2.0 (2025/12/30):
-        - 适配新的 Redis 消息格式（app_id 在 payload 内部）
+        - 适配新的 Redis 消息格式（app_id 在 text_message 内部）
         - 增强消息解析的错误处理和验证
 
 
@@ -26,7 +26,7 @@ Agent Worker - 异步处理 Agent 任务
     - redis.asyncio: Redis 异步客户端
     - aiwen.services.agents: Agent 管理和运行时
 """
-# aiwen/workers/agent_worker.py
+# aiwen/workers/task_worker.py
 import asyncio
 import json
 import logging
@@ -37,6 +37,8 @@ import redis.asyncio as redis_async
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_session
+from aiwen.schemas.agents.input import TextInput
+from aiwen.schemas.task.payload import TaskPayload
 from aiwen.services.agents.agent_registry import AgentRegistry
 from aiwen.services.agents.app_factory import AppAgentFactory
 from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
@@ -44,8 +46,43 @@ from aiwen.services.agents.crud.app_crud import AppCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.utils.json_utils import dumps as json_dumps
+from aiwen.workers.task_utils import decode_data_field, build_stream_name_key
 
 logger = logging.getLogger(__name__)
+
+
+async def _validate_template_registration(template):
+    """验证模板是否已注册"""
+    logger.info(f"Checking if template '{template.template_code}' is registered...")
+    logger.info(f"Available templates in registry: {AgentRegistry.list()}")
+
+    if not AgentRegistry.is_registered(template.template_code):
+        available_templates = AgentRegistry.list()
+        error_msg = (
+            f"Agent template '{template.template_code}' is not registered in AgentRegistry. "
+            f"Available templates: {available_templates if available_templates else 'NONE - Registry is empty!'}"
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+
+async def _get_agent_template(template_crud, app):
+    """获取agent模板"""
+    if not app.agent_template_id:
+        raise ValueError("App has no associated agent template")
+
+    template = await template_crud.get_template_by_id(app.agent_template_id)
+    if not template:
+        raise ValueError(f"Agent template '{app.agent_template_id}' not found")
+    return template
+
+
+async def _get_app_by_id(app_crud, app_id):
+    """根据ID获取app配置"""
+    app = await app_crud.get_app_by_id(UUID(app_id) if isinstance(app_id, str) else app_id)
+    if not app:
+        raise ValueError(f"App with ID '{app_id}' not found")
+    return app
 
 
 class AgentWorker:
@@ -55,7 +92,7 @@ class AgentWorker:
     使用 AgentRuntime 管理 agent 实例生命周期，支持流式输出和任务状态跟踪。
     """
 
-    def __init__(self, redis_client: redis_async.Redis, db: AsyncSession = None):
+    def __init__(self, redis_client: redis_async.Redis):
         """
         初始化 Agent Worker.
 
@@ -64,16 +101,11 @@ class AgentWorker:
             db: 数据库会话工厂
         """
         self.redis_client = redis_client
-        self.db = db or get_session("aiwen")  # 如果没有提供，则使用默认的aiwen数据库会话
         self.runtime = AgentRuntime()  # Agent 运行时管理器
-        self.pubsub = None
+        self.task_name = "agent"
 
     async def start(self):
         logger.info("Starting AgentWorker...")
-
-        # Start cancellation listener in background
-        cancel_task = asyncio.create_task(self._listen_for_cancellations())
-
         try:
             # Consume tasks from Redis Stream
             await self._consume_task_stream()
@@ -81,57 +113,31 @@ class AgentWorker:
             logger.info("AgentWorker cancelled")
         except Exception as e:
             logger.error(f"AgentWorker error: {e}", exc_info=True)
-        finally:
-            cancel_task.cancel()
-            try:
-                await cancel_task
-            except asyncio.CancelledError:
-                pass
-
-    async def _listen_for_cancellations(self):
-        """Listen for task cancellation requests via Pub/Sub"""
-        self.pubsub = self.redis_client.pubsub()
-        await self.pubsub.psubscribe("agent:task:*:cancel")
-
-        try:
-            async for message in self.pubsub.listen():
-                if message["type"] == "pmessage":
-                    try:
-                        await self._handle_cancel_message(message["data"])
-                    except Exception as e:
-                        logger.error(f"Error handling cancellation: {e}", exc_info=True)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await self.pubsub.punsubscribe("agent:task:*:cancel")
 
     async def _consume_task_stream(self):
         """Consume tasks from Redis Stream using XREAD"""
-        stream_name = "agent_tasks"
-        last_id = "$"  # Start from new messages only
 
-        logger.info(f"Starting to consume tasks from stream '{stream_name}'")
+        logger.info(f"Starting to consume tasks from stream '{self.task_name}'")
 
         while True:
             try:
-                # Read from stream with blocking
+                # 读取Redis流中的任务
                 messages = await self.redis_client.xread(
-                    streams={stream_name: last_id},
+                    streams={self.task_name: "$"},
                     count=1,
-                    block=1000  # Block for 1 second
+                    block=1000
                 )
 
-                if not messages:
-                    continue
-
-                for stream_key, msgs in messages:
-                    for message_id, data in msgs:
-                        # Update last_id for next iteration
-                        last_id = message_id.decode() if isinstance(message_id, bytes) else message_id
-
+                if messages:
+                    # messages结构为 [(stream_name, [(message_id, data), ...])]
+                    stream_name, msg_list = messages[0]
+                    for message_id, data in msg_list:
                         try:
-                            # Process the task
-                            await self.process_task(data)
+                            task_id = decode_data_field(data, "task_id")
+                            payload = decode_data_field(data, "input")
+                            payload = TaskPayload.model_validate(payload)
+                            async with get_session("aiwen") as db:
+                                await self.process_task(task_id, payload, db)
                         except Exception as e:
                             logger.error(f"Error processing task: {e}", exc_info=True)
 
@@ -139,35 +145,27 @@ class AgentWorker:
                 raise
             except Exception as e:
                 logger.error(f"Error reading from stream: {e}", exc_info=True)
-                await asyncio.sleep(1)  # Wait before retry
+                await asyncio.sleep(1)  # 等待后重试
 
-    async def process_task(self, message_data):
+    async def process_task(self, task_id: UUID | str, task_payload: TaskPayload, db: AsyncSession):
         """
         处理单个 agent 任务.
 
         Args:
-            message_data: Redis Stream 消息数据 (dict with bytes keys from XREAD)
+            task_payload: Redis Stream 消息数据 (dict with bytes keys from XREAD)
         """
-        task_id = None
 
         try:
             # 解析消息数据 (from Redis Stream)
-            data = self._parse_stream_message(message_data)
-            task_id = data["task_id"]
-            app_id = data["app_id"]
-            payload = data.get("payload", {})
+            app_id = task_payload.input.app_id
+            if not app_id:
+                raise ValueError("App ID is required")
+            input = task_payload.input
 
             logger.info(f"Processing task {task_id} for app {app_id}")
 
-            # 获取数据库会话
-
-            task_crud = AgentTaskCRUD(self.db)
-            # 更新任务状态为 running
-            await task_crud.update_agent_task_status(task_id, "running")
-
             # 执行任务的主要逻辑
-            await self._execute_task_logic(task_id, app_id, payload, task_crud)
-            await self.db.commit()
+            await self._execute_task_logic(task_id, app_id, input, db)
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in task message: {e}")
         except Exception as e:
@@ -183,7 +181,7 @@ class AgentWorker:
         Stream 消息格式 (from XREAD):
         {
             b"task_id": b"...",
-            b"payload": b'{"app_id": "...", ...}'
+            b"text_message": b'{"app_id": "...", ...}'
         }
 
         Args:
@@ -208,55 +206,55 @@ class AgentWorker:
         if "task_id" not in decoded_data:
             raise ValueError("Missing required field: task_id")
 
-        # Parse payload JSON
-        payload_str = decoded_data.get("payload", "{}")
+        # Parse text_message JSON
+        text_messages_str = decoded_data.get("text_message", "{}")
         try:
-            payload = json.loads(payload_str)
+            payload = json.loads(text_messages_str)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in payload: {e}")
+            raise ValueError(f"Invalid JSON in text_message: {e}")
 
-        logger.info(f"Extracted payload: {payload}")
+        logger.info(f"Extracted text_message: {payload}")
 
         app_id = payload.get("app_id")
         if not app_id:
             raise ValueError(
-                "Missing required field: app_id in payload. "
-                "Ensure ChatService is using the new payload format (v1.2.0+)"
+                "Missing required field: app_id in text_message. "
+                "Ensure ChatService is using the new text_message format (v1.2.0+)"
             )
 
         parsed_result = {
             "task_id": UUID(decoded_data["task_id"]),
             "app_id": app_id,
-            "payload": payload
+            "text_message": payload
         }
         logger.info(f"Parsed result: {parsed_result}")
 
         return parsed_result
 
-    async def _execute_task_logic(self, task_id, app_id, payload, task_crud):
+    async def _execute_task_logic(self, task_id: str | UUID, app_id: str | UUID, input: TextInput, db: AsyncSession):
         """执行任务的主要逻辑"""
         try:
             # 获取数据库会话
-            app_crud = AppCRUD(self.db)
-            template_crud = AgentTemplateCRUD(self.db)
-
+            app_crud = AppCRUD(db)
+            template_crud = AgentTemplateCRUD(db)
+            task_crud = AgentTaskCRUD(db)
             try:
                 # 1. 从数据库获取 app 配置
-                app = await self._get_app_by_id(app_crud, app_id)
+                app = await _get_app_by_id(app_crud, app_id)
 
                 # 2. 获取 agent 模板
-                template = await self._get_agent_template(template_crud, app)
+                template = await _get_agent_template(template_crud, app)
 
                 # 3. 检查模板代码是否在 Registry 中注册
-                await self._validate_template_registration(template)
+                await _validate_template_registration(template)
 
                 # 4. 创建 agent 实例并附加到运行时
-                agent_instance = await self._create_and_attach_agent(app, template, payload, task_id)
+                agent_instance = await self._create_and_attach_agent(app, template, input, task_id)
 
                 logger.info(f"Agent instance created for task {task_id}, type: {template.template_code}")
 
                 # 5. 流式执行 agent 并发送事件
-                result_data = await self._execute_agent_stream(agent_instance, payload, task_id)
+                result_data = await self._execute_agent_stream(agent_instance, input, task_id)
 
                 # 6. 更新任务状态为成功
                 await task_crud.update_agent_task_status(task_id, "success", result=result_data)
@@ -274,37 +272,6 @@ class AgentWorker:
         except Exception as e:
             logger.error(f"Task {task_id} failed (Exception): {e}", exc_info=True)
             await self._handle_task_error(task_id, str(e))
-
-    async def _get_app_by_id(self, app_crud, app_id):
-        """根据ID获取app配置"""
-        app = await app_crud.get_app_by_id(UUID(app_id) if isinstance(app_id, str) else app_id)
-        if not app:
-            raise ValueError(f"App with ID '{app_id}' not found")
-        return app
-
-    async def _get_agent_template(self, template_crud, app):
-        """获取agent模板"""
-        if not app.agent_template_id:
-            raise ValueError("App has no associated agent template")
-
-        template = await template_crud.get_template_by_id(app.agent_template_id)
-        if not template:
-            raise ValueError(f"Agent template '{app.agent_template_id}' not found")
-        return template
-
-    async def _validate_template_registration(self, template):
-        """验证模板是否已注册"""
-        logger.info(f"Checking if template '{template.template_code}' is registered...")
-        logger.info(f"Available templates in registry: {AgentRegistry.list()}")
-
-        if not AgentRegistry.is_registered(template.template_code):
-            available_templates = AgentRegistry.list()
-            error_msg = (
-                f"Agent template '{template.template_code}' is not registered in AgentRegistry. "
-                f"Available templates: {available_templates if available_templates else 'NONE - Registry is empty!'}"
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
 
     async def _create_and_attach_agent(self, app, template, payload, task_id):
         """创建agent实例并附加到运行时"""
@@ -332,15 +299,15 @@ class AgentWorker:
         Returns:
             包含完整结果和块数的字典
         """
-        # 验证 payload 类型
+        # 验证 text_message 类型
         logger.info(f"Executing agent stream for task {task_id}")
         logger.info(f"Payload type: {type(payload)}")
         logger.info(f"Payload content: {payload}")
 
-        # 确保 payload 是字典
+        # 确保 text_message 是字典
         if not isinstance(payload, dict):
             error_msg = (
-                f"Invalid payload type: expected dict, got {type(payload).__name__}. "
+                f"Invalid text_message type: expected dict, got {type(payload).__name__}. "
                 f"Payload content: {payload}"
             )
             logger.error(error_msg)
@@ -389,13 +356,13 @@ class AgentWorker:
             event_data: 事件数据 (包含 event 和 data 字段)
         """
         try:
-            # 使用与 TaskConsumer 一致的 Stream 名称格式
-            stream_name = f"agent:task:chat:{task_id}:events"
+            # 使用与 AgentTaskConsumer 一致的 Stream 名称格式
+            stream_name = build_stream_name_key(str(task_id), self.task_name)
 
             # 准备 Stream 消息字段
             fields = {
                 "event": event_data.get("event", "chunk"),
-                "payload": json_dumps(event_data.get("data", ""))
+                "data": json_dumps(event_data.get("data", ""))
             }
 
             # 使用 XADD 发布到 Stream
@@ -498,11 +465,6 @@ class AgentWorker:
                 self.runtime.release(task_id)
                 logger.info(f"Released agent instance for task {task_id}")
 
-            # 关闭 pubsub 连接 (用于取消订阅)
-            if self.pubsub:
-                await self.pubsub.punsubscribe("agent:task:*:cancel")
-                await self.pubsub.close()
-
             logger.info("AgentWorker cleanup completed")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
@@ -514,7 +476,7 @@ async def start_worker(redis_client: redis_async.Redis, db: AsyncSession):
 
     args:
         redis_client: redis 异步客户端
-        db: 数据库会话工厂
+        db_session: 数据库会话工厂
 
     usage:
         ```python

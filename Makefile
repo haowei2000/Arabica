@@ -23,8 +23,50 @@ help: ## 显示帮助信息
 # 安装和依赖管理
 # ============================================================================
 
-docker-up:
+docker-up: ## 启动 Docker 容器
 	docker compose -f docker/docker-compose.yml --env-file .env up -d
 
-docker-down:
+docker-down: ## 停止 Docker 容器
 	docker compose -f docker/docker-compose.yml --env-file .env down
+
+# ============================================================================
+# 数据库迁移 (Alembic)
+# ============================================================================
+
+db-upgrade: ## 升级数据库到最新版本
+	uv run alembic upgrade head
+
+db-downgrade: ## 回滚数据库一个版本
+	uv run alembic downgrade -1
+
+db-revision: ## 创建新的迁移脚本 (自动检测变更)
+	@read -p "迁移描述: " msg; \
+	uv run alembic revision --autogenerate -m "$$msg"
+
+db-revision-empty: ## 创建空的迁移脚本
+	@read -p "迁移描述: " msg; \
+	uv run alembic revision -m "$$msg"
+
+db-current: ## 显示当前数据库版本
+	uv run alembic current
+
+db-history: ## 显示迁移历史
+	uv run alembic history --verbose
+
+db-heads: ## 显示所有分支头
+	uv run alembic heads
+
+db-reset: ## 重置数据库 (危险: 回滚所有迁移)
+	@echo "$(RED)警告: 这将回滚所有迁移!$(NC)"
+	@read -p "确认继续? [y/N] " confirm; \
+	if [ "$$confirm" = "y" ]; then \
+		uv run alembic downgrade base; \
+		uv run alembic upgrade head; \
+	fi
+
+db-status: ## 显示迁移状态
+	@echo "$(BLUE)当前版本:$(NC)"
+	@uv run alembic current
+	@echo ""
+	@echo "$(BLUE)待执行迁移:$(NC)"
+	@uv run alembic history --indicate-current

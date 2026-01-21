@@ -11,7 +11,7 @@ Task Utilities - 任务工具模块
 
 """
 import json
-from typing import Any, Dict, Union
+from typing import Any
 
 
 def decode_bytes(value: bytes | str, default: str = "") -> str:
@@ -32,9 +32,9 @@ def decode_bytes(value: bytes | str, default: str = "") -> str:
     return default
 
 
-def decode_message_field(
-    data: dict[bytes | str, bytes | str],
-    field: str
+def decode_data_field(
+        data: dict[bytes | str, bytes | str],
+        field: str
 ) -> str:
     """
     从消息数据中解码指定字段
@@ -52,9 +52,9 @@ def decode_message_field(
 
 
 def parse_json_field(
-    data: dict[bytes | str, bytes | str],
-    field: str,
-    default: Any = None
+        data: dict[bytes | str, bytes | str],
+        field: str,
+        default: Any = None
 ) -> Any:
     """
     从消息数据中解码并解析 JSON 字段
@@ -67,7 +67,7 @@ def parse_json_field(
     Returns:
         解析后的 Python 对象
     """
-    field_value = decode_message_field(data, field)
+    field_value = decode_data_field(data, field)
     if not field_value:
         return default
 
@@ -98,14 +98,17 @@ def encode_message_data(data: dict[str, Any]) -> dict[str, str]:
     return encoded
 
 
-def decode_message_id(message_id: bytes | str) -> str:
+
+
+
+def build_stream_name_key(task_id: str, task_name: str = 'chat', task_type: str = "events") -> str:
     """
-    解码 Redis Stream 消息 ID
+    构建 Stream 名称
 
     Args:
-        message_id: 消息 ID（bytes 或 str）
+        task_id: 任务 ID
 
     Returns:
-        解码后的消息 ID 字符串
+        完整的 Stream 名称
     """
-    return decode_bytes(message_id)
+    return f"{task_name}:{task_id}:{task_type}"

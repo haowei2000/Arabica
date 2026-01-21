@@ -291,7 +291,7 @@ factory = AppAgentFactory(
     app_config={"model": "gpt-4", "temperature": 0.7}
 )
 
-# 创建实例（会合并 app_config 和 payload）
+# 创建实例（会合并 app_config 和 text_message）
 agent = factory.create(payload={"query": "Hello"})
 
 # 执行
@@ -326,24 +326,24 @@ all_instances = runtime._instances
 
 ```python
 from aiwen.services.agents.chat.chat_helper import (
-   create_conversation,
-   create_message,
-   stream_and_finalize
+    create_conversation,
+    create_message,
+    stream_and_finalize
 )
 
 # 准备会话
 conversation = await create_conversation(
-   app_id=app_id,
-   payload=payload,
-   conversation_crud=conversation_crud
+    app_id=app_id,
+    text_message=payload,
+    conversation_crud=conversation_crud
 )
 
 # 创建消息
 message = await create_message(
-   app_id=app_id,
-   conversation_id=conversation.id,
-   text_message=payload,
-   message_crud=message_crud
+    app_id=app_id,
+    conversation_id=conversation.id,
+    text_message=payload,
+    message_crud=message_crud
 )
 
 # 流式执行并自动保存结果
@@ -352,7 +352,7 @@ async for event in stream_and_finalize(
         conversation=conversation,
         message=message
 ):
-   yield event
+    yield event
 ```
 
 ## 测试清单

@@ -3,7 +3,7 @@ LOGGING_CONFIG = {
     'disable_existing_loggers': False,
     'formatters': {
         'default': {
-            'format': '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+            'format': '[%(asctime)s] %(levelname)s in %(module)s: %(input)s',
         }
     },
     'handlers': {

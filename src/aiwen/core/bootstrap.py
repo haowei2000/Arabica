@@ -53,8 +53,6 @@ class BootstrapConfig:
     # 是否初始化 Agent Registry
     init_agent_registry: bool = True
 
-    # 是否注册维度（NL2SQL功能需要）
-    register_dimensions: bool = True
 
 
 class ApplicationBootstrap:
@@ -104,10 +102,6 @@ class ApplicationBootstrap:
         # Step 6: Agent Registry初始化
         if self.config.init_agent_registry:
             await self._initialize_agent_registry()
-
-        # Step 7: 注册维度（NL2SQL功能）
-        if self.config.register_dimensions:
-            await self._register_dimensions()
 
         logger.info("=" * 60)
         logger.info("✅ 应用初始化完成")
@@ -264,19 +258,6 @@ class ApplicationBootstrap:
             logger.error(f"❌ Agent Registry初始化失败: {e}")
             # 不抛出异常，允许应用继续运行
 
-    async def _register_dimensions(self) -> None:
-        """注册NL2SQL维度"""
-        logger.info("📐 注册NL2SQL维度...")
-        try:
-            import importlib
-            import aiwen.services.nl2sql.dimension_registry.dimensions
-
-            # 重新加载以确保注册生效
-            importlib.reload(aiwen.services.nl2sql.dimension_registry.dimensions)
-            logger.info("✅ NL2SQL维度注册完成")
-        except Exception as e:
-            logger.error(f"❌ 维度注册失败: {e}")
-            # 不抛出异常，允许应用继续运行
 
     async def _shutdown_redis(self) -> None:
         """关闭Redis连接"""
@@ -324,7 +305,6 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         create_tables=False,         # ⚠️  表由 Alembic 管理，不在代码中创建
         create_admin_user=True,      # API负责创建用户
         init_agent_registry=True,
-        register_dimensions=True,
     )
 
 
@@ -343,7 +323,6 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
         create_tables=False,         # 表由 Alembic 管理
         create_admin_user=False,     # Worker不创建用户
         init_agent_registry=True,    # Worker需要Agent Registry
-        register_dimensions=True,    # Worker需要维度信息
     )
 
 
@@ -362,7 +341,6 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
         create_tables=False,         # 表由 Alembic 管理
         create_admin_user=False,     # MCP不创建用户
         init_agent_registry=False,   # MCP不需要Agent Registry
-        register_dimensions=True,    # MCP需要维度信息（NL2SQL功能）
     )
 
 

@@ -63,13 +63,13 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None) -> 
 
 def verify_token(token: str) -> dict | None:
     """
-    Verify a JWT token and return the payload.
+    Verify a JWT token and return the text_message.
 
     Args:
         token: The JWT token to verify
 
     Returns:
-        The decoded payload if valid, None otherwise
+        The decoded text_message if valid, None otherwise
     """
     try:
         payload = jwt.decode(token, settings.auth.jwt_secret_key, algorithms=[settings.auth.jwt_algorithm])

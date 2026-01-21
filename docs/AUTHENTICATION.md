@@ -65,7 +65,7 @@ async def admin_panel(
     current_user: Annotated[UserResponse, Depends(get_current_active_user)]
 ):
     # 只有激活的用户才能访问
-    return {"message": "Admin panel"}
+    return {"input": "Admin panel"}
 ```
 
 ### 3. `get_token_data`
@@ -102,14 +102,14 @@ async def protected_route(
 ):
     """需要认证才能访问的端点"""
     return {
-        "message": "You are authenticated!",
+        "input": "You are authenticated!",
         "user": current_user.username
     }
 
 @router.get("/public")
 async def public_route():
     """公开端点，无需认证"""
-    return {"message": "This is public"}
+    return {"input": "This is public"}
 ```
 
 ### 角色检查示例
@@ -128,7 +128,7 @@ async def admin_only(
             detail="Admin access required"
         )
 
-    return {"message": "Admin access granted"}
+    return {"input": "Admin access granted"}
 ```
 
 ### 多角色检查示例
@@ -146,7 +146,7 @@ async def moderator_area(
             detail=f"One of these roles required: {allowed_roles}"
         )
 
-    return {"message": "Moderator area"}
+    return {"input": "Moderator area"}
 ```
 
 ### 高效的 Token 检查
@@ -324,7 +324,7 @@ A: 直接不使用认证依赖即可。依赖注入的方式让每个端点自�
 @router.get("/public")
 async def public_endpoint():
     # 无需任何认证依赖
-    return {"message": "Public"}
+    return {"input": "Public"}
 
 @router.get("/protected")
 async def protected_endpoint(
@@ -379,7 +379,7 @@ def require_role(required_role: str):
 async def premium_content(
     current_user: Annotated[UserResponse, Depends(require_role("premium"))]
 ):
-    return {"message": "Premium content"}
+    return {"input": "Premium content"}
 ```
 
 ### Q: nl2sql API 为什么不需要认证？

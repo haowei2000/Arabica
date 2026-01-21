@@ -35,7 +35,7 @@ def upgrade() -> None:
                comment='任务状态: pending, running, success, failed',
                existing_nullable=False,
                existing_server_default=sa.text("'pending'::character varying"))
-    op.alter_column('agent_task', 'payload',
+    op.alter_column('agent_task', 'text_message',
                existing_type=postgresql.JSONB(astext_type=sa.Text()),
                comment='任务输入数据',
                existing_nullable=True)
@@ -426,7 +426,7 @@ def downgrade() -> None:
                comment=None,
                existing_comment='任务结果',
                existing_nullable=True)
-    op.alter_column('agent_task', 'payload',
+    op.alter_column('agent_task', 'text_message',
                existing_type=postgresql.JSONB(astext_type=sa.Text()),
                comment=None,
                existing_comment='任务输入数据',

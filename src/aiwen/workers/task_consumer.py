@@ -19,30 +19,34 @@ Task Consumer - 任务消费者
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any
 
 import redis.asyncio as aioredis
 
-from .task_utils import decode_message_field, decode_message_id, parse_json_field
+from .task_utils import decode_data_field, parse_json_field, build_stream_name_key, decode_bytes
+from ..schemas.task.payload import TaskPayload
 
 logger = logging.getLogger(__name__)
 
 
-def _build_stream_name(task_type: str, task_id: str, task_name:str= "agent:chat") -> str:
-    """
-    构建 Stream 名称
-
-    Args:
-        task_type: 任务类型
-        task_id: 任务 ID
-
-    Returns:
-        完整的 Stream 名称
-    """
-    return f"{task_name}:{task_type}:{task_id}:events"
+class EventAction(Enum):
+    """事件处理动作"""
+    YIELD = auto()
+    RETURN = auto()
+    RAISE = auto()
+    SKIP = auto()
 
 
-class TaskConsumer:
+@dataclass
+class EventResult:
+    """事件处理结果"""
+    action: EventAction
+    data: Any = None
+
+
+class AgentTaskConsumer:
     """
     任务消费者
 
@@ -51,11 +55,11 @@ class TaskConsumer:
 
     使用示例:
         ```python
-        from aiwen.workers.task_consumer import TaskConsumer
+        from aiwen.workers.task_consumer import AgentTaskConsumer
         from aiwen.middleware.cache_middleware import get_redis_client
 
         redis_client = get_redis_client(is_async=True)
-        consumer = TaskConsumer(redis_client)
+        consumer = AgentTaskConsumer(redis_client)
 
         # 消费任务事件流
         async for event_data in consumer.consume_task_events(
@@ -67,10 +71,10 @@ class TaskConsumer:
     """
 
     def __init__(
-        self,
-        redis_client: aioredis.Redis,
-        read_count: int = 10,
-        read_block_ms: int = 1000
+            self,
+            redis_client: aioredis.Redis,
+            read_count: int = 10,
+            read_block_ms: int = 1000,
     ):
         """
         初始化任务消费者
@@ -83,27 +87,72 @@ class TaskConsumer:
         self.redis = redis_client
         self.read_count = read_count
         self.read_block_ms = read_block_ms
+        self.task_name = "agent"
+
+    @staticmethod
+    def _check_timeout(
+            start_time: float,
+            timeout_seconds: float | None,
+            task_id: str
+    ) -> None:
+        """检查是否超时，超时则抛出异常"""
+        if timeout_seconds is None:
+            return
+        elapsed = asyncio.get_event_loop().time() - start_time
+        if elapsed >= timeout_seconds:
+            logger.warning(f"Timeout after {elapsed:.2f}s consuming task {task_id}")
+            raise TimeoutError(f"Task consumption timeout after {timeout_seconds}s")
+
+    async def _read_messages(self, stream_name: str, last_id: str) -> list | None:
+        """从 Redis Stream 读取消息"""
+        try:
+            return await self.redis.xread(
+                streams={stream_name: last_id},
+                count=self.read_count,
+                block=self.read_block_ms
+            )
+        except TimeoutError:
+            return None
+        except Exception as e:
+            logger.error(f"Error reading from stream {stream_name}: {e}", exc_info=True)
+            raise
+
+    @staticmethod
+    def _handle_event(event_type: str, payload: TaskPayload, task_id: str) -> EventResult:
+        """处理事件，返回 EventResult"""
+        logger.debug(f"Received event '{event_type}' for task {task_id}: {payload}")
+
+        match event_type:
+            case "chunk":
+                return EventResult(EventAction.YIELD, payload)
+            case "success":
+                logger.info(f"Task {task_id} completed successfully")
+                return EventResult(EventAction.RETURN)
+            case "failed":
+                error_msg = payload if isinstance(payload, str) else str(payload)
+                logger.error(f"Task {task_id} failed: {error_msg}")
+                return EventResult(EventAction.RAISE, Exception(error_msg))
+            case _:
+                logger.warning(f"Unknown event type '{event_type}' for task {task_id}")
+                return EventResult(EventAction.SKIP)
 
     async def consume_task_events(
-        self,
-        task_id: str,
-        task_type: str,
-        task_name: str = "agent:chat",
-        last_id: str = "0-0",
-        timeout_seconds: float | None = None
+            self,
+            task_id: str,
+            last_id: str = "0-0",
+            timeout_seconds: float | None = None
     ) -> AsyncGenerator[Any, None]:
         """
         消费任务事件流
 
         从 Redis Stream 读取任务执行事件，并以异步生成器形式返回。
         支持三种事件类型:
-            - chunk: 中间结果事件（返回 payload）
+            - chunk: 中间结果事件（返回 text_message）
             - success: 任务成功完成（生成器正常结束）
             - failed: 任务失败（抛出异常）
 
         Args:
             task_id: 任务 ID
-            task_type: 任务类型
             last_id: 开始读取的消息 ID，默认从头开始
             timeout_seconds: 超时时间（秒），None 表示无限等待
 
@@ -112,180 +161,41 @@ class TaskConsumer:
 
         Raises:
             Exception: 任务失败时抛出包含错误信息的异常
-            asyncio.TimeoutError: 超时时抛出
+            TimeoutError: 超时时抛出
         """
-        stream_name = _build_stream_name(task_type, task_id)
+        stream_name = build_stream_name_key(task_id, self.task_name)
         start_time = asyncio.get_event_loop().time()
 
-        logger.info(
-            f"Starting to consume events for task {task_id} "
-            f"from stream {stream_name}"
-        )
+        logger.info(f"Starting to consume events for task {task_id} from stream {stream_name}")
 
         try:
             while True:
-                # Check timeout
-                if timeout_seconds is not None:
-                    elapsed = asyncio.get_event_loop().time() - start_time
-                    if elapsed >= timeout_seconds:
-                        logger.warning(
-                            f"Timeout after {elapsed:.2f}s consuming "
-                            f"task {task_id}"
-                        )
-                        raise TimeoutError(
-                            f"Task consumption timeout after {timeout_seconds}s"
-                        )
+                self._check_timeout(start_time, timeout_seconds, task_id)
 
-                # Read from stream
-                try:
-                    messages = await self.redis.xread(
-                        streams={stream_name: last_id},
-                        count=self.read_count,
-                        block=self.read_block_ms
-                    )
-                except TimeoutError:
-                    # xread timeout, continue loop
-                    continue
-                except Exception as e:
-                    logger.error(
-                        f"Error reading from stream {stream_name}: {e}",
-                        exc_info=True
-                    )
-                    raise
-
-                # No messages received
+                messages = await self._read_messages(stream_name, last_id)
                 if not messages:
                     await asyncio.sleep(0.01)
                     continue
 
-                # Process messages
-                for stream_key, msgs in messages:
+                for _stream_key, msgs in messages:
                     for message_id, data in msgs:
-                        # Update last_id for next iteration
-                        last_id = decode_message_id(message_id)
+                        last_id = decode_bytes(message_id)
+                        event_type = decode_data_field(data, "event")
+                        payload = parse_json_field(data, "input", default={})
+                        payload = TaskPayload.model_validate(payload)
+                        event_result = self._handle_event(event_type, payload, task_id)
 
-                        # Extract event type and payload
-                        event_type = decode_message_field(data, "event")
-                        payload = parse_json_field(data, "payload")
-
-                        logger.debug(
-                            f"Received event '{event_type}' for task {task_id}: "
-                            f"{payload}"
-                        )
-
-                        # Handle different event types
-                        if event_type == "chunk":
-                            # Intermediate result
-                            yield payload
-
-                        elif event_type == "success":
-                            # Task completed successfully
-                            logger.info(
-                                f"Task {task_id} completed successfully"
-                            )
-                            return
-
-                        elif event_type == "failed":
-                            # Task failed
-                            error_msg = payload if isinstance(payload, str) else str(payload)
-                            logger.error(
-                                f"Task {task_id} failed: {error_msg}"
-                            )
-                            raise Exception(error_msg)
-
-                        else:
-                            # Unknown event type, log and continue
-                            logger.warning(
-                                f"Unknown event type '{event_type}' for "
-                                f"task {task_id}"
-                            )
+                        match event_result.action:
+                            case EventAction.YIELD:
+                                yield event_result.data
+                            case EventAction.RETURN:
+                                return
+                            case EventAction.RAISE:
+                                raise event_result.data
 
         except asyncio.CancelledError:
             logger.info(f"Task {task_id} consumption cancelled")
             raise
         except Exception as e:
-            logger.error(
-                f"Error consuming task {task_id}: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error consuming task {task_id}: {e}", exc_info=True)
             raise
-
-    async def get_stream_length(
-        self,
-        task_type: str,
-        task_id: str,
-        task_name: str = "agent:chat"
-    ) -> int:
-        """
-        获取任务事件流的长度
-
-        Args:
-            task_type: 任务类型
-            task_id: 任务 ID
-
-        Returns:
-            Stream 中的消息数量
-        """
-        stream_name = _build_stream_name(task_type, task_id, task_name)
-        try:
-            length = await self.redis.xlen(stream_name)
-            return length
-        except Exception as e:
-            logger.error(
-                f"Error getting stream length for {stream_name}: {e}"
-            )
-            return 0
-
-    async def stream_exists(
-        self,
-        task_type: str,
-        task_id: str,
-        task_name: str = "agent:chat"
-    ) -> bool:
-        """
-        检查任务事件流是否存在
-
-        Args:
-            task_type: 任务类型
-            task_id: 任务 ID
-
-        Returns:
-            流是否存在
-        """
-        stream_name = _build_stream_name(task_type, task_id, task_name)
-        try:
-            exists = await self.redis.exists(stream_name)
-            return bool(exists)
-        except Exception as e:
-            logger.error(
-                f"Error checking stream existence for {stream_name}: {e}"
-            )
-            return False
-
-    async def delete_stream(
-        self,
-        task_type: str,
-        task_id: str,
-        task_name: str = "agent:chat"
-    ) -> bool:
-        """
-        删除任务事件流
-
-        Args:
-            task_type: 任务类型
-            task_id: 任务 ID
-
-        Returns:
-            是否成功删除
-        """
-        stream_name = _build_stream_name(task_type, task_id,task_name)
-        try:
-            deleted = await self.redis.delete(stream_name)
-            logger.info(f"Deleted stream {stream_name}")
-            return bool(deleted)
-        except Exception as e:
-            logger.error(
-                f"Error deleting stream {stream_name}: {e}",
-                exc_info=True
-            )
-            return False

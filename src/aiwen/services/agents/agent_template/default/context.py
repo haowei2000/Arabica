@@ -29,9 +29,9 @@ async def add_message_to_context(
     app_id: Optional[UUID] = None
 ):
     """
-    Add a message to the context.
+    Add a input to the context.
 
-    Ensures the conversation exists before adding the message.
+    Ensures the conversation exists before adding the input.
     If the conversation doesn't exist, it will be created automatically.
 
     Args:
@@ -51,7 +51,7 @@ async def add_message_to_context(
         if not conversation:
             logger.warning(
                 f"Conversation {conversation_id} not found. "
-                f"Creating new conversation for message history."
+                f"Creating new conversation for input history."
             )
 
             # Ensure we have an app_id for creating the conversation
@@ -74,7 +74,7 @@ async def add_message_to_context(
             )
             logger.info(f"Created conversation {conversation.id} with app_id {app_id}")
 
-        # Now add the message
+        # Now add the input
         crud = MessageCRUD(db)
         await crud.create(
             MessageCreate(
@@ -83,7 +83,7 @@ async def add_message_to_context(
                 app_id=app_id or conversation.app_id  # Use app_id from conversation if not provided
             )
         )
-        logger.debug(f"Added message to context: {message}")
+        logger.debug(f"Added input to context: {message}")
 
 
 async def get_messages_from_context(
@@ -138,7 +138,7 @@ async def get_messages_from_context(
             messages = list(reversed(messages))
 
             logger.info(
-                f"Loaded {len(messages)} message pairs "
+                f"Loaded {len(messages)} input pairs "
                 f"for conversation {conversation_id}"
             )
 

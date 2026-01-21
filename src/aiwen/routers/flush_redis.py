@@ -54,7 +54,7 @@ async def flush_redis_cache(
         deleted_count = await clear_cache_pattern(pattern)
         return {
             "success": True,
-            "message": f"成功清空 {deleted_count} 条缓存记录",
+            "input": f"成功清空 {deleted_count} 条缓存记录",
             "pattern": pattern
         }
     except RuntimeError as e:

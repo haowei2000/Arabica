@@ -47,7 +47,7 @@ class MessageCRUD:
 
     async def create(self, data: MessageCreate, auto_commit: bool = False) -> Message:
         """
-        Create a new message.
+        Create a new input.
 
         Args:
             data: Message creation data
@@ -87,10 +87,10 @@ class MessageCRUD:
 
     async def get_by_id(self, message_id: str | UUID) -> Message | None:
         """
-        Get message by ID.
+        Get input by ID.
 
         Args:
-            message_id: The message ID to search for
+            message_id: The input ID to search for
 
         Returns:
             Message instance or None if not found
@@ -107,10 +107,10 @@ class MessageCRUD:
         auto_commit: bool = False
     ) -> Message | None:
         """
-        Update an existing message.
+        Update an existing input.
 
         Args:
-            message_id: The message ID to update
+            message_id: The input ID to update
             data: Update data
             auto_commit: If True, immediately commit the transaction.
                          If False (default), only flush changes.

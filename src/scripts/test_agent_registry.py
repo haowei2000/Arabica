@@ -31,7 +31,7 @@ from aiwen.services.agents.agent_registry import AgentRegistry, init_agent_regis
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(input)s'
 )
 
 logger = logging.getLogger(__name__)

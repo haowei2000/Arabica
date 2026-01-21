@@ -25,7 +25,7 @@ def assert_response_success(
         AssertionError: 当断言失败时
 
     使用示例:
-        >>> response = {"code": 200, "message": "Success", "data": {...}}
+        >>> response = {"code": 200, "input": "Success", "data": {...}}
         >>> assert_response_success(response)
         >>> assert_response_success(response, expected_message="Success")
     """
@@ -35,9 +35,9 @@ def assert_response_success(
     )
 
     if expected_message:
-        assert "message" in response, "Response missing 'message' field"
-        assert response["message"] == expected_message, (
-            f"Expected message '{expected_message}', got '{response['message']}'"
+        assert "input" in response, "Response missing 'input' field"
+        assert response["input"] == expected_message, (
+            f"Expected input '{expected_message}', got '{response['input']}'"
         )
 
     # 检查是否有 data 字段（成功响应通常应该有）
@@ -58,7 +58,7 @@ def assert_response_error(
         message_contains: 错误消息应包含的文本（可选）
 
     使用示例:
-        >>> response = {"code": 400, "message": "Invalid parameter"}
+        >>> response = {"code": 400, "input": "Invalid parameter"}
         >>> assert_response_error(response, 400)
         >>> assert_response_error(response, 400, message_contains="Invalid")
     """
@@ -68,10 +68,10 @@ def assert_response_error(
     )
 
     if message_contains:
-        assert "message" in response, "Response missing 'message' field"
-        assert message_contains in response["message"], (
-            f"Expected message to contain '{message_contains}', "
-            f"got '{response['message']}'"
+        assert "input" in response, "Response missing 'input' field"
+        assert message_contains in response["input"], (
+            f"Expected input to contain '{message_contains}', "
+            f"got '{response['input']}'"
         )
 
 

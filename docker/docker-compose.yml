@@ -142,7 +142,7 @@ services:
   postgres:
     profiles:
       - postgres
-      - db
+      - db_session
       - infra
       - all
     image: pgvector/pgvector:pg15
@@ -175,7 +175,7 @@ services:
   mysql:
     profiles:
       - mysql
-      - db
+      - db_session
       - infra
       - all
     image: mysql:8.0
@@ -215,6 +215,8 @@ services:
       - all
     image: redis:7-alpine
     container_name: aiwen-redis
+    env_file:
+      - ../.env
     command:
       - redis-server
       - /usr/local/etc/redis/redis.conf

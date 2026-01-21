@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class MessageCreate(BaseModel):
     """
-    Schema for creating a new message.
+    Schema for creating a new input.
 
     Note: Agent and App are merged into a single concept.
     app_id refers to the agent_id.
@@ -22,23 +22,23 @@ class MessageCreate(BaseModel):
     message: dict[str, Any] = Field(..., description="Message content as JSON")
     answer: str = Field(default="", description="Model answer/response")
     status: str = Field(default="normal", description="Message status")
-    from_source: str = Field(default='system', description="Source of the message")
+    from_source: str = Field(default='system', description="Source of the input")
     from_end_user_id: str | UUID | None = Field(default=None, description="End user ID")
     from_account_id: str | UUID | None = Field(default=None, description="Account ID")
 
 
 class MessageUpdate(BaseModel):
-    """Schema for updating an existing message."""
+    """Schema for updating an existing input."""
 
     answer: str | None = Field(None, description="Model answer/response")
     status: str | None = Field(None, description="Message status")
-    error: str | None = Field(None, description="Error message if any")
+    error: str | None = Field(None, description="Error input if any")
     answer_tokens: int | None = Field(None, description="Number of tokens in answer")
-    total_price: Decimal | None = Field(None, description="Total price for the message")
+    total_price: Decimal | None = Field(None, description="Total price for the input")
 
 
 class MessageResponse(BaseModel):
-    """Schema for message response."""
+    """Schema for input response."""
 
     id: str
     app_id: str

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/test-auth", tags=["test-auth"])
 @router.get("/public")
 async def public_endpoint():
     """Public endpoint that doesn't require authentication."""
-    return {"message": "This is a public endpoint"}
+    return {"input": "This is a public endpoint"}
 
 
 @router.get("/protected")
@@ -22,7 +22,7 @@ async def protected_endpoint(
 ):
     """Protected endpoint that requires authentication using FastAPI dependencies."""
     return {
-        "message": "This is a protected endpoint",
+        "input": "This is a protected endpoint",
         "user": {
             "id": str(current_user.id),
             "username": current_user.username,
@@ -46,7 +46,7 @@ async def admin_only_endpoint(
         )
 
     return {
-        "message": "This is an admin-only endpoint",
+        "input": "This is an admin-only endpoint",
         "user": {
             "id": str(current_user.id),
             "username": current_user.username,
@@ -66,7 +66,7 @@ async def token_info_endpoint(
     This is more efficient when you only need token claims.
     """
     return {
-        "message": "Token information retrieved",
+        "input": "Token information retrieved",
         "token_data": {
             "user_id": str(token_data.user_id),
             "role": token_data.role,

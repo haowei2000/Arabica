@@ -178,7 +178,7 @@ from aiwen.utils.permissions import require_auth
 @router.get("/protected")
 @require_auth
 async def protected_endpoint(request: Request):
-    return {"message": "This is protected"}
+    return {"input": "This is protected"}
 ```
 
 ### 2. 需要特定角色
@@ -188,7 +188,7 @@ from aiwen.utils.permissions import require_roles
 @router.get("/admin-only")
 @require_roles(["admin"])
 async def admin_only_endpoint(request: Request):
-    return {"message": "Admin only"}
+    return {"input": "Admin only"}
 ```
 
 ## 依赖注入使用
@@ -216,7 +216,7 @@ from aiwen.utils.current_user import get_current_active_user
 
 @router.get("/secure-profile")
 async def get_secure_profile(current_user: TokenData = Depends(get_current_active_user)):
-    return {"message": "This user is active"}
+    return {"input": "This user is active"}
 ```
 
 ### 3. 角色检查依赖
@@ -226,12 +226,12 @@ from aiwen.utils.current_user import get_current_admin_user, require_any_role
 # 管理员专用
 @router.get("/admin-panel")
 async def admin_panel(current_user: TokenData = Depends(get_current_admin_user)):
-    return {"message": "Admin access"}
+    return {"input": "Admin access"}
 
 # 多角色检查
 @router.get("/moderator-area")
 async def moderator_area(current_user: TokenData = Depends(require_any_role(["admin", "moderator"]))):
-    return {"message": "Moderator access"}
+    return {"input": "Moderator access"}
 ```
 
 ### 4. 自定义角色依赖
@@ -240,7 +240,7 @@ from aiwen.utils.current_user import require_role
 
 @router.get("/premium-content")
 async def premium_content(current_user: TokenData = Depends(require_role("premium"))):
-    return {"message": "Premium content unlocked"}
+    return {"input": "Premium content unlocked"}
 ```
 
 ### 5. 同时访问请求和用户信息

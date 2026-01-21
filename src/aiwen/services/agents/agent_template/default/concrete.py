@@ -3,7 +3,7 @@
 Default Agent Template with Conversation Context
 
 Provides a default agent implementation with short-term conversation context
-loaded from database conversation and message tables.
+loaded from database conversation and input tables.
 
 默认Agent模版，支持从数据库加载短期会话级上下文
 """
@@ -13,7 +13,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 
-from aiwen.schemas.agents.input import TextMessage
+from aiwen.schemas.agents.input import TextInput
 from aiwen.services.agents.agent_registry import register_agent
 from aiwen.services.agents.base import BaseAgentTemplate
 from .context import get_messages_from_context, add_message_to_context
@@ -84,18 +84,18 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         # Initialize agent
         self.agent = create_agent(model=self.llm)
 
-    async def _prepare_messages(self, input_data: TextMessage) -> list:
+    async def _prepare_messages(self, input_data: TextInput) -> list:
         """
         Prepare messages including conversation history.
 
         Loads historical messages from database if conversation_id is provided,
-        then appends the current user message.
+        then appends the current user input.
 
         Args:
-            input_data: Input message with optional conversation_id
+            input_data: Input input with optional conversation_id
 
         Returns:
-            List of message dictionaries including history and current message
+            List of input dictionaries including history and current input
 
         准备消息列表，包含对话历史。
         """
@@ -116,16 +116,16 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
         return messages
 
-    async def run(self, input_data: TextMessage | dict) -> dict[str, Any]:
+    async def run(self, input_data: TextInput | dict) -> dict[str, Any]:
         """
         Execute the agent with conversation context.
 
-        Loads conversation history from a database, appends the new message,
+        Loads conversation history from a database, appends the new input,
         and generates a response using the LLM.
 
         Args:
             input_data: Contains 'query' and optional 'conversation_id'
-                - query: User's input message
+                - query: User's input input
                 - conversation_id: UUID of existing conversation (optional)
 
         Returns:
@@ -134,26 +134,26 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         执行Agent，支持对话上下文。
         从数据库加载对话历史，添加新消息，并生成响应。
         """
-        # Convert to TextMessage if needed
+        # Convert to TextInput if needed
         if isinstance(input_data, dict):
-            input_data = TextMessage(**input_data)
+            input_data = TextInput(**input_data)
 
         # Prepare messages with history
         messages = await self._prepare_messages(input_data)
 
-        logger.info(f"Processing message with {len(messages)} total messages in context")
+        logger.info(f"Processing input with {len(messages)} total messages in context")
 
         # Use PostgresSaver for checkpointing
-        # Invoke LLM with full message history
+        # Invoke LLM with full input history
         response = await self.llm.ainvoke(messages)
 
         return {"answer": response.content}
 
-    async def stream(self, input_data: TextMessage | dict):
+    async def stream(self, input_data: TextInput | dict):
         """
         Stream the agent's output with conversation context.
 
-        Loads conversation history, appends the new message, and streams
+        Loads conversation history, appends the new input, and streams
         the agent's response as it is generated.
 
         Args:
@@ -167,7 +167,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         # 验证输入数据类型
         logger.info(f"Agent.stream called with input_data type: {type(input_data)}")
 
-        if not isinstance(input_data, (dict, TextMessage)):
+        if not isinstance(input_data, (dict, TextInput)):
             error_msg = (
                 f"Invalid input_data type: expected dict or TextMessage, "
                 f"got {type(input_data).__name__}. "
@@ -176,11 +176,11 @@ class DefaultAgentTemplate(BaseAgentTemplate):
             logger.error(error_msg)
             raise TypeError(error_msg)
 
-        # Convert to TextMessage if needed
+        # Convert to TextInput if needed
         if isinstance(input_data, dict):
             logger.info(f"Converting dict to TextMessage: {input_data}")
             try:
-                input_data = TextMessage(**input_data)
+                input_data = TextInput(**input_data)
             except Exception as e:
                 logger.error(f"Failed to convert dict to TextMessage: {e}")
                 logger.error(f"Dict content: {input_data}")
@@ -189,7 +189,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         # Prepare messages with history
         messages = await self._prepare_messages(input_data)
 
-        logger.info(f"Streaming message with {len(messages)} total messages in context")
+        logger.info(f"Streaming input with {len(messages)} total messages in context")
 
 
         # Use PostgresSaver for checkpointing
@@ -202,6 +202,6 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                 yield f"Token: {event['data']['chunk'].content}"
                 full_response += event['data']['chunk'].content
             elif event["event"] == "on_chat_model_end":
-                yield f"Full message: {event['data']['output'].content}"
+                yield f"Full input: {event['data']['output'].content}"
             else:
                 pass

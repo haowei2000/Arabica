@@ -1,5 +1,5 @@
 """
-REST API endpoints for message management.
+REST API endpoints for input management.
 
 Note: Agent and App are merged into a single concept.
 The app_id field in messages refers to the agent_id.
@@ -27,14 +27,14 @@ async def create_message(
     crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
-    Create a new message.
+    Create a new input.
 
     Args:
         data: Message creation data
         crud: Message CRUD service
 
     Returns:
-        Created message
+        Created input
     """
     message = await crud.create(data)
     return message
@@ -46,17 +46,17 @@ async def get_message(
     crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
-    Get message by ID.
+    Get input by ID.
 
     Args:
-        message_id: The message ID
+        message_id: The input ID
         crud: Message CRUD service
 
     Returns:
         Message details
 
     Raises:
-        HTTPException: If message not found
+        HTTPException: If input not found
     """
     message = await crud.get_by_id(message_id)
     if not message:
@@ -74,18 +74,18 @@ async def update_message(
     crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
-    Update an existing message.
+    Update an existing input.
 
     Args:
-        message_id: The message ID
+        message_id: The input ID
         data: Update data
         crud: Message CRUD service
 
     Returns:
-        Updated message
+        Updated input
 
     Raises:
-        HTTPException: If message not found
+        HTTPException: If input not found
     """
     message = await crud.update(message_id, data)
     if not message:

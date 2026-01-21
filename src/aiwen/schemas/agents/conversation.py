@@ -95,7 +95,7 @@ class ConversationDetailResponse(ConversationResponse):
     @model_validator(mode='before')
     @classmethod
     def convert_messages(cls, data: Any) -> Any:
-        """Convert message objects to dicts."""
+        """Convert input objects to dicts."""
         # First call parent validator
         result = ConversationResponse.convert_uuids_and_map_fields(data)
 

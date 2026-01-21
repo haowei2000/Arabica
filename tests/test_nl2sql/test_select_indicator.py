@@ -47,12 +47,12 @@ class TestSelectIndicatorEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
-        assert data["message"] == "Indicator selected successfully"
+        assert data["input"] == "Indicator selected successfully"
         assert "data" in data
         assert data["data"]["indicator_name"] == "production_quantity_last_week"
         mock_service.assert_called_once_with(
             query=valid_query,
-            db=mock_service.call_args[1]['db']  # 数据库会话参数由Depends注入
+            db=mock_service.call_args[1]['db_session']  # 数据库会话参数由Depends注入
         )
 
     def test_select_indicator_empty_query(self, test_client):
@@ -67,7 +67,7 @@ class TestSelectIndicatorEndpoint:
         assert response.status_code == 500  # 服务层会抛出ValueError，被全局异常处理器捕获
         data = response.json()
         assert data["code"] == 500
-        assert data["message"] == "Failed to select indicator"
+        assert data["input"] == "Failed to select indicator"
 
     def test_select_indicator_missing_query(self, test_client):
         """测试缺少查询参数的情况"""
@@ -81,7 +81,7 @@ class TestSelectIndicatorEndpoint:
         assert response.status_code == 422  # 请求验证错误
         data = response.json()
         assert data["code"] == 422
-        assert data["message"] == "请求参数验证失败"
+        assert data["input"] == "请求参数验证失败"
 
     @patch('aiwen.routers.nl2sql.select_indicator_service')
     def test_select_indicator_service_exception(self, mock_service, test_client, valid_query):
@@ -99,5 +99,5 @@ class TestSelectIndicatorEndpoint:
         assert response.status_code == 500
         data = response.json()
         assert data["code"] == 500
-        assert data["message"] == "Failed to select indicator"
+        assert data["input"] == "Failed to select indicator"
         mock_service.assert_called_once()

@@ -27,7 +27,7 @@ else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
     print("   Worker may fail if environment variables are not set!")
 
-from aiwen.workers.agent_worker import start_worker
+from aiwen.workers.task_worker import start_worker
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
 from aiwen.services.agents.agent_registry import init_agent_registry
@@ -39,7 +39,7 @@ log_dir.mkdir(exist_ok=True)
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(input)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(log_dir / 'agent_worker.log')

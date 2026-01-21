@@ -38,7 +38,7 @@ class TestNl2sqlMcpTools:
         # Assert
         assert isinstance(result, IndicatorSelectResponseSchema)
         assert result.indicator_name == "production_last_week"
-        mock_service.assert_called_once_with(query=query, db=mock_service.call_args[1]['db'])
+        mock_service.assert_called_once_with(query=query, db=mock_service.call_args[1]['db_session'])
 
     @patch('aiwen.mcp_router.nl2sql.get_indicator_info_service')
     async def test_get_indicator_info(self, mock_service):
@@ -59,7 +59,7 @@ class TestNl2sqlMcpTools:
         # Assert
         assert isinstance(result, IndicatorInfoSchema)
         assert result.name == indicator_name
-        mock_service.assert_called_once_with(indicator_name=indicator_name, db=mock_service.call_args[1]['db'])
+        mock_service.assert_called_once_with(indicator_name=indicator_name, db=mock_service.call_args[1]['db_session'])
 
     @patch('aiwen.mcp_router.nl2sql.generate_sql_service')
     async def test_generate_sql(self, mock_service):

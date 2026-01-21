@@ -32,6 +32,7 @@ class AppSettings(BaseSettings):
 
     dashscope_api_key: str = Field(default="", description="DashScope API Key")
     env: str = "development"
+    agent_task_name: str = "agent:stream"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

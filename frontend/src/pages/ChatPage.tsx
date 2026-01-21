@@ -64,13 +64,13 @@ export default function ChatPage() {
     }
 
     if (!currentAppId) {
-      console.error('❌ No app ID, cannot send message');
+      console.error('❌ No app ID, cannot send input');
       return;
     }
 
     const message = input.trim();
     setInput('');
-    console.log('📨 Sending message:', message);
+    console.log('📨 Sending input:', message);
     await sendMessage(message, '新对话');
   };
 

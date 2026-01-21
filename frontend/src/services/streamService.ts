@@ -155,8 +155,8 @@ class StreamService {
                       console.log('🔤 Token:', token);
                       onChunk(token);
                     }
-                  } else if (chunkData.startsWith('Full message: ')) {
-                    console.log('📝 Full message received');
+                  } else if (chunkData.startsWith('Full input: ')) {
+                    console.log('📝 Full input received');
                   } else if (chunkData && !chunkData.startsWith('Input: ')) {
                     console.log('💬 Other chunk:', chunkData);
                     onChunk(chunkData);

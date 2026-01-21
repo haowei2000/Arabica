@@ -50,7 +50,7 @@ def _initialize_cache_middleware(settings) -> ResponseCachingMiddleware:
         cache_store = RedisStore(
             host=settings.redis.host,
             port=settings.redis.port,
-            db=settings.redis.db,
+            db=settings.redis.db_session,
             password=settings.redis.password,
         )
         logger.debug(

@@ -12,9 +12,8 @@ Chat Service - 聊天服务
     - CRUD services: 数据库操作
     - Agent Registry: Agent 注册管理
 """
-from collections.abc import AsyncGenerator
-import json
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import UUID
 
@@ -22,43 +21,36 @@ from pydantic import BaseModel
 
 from aiwen.models.agents.conversation import Conversation
 from aiwen.models.agents.message import Message
-from aiwen.schemas.agents.input import TextMessage
+from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.agents.message import MessageUpdate
-from aiwen.services.agents.agent_registry import AgentRegistry
-from aiwen.services.agents.app_factory import AppAgentFactory
+from aiwen.schemas.chat import StartTaskResult
 from aiwen.services.agents.chat.chat_helper import (
     create_message,
     create_conversation,
     stream_and_finalize,
 )
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.agents.crud.app_crud import AppCRUD
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
 from aiwen.services.agents.crud.message_crud import MessageCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.utils.json_utils import dumps as json_dumps
 from aiwen.utils.sse import sse
-from aiwen.workers.task_consumer import TaskConsumer
-from aiwen.workers.task_producer import TaskProducer
-from redis.asyncio import Redis as AsyncRedis
+from aiwen.workers.task_consumer import AgentTaskConsumer
+from aiwen.workers.task_producer import AgentTaskProducer
 
 logger = logging.getLogger(__name__)
 
 
-class StartTaskResult(BaseModel):
-    """启动任务的返回结果"""
-    task_id: str
-    conversation_id: str
-    message_id: str
+
+
 
 async def _stream_queue_events(
         *,
-    task_consumer: TaskConsumer,
-    task_id: UUID,
-    conversation: Conversation,
-    message: Message,
-    message_crud: MessageCRUD,
+        task_consumer: AgentTaskConsumer,
+        task_id: UUID,
+        conversation: Conversation,
+        message: Message,
+        message_crud: MessageCRUD,
 ) -> AsyncGenerator[str, None]:
     """
     从 Redis Stream 流式读取事件
@@ -77,21 +69,20 @@ async def _stream_queue_events(
         Exception: 事件处理失败时抛出异常
     """
     try:
-        logger.info(f"Starting to consume events for task {task_id} via TaskConsumer")
+        logger.info(f"Starting to consume events for task {task_id} via AgentTaskConsumer")
 
         async def consumer_stream():
-            """内部 TaskConsumer 消息流生成器"""
+            """内部 AgentTaskConsumer 消息流生成器"""
             async for event_payload in task_consumer.consume_task_events(
-                task_id=str(task_id),
-                task_type="chat",
+                    task_id=str(task_id),
             ):
                 yield event_payload
 
         # Stream and finalize
         async for event in stream_and_finalize(
-            stream_iter=consumer_stream(),
-            conversation=conversation,
-            message=message,
+                stream_iter=consumer_stream(),
+                conversation=conversation,
+                message=message,
         ):
             yield event
 
@@ -104,110 +95,17 @@ async def _stream_queue_events(
         yield sse("error", str(e))
 
 
-async def _stream_direct_events(
-        *,
-    app_id: UUID,
-    payload: TextMessage,
-    conversation: Conversation,
-    message: Message,
-    app_crud: AppCRUD,
-    template_crud: AgentTemplateCRUD,
-    message_crud: MessageCRUD,
-        runtime: AgentRuntime,
-) -> AsyncGenerator[str, None]:
-    """
-    直接模式事件流生成器
-
-    Args:
-        app_id: 应用 ID
-        payload: 聊天消息载荷
-        conversation: 对话对象
-        message: 消息对象
-        app_crud: 应用 CRUD 服务
-        template_crud: Agent 模板 CRUD 服务
-        message_crud: 消息 CRUD 服务
-        runtime: Agent 运行时
-
-    Yields:
-        SSE 格式的事件字符串
-
-    Raises:
-        Exception: Agent 执行失败时抛出异常
-    """
-    task_id = None
-
-    try:
-        # 1. Get app from database
-        app = await app_crud.get_app_by_id(app_id)
-        if not app:
-            raise ValueError(f"App with ID '{app_id}' not found")
-        logger.info(f"Retrieved app {app_id} from database")
-
-        # 2. Get agent template
-        if not app.agent_template_id:
-            raise ValueError(f"App '{app_id}' has no associated agent template")
-
-        template = await template_crud.get_template_by_id(app.agent_template_id)
-        if not template:
-            raise ValueError(f"Agent template '{app.agent_template_id}' not found")
-        logger.info(f"Retrieved agent template '{template.template_code}'")
-
-        # 3. Check if template is registered
-        if not AgentRegistry.is_registered(template.template_code):
-            raise ValueError(
-                f"Agent type '{template.template_code}' is not registered in AgentRegistry"
-            )
-
-        # 4. Create agent instance using factory
-        factory = AppAgentFactory(
-            appid=str(app.id),
-            template_code=template.template_code,
-            app_config=app.config or {},
-        )
-        payload_dict = payload.model_dump(mode="json")
-        agent_instance = factory.create(payload_dict)
-        logger.info(f"Created agent instance for template '{template.template_code}'")
-
-        # 5. Attach to runtime (using message.id as task_id)
-        task_id = message.id
-        runtime.attach(task_id, agent_instance)
-        logger.info(f"Attached agent instance to runtime with task_id {task_id}")
-
-        # 6. Stream execution
-        stream = agent_instance.stream(payload_dict)
-
-        async for event in stream_and_finalize(
-            stream_iter=stream,
-            conversation=conversation,
-            message=message,
-        ):
-            yield event
-
-    except Exception as e:
-        logger.error(f"Error in direct chat for app {app_id}: {e}", exc_info=True)
-        await message_crud.update(
-            str(message.id),
-            MessageUpdate(status="failed", error=str(e)),
-        )
-        yield sse("error", str(e))
-    finally:
-        # 7. Release agent instance
-        if task_id:
-            runtime.release(task_id)
-            logger.info(f"Released agent instance from runtime (task_id: {task_id})")
-
-
 def _prepare_task_payload(
-        payload: TextMessage,
-    app_id: UUID,
-    conversation: Conversation,
-    message: Message,
+        text_message: TextInput,
+        app_id: UUID,
+        conversation: Conversation,
+        message: Message,
 ) -> dict:
     """
     准备载荷字典
 
     Args:
-        payload: 原始载荷
+        text_message: 原始载荷
         app_id: 应用 ID
         conversation: 对话对象
         message: 消息对象
@@ -216,9 +114,9 @@ def _prepare_task_payload(
         包含应用、对话和消息 ID 的载荷字典
     """
     payload_dict = (
-        payload.model_dump(mode="json")
-        if isinstance(payload, BaseModel)
-        else payload
+        text_message.model_dump(mode="json")
+        if isinstance(text_message, BaseModel)
+        else text_message
     )
     payload_dict.update(
         {
@@ -231,10 +129,10 @@ def _prepare_task_payload(
 
 
 async def _publish_event_to_stream(
-    redis_client: Any,
-    task_id: UUID,
-    event: str,
-    data: str,
+        redis_client: Any,
+        task_id: UUID,
+        event: str,
+        data: str,
 ) -> None:
     """
     发布事件到 Redis Stream
@@ -248,7 +146,7 @@ async def _publish_event_to_stream(
     stream_name = f"agent:task:chat:{task_id}:events"
     await redis_client.xadd(
         name=stream_name,
-        fields={"event": event, "payload": json_dumps(data)},
+        fields={"event": event, "text_message": json_dumps(data)},
         maxlen=1000,
         approximate=True
     )
@@ -256,9 +154,9 @@ async def _publish_event_to_stream(
 
 async def cancel_task(
         *,
-    task_id: UUID,
-    redis_client: Any,
-    runtime: AgentRuntime,
+        task_id: UUID,
+        redis_client: Any,
+        runtime: AgentRuntime,
 ) -> bool:
     """
     取消正在运行的任务
@@ -312,13 +210,13 @@ async def cancel_task(
 
 async def get_task_messages(
         *,
-    task_id: UUID,
-    task_consumer: TaskConsumer,
+        task_id: UUID,
+        task_consumer: AgentTaskConsumer,
 ) -> AsyncGenerator[str, None]:
     """
     订阅任务消息流
 
-    通过 TaskConsumer 从 Redis Stream 读取任务的消息流，返回 SSE 格式的事件。
+    通过 AgentTaskConsumer 从 Redis Stream 读取任务的消息流，返回 SSE 格式的事件。
 
     Args:
         task_id: 任务 ID
@@ -328,26 +226,25 @@ async def get_task_messages(
         SSE 格式的事件字符串
     """
     try:
-        logger.info(f"Starting to consume messages for task {task_id} via TaskConsumer")
+        logger.info(f"Starting to consume messages for task {task_id} via AgentTaskConsumer")
 
         # Yield metadata event with task_id
         yield sse("metadata", {"task_id": str(task_id)})
 
         async for event_payload in task_consumer.consume_task_events(
-            task_id=str(task_id),
-            task_type="chat",
+                task_id=str(task_id),
         ):
             yield sse("chunk", event_payload)
 
         # Task completed successfully (consume_task_events returns normally on success)
         logger.info(f"Task {task_id} completed successfully")
-        yield sse("success", {"message": "Task completed"})
+        yield sse("success", {"input": "Task completed"})
 
     except Exception as e:
         error_msg = str(e)
         if "cancelled" in error_msg.lower():
             logger.info(f"Task {task_id} was cancelled")
-            yield sse("cancelled", {"message": "Task was cancelled"})
+            yield sse("cancelled", {"input": "Task was cancelled"})
         else:
             logger.error(f"Error streaming events for task {task_id}: {e}", exc_info=True)
             yield sse("error", error_msg)
@@ -355,13 +252,13 @@ async def get_task_messages(
 
 async def start_task(
         *,
-    app_id: UUID,
-    user_id: UUID,
-    payload: TextMessage,
-    task_crud: AgentTaskCRUD,
-    conversation_crud: ConversationCRUD,
-    message_crud: MessageCRUD,
-    task_producer: TaskProducer,
+        app_id: UUID,
+        user_id: UUID,
+        text_message: TextInput,
+        task_crud: AgentTaskCRUD,
+        conversation_crud: ConversationCRUD,
+        message_crud: MessageCRUD,
+        task_producer: AgentTaskProducer,
 ) -> StartTaskResult:
     """
     启动聊天任务（不等待结果）
@@ -372,7 +269,7 @@ async def start_task(
     Args:
         app_id: 应用 ID
         user_id: 用户 ID
-        payload: 聊天消息载荷
+        text_message: 聊天消息载荷
         task_crud: 任务 CRUD 服务
         conversation_crud: 对话 CRUD 服务
         message_crud: 消息 CRUD 服务
@@ -384,36 +281,36 @@ async def start_task(
     # 1. Prepare conversation
     conversation = await create_conversation(
         app_id=app_id,
-        payload=payload,
+        text_message=text_message,
         conversation_crud=conversation_crud,
     )
     logger.info(f"Prepared conversation {conversation.id} for app {app_id}")
 
-    # 2. Create message
+    # 2. Create input
     message = await create_message(
         app_id=app_id,
         conversation_id=conversation.id,
-        text_message=payload,
+        text_message=text_message,
         message_crud=message_crud,
     )
-    logger.info(f"Created message {message.id} in conversation {conversation.id}")
+    logger.info(f"Created input {message.id} in conversation {conversation.id}")
 
     # 3. Create a task
     task = await task_crud.create_agent_task(
         app_id=app_id,
         user_id=user_id,
-        task_type="chat",
-        payload=payload,
+        task_type="agent:streams",
+        payload=text_message,
     )
-    logger.info(f"Created task {task.id} for message {message.id}")
+    logger.info(f"Created task {task.id} for input {message.id}")
 
-    # 4. Prepare a payload with app, conversation and message IDs
-    payload_dict = _prepare_task_payload(payload, app_id, conversation, message)
+    # 4. Prepare a text_message with app, conversation and input IDs
+    task_payload = _prepare_task_payload(text_message, app_id, conversation, message)
 
-    # 5. Publish a task using TaskProducer
+    # 5. Publish a task using AgentTaskProducer
     await task_producer.publish_task(
         task_id=UUID(str(task.id)),
-        payload=payload_dict,
+        payload=task_payload,
     )
 
     return StartTaskResult(
@@ -421,144 +318,3 @@ async def start_task(
         conversation_id=str(conversation.id),
         message_id=str(message.id),
     )
-
-
-async def chat_direct(
-        *,
-    app_id: UUID,
-    payload: TextMessage,
-    app_crud: AppCRUD,
-    template_crud: AgentTemplateCRUD,
-    conversation_crud: ConversationCRUD,
-    message_crud: MessageCRUD,
-    runtime: AgentRuntime,
-) -> AsyncGenerator[str, None]:
-    """
-    直接模式聊天
-
-    直接执行聊天请求，不通过队列。适用于测试或低延迟场景。
-
-    Args:
-        app_id: 应用 ID
-        payload: 聊天消息载荷
-        app_crud: 应用 CRUD 服务
-        template_crud: Agent 模板 CRUD 服务
-        conversation_crud: 对话 CRUD 服务
-        message_crud: 消息 CRUD 服务
-        runtime: Agent 运行时
-
-    Yields:
-        SSE 格式的事件字符串
-
-    Raises:
-        Exception: 聊天处理失败时抛出异常
-    """
-    # 1. Prepare conversation
-    conversation = await create_conversation(
-        app_id=app_id,
-        payload=payload,
-        conversation_crud=conversation_crud,
-    )
-    logger.info(f"Prepared conversation {conversation.id} for app {app_id}")
-
-    # 2. Create message
-    message = await create_message(
-        app_id=app_id,
-        conversation_id=conversation.id,
-        text_message=payload,
-        message_crud=message_crud,
-    )
-    logger.info(f"Created message {message.id} in conversation {conversation.id}")
-
-    # 3. Stream events from direct agent execution
-    async for event in _stream_direct_events(
-        app_id=app_id,
-        payload=payload,
-        conversation=conversation,
-        message=message,
-        app_crud=app_crud,
-        template_crud=template_crud,
-        message_crud=message_crud,
-            runtime=runtime,
-    ):
-        yield event
-
-
-async def chat_queue_based(
-        *,
-    app_id: UUID,
-    user_id: UUID,
-    payload: TextMessage,
-    task_crud: AgentTaskCRUD,
-    conversation_crud: ConversationCRUD,
-    message_crud: MessageCRUD,
-    task_producer: TaskProducer,
-    task_consumer: TaskConsumer,
-) -> AsyncGenerator[str, None]:
-    """
-    队列模式聊天
-
-    通过 Redis 队列异步处理聊天请求，适用于生产环境。
-    任务由 Worker 异步处理，结果通过 Redis Stream 实时推送。
-
-    Args:
-        app_id: 应用 ID
-        user_id: 用户 ID
-        payload: 聊天消息载荷
-        task_crud: 任务 CRUD 服务
-        conversation_crud: 对话 CRUD 服务
-        message_crud: 消息 CRUD 服务
-        task_producer: 任务生产者
-        task_consumer: 任务消费者 (用于读取事件)
-
-    Yields:
-        SSE 格式的事件字符串
-
-    Raises:
-        Exception: 聊天处理失败时抛出异常
-    """
-    # 1. Prepare conversation
-    conversation = await create_conversation(
-        app_id=app_id,
-        payload=payload,
-        conversation_crud=conversation_crud,
-    )
-
-    logger.info(f"Prepared conversation {conversation.id} for app {app_id}")
-
-    # 2. Create a message
-    message = await create_message(
-        app_id=app_id,
-        conversation_id=conversation.id,
-        text_message=payload,
-        message_crud=message_crud,
-    )
-    logger.info(f"Created message {message.id} in conversation {conversation.id}")
-
-    # 3. Create task
-    task = await task_crud.create_agent_task(
-        app_id=app_id,
-        user_id=user_id,
-        task_type="chat",
-        payload=payload,
-    )
-    logger.info(f"Created task {task.id} for message {message.id}")
-
-    # 4. Prepare a payload with app, conversation and message IDs
-    payload_dict = _prepare_task_payload(payload, app_id, conversation, message)
-
-    # 5. Publish task using TaskProducer
-    await task_producer.publish_task(
-        task_id=task.id,
-        payload=payload_dict,
-    )
-
-    # 6. Stream events from TaskConsumer
-    async for event in _stream_queue_events(
-        task_consumer=task_consumer,
-        task_id=task.id,
-        conversation=conversation,
-        message=message,
-        message_crud=message_crud,
-    ):
-        yield event

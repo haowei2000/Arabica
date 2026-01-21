@@ -92,7 +92,7 @@ async def get_current_active_user(
         async def admin_route(
             current_user: Annotated[UserResponse, Depends(get_current_active_user)]
         ):
-            return {"message": "Admin access granted"}
+            return {"input": "Admin access granted"}
     """
     if not current_user.is_active:
         raise HTTPException(
@@ -169,7 +169,7 @@ async def get_admin_user(
             admin_user: Annotated[UserResponse, Depends(get_admin_user)],
             user_id: UUID
         ):
-            return {"message": "User deleted by admin"}
+            return {"input": "User deleted by admin"}
     """
     if not current_user.is_superuser:
         raise HTTPException(

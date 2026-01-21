@@ -74,7 +74,7 @@ def require_role(required_role: str):
     Usage:
         @router.get("/admin")
         async def admin_endpoint(current_user: TokenData = Depends(require_role("admin"))):
-            return {"message": "Admin access granted"}
+            return {"input": "Admin access granted"}
 
     Args:
         required_role: The role required to access the endpoint
@@ -104,7 +104,7 @@ def require_any_role(required_roles: list[str]):
     Usage:
         @router.get("/moderator")
         async def moderator_endpoint(current_user: TokenData = Depends(require_any_role(["admin", "moderator"]))):
-            return {"message": "Moderator access granted"}
+            return {"input": "Moderator access granted"}
 
     Args:
         required_roles: List of roles that can access the endpoint

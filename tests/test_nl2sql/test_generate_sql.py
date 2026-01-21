@@ -84,7 +84,7 @@ class TestGenerateSqlEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
-        assert data["message"] == "SQL generated successfully"
+        assert data["input"] == "SQL generated successfully"
         assert "data" in data
         assert "sql" in data["data"]
         mock_service.assert_called_once()
@@ -101,7 +101,7 @@ class TestGenerateSqlEndpoint:
         assert response.status_code == 422  # 请求验证错误
         data = response.json()
         assert data["code"] == 422
-        assert data["message"] == "请求参数验证失败"
+        assert data["input"] == "请求参数验证失败"
 
     def test_generate_sql_missing_query(self, test_client, sample_indicator_info):
         """测试缺少查询参数的情况"""
@@ -117,7 +117,7 @@ class TestGenerateSqlEndpoint:
         assert response.status_code == 422  # 请求验证错误
         data = response.json()
         assert data["code"] == 422
-        assert data["message"] == "请求参数验证失败"
+        assert data["input"] == "请求参数验证失败"
 
     @patch('aiwen.routers.nl2sql.generate_sql_service')
     def test_generate_sql_service_exception(self, mock_service, test_client, sample_query, sample_indicator_info):
@@ -139,5 +139,5 @@ class TestGenerateSqlEndpoint:
         assert response.status_code == 500
         data = response.json()
         assert data["code"] == 500
-        assert data["message"] == "Failed to generate SQL"
+        assert data["input"] == "Failed to generate SQL"
         mock_service.assert_called_once()

@@ -17,34 +17,28 @@ from fastapi.responses import StreamingResponse
 
 from aiwen.dependencies.agents import (
     get_agent_runtime,
-    get_app_crud,
     get_conversation_crud,
     get_message_crud,
     get_redis_client_dep,
     get_task_consumer,
     get_task_crud,
     get_task_producer,
-    get_template_crud,
 )
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.agents.input import TextMessage
+from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.services.agents.chat.chat_service import (
     StartTaskResult,
     cancel_task,
-    chat_direct,
-    chat_queue_based,
     get_task_messages,
     start_task,
 )
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.agents.crud.app_crud import AppCRUD
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
 from aiwen.services.agents.crud.message_crud import MessageCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
-from aiwen.workers.task_consumer import TaskConsumer
-from aiwen.workers.task_producer import TaskProducer
+from aiwen.workers.task_consumer import AgentTaskConsumer
+from aiwen.workers.task_producer import AgentTaskProducer
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -54,12 +48,12 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("/{app_id}/start", response_model=StartTaskResult)
 async def start_chat_task(
     app_id: UUID,
-    payload: TextMessage,
+    payload: TextInput,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     task_crud: AgentTaskCRUD = Depends(get_task_crud),
     conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
     message_crud: MessageCRUD = Depends(get_message_crud),
-    task_producer: TaskProducer = Depends(get_task_producer),
+    task_producer: AgentTaskProducer = Depends(get_task_producer),
 ) -> StartTaskResult:
     """
     启动聊天任务
@@ -85,7 +79,7 @@ async def start_chat_task(
     return await start_task(
         app_id=app_id,
         user_id=current_user.id,
-        payload=payload,
+        text_message=payload,
         task_crud=task_crud,
         conversation_crud=conversation_crud,
         message_crud=message_crud,
@@ -96,10 +90,9 @@ async def start_chat_task(
 # ---------- Get task messages (split endpoint) ----------
 
 @router.get("/{task_id}/messages")
-async def get_task_messages_endpoint(
+async def stream_task_messages(
     task_id: UUID,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    task_consumer: TaskConsumer = Depends(get_task_consumer),
+    task_consumer: AgentTaskConsumer = Depends(get_task_consumer),
 ):
     """
     获取任务消息流
@@ -114,7 +107,6 @@ async def get_task_messages_endpoint(
 
     Args:
         task_id: 任务 ID
-        current_user: 当前用户
         task_consumer: 任务消费者
 
     Returns:
@@ -139,8 +131,7 @@ async def get_task_messages_endpoint(
 @router.post("/{task_id}/cancel")
 async def cancel_chat_task(
     task_id: UUID,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    redis_client=Depends(get_redis_client_dep),
+        redis_client=Depends(get_redis_client_dep),
     runtime: AgentRuntime = Depends(get_agent_runtime),
 ):
     """
@@ -150,7 +141,6 @@ async def cancel_chat_task(
 
     Args:
         task_id: 任务 ID
-        current_user: 当前用户
         redis_client: Redis 客户端
         runtime: Agent 运行时
 
@@ -164,115 +154,6 @@ async def cancel_chat_task(
     )
 
     if success:
-        return {"status": "success", "message": f"Task {task_id} cancelled successfully"}
+        return {"status": "success", "input": f"Task {task_id} cancelled successfully"}
     else:
-        return {"status": "not_found", "message": f"Task {task_id} not found or already completed"}
-
-
-# ---------- Queue-based chat (combined endpoint, kept for compatibility) ----------
-
-@router.post("/{app_id}")
-async def chat_with_agent(
-    app_id: UUID,
-    payload: TextMessage,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    task_crud: AgentTaskCRUD = Depends(get_task_crud),
-    conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
-    message_crud: MessageCRUD = Depends(get_message_crud),
-    task_producer: TaskProducer = Depends(get_task_producer),
-    task_consumer: TaskConsumer = Depends(get_task_consumer),
-):
-    """
-    队列模式聊天端点
-
-    通过 Redis 队列异步处理聊天请求，适用于生产环境。
-
-    Args:
-        app_id: 应用 ID
-        payload: 聊天消息载荷
-        current_user: 当前用户
-        task_crud: 任务 CRUD 服务
-        conversation_crud: 对话 CRUD 服务
-        message_crud: 消息 CRUD 服务
-        task_producer: 任务生产者
-        task_consumer: 任务消费者
-
-    Returns:
-        StreamingResponse: SSE 流式响应
-    """
-    # Fill user info
-    payload.from_account_id = payload.from_account_id or current_user.id
-
-    # Stream events from service
-    return StreamingResponse(
-        chat_queue_based(
-            app_id=app_id,
-            user_id=current_user.id,
-            payload=payload,
-            task_crud=task_crud,
-            conversation_crud=conversation_crud,
-            message_crud=message_crud,
-            task_producer=task_producer,
-            task_consumer=task_consumer,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-        },
-    )
-
-
-# ---------- Direct chat ----------
-
-@router.post("/{app_id}/direct")
-async def chat_with_agent_direct(
-    app_id: UUID,
-    payload: TextMessage,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    app_crud: AppCRUD = Depends(get_app_crud),
-    template_crud: AgentTemplateCRUD = Depends(get_template_crud),
-    conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
-    message_crud: MessageCRUD = Depends(get_message_crud),
-    runtime: AgentRuntime = Depends(get_agent_runtime),
-):
-    """
-    直接模式聊天端点
-
-    直接执行聊天请求，不通过队列。适用于测试或低延迟场景。
-
-    Args:
-        app_id: 应用 ID
-        payload: 聊天消息载荷
-        current_user: 当前用户
-        app_crud: 应用 CRUD 服务
-        template_crud: Agent 模板 CRUD 服务
-        conversation_crud: 对话 CRUD 服务
-        message_crud: 消息 CRUD 服务
-        runtime: Agent 运行时
-
-    Returns:
-        StreamingResponse: SSE 流式响应
-    """
-    # Fill user info
-    payload.from_account_id = payload.from_account_id or current_user.id
-
-    # Stream events from service
-    return StreamingResponse(
-        chat_direct(
-            app_id=app_id,
-            payload=payload,
-            app_crud=app_crud,
-            template_crud=template_crud,
-            conversation_crud=conversation_crud,
-            message_crud=message_crud,
-            runtime=runtime,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-        },
-    )
+        return {"status": "not_found", "input": f"Task {task_id} not found or already completed"}

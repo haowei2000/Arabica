@@ -114,26 +114,28 @@ Starting AgentWorker...
 
 ```python
 import asyncio
-from aiwen.workers.agent_worker import AgentWorker
+from aiwen.workers.task_worker import AgentWorker
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
 
+
 async def main():
-    # 初始化 Redis
-    await init_redis_client()
-    redis_client = get_redis_client(is_async=True)
+   # 初始化 Redis
+   await init_redis_client()
+   redis_client = get_redis_client(is_async=True)
 
-    # 创建 worker
-    worker = AgentWorker(redis_client, get_session)
+   # 创建 worker
+   worker = AgentWorker(redis_client, get_session)
 
-    # 启动 worker
-    try:
-        await worker.start()
-    finally:
-        await worker.cleanup()
+   # 启动 worker
+   try:
+      await worker.start()
+   finally:
+      await worker.cleanup()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+   asyncio.run(main())
 ```
 
 ### 方式 3: 与 FastAPI 集成
@@ -274,7 +276,7 @@ Worker 会输出详细的日志信息：
 ### 查看运行状态
 
 ```python
-from aiwen.workers.agent_worker import AgentWorker
+from aiwen.workers.task_worker import AgentWorker
 
 # 获取正在运行的任务数
 count = worker.get_running_task_count()
@@ -283,7 +285,7 @@ print(f"Running tasks: {count}")
 # 获取特定任务的 agent
 agent = worker.get_running_agent(task_id)
 if agent:
-    print(f"Agent config: {agent.config}")
+   print(f"Agent config: {agent.config}")
 ```
 
 ## 故障排除
@@ -371,7 +373,7 @@ AppAgentFactory.register("my_custom_agent", MyCustomAgent)
 ```python
 await self.publish_event(task_id, {
     "event": "progress",
-    "data": {"percent": 50, "message": "Half done"}
+    "data": {"percent": 50, "input": "Half done"}
 })
 ```
 

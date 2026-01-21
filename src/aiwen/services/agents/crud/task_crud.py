@@ -7,7 +7,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.agent_task import AgentTask
-from aiwen.schemas.agents.input import TextMessage
+from aiwen.schemas.agents.input import TextInput
 
 
 class AgentTaskCRUD:
@@ -27,7 +27,7 @@ class AgentTaskCRUD:
         app_id: UUID,
         user_id: UUID,
         task_type: str | None = None,
-        payload: dict[str, Any] | TextMessage | None = None,
+        payload: dict[str, Any] | TextInput | None = None,
         auto_commit: bool = False
     ) -> AgentTask:
         """
@@ -92,7 +92,7 @@ class AgentTaskCRUD:
             task_id: The task UUID to update
             status: New status
             result: Task result
-            error: Error message
+            error: Error input
             progress: Progress percentage
             auto_commit: If True, immediately commit the transaction.
                          If False (default), only flush changes.
