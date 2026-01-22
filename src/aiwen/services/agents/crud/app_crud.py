@@ -1,6 +1,5 @@
 # aiwen/services/agents/app_crud.py
-from datetime import UTC, datetime, timezone
-from typing import List, Optional, Tuple, Union
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -71,7 +70,7 @@ class AppCRUD:
         await self.db_session.refresh(app)
         return app
 
-    async def get_app_by_id(self, app_id: UUID) -> App | None:
+    async def get_app(self, app_id: UUID) -> App | None:
         """
         Get an app by its UUID.
 
@@ -100,11 +99,11 @@ class AppCRUD:
         return result.scalar_one_or_none()
 
     async def list_apps(
-        self,
-        skip: int = 0,
-        limit: int = 100,
-        enabled_only: bool = False,
-        user_id: UUID | None = None,  # Add filter by user_id
+            self,
+            skip: int = 0,
+            limit: int = 100,
+            enabled_only: bool = False,
+            user_id: UUID | None = None,  # Add filter by user_id
     ) -> tuple[list[App], int]:
         """
         List all apps with pagination.
@@ -144,13 +143,13 @@ class AppCRUD:
         return items, total
 
     async def update_app(
-        self, app_code: str, data: AppUpdate, auto_commit: bool = False
+            self, app_id: UUID, data: AppUpdate, auto_commit: bool = False
     ) -> App | None:
         """
         Update an existing app.
 
         Args:
-            app_code: The app_code to update
+            app_id:
             data: Update data
             auto_commit: If True, immediately commit the transaction.
                          If False (default), only flush changes.
@@ -158,7 +157,7 @@ class AppCRUD:
         Returns:
             Updated App instance or None if not found
         """
-        app = await self.get_app_by_code(app_code)
+        app = await self.get_app(app_id)
         if not app:
             return None
 
@@ -177,19 +176,19 @@ class AppCRUD:
         await self.db_session.refresh(app)
         return app
 
-    async def delete_app(self, app_code: str, auto_commit: bool = False) -> bool:
+    async def delete_app(self, app_id: UUID, auto_commit: bool = False) -> bool:
         """
-        Delete an app by app_code.
+        Delete an app by app_id.
 
         Args:
-            app_code: The app_code to delete
+            app_id: The app_id to delete
             auto_commit: If True, immediately commit the transaction.
                          If False (default), only flush changes.
 
         Returns:
             True if deleted, False if not found
         """
-        app = await self.get_app_by_code(app_code)
+        app = await self.get_app(app_id)
         if not app:
             return False
 
@@ -202,8 +201,8 @@ class AppCRUD:
 
         return True
 
-    async def get_apps_by_template(
-        self, agent_template_id: UUID, skip: int = 0, limit: int = 100
+    async def filter_apps_by_template(
+            self, agent_template_id: UUID, skip: int = 0, limit: int = 100
     ) -> tuple[list[App], int]:
         """
         Get all apps using a specific agent template.
@@ -235,7 +234,7 @@ class AppCRUD:
         return items, total
 
     async def get_apps_by_user(
-        self, user_id: UUID, skip: int = 0, limit: int = 100
+            self, user_id: UUID, skip: int = 0, limit: int = 100
     ) -> tuple[list[App], int]:
         """
         Get all apps created by a specific user.

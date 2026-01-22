@@ -8,8 +8,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from aiwen.models.agents.message import Message
-
 
 class MessageCreate(BaseModel):
     """
@@ -56,21 +54,16 @@ class MessageContent(BaseModel):
 class MessageResponse(BaseModel):
     """Schema for input response."""
 
-    id: str
-    app_id: str
-    conversation_id: str
+    id: str | UUID
+    app_id: str | UUID | None = None
+    conversation_id: str | UUID
     query: str
     answer: str
-    message: list[MessageContent]
+    message: list[dict[str, Any]]
     status: str
-    message_tokens: int
-    answer_tokens: int
     from_source: str
-    from_end_user_id: str | None = None
-    from_account_id: str | None = None
-    model_provider: str | None = None
-    model_id: str | None = None
-    currency: str
+    from_end_user_id: str | UUID | None = None
+    from_account_id: str | UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -82,6 +75,6 @@ class MessageListResponse(BaseModel):
     """Schema for paginated list of messages."""
 
     total: int = Field(..., description="Total number of messages")
-    items: list[MessageResponse | Message] = Field(..., description="List of messages")
+    items: list[MessageResponse | dict[str, Any]] = Field(..., description="List of messages")
     page: int = Field(..., description="Current page number")
     page_size: int = Field(..., description="Number of items per page")

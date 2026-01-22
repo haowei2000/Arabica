@@ -38,12 +38,12 @@ logger = logging.getLogger(__name__)
 
 
 async def _stream_queue_events(
-    *,
-    task_consumer: AgentTaskConsumer,
-    task_id: UUID,
-    conversation: Conversation,
-    message: Message,
-    message_crud: MessageCRUD,
+        *,
+        task_consumer: AgentTaskConsumer,
+        task_id: UUID,
+        conversation: Conversation,
+        message: Message,
+        message_crud: MessageCRUD,
 ) -> AsyncGenerator[str, None]:
     """
     从 Redis Stream 流式读取事件
@@ -69,15 +69,15 @@ async def _stream_queue_events(
         async def consumer_stream():
             """内部 AgentTaskConsumer 消息流生成器"""
             async for event_payload in task_consumer.get_task_events(
-                task_id=str(task_id),
+                    task_id=str(task_id),
             ):
                 yield event_payload
 
         # Stream and finalize
         async for event in stream_and_finalize(
-            stream_iter=consumer_stream(),
-            conversation=conversation,
-            message=message,
+                stream_iter=consumer_stream(),
+                conversation=conversation,
+                message=message,
         ):
             yield event
 
@@ -91,9 +91,10 @@ async def _stream_queue_events(
 
 
 def _prepare_task_payload(
-    text_input: TextInput,
-    conversation: Conversation,
-    app_id: str,
+        text_input: TextInput,
+        conversation: Conversation,
+        app_id: str,
+        user_id: str | UUID | None = None,
 ) -> TaskPayload:
     """
     准备载荷字典
@@ -101,7 +102,8 @@ def _prepare_task_payload(
     Args:
         text_input: 原始载荷
         conversation: 对话对象
-        message_content: 消息对象
+        app_id: 应用 ID
+        user_id: 用户 ID
 
     Returns:
         包含应用、对话和消息 ID 的载荷字典
@@ -111,13 +113,14 @@ def _prepare_task_payload(
         conversation_id=str(conversation.id),
         input=text_input,
         app_id=app_id,
+        user_id=str(user_id) if user_id else None,
     )
 
 
 async def get_messages_by_task(
-    *,
-    task_id: UUID,
-    task_consumer: AgentTaskConsumer,
+        *,
+        task_id: UUID,
+        task_consumer: AgentTaskConsumer,
 ) -> AsyncGenerator[str, None]:
     """
     订阅任务消息流
@@ -140,7 +143,7 @@ async def get_messages_by_task(
         yield sse("metadata", {"task_id": str(task_id)})
 
         async for event_payload in task_consumer.get_task_events(
-            task_id=str(task_id),
+                task_id=str(task_id),
         ):
             yield sse("chunk", event_payload)
 
@@ -161,13 +164,12 @@ async def get_messages_by_task(
 
 
 async def start_task(
-    app_id: UUID,
-    user_id: UUID,
-    text_input: TextInput,
-    task_crud: AgentTaskCRUD,
-    conversation_crud: ConversationCRUD,
-    message_crud: MessageCRUD,
-    task_producer: AgentTaskProducer,
+        app_id: UUID,
+        user_id: UUID,
+        text_input: TextInput,
+        task_crud: AgentTaskCRUD,
+        conversation_crud: ConversationCRUD,
+        task_producer: AgentTaskProducer,
 ) -> StartTaskResult:
     """
     启动聊天任务（不等待结果）
@@ -213,8 +215,9 @@ async def start_task(
     )
     logger.debug(f"Created task {task.id} for {text_input.query}")
     text_input.conversation_id = conversation.id
+    text_input.app_id = app_id
     # 4. Prepare a text_message with app, conversation and input IDs
-    task_payload = _prepare_task_payload(text_input, conversation, str(app_id))
+    task_payload = _prepare_task_payload(text_input, conversation, str(app_id), user_id)
 
     # 5. Publish a task using AgentTaskProducer
     await task_producer.publish_task(

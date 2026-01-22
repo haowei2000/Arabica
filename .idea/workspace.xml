@@ -4,9 +4,35 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置">
+    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="chore(migrations): 统一数据库迁移文件中的字符串引号格式并优化表结构定义&#10;&#10;- 将所有单引号统一替换为双引号以保持代码风格一致&#10;- 在初始数据库模式迁移中规范化表结构定义格式&#10;- 优化字段约束和索引定义的代码结构&#10;- 更新注释和文档字符串格式以提高可读性&#10;- 调整数据库表字段的注释和默认值设置&#10;- 优化外键约束和唯一约束的定义方式">
+      <change beforePath="$PROJECT_DIR$/.idea/agent_chat.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/agent_chat.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/FIXES_SUMMARY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/FIXES_SUMMARY.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/REFACTORING_MANAGER.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/REFACTORING_MANAGER.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/constants/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/constants/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/hooks/useApps.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/hooks/useApps.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/AppsPage.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/AppsPage.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/appService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/appService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/conversationService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/conversationService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/services/messageService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/messageService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/stores/useChatStore.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/stores/useChatStore.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/types/message.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/types/message.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/extensions/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/extensions/logger.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/0001_initial_database_schema.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/0001_initial_database_schema.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/0430e7390877_make_admin_id_nullable_in_tenant.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/0430e7390877_make_admin_id_nullable_in_tenant.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/conversations.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/conversations.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/messages.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/messages.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/app.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/concrete.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/agent_template/default/concrete.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/app_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/app_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/message_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/message_crud.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -14,7 +40,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="1795" />
+    <option name="cachedIndexableFilesCount" value="2392" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -56,32 +82,33 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Makefile Target.db-upgrade.executor&quot;: &quot;Run&quot;,
-    &quot;Makefile Target.docker-down.executor&quot;: &quot;Run&quot;,
-    &quot;Makefile Target.docker-up.executor&quot;: &quot;Run&quot;,
-    &quot;Python.api_cli.executor&quot;: &quot;Run&quot;,
-    &quot;Python.work_cli.executor&quot;: &quot;Run&quot;,
-    &quot;Python.worker_cli.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
-    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
-    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;fastapi&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;npm.dev.executor&quot;: &quot;Run&quot;,
-    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
-    &quot;ts.external.directory.path&quot;: &quot;/Users/haowei/projects/agent_chat/frontend/node_modules/typescript/lib&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Makefile Target.db-upgrade.executor": "Run",
+    "Makefile Target.docker-down.executor": "Run",
+    "Makefile Target.docker-up.executor": "Run",
+    "Python.api_cli.executor": "Run",
+    "Python.work_cli.executor": "Debug",
+    "Python.worker_cli.executor": "Run",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "ai.playground.ignore.import.keys.banner.in.settings": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "fastapi",
+    "node.js.detected.package.eslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "npm.dev.executor": "Run",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyIntegratedToolsModulesConfigurable",
+    "to.speed.mode.migration.done": "true",
+    "ts.external.directory.path": "/Users/haowei/projects/agent_chat/frontend/node_modules/typescript/lib"
   }
-}</component>
+}]]></component>
   <component name="RdControllerToolWindowsLayoutState" isNewUi="true">
     <layout>
       <window_info id="Bookmarks" side_tool="true" />
@@ -132,12 +159,12 @@
   </component>
   <component name="RecapSpentCounter">
     <option name="endsOfQuotaMs" value="1769760064844" />
-    <option name="spentUsd" value="0.14793585" />
+    <option name="spentUsd" value="0.18299685" />
   </component>
   <component name="RecapUselessUpdatesCounter">
-    <option name="suspendCountdown" value="1" />
+    <option name="suspendCountdown" value="0" />
   </component>
-  <component name="RunManager" selected="npm.dev">
+  <component name="RunManager" selected="Python.work_cli">
     <configuration name="db-upgrade" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
       <makefile filename="$PROJECT_DIR$/Makefile" target="db-upgrade" workingDirectory="" arguments="">
         <envs />
@@ -217,7 +244,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769052416878</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="chore(migrations): 统一数据库迁移文件中的字符串引号格式并优化表结构定义&#10;&#10;- 将所有单引号统一替换为双引号以保持代码风格一致&#10;- 在初始数据库模式迁移中规范化表结构定义格式&#10;- 优化字段约束和索引定义的代码结构&#10;- 更新注释和文档字符串格式以提高可读性&#10;- 调整数据库表字段的注释和默认值设置&#10;- 优化外键约束和唯一约束的定义方式">
+      <option name="closed" value="true" />
+      <created>1769053011467</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1769053011467</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -228,11 +263,30 @@
     <MESSAGE value="fix(workers): 修复Pydantic模型在任务消费和执行中的处理问题&#10;&#10;- 在task_consumer.py中添加BaseModel导入用于模型数据处理&#10;- 修复_event处理函数中对BaseModel实例的数据转换问题&#10;- 修改task_worker.py中_execute_agent_stream调用以正确传递模型数据&#10;- 清理workspace.xml中的冗余变更列表配置" />
     <MESSAGE value="fix(chat): 修复聊天服务中的消息处理和任务流问题&#10;&#10;- 重命名 get_task_messages 为 get_messages_by_task 以提高语义清晰度&#10;- 从 StartTaskResult 中移除 message_id 字段&#10;- 从 chat_helper 中移除 create_message 函数&#10;- 更新 _prepare_task_payload 函数参数并移除 message 参数&#10;- 将任务类型从 agent:streams 更改为 agent_stream&#10;- 修复日志格式中 message_content 的引用错误&#10;- 将 Message 模型中的 message 字段从 dict 类型更改为 list[dict] 类型&#10;- 添加 MessageContent 数据模型定义&#10;- 更新 MessageCRUD 中的创建和更新方法参数结构&#10;- 移动 _handle_event 函数到" />
     <MESSAGE value="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置" />
-    <option name="LAST_COMMIT_MESSAGE" value="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置" />
+    <MESSAGE value="chore(migrations): 统一数据库迁移文件中的字符串引号格式并优化表结构定义&#10;&#10;- 将所有单引号统一替换为双引号以保持代码风格一致&#10;- 在初始数据库模式迁移中规范化表结构定义格式&#10;- 优化字段约束和索引定义的代码结构&#10;- 更新注释和文档字符串格式以提高可读性&#10;- 调整数据库表字段的注释和默认值设置&#10;- 优化外键约束和唯一约束的定义方式" />
+    <option name="LAST_COMMIT_MESSAGE" value="chore(migrations): 统一数据库迁移文件中的字符串引号格式并优化表结构定义&#10;&#10;- 将所有单引号统一替换为双引号以保持代码风格一致&#10;- 在初始数据库模式迁移中规范化表结构定义格式&#10;- 优化字段约束和索引定义的代码结构&#10;- 更新注释和文档字符串格式以提高可读性&#10;- 调整数据库表字段的注释和默认值设置&#10;- 优化外键约束和唯一约束的定义方式" />
+    <option name="OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT" value="true" />
+    <option name="REFORMAT_BEFORE_PROJECT_COMMIT" value="true" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/src/aiwen/workers/task_consumer.py</url>
+          <line>61</line>
+          <option name="timeStamp" value="4" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/src/aiwen/workers/task_consumer.py</url>
+          <line>192</line>
+          <option name="timeStamp" value="5" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769044860653" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
-    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769044864378" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769063626054" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769063628667" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
     <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768980510907" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
   </component>
   <component name="github-copilot-workspace">

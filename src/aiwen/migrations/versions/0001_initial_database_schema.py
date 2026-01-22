@@ -8,8 +8,8 @@ Create Date: 2025-12-23 11:30:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
@@ -64,7 +64,7 @@ def upgrade() -> None:
     op.create_table(
         "app",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("app_code", sa.String, nullable=False),
+        sa.Column("app_id", sa.String, nullable=False),
         sa.Column("app_type", sa.String, nullable=False),
         sa.Column("enabled", sa.Boolean, server_default="true", nullable=False),
         sa.Column("config", postgresql.JSONB, nullable=True),
@@ -72,7 +72,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("app_code"),
+        sa.UniqueConstraint("app_id"),
     )
 
     # Create agent_template table

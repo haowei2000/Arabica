@@ -1,7 +1,7 @@
 """Pydantic schemas for App (Agent) API endpoints."""
-
 from datetime import datetime
-from typing import Any, Dict, Optional
+from enum import StrEnum
+from typing import Any, Dict
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -65,3 +65,46 @@ class AppListResponse(BaseModel):
     items: list[AppResponse] = Field(..., description="List of apps")
     page: int = Field(..., description="Current page number")
     page_size: int = Field(..., description="Number of items per page")
+
+
+class Model(BaseModel):
+    """Schema for model configuration."""
+    name: str = Field(..., description="Model name")
+    provider: str = Field(..., description="Model provider")
+
+
+class ContextType(StrEnum):
+    """Schema for context type."""
+    KNOWLEDGE = "knowledge"
+    CONVERSATION = "conversation"
+    MESSAGE = "message"
+    SKILL = "SKILL"
+    TOOL = "tool"
+
+
+class Context(BaseModel):
+    """Schema for context configuration."""
+    type: ContextType
+    enabled: bool = Field(default=True, description="Whether the context is enabled")
+    config: Dict[str, Any] | None = Field(None, description="Context configuration")
+
+
+class KnowledgeConfig(BaseModel):
+    """Schema for knowledge configuration."""
+    source: list[UUID] | None = Field(..., description="List of knowledge source IDs")
+
+
+class SkillConfig(BaseModel):
+    """Schema for SKILL configuration."""
+    source: list[UUID] | None = Field(..., description="List of SKILL source IDs")
+
+
+class ToolConfig(BaseModel):
+    """Schema for tool configuration."""
+    source: list[UUID] | None = Field(..., description="List of tool source IDs")
+
+
+class AppConfig(BaseModel):
+    """Schema for app configuration."""
+    model: Model = Field(..., description="Model configuration")
+    context: list[Context] | None = Field(None, description="List of context configurations")

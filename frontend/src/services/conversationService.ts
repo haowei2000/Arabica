@@ -1,11 +1,7 @@
-import { apiClient } from './api';
-import { API_ENDPOINTS } from '@/constants/api';
-import type {
-  Conversation,
-  ConversationCreate,
-  ConversationUpdate,
-} from '@/types/conversation';
-import type { PaginatedResponse } from '@/types/api';
+import {apiClient} from './api';
+import {API_ENDPOINTS} from '@/constants/api';
+import type {Conversation, ConversationCreate, ConversationUpdate,} from '@/types/conversation';
+import type {PaginatedResponse} from '@/types/api';
 
 export const conversationService = {
   /**
@@ -43,25 +39,14 @@ export const conversationService = {
     id: string,
     data: ConversationUpdate
   ): Promise<Conversation> {
-    return apiClient.put(API_ENDPOINTS.CONVERSATIONS.UPDATE(id), data);
+      return apiClient.post(API_ENDPOINTS.CONVERSATIONS.UPDATE(id), data);
   },
 
   /**
    * 删除对话（软删除）
    */
   async deleteConversation(id: string): Promise<void> {
-    return apiClient.delete(API_ENDPOINTS.CONVERSATIONS.DELETE(id));
+      return apiClient.post(API_ENDPOINTS.CONVERSATIONS.DELETE(id));
   },
 
-  /**
-   * 搜索对话
-   */
-  async searchConversations(params: {
-    q: string;
-    app_id?: string;
-    page?: number;
-    page_size?: number;
-  }): Promise<PaginatedResponse<Conversation>> {
-    return apiClient.get(API_ENDPOINTS.CONVERSATIONS.SEARCH, { params });
-  },
 };

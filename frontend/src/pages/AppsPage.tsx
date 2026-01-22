@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useApps, useCreateApp, useDeleteApp, useTemplates } from '@/hooks/useApps';
-import { useAppStore } from '@/stores/useAppStore';
-import { useChatStore } from '@/stores/useChatStore';
-import { authService } from '@/services/authService';
+import {useState} from 'react';
+import {useNavigate} from 'react-router-dom';
+import {useApps, useCreateApp, useDeleteApp, useTemplates} from '@/hooks/useApps';
+import {useAppStore} from '@/stores/useAppStore';
+import {useChatStore} from '@/stores/useChatStore';
+import {authService} from '@/services/authService';
 
 export default function AppsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -36,11 +36,11 @@ export default function AppsPage() {
     }
   };
 
-  const handleDeleteApp = async (appCode: string) => {
+    const handleDeleteApp = async (appId: string, appCode: string) => {
     if (!confirm(`确定要删除 App "${appCode}" 吗？`)) return;
 
     try {
-      await deleteAppMutation.mutateAsync(appCode);
+        await deleteAppMutation.mutateAsync(appId);
       alert('App 删除成功！');
     } catch (error) {
       alert(`删除失败: ${error instanceof Error ? error.message : '未知错误'}`);
@@ -207,7 +207,7 @@ export default function AppsPage() {
                     开始对话
                   </button>
                   <button
-                    onClick={() => handleDeleteApp(app.app_code)}
+                      onClick={() => handleDeleteApp(app.id, app.app_code)}
                     disabled={deleteAppMutation.isPending}
                     className="px-4 py-2 border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 text-sm rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
                   >

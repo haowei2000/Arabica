@@ -10,6 +10,12 @@ export type MessageRoleType = typeof MessageRole[keyof typeof MessageRole];
 // 消息状态
 export type MessageStatus = 'normal' | 'deleted' | 'error';
 
+// 消息内容项
+export interface MessageContent {
+    role: MessageRoleType;
+    content: string;
+}
+
 // 消息
 export interface Message {
   id: string;
@@ -17,9 +23,7 @@ export interface Message {
   conversation_id: string;
   query: string;
   answer: string;
-  message: Record<string, any>;
-  role?: MessageRoleType;
-  content?: string;
+    message: MessageContent[];
   status: MessageStatus;
   message_tokens: number;
   answer_tokens: number;
@@ -38,7 +42,7 @@ export interface MessageCreate {
   app_id: string;
   conversation_id: string;
   query: string;
-  message: Record<string, any>;
+    message: MessageContent[];
   answer?: string;
   status?: MessageStatus;
   from_source: string;

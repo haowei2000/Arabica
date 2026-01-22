@@ -58,7 +58,7 @@ def _handle_event(event_type: str, event_data: Any, task_id: str) -> EventResult
     """处理事件，返回 EventResult"""
     logger.debug(f"Received event '{event_type}' for task {task_id}: {event_data}")
     if isinstance(event_data, BaseModel):
-        event_data = event_data.model_dump()
+        event_data = event_data.model_dump_json()
     match event_type:
         case "chunk":
             return EventResult(EventAction.YIELD, event_data)
@@ -99,10 +99,10 @@ class AgentTaskConsumer:
     """
 
     def __init__(
-        self,
-        redis_client: aioredis.Redis,
-        read_count: int = 10,
-        read_block_ms: int = 1000,
+            self,
+            redis_client: aioredis.Redis,
+            read_count: int = 10,
+            read_block_ms: int = 1000,
     ):
         """
         初始化任务消费者
@@ -119,7 +119,7 @@ class AgentTaskConsumer:
 
     @staticmethod
     def _check_timeout(
-        start_time: float, timeout_seconds: float | None, task_id: str
+            start_time: float, timeout_seconds: float | None, task_id: str
     ) -> None:
         """检查是否超时，超时则抛出异常"""
         if timeout_seconds is None:
@@ -144,7 +144,7 @@ class AgentTaskConsumer:
             raise
 
     async def get_task_events(
-        self, task_id: str, last_id: str = "0-0", timeout_seconds: float | None = None
+            self, task_id: str, last_id: str = "0-0", timeout_seconds: float | None = None
     ) -> AsyncGenerator[Any, None]:
         """
         消费任务事件流

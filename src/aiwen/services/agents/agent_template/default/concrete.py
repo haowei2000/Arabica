@@ -13,10 +13,11 @@ from typing import Any
 
 from langchain.agents import create_agent
 
+from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.agents.input import TextInput
 from aiwen.services.agents.agent_registry import register_agent
 from aiwen.services.agents.base import BaseAgentTemplate
-from .context import get_messages_from_context, add_message_to_context
+from .context import get_messages_from_context
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +38,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         "template_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,
-        "config": {
-            "context": {
-                "enabled": True,
-                "sources": {
-                    "conversation_history": {"enabled": True, "max_conversations": 20},
-                    "message_history": {"enabled": True, "max_messages": 20},
-                    "knowledge_base": {"enabled": True, "kb_ids": []},
-                },
-            },
-            "model_provider": "ollama",
-            "model_name": "qwen3:30b",
-            "max_history_messages": 20,  # Maximum number of historical messages to load
-        },
+        "config": AppConfig(model=Model(provider="ollama", name="qwen3:30b"), context=None)
     }
 
     def __init__(self, config: dict):

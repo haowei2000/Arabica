@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel
 
 from aiwen.schemas.agents.input import TextInput
@@ -8,4 +10,5 @@ class TaskPayload(BaseModel):
 
     app_id: str
     conversation_id: str
+    user_id: str | UUID | None = None
     input: TextInput

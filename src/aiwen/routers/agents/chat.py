@@ -18,7 +18,6 @@ from fastapi.responses import StreamingResponse
 
 from aiwen.dependencies.agents import (
     get_conversation_crud,
-    get_message_crud,
     get_task_consumer,
     get_task_crud,
     get_task_producer,
@@ -32,7 +31,6 @@ from aiwen.services.agents.chat.chat_service import (
     start_task,
 )
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
-from aiwen.services.agents.crud.message_crud import MessageCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
@@ -43,15 +41,14 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # ---------- Start task (split endpoint) ----------
 
 
-@router.post("/{app_id}/start", response_model=StartTaskResult)
+@router.post("/app/{app_id}/stream", response_model=StartTaskResult)
 async def start_chat_task(
-    app_id: UUID,
-    payload: TextInput,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    task_crud: AgentTaskCRUD = Depends(get_task_crud),
-    conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
-    message_crud: MessageCRUD = Depends(get_message_crud),
-    task_producer: AgentTaskProducer = Depends(get_task_producer),
+        app_id: UUID,
+        text_input: TextInput,
+        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        task_crud: AgentTaskCRUD = Depends(get_task_crud),
+        conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
+        task_producer: AgentTaskProducer = Depends(get_task_producer),
 ) -> StartTaskResult:
     """
     启动聊天任务
@@ -62,24 +59,22 @@ async def start_chat_task(
 
     Args:
         app_id: 应用 ID
-        payload: 聊天消息载荷
+        text_input: 聊天消息载荷
         current_user: 当前用户
         task_crud: 任务 CRUD 服务
         conversation_crud: 对话 CRUD 服务
-        message_crud: 消息 CRUD 服务
         task_producer: 任务生产者
 
     Returns:
         StartTaskResult: 包含 task_id, conversation_id, message_id
     """
-    payload.from_account_id = payload.from_account_id or current_user.id
+    text_input.from_account_id = current_user.id
     return await start_task(
         app_id=app_id,
         user_id=current_user.id,
-        text_input=payload,
+        text_input=text_input,
         task_crud=task_crud,
         conversation_crud=conversation_crud,
-        message_crud=message_crud,
         task_producer=task_producer,
     )
 
@@ -87,10 +82,12 @@ async def start_chat_task(
 # ---------- Get task messages (split endpoint) ----------
 
 
-@router.get("/{task_id}/messages")
+@router.get("/task/{task_id}/stream")
 async def stream_task_messages(
-    task_id: UUID,
-    task_consumer: AgentTaskConsumer = Depends(get_task_consumer),
+        task_id: UUID,
+        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        task_crud: AgentTaskCRUD = Depends(get_task_crud),
+        task_consumer: AgentTaskConsumer = Depends(get_task_consumer),
 ):
     """
     获取任务消息流
@@ -105,11 +102,31 @@ async def stream_task_messages(
 
     Args:
         task_id: 任务 ID
+        current_user: 当前用户
+        task_crud: 任务 CRUD 服务
         task_consumer: 任务消费者
 
     Returns:
         StreamingResponse: SSE 流式响应
+
+    Raises:
+        HTTPException: 如果任务不存在或无权限访问
     """
+    from fastapi import HTTPException, status
+
+    # Verify task exists and belongs to current user
+    task = await task_crud.get_agent_task_by_task_id(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {task_id} not found",
+        )
+    if task.user_id and str(task.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this task",
+        )
+
     return StreamingResponse(
         get_messages_by_task(
             task_id=task_id,
@@ -122,7 +139,6 @@ async def stream_task_messages(
             "Access-Control-Allow-Origin": "*",
         },
     )
-
 
 # # ---------- Cancel task ----------
 #

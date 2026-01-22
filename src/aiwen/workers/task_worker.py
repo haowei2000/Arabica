@@ -28,7 +28,6 @@ Agent Worker - 异步处理 Agent 任务
 """
 
 # aiwen/workers/task_worker.py
-from cryptography.hazmat.asn1.asn1 import U
 import asyncio
 import json
 import logging
@@ -40,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_session
 from aiwen.schemas.agents.input import TextInput
-from aiwen.schemas.agents.message import MessageCreate
+from aiwen.schemas.agents.message import MessageContent, Role
 from aiwen.schemas.task.payload import TaskPayload
 from aiwen.services.agents.agent_registry import AgentRegistry
 from aiwen.services.agents.app_factory import AppAgentFactory
@@ -87,7 +86,7 @@ async def _get_agent_template(template_crud, app):
 
 async def _get_app_by_id(app_crud, app_id):
     """根据ID获取app配置"""
-    app = await app_crud.get_app_by_id(
+    app = await app_crud.get_app(
         UUID(app_id) if isinstance(app_id, str) else app_id
     )
     if not app:
@@ -156,7 +155,7 @@ class AgentWorker:
                 await asyncio.sleep(1)  # 等待后重试
 
     async def process_task(
-        self, task_id: UUID, task_payload: TaskPayload, db: AsyncSession
+            self, task_id: UUID, task_payload: TaskPayload, db: AsyncSession
     ):
         """
         处理单个 agent 任务.
@@ -242,7 +241,7 @@ class AgentWorker:
         return parsed_result
 
     async def _execute_task_logic(
-        self, task_id: UUID, app_id: UUID, input: TextInput, db: AsyncSession
+            self, task_id: UUID, app_id: UUID, input: TextInput, db: AsyncSession
     ):
         """执行任务的主要逻辑"""
         try:
@@ -271,7 +270,7 @@ class AgentWorker:
 
                 # 5. 流式执行 agent 并发送事件
                 result_data = await self._execute(
-                    agent_instance, input.model_dump(), task_id
+                    agent_instance, input, task_id
                 )
 
                 # 6. 更新任务状态为成功
@@ -311,13 +310,13 @@ class AgentWorker:
         self.runtime.attach(task_id, agent_instance)
         return agent_instance
 
-    async def _execute(self, agent_instance, payload: TextInput, task_id):
+    async def _execute(self, agent_instance, text_input: TextInput, task_id):
         """
         执行agent流式处理并收集结果
 
         Args:
             agent_instance: Agent 实例
-            payload: 任务载荷数据
+            text_input: 任务载荷数据
             task_id: 任务 ID
 
         Returns:
@@ -325,27 +324,26 @@ class AgentWorker:
         """
         # 验证 text_message 类型
         logger.info(f"Executing agent stream for task {task_id}")
-        logger.info(f"Payload type: {type(payload)}")
-        logger.info(f"Payload content: {payload}")
-
+        logger.info(f"Payload type: {type(text_input)}")
+        logger.info(f"Payload content: {text_input}")
         collected_chunks = []
-        async for chunk in agent_instance.stream(payload.model_dump()):
+        async for chunk in agent_instance.stream(text_input.model_dump()):
             collected_chunks.append(chunk)
             await self.publish_event(task_id, {"event": "chunk", "data": chunk})
-
+        full_result = collected_chunks[-1].strip("Full input:")
         # 6. 收集完整结果
-        full_result = "".join(collected_chunks) if collected_chunks else ""
         async with get_session("aiwen") as db_session:
             message_crud = MessageCRUD(db_session)
             await message_crud.create(
-                app_id=str(payload.app_id),
-                task_id=task_id,
-                query=payload.query,
+                app_id=str(text_input.app_id),
+                query=text_input.query,
                 answer=full_result,
-                conversation_id=str(payload.conversation_id),
+                conversation_id=str(text_input.conversation_id),
                 status="finished",
                 from_source="api",
-                message_content={"human": payload.query, "assitant": full_result},
+                from_account_id=text_input.from_account_id,
+                message_content=[MessageContent(role=Role.USER, content=text_input.query),
+                                 MessageContent(role=Role.ASSISTANT, content=full_result)],
             )
         return {"answer": full_result, "chunks_count": len(collected_chunks)}
 

@@ -14,41 +14,36 @@ export const API_ENDPOINTS = {
   // 流式对话
   CHAT: {
     // Split endpoints (recommended)
-    START: (appId: string) => `/chat/${appId}/start`,
-    MESSAGES: (taskId: string) => `/chat/${taskId}/messages`,
-    CANCEL: (taskId: string) => `/chat/${taskId}/cancel`,
-    // Combined endpoints (legacy, kept for compatibility)
-    STREAM: (appId: string) => `/chat/${appId}`,
-    DIRECT: (appId: string) => `/chat/${appId}/direct`,
+    START: (appId: string) => `/chat/app/${appId}/stream`,
+    MESSAGES: (taskId: string) => `/chat/task/${taskId}/stream`,
+    CANCEL: (taskId: string) => `/chat/task/${taskId}/cancel`,
   },
 
   // 对话管理
   CONVERSATIONS: {
-    LIST: '/conversations/',
-    CREATE: '/conversations/',
-    GET: (id: string) => `/conversations/${id}`,
-    UPDATE: (id: string) => `/conversations/${id}`,
-    DELETE: (id: string) => `/conversations/${id}`,
-    SEARCH: '/conversations/search/',
+    LIST: '/conversations/query',
+    CREATE: '/conversations/create',
+    GET: (id: string) => `/conversations/${id}/get`,
+    UPDATE: (id: string) => `/conversations/${id}/update`,
+    DELETE: (id: string) => `/conversations/${id}/delete`,
   },
 
   // 消息管理
   MESSAGES: {
-    LIST: '/messages/',
-    CREATE: '/messages/',
-    GET: (id: string) => `/messages/${id}`,
-    UPDATE: (id: string) => `/messages/${id}`,
-    SEARCH: '/messages/search/',
+    LIST: '/messages/query',
+    CREATE: '/messages/create',
+    GET: (id: string) => `/messages/${id}/get`,
+    UPDATE: (id: string) => `/messages/${id}/update`,
   },
 
   // App 管理
   APPS: {
-    TEMPLATES: '/apps/templates',
-    LIST: '/apps/',
-    CREATE: '/apps/',
-    GET: (appCode: string) => `/apps/${appCode}`,
-    UPDATE: (appCode: string) => `/apps/${appCode}`,
-    DELETE: (appCode: string) => `/apps/${appCode}`,
-    BY_TEMPLATE: (templateId: string) => `/apps/templates/${templateId}/apps`,
+    TEMPLATES: '/apps/templates/list',
+    LIST: '/apps/list',
+    CREATE: '/apps/create',
+    GET: (appId: string) => `/apps/${appId}/get`,
+    UPDATE: (appId: string) => `/apps/${appId}/update`,
+    DELETE: (appId: string) => `/apps/${appId}/delete`,
+    QUERY: '/apps/query',
   },
 } as const;

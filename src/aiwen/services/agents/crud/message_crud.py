@@ -7,6 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.message import Message
+from aiwen.schemas.agents.message import MessageContent
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -44,17 +45,17 @@ class MessageCRUD:
         self.db = db_session
 
     async def create(
-        self,
-        app_id: str | UUID,
-        conversation_id: str | UUID,
-        query: str,
-        message_content: str,
-        answer: str,
-        status: str,
-        from_source: str | None = None,
-        from_end_user_id: str | UUID | None = None,
-        from_account_id: str | UUID | None = None,
-        auto_commit: bool = False,
+            self,
+            app_id: str | UUID,
+            conversation_id: str | UUID,
+            query: str,
+            message_content: list[MessageContent],
+            answer: str,
+            status: str,
+            from_source: str | None = None,
+            from_end_user_id: str | UUID | None = None,
+            from_account_id: str | UUID | None = None,
+            auto_commit: bool = False,
     ) -> Message:
         """
         Create a new message.
@@ -89,7 +90,7 @@ class MessageCRUD:
             app_id=app_id,
             conversation_id=conversation_id,
             query=query,
-            message=message_content,
+            message=[message_content.model_dump() for message_content in message_content],
             answer=answer,
             status=status,
             from_source=from_source,
@@ -123,17 +124,17 @@ class MessageCRUD:
         return result.scalar_one_or_none()
 
     async def update(
-        self,
-        message_id: str | UUID,
-        *,
-        query: str | None = None,
-        message_content: str | None = None,
-        answer: str | None = None,
-        status: str | None = None,
-        from_source: str | None = None,
-        from_end_user_id: str | UUID | None = None,
-        from_account_id: str | UUID | None = None,
-        auto_commit: bool = False,
+            self,
+            message_id: str | UUID,
+            *,
+            query: str | None = None,
+            message_content: str | None = None,
+            answer: str | None = None,
+            status: str | None = None,
+            from_source: str | None = None,
+            from_end_user_id: str | UUID | None = None,
+            from_account_id: str | UUID | None = None,
+            auto_commit: bool = False,
     ) -> Message | None:
         """
         Update an existing message_content.
@@ -188,14 +189,14 @@ class MessageCRUD:
         return message
 
     async def list(
-        self,
-        conversation_id: str | UUID | None = None,
-        app_id: str | UUID | None = None,
-        status: str | None = None,
-        from_end_user_id: str | UUID | None = None,
-        from_account_id: str | UUID | None = None,
-        skip: int = 0,
-        limit: int = 100,
+            self,
+            conversation_id: str | UUID | None = None,
+            app_id: str | UUID | None = None,
+            status: str | None = None,
+            from_end_user_id: str | UUID | None = None,
+            from_account_id: str | UUID | None = None,
+            skip: int = 0,
+            limit: int = 100,
     ) -> tuple[list[Message], int]:
         """
         List messages with filtering and pagination.
@@ -251,8 +252,8 @@ class MessageCRUD:
         count_result = await self.db.execute(count_stmt)
         total = count_result.scalar() or 0
 
-        # Apply pagination and ordering (newest first)
-        stmt = stmt.order_by(Message.created_at.desc()).offset(skip).limit(limit)
+        # Apply pagination and ordering (oldest first for chronological order)
+        stmt = stmt.order_by(Message.created_at.asc()).offset(skip).limit(limit)
 
         result = await self.db.execute(stmt)
         items = list(result.scalars().all())
@@ -260,12 +261,12 @@ class MessageCRUD:
         return items, total
 
     async def search(
-        self,
-        search_term: str,
-        conversation_id: str | UUID | None = None,
-        app_id: str | UUID | None = None,
-        skip: int = 0,
-        limit: int = 100,
+            self,
+            search_term: str,
+            conversation_id: str | UUID | None = None,
+            app_id: str | UUID | None = None,
+            skip: int = 0,
+            limit: int = 100,
     ) -> tuple[builtins.list[Message], int]:
         """
         Full-text search in messages (query and answer fields).
@@ -319,7 +320,7 @@ class MessageCRUD:
         return items, total
 
     async def get_by_conversation(
-        self, conversation_id: str | UUID, skip: int = 0, limit: int = 100
+            self, conversation_id: str | UUID, skip: int = 0, limit: int = 100
     ) -> tuple[builtins.list[Message], int]:
         """
         Get all messages for a specific conversation.

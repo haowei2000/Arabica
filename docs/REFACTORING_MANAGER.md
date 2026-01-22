@@ -79,6 +79,7 @@ chat_helper (辅助函数)
 - ✅ 添加 `get_agent_runtime()` - 返回全局 AgentRuntime 单例
 
 **代码示例:**
+
 ```python
 # 旧代码
 agent_manager = Depends(get_agent_manager)
@@ -88,7 +89,7 @@ stream = agent_manager.stream_agent(agent_id, payload)
 runtime = Depends(get_agent_runtime)
 app_crud = Depends(get_app_crud)
 
-app = await app_crud.get_app_by_id(app_id)
+app = await app_crud.get_app(app_id)
 factory = AppAgentFactory(str(app.id), app.app_type, app.config)
 agent = factory.create(payload)
 runtime.attach(task_id, agent)
@@ -102,9 +103,10 @@ stream = agent.stream(payload)
 - ✅ 使用 `AppCRUD` + `AgentRegistry` + `AppAgentFactory` + `AgentRuntime`
 
 **工作流程:**
+
 ```python
 # 1. 获取 App 配置
-app = await app_crud.get_app_by_id(app_id)
+app = await app_crud.get_app(app_id)
 
 # 2. 检查模板是否注册
 if not AgentRegistry.is_registered(app.app_type):
@@ -137,16 +139,17 @@ self.runtime.release(task_id)
 - 🔄 路由路径改为 `/{app_id}/direct` (统一使用 UUID)
 
 **Direct Chat 新实现:**
+
 ```python
 @router.post("/{app_id}/direct")
 async def chat_with_agent_direct(
-    app_id: UUID,
-    payload: TextMessage,
-    app_crud: AppCRUD = Depends(get_app_crud),
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+        app_id: UUID,
+        payload: TextMessage,
+        app_crud: AppCRUD = Depends(get_app_crud),
+        runtime: AgentRuntime = Depends(get_agent_runtime),
 ):
     # 1. 获取 app
-    app = await app_crud.get_app_by_id(app_id)
+    app = await app_crud.get_app(app_id)
 
     # 2. 创建 agent
     factory = AppAgentFactory(str(app.id), app.app_type, app.config)
@@ -177,11 +180,12 @@ async def run_agent(agent_id: str, input_data: dict):
     result = await agent_manager.run_agent(agent_id, input_data)
     return result
 
+
 # ✅ 新代码
 async def run_agent(app_id: UUID, input_data: dict):
     # 1. 获取 app 配置
     app_crud = AppCRUD(db_session)
-    app = await app_crud.get_app_by_id(app_id)
+    app = await app_crud.get_app(app_id)
 
     # 2. 创建 agent
     factory = AppAgentFactory(
@@ -205,11 +209,12 @@ async def stream_agent(agent_id: str, input_data: dict):
     async for chunk in agent_manager.stream_agent(agent_id, input_data):
         yield chunk
 
+
 # ✅ 新代码
 async def stream_agent(app_id: UUID, input_data: dict):
     # 1. 获取 app 和创建 agent
     app_crud = AppCRUD(db_session)
-    app = await app_crud.get_app_by_id(app_id)
+    app = await app_crud.get_app(app_id)
 
     factory = AppAgentFactory(str(app.id), app.app_type, app.config)
     agent = factory.create(input_data)
@@ -228,6 +233,7 @@ class MyWorker:
         agent_manager = AgentManager(db_session)
         result = await agent_manager.run_agent(app_id, payload)
 
+
 # ✅ 新代码
 class MyWorker:
     def __init__(self):
@@ -235,7 +241,7 @@ class MyWorker:
 
     async def process(self, task_id, app_id, payload):
         # 获取配置
-        app = await app_crud.get_app_by_id(app_id)
+        app = await app_crud.get_app(app_id)
 
         # 创建实例
         factory = AppAgentFactory(str(app.id), app.app_type, app.config)

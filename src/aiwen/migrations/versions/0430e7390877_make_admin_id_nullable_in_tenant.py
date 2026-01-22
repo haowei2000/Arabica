@@ -7,10 +7,9 @@ Create Date: 2025-12-24 16:08:04.480324
 """
 
 from collections.abc import Sequence
-from typing import Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -167,7 +166,7 @@ def upgrade() -> None:
     )
     op.alter_column(
         "app",
-        "app_code",
+        "app_id",
         existing_type=sa.VARCHAR(),
         comment="对外使用的agent标识",
         existing_nullable=False,
@@ -544,7 +543,7 @@ def downgrade() -> None:
     )
     op.alter_column(
         "app",
-        "app_code",
+        "app_id",
         existing_type=sa.VARCHAR(),
         comment=None,
         existing_comment="对外使用的agent标识",

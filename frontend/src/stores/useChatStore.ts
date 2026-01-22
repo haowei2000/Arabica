@@ -1,7 +1,6 @@
-import { create } from 'zustand';
-import type { SimpleMessage } from '@/types/message';
-import type { ConversationDetail } from '@/types/conversation';
-import { conversationService } from '@/services/conversationService';
+import {create} from 'zustand';
+import type {MessageRoleType, SimpleMessage} from '@/types/message';
+import {messageService} from '@/services/messageService';
 
 interface ChatState {
   currentConversationId: string | null;
@@ -56,15 +55,29 @@ export const useChatStore = create<ChatState>((set) => ({
   loadConversation: async (conversationId: string) => {
     try {
       set({ isLoadingConversation: true });
-      const conversationDetail = await conversationService.getConversation(conversationId) as ConversationDetail;
 
-      // Convert conversation messages to SimpleMessage format
-      const messages: SimpleMessage[] = conversationDetail.messages?.map((msg) => ({
-        id: msg.id,
-        role: (msg.role || 'user') as any,
-        content: msg.content || msg.query || msg.answer || '',
-        timestamp: new Date(msg.created_at),
-      })) || [];
+        // Fetch messages using message service with conversation_id filter
+        const messagesResponse = await messageService.getMessages({
+            conversation_id: conversationId,
+            page: 1,
+            page_size: 100,
+        });
+
+        // Convert API messages to SimpleMessage format
+        const messages: SimpleMessage[] = [];
+        for (const msg of messagesResponse.items) {
+            // Each message contains a list of message content (user + assistant)
+            if (Array.isArray(msg.message)) {
+                for (const content of msg.message) {
+                    messages.push({
+                        id: `${msg.id}-${content.role}`,
+                        role: content.role as MessageRoleType,
+                        content: content.content || '',
+                        timestamp: new Date(msg.created_at),
+                    });
+                }
+            }
+        }
 
       set({
         currentConversationId: conversationId,
