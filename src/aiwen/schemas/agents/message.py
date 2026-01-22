@@ -19,7 +19,7 @@ class MessageCreate(BaseModel):
     app_id: str | UUID | None = Field(default=None, description="Agent ID (app_id and agent_id are the same)")
     conversation_id: str | UUID = Field(..., description="Conversation ID")
     query: str = Field(default='', description="User query/input")
-    message: dict[str, Any] = Field(..., description="Message content as JSON")
+    message: list[dict[str, Any]] = Field(..., description="Message content as JSON")
     answer: str = Field(default="", description="Model answer/response")
     status: str = Field(default="normal", description="Message status")
     from_source: str = Field(default='system', description="Source of the input")
@@ -37,6 +37,12 @@ class MessageUpdate(BaseModel):
     total_price: Decimal | None = Field(None, description="Total price for the input")
 
 
+class MessageContent(BaseModel):
+    human: str | None
+    assistant: str | None
+    system: str | None
+
+
 class MessageResponse(BaseModel):
     """Schema for input response."""
 
@@ -45,7 +51,7 @@ class MessageResponse(BaseModel):
     conversation_id: str
     query: str
     answer: str
-    message: dict[str, Any]
+    message: list[dict[str, Any]]
     status: str
     message_tokens: int
     answer_tokens: int

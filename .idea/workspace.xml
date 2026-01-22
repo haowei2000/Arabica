@@ -4,9 +4,20 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08">
+    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="fix(workers): 修复Pydantic模型在任务消费和执行中的处理问题&#10;&#10;- 在task_consumer.py中添加BaseModel导入用于模型数据处理&#10;- 修复_event处理函数中对BaseModel实例的数据转换问题&#10;- 修改task_worker.py中_execute_agent_stream调用以正确传递模型数据&#10;- 清理workspace.xml中的冗余变更列表配置">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/extensions/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/extensions/logger.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/message.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/message.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/routers/agents/messages.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/routers/agents/messages.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/task/payload.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/chat/chat_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/services/agents/crud/message_crud.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/services/agents/crud/message_crud.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_consumer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_producer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/workers/task_worker.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -132,12 +143,12 @@
   </component>
   <component name="RecapSpentCounter">
     <option name="endsOfQuotaMs" value="1769760064844" />
-    <option name="spentUsd" value="0.080526054" />
+    <option name="spentUsd" value="0.14793585" />
   </component>
   <component name="RecapUselessUpdatesCounter">
-    <option name="suspendCountdown" value="5" />
+    <option name="suspendCountdown" value="1" />
   </component>
-  <component name="RunManager" selected="Python.api_cli">
+  <component name="RunManager" selected="npm.dev">
     <configuration name="db-upgrade" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
       <makefile filename="$PROJECT_DIR$/Makefile" target="db-upgrade" workingDirectory="" arguments="">
         <envs />
@@ -193,6 +204,15 @@
       <workItem from="1769006151913" duration="1041000" />
       <workItem from="1769007206785" duration="688000" />
     </task>
+    <task id="LOCAL-00001" summary="fix(workers): 修复Pydantic模型在任务消费和执行中的处理问题&#10;&#10;- 在task_consumer.py中添加BaseModel导入用于模型数据处理&#10;- 修复_event处理函数中对BaseModel实例的数据转换问题&#10;- 修改task_worker.py中_execute_agent_stream调用以正确传递模型数据&#10;- 清理workspace.xml中的冗余变更列表配置">
+      <option name="closed" value="true" />
+      <created>1769044900670</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1769044900670</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -200,22 +220,12 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
-    <option name="LAST_COMMIT_MESSAGE" value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
-  </component>
-  <component name="XDebuggerManager">
-    <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/src/aiwen/routers/agents/chat.py</url>
-          <line>74</line>
-          <option name="timeStamp" value="3" />
-        </line-breakpoint>
-      </breakpoints>
-    </breakpoint-manager>
+    <MESSAGE value="fix(workers): 修复Pydantic模型在任务消费和执行中的处理问题&#10;&#10;- 在task_consumer.py中添加BaseModel导入用于模型数据处理&#10;- 修复_event处理函数中对BaseModel实例的数据转换问题&#10;- 修改task_worker.py中_execute_agent_stream调用以正确传递模型数据&#10;- 清理workspace.xml中的冗余变更列表配置" />
+    <option name="LAST_COMMIT_MESSAGE" value="fix(workers): 修复Pydantic模型在任务消费和执行中的处理问题&#10;&#10;- 在task_consumer.py中添加BaseModel导入用于模型数据处理&#10;- 修复_event处理函数中对BaseModel实例的数据转换问题&#10;- 修改task_worker.py中_execute_agent_stream调用以正确传递模型数据&#10;- 清理workspace.xml中的冗余变更列表配置" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769044530633" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
-    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769044682178" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769044860653" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769044864378" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
     <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768980510907" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
   </component>
   <component name="github-copilot-workspace">

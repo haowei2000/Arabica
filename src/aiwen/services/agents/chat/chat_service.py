@@ -23,7 +23,6 @@ from aiwen.schemas.agents.message import MessageUpdate
 from aiwen.schemas.chat import StartTaskResult
 from aiwen.schemas.task.payload import TaskPayload
 from aiwen.services.agents.chat.chat_helper import (
-    create_message,
     create_conversation,
     stream_and_finalize,
 )
@@ -35,9 +34,6 @@ from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
 
 logger = logging.getLogger(__name__)
-
-
-
 
 
 async def _stream_queue_events(
@@ -94,8 +90,7 @@ async def _stream_queue_events(
 def _prepare_task_payload(
         text_input: TextInput,
         conversation: Conversation,
-        message: Message,
-        app_id:str,
+        app_id: str,
 ) -> TaskPayload:
     """
     准备载荷字典
@@ -103,7 +98,7 @@ def _prepare_task_payload(
     Args:
         text_input: 原始载荷
         conversation: 对话对象
-        message: 消息对象
+        message_content: 消息对象
 
     Returns:
         包含应用、对话和消息 ID 的载荷字典
@@ -111,16 +106,12 @@ def _prepare_task_payload(
 
     return TaskPayload(
         conversation_id=str(conversation.id),
-        message_id=str(message.id),
         input=text_input,
-        app_id=app_id
+        app_id=app_id,
     )
 
 
-
-
-
-async def get_task_messages(
+async def get_messages_by_task(
         *,
         task_id: UUID,
         task_consumer: AgentTaskConsumer,
@@ -198,25 +189,25 @@ async def start_task(
     logger.info(f"Prepared conversation {conversation.id} for app {app_id}")
 
     # 2. Create input
-    message = await create_message(
-        app_id=app_id,
-        conversation_id=conversation.id,
-        text_message=text_input,
-        message_crud=message_crud,
-    )
-    logger.info(f"Created input {message.id} in conversation {conversation.id}")
+    # message_content = await create_message(
+    #     app_id=app_id,
+    #     conversation_id=conversation.id,
+    #     text_message=text_input,
+    #     message_crud=message_crud,
+    # )
+    # logger.info(f"Created input {message_content.id} in conversation {conversation.id}")
 
     # 3. Create a task
     task = await task_crud.create_agent_task(
         app_id=app_id,
         user_id=user_id,
-        task_type="agent:streams",
+        task_type="agent_stream",
         payload=text_input,
     )
-    logger.info(f"Created task {task.id} for input {message.id}")
-
+    logger.debug(f"Created task {task.id} for {text_input.query}")
+    text_input.conversation_id = conversation.id
     # 4. Prepare a text_message with app, conversation and input IDs
-    task_payload = _prepare_task_payload(text_input, conversation, message,str(app_id))
+    task_payload = _prepare_task_payload(text_input, conversation, str(app_id))
 
     # 5. Publish a task using AgentTaskProducer
     await task_producer.publish_task(
@@ -227,5 +218,4 @@ async def start_task(
     return StartTaskResult(
         task_id=str(task.id),
         conversation_id=str(conversation.id),
-        message_id=str(message.id),
     )

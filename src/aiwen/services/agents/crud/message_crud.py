@@ -1,14 +1,12 @@
 """CRUD operations for Message model."""
 
 import builtins
-from typing import List, Optional, Tuple, Union
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.message import Message
-from aiwen.schemas.agents.message import MessageCreate, MessageUpdate
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -45,12 +43,20 @@ class MessageCRUD:
         """
         self.db = db_session
 
-    async def create(self, data: MessageCreate, auto_commit: bool = False) -> Message:
+    async def create(self, app_id: str | UUID, conversation_id: str | UUID, query: str, message_content: str, answer: str, status: str, from_source: str | None = None, from_end_user_id: str | UUID | None = None, from_account_id: str | UUID | None = None, auto_commit: bool = False) -> Message:
         """
-        Create a new input.
+        Create a new message.
 
         Args:
-            data: Message creation data
+            app_id: Application ID
+            conversation_id: Conversation ID
+            query: Query content
+            message_content: Message content
+            answer: Answer content
+            status: Status of the message
+            from_source: Source of the message
+            from_end_user_id: End user ID if from end user
+            from_account_id: Account ID if from account
             auto_commit: If True, immediately commit the transaction.
                          If False (default), only flush changes.
 
@@ -58,32 +64,32 @@ class MessageCRUD:
             Created Message instance
         """
         # Normalize UUID fields to strings
-        app_id = data.app_id
-        conversation_id = data.conversation_id
-        from_end_user_id =data.from_end_user_id if data.from_end_user_id else None
-        from_account_id = data.from_account_id if data.from_account_id else None
+        app_id = normalize_uuid_to_str(app_id)
+        conversation_id = normalize_uuid_to_str(conversation_id)
+        from_end_user_id = normalize_uuid_to_str(from_end_user_id) if from_end_user_id else None
+        from_account_id = normalize_uuid_to_str(from_account_id) if from_account_id else None
 
-        message = Message(
+        message_obj = Message(
             app_id=app_id,
             conversation_id=conversation_id,
-            query=data.query,
-            message=data.message,
-            answer=data.answer,
-            status=data.status,
-            from_source=data.from_source,
+            query=query,
+            message=message_content,
+            answer=answer,
+            status=status,
+            from_source=from_source,
             from_end_user_id=from_end_user_id,
             from_account_id=from_account_id,
         )
 
-        self.db.add(message)
+        self.db.add(message_obj)
 
         if auto_commit:
             await self.db.commit()
         else:
             await self.db.flush()
 
-        await self.db.refresh(message)
-        return message
+        await self.db.refresh(message_obj)
+        return message_obj
 
     async def get_by_id(self, message_id: str | UUID) -> Message | None:
         """
@@ -103,15 +109,28 @@ class MessageCRUD:
     async def update(
         self,
         message_id: str | UUID,
-        data: MessageUpdate,
+        *,
+        query: str | None = None,
+        message_content: str | None = None,
+        answer: str | None = None,
+        status: str | None = None,
+        from_source: str | None = None,
+        from_end_user_id: str | UUID | None = None,
+        from_account_id: str | UUID | None = None,
         auto_commit: bool = False
     ) -> Message | None:
         """
-        Update an existing input.
+        Update an existing message_content.
 
         Args:
-            message_id: The input ID to update
-            data: Update data
+            message_id: The message_content ID to update
+            query: New query content
+            message_content: New message_content content
+            answer: New answer content
+            status: New status of the message_content
+            from_source: New source of the message_content
+            from_end_user_id: New end user ID
+            from_account_id: New account ID
             auto_commit: If True, immediately commit the transaction.
                          If False (default), only flush changes.
 
@@ -123,7 +142,24 @@ class MessageCRUD:
         if not message:
             return None
 
-        update_data = data.model_dump(exclude_unset=True)
+        # Prepare update data based on provided parameters
+        update_data = {}
+        if query is not None:
+            update_data['query'] = query
+        if message_content is not None:
+            update_data['message_content'] = message_content
+        if answer is not None:
+            update_data['answer'] = answer
+        if status is not None:
+            update_data['status'] = status
+        if from_source is not None:
+            update_data['from_source'] = from_source
+        if from_end_user_id is not None:
+            update_data['from_end_user_id'] = normalize_uuid_to_str(from_end_user_id)
+        if from_account_id is not None:
+            update_data['from_account_id'] = normalize_uuid_to_str(from_account_id)
+
+        # Apply updates
         for key, value in update_data.items():
             setattr(message, key, value)
 

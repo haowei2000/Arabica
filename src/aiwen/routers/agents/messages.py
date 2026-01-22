@@ -5,16 +5,12 @@ Note: Agent and App are merged into a single concept.
 The app_id field in messages refers to the agent_id.
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_message_crud
 from aiwen.schemas.agents.message import (
-    MessageCreate,
     MessageListResponse,
-    MessageResponse,
-    MessageUpdate,
+    MessageResponse, MessageCreate, MessageUpdate,
 )
 from aiwen.services.agents.crud.message_crud import MessageCRUD
 
@@ -23,8 +19,8 @@ router = APIRouter(prefix="/messages", tags=["messages"])
 
 @router.post("/", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_message(
-    data: MessageCreate,
-    crud: MessageCRUD = Depends(get_message_crud)
+        data: MessageCreate,
+        crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
     Create a new input.
@@ -36,14 +32,14 @@ async def create_message(
     Returns:
         Created input
     """
-    message = await crud.create(data)
+    message = await crud.create(**data.model_dump())
     return message
 
 
 @router.get("/{message_id}", response_model=MessageResponse)
 async def get_message(
-    message_id: str,
-    crud: MessageCRUD = Depends(get_message_crud)
+        message_id: str,
+        crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
     Get input by ID.
@@ -69,9 +65,9 @@ async def get_message(
 
 @router.put("/{message_id}", response_model=MessageResponse)
 async def update_message(
-    message_id: str,
-    data: MessageUpdate,
-    crud: MessageCRUD = Depends(get_message_crud)
+        message_id: str,
+        data: MessageUpdate,
+        crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
     Update an existing input.
@@ -87,7 +83,7 @@ async def update_message(
     Raises:
         HTTPException: If input not found
     """
-    message = await crud.update(message_id, data)
+    message = await crud.update(message_id, **data.model_dump())
     if not message:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -98,14 +94,14 @@ async def update_message(
 
 @router.get("/", response_model=MessageListResponse)
 async def list_messages(
-    conversation_id: str | None = Query(None, description="Filter by conversation ID"),
-    app_id: str | None = Query(None, description="Filter by agent ID (app_id = agent_id)"),
-    status: str | None = Query(None, description="Filter by status"),
-    from_end_user_id: str | None = Query(None, description="Filter by end user ID"),
-    from_account_id: str | None = Query(None, description="Filter by account ID"),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    crud: MessageCRUD = Depends(get_message_crud)
+        conversation_id: str | None = Query(None, description="Filter by conversation ID"),
+        app_id: str | None = Query(None, description="Filter by agent ID (app_id = agent_id)"),
+        status: str | None = Query(None, description="Filter by status"),
+        from_end_user_id: str | None = Query(None, description="Filter by end user ID"),
+        from_account_id: str | None = Query(None, description="Filter by account ID"),
+        page: int = Query(1, ge=1, description="Page number"),
+        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+        crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
     List messages with filtering and pagination.
@@ -145,12 +141,12 @@ async def list_messages(
 
 @router.get("/search/", response_model=MessageListResponse)
 async def search_messages(
-    q: str = Query(..., min_length=1, description="Search term"),
-    conversation_id: str | None = Query(None, description="Filter by conversation ID"),
-    app_id: str | None = Query(None, description="Filter by agent ID (app_id = agent_id)"),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    crud: MessageCRUD = Depends(get_message_crud)
+        q: str = Query(..., min_length=1, description="Search term"),
+        conversation_id: str | None = Query(None, description="Filter by conversation ID"),
+        app_id: str | None = Query(None, description="Filter by agent ID (app_id = agent_id)"),
+        page: int = Query(1, ge=1, description="Page number"),
+        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+        crud: MessageCRUD = Depends(get_message_crud)
 ):
     """
     Search messages by keyword (searches in query and answer fields).

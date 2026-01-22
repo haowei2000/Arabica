@@ -48,7 +48,7 @@ class Message(Base):
     )
     summary: Mapped[str | None] = mapped_column(LongText)
     query: Mapped[str] = mapped_column(LongText, nullable=False)
-    message: Mapped[dict[str, Any]] = mapped_column(sa.JSON, nullable=False)
+    message: Mapped[list[dict[str, Any]]] = mapped_column(sa.JSON, nullable=False)
     answer: Mapped[str] = mapped_column(LongText, nullable=False)
     status: Mapped[str] = mapped_column(String(255), nullable=False, server_default=sa.text("'normal'"))
     error: Mapped[str | None] = mapped_column(LongText)

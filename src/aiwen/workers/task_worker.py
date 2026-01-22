@@ -39,11 +39,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_session
 from aiwen.schemas.agents.input import TextInput
+from aiwen.schemas.agents.message import MessageCreate
 from aiwen.schemas.task.payload import TaskPayload
 from aiwen.services.agents.agent_registry import AgentRegistry
 from aiwen.services.agents.app_factory import AppAgentFactory
 from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.agents.crud.app_crud import AppCRUD
+from aiwen.services.agents.crud.message_crud import MessageCRUD
 from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.utils.json_utils import dumps as json_dumps
@@ -255,7 +257,7 @@ class AgentWorker:
                 logger.info(f"Agent instance created for task {task_id}, type: {template.template_code}")
 
                 # 5. 流式执行 agent 并发送事件
-                result_data = await self._execute_agent_stream(agent_instance, input.model_dump(), task_id)
+                result_data = await self._execute(agent_instance, input.model_dump(), task_id)
 
                 # 6. 更新任务状态为成功
                 await task_crud.update_agent_task_status(task_id, "success", result=result_data)
@@ -288,7 +290,7 @@ class AgentWorker:
         self.runtime.attach(task_id, agent_instance)
         return agent_instance
 
-    async def _execute_agent_stream(self, agent_instance, payload:TextInput, task_id):
+    async def _execute(self, agent_instance, payload:TextInput, task_id):
         """
         执行agent流式处理并收集结果
 
@@ -305,22 +307,26 @@ class AgentWorker:
         logger.info(f"Payload type: {type(payload)}")
         logger.info(f"Payload content: {payload}")
 
-        # 确保 text_message 是字典
-        if not isinstance(payload, dict):
-            error_msg = (
-                f"Invalid text_message type: expected dict, got {type(payload).__name__}. "
-                f"Payload content: {payload}"
-            )
-            logger.error(error_msg)
-            raise TypeError(error_msg)
 
         collected_chunks = []
-        async for chunk in agent_instance.stream(payload):
+        async for chunk in agent_instance.stream(payload.model_dump()):
             collected_chunks.append(chunk)
             await self.publish_event(task_id, {"event": "chunk", "data": chunk})
 
         # 6. 收集完整结果
         full_result = "".join(collected_chunks) if collected_chunks else ""
+        async with get_session("aiwen") as db_session:
+            message_crud = MessageCRUD(db_session)
+            await message_crud.create(
+                app_id=str(payload.app_id),
+                task_id=task_id,
+                query=payload.query,
+                answer=full_result,
+                conversation_id=str(payload.conversation_id),
+                status="finished",
+                from_source="api",
+                message_content={"human": payload.query, "assitant": full_result}
+            )
         return {"answer": full_result, "chunks_count": len(collected_chunks)}
 
     async def _handle_task_error(self, task_id, error_msg):

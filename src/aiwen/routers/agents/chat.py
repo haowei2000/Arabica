@@ -27,7 +27,7 @@ from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.services.agents.chat.chat_service import (
     StartTaskResult,
-    get_task_messages,
+    get_messages_by_task,
     start_task,
 )
 from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
@@ -71,7 +71,6 @@ async def start_chat_task(
         StartTaskResult: 包含 task_id, conversation_id, message_id
     """
     payload.from_account_id = payload.from_account_id or current_user.id
-    print(payload)
     return await start_task(
         app_id=app_id,
         user_id=current_user.id,
@@ -109,7 +108,7 @@ async def stream_task_messages(
         StreamingResponse: SSE 流式响应
     """
     return StreamingResponse(
-        get_task_messages(
+        get_messages_by_task(
             task_id=task_id,
             task_consumer=task_consumer,
         ),

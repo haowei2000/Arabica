@@ -81,21 +81,20 @@ class AgentTaskProducer:
             Exception: 发布失败时抛出异常
         """
         try:
-            # Build fields with flat string values for Redis Stream
             fields = {
                 "task_id": str(task_id),
                 "input": payload.model_dump_json() if payload else "{}",
             }
-            task_message_id = await self.redis_client.xadd(
-                name=self.task_name,  # Write to "agent" stream directly
+            task_stream_id = await self.redis_client.xadd(
+                name=self.task_name,
                 fields=fields,
-                maxlen=10000,  # 限制 Stream 最大长度（可选）
-                approximate=True  # 使用近似修剪以提高性能
+                maxlen=10000,
+                approximate=True
             )
             logger.info(
-                f"Published task {task_id} to stream (input: {task_message_id})"
+                f"Published task {task_id} to stream (input: {task_stream_id})"
             )
-            return task_message_id
+            return task_stream_id
         except Exception as e:
             logger.error(
                 f"Error publishing task {task_id} to stream: {e}",
@@ -110,7 +109,7 @@ async def _get_redis_client():
 
 
 async def get_task_producer(
-    redis_client: redis_async.Redis = Depends(_get_redis_client),
+        redis_client: redis_async.Redis = Depends(_get_redis_client),
 ) -> AgentTaskProducer:
     """
     FastAPI 依赖函数，获取 AgentTaskProducer 实例

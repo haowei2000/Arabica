@@ -16,7 +16,6 @@ Task Consumer - 任务消费者
     - redis.asyncio: Redis 异步客户端
     - task_utils: 消息编码/解码工具
 """
-from pydantic import BaseModel
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
@@ -25,6 +24,7 @@ from enum import Enum, auto
 from typing import Any
 
 import redis.asyncio as aioredis
+from pydantic import BaseModel
 
 from .task_utils import decode_data_field, parse_json_field, build_stream_name_key, decode_bytes
 
@@ -44,6 +44,26 @@ class EventResult:
     """事件处理结果"""
     action: EventAction
     data: Any = None
+
+
+def _handle_event(event_type: str, event_data: Any, task_id: str) -> EventResult:
+    """处理事件，返回 EventResult"""
+    logger.debug(f"Received event '{event_type}' for task {task_id}: {event_data}")
+    if isinstance(event_data, BaseModel):
+        event_data = event_data.model_dump()
+    match event_type:
+        case "chunk":
+            return EventResult(EventAction.YIELD, event_data)
+        case "success":
+            logger.info(f"Task {task_id} completed successfully")
+            return EventResult(EventAction.RETURN)
+        case "failed":
+            error_msg = event_data if isinstance(event_data, str) else str(event_data)
+            logger.error(f"Task {task_id} failed: {error_msg}")
+            return EventResult(EventAction.RAISE, Exception(error_msg))
+        case _:
+            logger.warning(f"Unknown event type '{event_type}' for task {task_id}")
+            return EventResult(EventAction.SKIP)
 
 
 class AgentTaskConsumer:
@@ -117,26 +137,6 @@ class AgentTaskConsumer:
             logger.error(f"Error reading from stream {stream_name}: {e}", exc_info=True)
             raise
 
-    @staticmethod
-    def _handle_event(event_type: str, event_data: Any, task_id: str) -> EventResult:
-        """处理事件，返回 EventResult"""
-        logger.debug(f"Received event '{event_type}' for task {task_id}: {event_data}")
-        if isinstance(event_data, BaseModel):
-            event_data=event_data.model_dump()
-        match event_type:
-            case "chunk":
-                return EventResult(EventAction.YIELD, event_data)
-            case "success":
-                logger.info(f"Task {task_id} completed successfully")
-                return EventResult(EventAction.RETURN)
-            case "failed":
-                error_msg = event_data if isinstance(event_data, str) else str(event_data)
-                logger.error(f"Task {task_id} failed: {error_msg}")
-                return EventResult(EventAction.RAISE, Exception(error_msg))
-            case _:
-                logger.warning(f"Unknown event type '{event_type}' for task {task_id}")
-                return EventResult(EventAction.SKIP)
-
     async def get_task_events(
             self,
             task_id: str,
@@ -183,7 +183,7 @@ class AgentTaskConsumer:
                         last_id = decode_bytes(message_id)
                         event_type = decode_data_field(data, "event")
                         event_data = parse_json_field(data, "data", default={})
-                        event_result = self._handle_event(event_type, event_data, task_id)
+                        event_result = _handle_event(event_type, event_data, task_id)
 
                         match event_result.action:
                             case EventAction.YIELD:
