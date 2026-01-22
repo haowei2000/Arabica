@@ -18,7 +18,7 @@ from aiwen.schemas.agents.app import ContextType
 Base = get_base("aiwen")
 
 
-class Context(Base):
+class Context(Base):  # ty:ignore[unsupported-base]
     """Context table for storing agent context with vector embeddings."""
 
     __tablename__ = "context"
@@ -31,7 +31,9 @@ class Context(Base):
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), nullable=False, comment="关联的用户ID"
     )
-
+    source_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, comment="关联的源ID"
+    )
     # Context type
     context_type: Mapped[str] = mapped_column(
         String(50),
@@ -72,7 +74,7 @@ class Context(Base):
         nullable=True,
         comment="1536维向量嵌入",
     )
-    
+
     # Metadata
     meta: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, comment="额外元数据"

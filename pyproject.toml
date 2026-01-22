@@ -72,6 +72,8 @@ dependencies = [
     "ty>=0.0.7",
     "pip>=25.3",
     "pgvector>=0.4.2",
+    # Task Queue
+    "celery[redis]>=5.4.0",
 ]
 
 [project.optional-dependencies]
@@ -92,6 +94,7 @@ dev = [
 aiwen-api = "aiwen.api_cli:run"
 aiwen-mcp = "aiwen.mcp_cli:main"
 aiwen-worker = "aiwen.worker_cli:main_sync"
+aiwen-celery = "aiwen.celery_cli:main"
 # 工具
 sync-env = "scripts.sync_env:main"
 

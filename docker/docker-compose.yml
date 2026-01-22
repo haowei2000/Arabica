@@ -99,7 +99,139 @@ services:
           memory: 2G
         reservations:
           memory: 512M
-
+  
+  # Celery Worker for background tasks
+  aiwen-celery-worker:
+    profiles:
+      - celery
+      - worker
+      - all
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+        UV_VERSION: ${UV_VERSION:-0.5.24}
+    image: aiwen-service:${VERSION:-latest}
+    container_name: aiwen-celery-worker
+    command: celery -A aiwen.workers.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - aiwen-logs:/app/logs
+    env_file:
+      - ../.env
+    environment:
+      <<: *common-env
+      # Database Configuration - PostgreSQL
+      POSTGRES__HOST: postgres
+      POSTGRES__PORT: 5432
+      POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-aiwen123456}
+      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES__DIFY_DBNAME: ${POSTGRES__DIFY_DBNAME:-dify}
+      POSTGRES__DRIVER: postgresql+asyncpg
+      # Database Configuration - MySQL
+      MYSQL__HOST: mysql
+      MYSQL__PORT: 3306
+      MYSQL__USERNAME: ${MYSQL__USERNAME:-root}
+      MYSQL__PASSWORD: ${MYSQL__PASSWORD:-123456}
+      MYSQL__DBNAME: ${MYSQL__DBNAME:-agent_chat}
+      MYSQL__DRIVER: mysql+asyncmy
+      # Redis Configuration
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__USERNAME: ${REDIS__USERNAME:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+  
+  # Celery Beat for scheduled tasks (optional)
+  aiwen-celery-beat:
+    profiles:
+      - celery-beat
+      - all
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+        UV_VERSION: ${UV_VERSION:-0.5.24}
+    image: aiwen-service:${VERSION:-latest}
+    container_name: aiwen-celery-beat
+    command: celery -A aiwen.workers.celery_app beat --loglevel=info
+    volumes:
+      - aiwen-logs:/app/logs
+    env_file:
+      - ../.env
+    environment:
+      <<: *common-env
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__DB: ${REDIS_DB:-1}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+  
+  # Flower - Celery monitoring (optional)
+  aiwen-flower:
+    profiles:
+      - flower
+      - tools
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+        UV_VERSION: ${UV_VERSION:-0.5.24}
+    image: aiwen-service:${VERSION:-latest}
+    container_name: aiwen-flower
+    command: celery -A aiwen.workers.celery_app flower --port=5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    env_file:
+      - ../.env
+    environment:
+      <<: *common-env
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__DB: ${REDIS_DB:-1}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+  
   # Frontend application (React + Vite)
   aiwen-frontend:
     profiles:

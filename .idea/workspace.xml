@@ -4,10 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置">
-      <change afterPath="$PROJECT_DIR$/docker/nginx/nginx.conf" afterDir="false" />
+    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="feat(infra): 添加Nginx反向代理配置并更新Docker编排&#10;&#10;- 在docker-compose.yml中新增nginx服务配置，支持反向代理功能&#10;- 添加nginx配置文件，实现后端API和前端服务的请求转发&#10;- 配置API代理路径(/api/)转发到后端服务，支持SSE流式响应&#10;- 设置WebSocket代理路径(/ws/)用于实时通信功能&#10;- 配置前端代理路径(/)转发到前端容器&#10;- 添加健康检查端点和安全头设置&#10;- 配置Gzip压缩和KeepAlive连接优化性能&#10;- 设置资源限制(memory: 128M)和重启策略&#10;- 更新IDE运行配置，默认选择docker-up启动命令">
+      <change afterPath="$PROJECT_DIR$/src/aiwen/routers/context/knowledge.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/knowledge.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/knowledge.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/app.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -139,7 +142,7 @@
   <component name="RecapUselessUpdatesCounter">
     <option name="suspendCountdown" value="0" />
   </component>
-  <component name="RunManager" selected="Makefile Target.docker-up">
+  <component name="RunManager" selected="npm.dev">
     <configuration name="db-upgrade" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
       <makefile filename="$PROJECT_DIR$/Makefile" target="db-upgrade" workingDirectory="" arguments="">
         <envs />
@@ -243,7 +246,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769067675444</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="feat(infra): 添加Nginx反向代理配置并更新Docker编排&#10;&#10;- 在docker-compose.yml中新增nginx服务配置，支持反向代理功能&#10;- 添加nginx配置文件，实现后端API和前端服务的请求转发&#10;- 配置API代理路径(/api/)转发到后端服务，支持SSE流式响应&#10;- 设置WebSocket代理路径(/ws/)用于实时通信功能&#10;- 配置前端代理路径(/)转发到前端容器&#10;- 添加健康检查端点和安全头设置&#10;- 配置Gzip压缩和KeepAlive连接优化性能&#10;- 设置资源限制(memory: 128M)和重启策略&#10;- 更新IDE运行配置，默认选择docker-up启动命令">
+      <option name="closed" value="true" />
+      <created>1769070283983</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1769070283983</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -257,7 +268,8 @@
     <MESSAGE value="chore(migrations): 统一数据库迁移文件中的字符串引号格式并优化表结构定义&#10;&#10;- 将所有单引号统一替换为双引号以保持代码风格一致&#10;- 在初始数据库模式迁移中规范化表结构定义格式&#10;- 优化字段约束和索引定义的代码结构&#10;- 更新注释和文档字符串格式以提高可读性&#10;- 调整数据库表字段的注释和默认值设置&#10;- 优化外键约束和唯一约束的定义方式" />
     <MESSAGE value="feat(api): 统一API端点命名并优化数据模型结构&#10;&#10;- 将数据库字段app_code统一重命名为app_id，确保ID字段命名一致性&#10;- 更新所有API路由端点，采用RESTful风格的路径设计&#10;- 重构前端API常量定义，匹配新的端点URL结构&#10;- 实现基于用户权限的数据访问控制机制&#10;- 优化数据传输对象(DTO)结构，提升API可读性&#10;- 更新后端路由处理函数以适应新的端点设计&#10;- 集成数据验证和错误处理机制，提高系统稳定性&#10;- 调整IDE配置文档格式为Google风格，便于代码维护" />
     <MESSAGE value="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置" />
-    <option name="LAST_COMMIT_MESSAGE" value="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置" />
+    <MESSAGE value="feat(infra): 添加Nginx反向代理配置并更新Docker编排&#10;&#10;- 在docker-compose.yml中新增nginx服务配置，支持反向代理功能&#10;- 添加nginx配置文件，实现后端API和前端服务的请求转发&#10;- 配置API代理路径(/api/)转发到后端服务，支持SSE流式响应&#10;- 设置WebSocket代理路径(/ws/)用于实时通信功能&#10;- 配置前端代理路径(/)转发到前端容器&#10;- 添加健康检查端点和安全头设置&#10;- 配置Gzip压缩和KeepAlive连接优化性能&#10;- 设置资源限制(memory: 128M)和重启策略&#10;- 更新IDE运行配置，默认选择docker-up启动命令" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(infra): 添加Nginx反向代理配置并更新Docker编排&#10;&#10;- 在docker-compose.yml中新增nginx服务配置，支持反向代理功能&#10;- 添加nginx配置文件，实现后端API和前端服务的请求转发&#10;- 配置API代理路径(/api/)转发到后端服务，支持SSE流式响应&#10;- 设置WebSocket代理路径(/ws/)用于实时通信功能&#10;- 配置前端代理路径(/)转发到前端容器&#10;- 添加健康检查端点和安全头设置&#10;- 配置Gzip压缩和KeepAlive连接优化性能&#10;- 设置资源限制(memory: 128M)和重启策略&#10;- 更新IDE运行配置，默认选择docker-up启动命令" />
     <option name="OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT" value="true" />
     <option name="REFORMAT_BEFORE_PROJECT_COMMIT" value="true" />
   </component>

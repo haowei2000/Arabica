@@ -75,7 +75,7 @@ class Model(BaseModel):
 
 class ContextType(StrEnum):
     """Schema for context type."""
-    KNOWLEDGE = "knowledge"
+    CHUNK = ("CHUNK")
     CONVERSATION = "conversation"
     MESSAGE = "message"
     SKILL = "SKILL"
