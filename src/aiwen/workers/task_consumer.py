@@ -16,6 +16,7 @@ Task Consumer - 任务消费者
     - redis.asyncio: Redis 异步客户端
     - task_utils: 消息编码/解码工具
 """
+from pydantic import BaseModel
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
@@ -120,7 +121,8 @@ class AgentTaskConsumer:
     def _handle_event(event_type: str, event_data: Any, task_id: str) -> EventResult:
         """处理事件，返回 EventResult"""
         logger.debug(f"Received event '{event_type}' for task {task_id}: {event_data}")
-
+        if isinstance(event_data, BaseModel):
+            event_data=event_data.model_dump()
         match event_type:
             case "chunk":
                 return EventResult(EventAction.YIELD, event_data)

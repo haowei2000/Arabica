@@ -255,7 +255,7 @@ class AgentWorker:
                 logger.info(f"Agent instance created for task {task_id}, type: {template.template_code}")
 
                 # 5. 流式执行 agent 并发送事件
-                result_data = await self._execute_agent_stream(agent_instance, input, task_id)
+                result_data = await self._execute_agent_stream(agent_instance, input.model_dump(), task_id)
 
                 # 6. 更新任务状态为成功
                 await task_crud.update_agent_task_status(task_id, "success", result=result_data)
