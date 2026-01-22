@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -14,16 +13,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aiwen.extensions.database import get_base
+from aiwen.schemas.agents.app import ContextType
 
 Base = get_base("aiwen")
-
-
-class ContextType(str, Enum):
-    """Context type enumeration."""
-
-    HISTORY = "history"  # Conversation history context
-    TOOL = "tool"  # Tool usage context
-    KNOWLEDGE = "knowledge"  # Knowledge base context
 
 
 class Context(Base):
@@ -36,22 +28,15 @@ class Context(Base):
         PGUUID(as_uuid=True), primary_key=True, default=uuid4
     )
 
-    # Relationships
-    app_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), nullable=False, comment="关联的应用ID"
-    )
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), nullable=False, comment="关联的用户ID"
-    )
-    conversation_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True, comment="关联的对话ID"
     )
 
     # Context type
     context_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        default=ContextType.HISTORY.value,
+        default=ContextType.CONVERSATION.value,
         comment="上下文类型: history, tool, knowledge",
     )
 
@@ -60,20 +45,37 @@ class Context(Base):
     summary: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="上下文摘要"
     )
-
-    # Vector embedding for similarity search
-    embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(1536),  # OpenAI text-embedding-3-small dimension
+    keywords: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True, comment="关键词"
+    )
+    # Vector embedding_1536 for similarity search
+    embedding_384: Mapped[list[float] | None] = mapped_column(
+        Vector(384),  # 轻量级模型维度，如 MiniLM / E5-small / bge-small
         nullable=True,
-        comment="向量嵌入",
+        comment="384维向量嵌入",
     )
 
-    # Metadata
-    metadata: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="额外元数据"
+    embedding_768: Mapped[list[float] | None] = mapped_column(
+        Vector(768),  # 经典BERT类模型维度，如sentence-transformers系列、bge-base、e5-base
+        nullable=True,
+        comment="768维向量嵌入",
     )
-    source: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="上下文来源"
+
+    embedding_1024: Mapped[list[float] | None] = mapped_column(
+        Vector(1024),  # 大型模型维度，如bge-large、e5-large
+        nullable=True,
+        comment="1024维向量嵌入",
+    )
+
+    embedding_1536: Mapped[list[float] | None] = mapped_column(
+        Vector(1536),  # OpenAI text-embedding-3-small 维度
+        nullable=True,
+        comment="1536维向量嵌入",
+    )
+    
+    # Metadata
+    meta: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, comment="额外元数据"
     )
     importance: Mapped[int | None] = mapped_column(
         Integer, default=0, comment="重要性评分 0-100"
@@ -92,17 +94,36 @@ class Context(Base):
 
     # Indexes for vector similarity search
     __table_args__ = (
-        Index("ix_context_app_id", "app_id"),
         Index("ix_context_user_id", "user_id"),
         Index("ix_context_type", "context_type"),
-        Index("ix_context_conversation_id", "conversation_id"),
         # Vector index using HNSW for fast similarity search
         Index(
-            "ix_context_embedding_hnsw",
-            "embedding",
+            "ix_context_embedding_384_hnsw",
+            "embedding_384",
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
-            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_ops={"embedding_384": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_context_embedding_768_hnsw",
+            "embedding_768",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_768": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_context_embedding_1024_hnsw",
+            "embedding_1024",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_1024": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_context_embedding_1536_hnsw",
+            "embedding_1536",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_1536": "vector_cosine_ops"},
         ),
     )
 

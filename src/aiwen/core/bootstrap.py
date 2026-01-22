@@ -16,7 +16,7 @@ from typing import Optional
 from sqlalchemy import select
 
 from aiwen.config.factory import get_settings
-from aiwen.extensions.database import _bases, _engines, _ensure_registered, get_session
+from aiwen.extensions.database import _engines, _ensure_registered, get_session
 from aiwen.extensions.logger import setup_logging
 from aiwen.models.auth.tenant import Tenant
 from aiwen.models.auth.user import User
@@ -55,6 +55,89 @@ class BootstrapConfig:
     init_agent_registry: bool = True
 
 
+async def _initialize_databases() -> None:
+    """初始化数据库连接"""
+    logger.info("🗄️  初始化数据库连接...")
+    _ensure_registered()
+    logger.info(f"✅ 已注册 {len(_engines)} 个数据库")
+
+
+async def _create_tables() -> None:
+    """
+    创建数据库表（已禁用）
+
+    ⚠️  表的创建应该统一由 Alembic 管理，不应该在代码中自动创建。
+
+    使用 Alembic 创建表的步骤：
+    1. 运行: alembic upgrade head
+    2. 如果需要新表，先创建模型，然后: alembic revision --autogenerate -m "add new table"
+    3. 再运行: alembic upgrade head
+
+    如果确实需要在代码中创建表（仅用于测试环境），请手动调用 Base.metadata.create_all()
+    """
+    logger.warning("⚠️  跳过数据库表创建 - 表应该由 Alembic 管理")
+    logger.warning("   请确保已运行: alembic upgrade head")
+    # 不再自动创建表
+    # 如果需要创建表，请使用 Alembic:
+    # $ alembic upgrade head
+
+
+def _setup_logging() -> None:
+    """设置日志系统"""
+    logger.info("📝 设置日志系统...")
+    setup_logging()
+    logger.info("✅ 日志系统已配置")
+
+
+async def _shutdown_redis() -> None:
+    """关闭Redis连接"""
+    logger.info("🔴 关闭Redis连接...")
+    try:
+        from aiwen.middleware.cache_middleware import close_redis_client
+
+        await close_redis_client()
+        logger.info("✅ Redis连接已关闭")
+    except Exception as e:
+        logger.error(f"⚠️  关闭Redis连接时出错: {e}")
+
+
+async def _shutdown_databases() -> None:
+    """关闭所有数据库连接"""
+    logger.info("🗄️  关闭数据库连接...")
+    for bind_name, engine in _engines.items():
+        try:
+            await engine.dispose()
+            logger.info(f"   ✅ 数据库 {bind_name} 已关闭")
+        except Exception as e:
+            logger.error(f"   ⚠️  关闭数据库 {bind_name} 时出错: {e}")
+    logger.info("✅ 所有数据库连接已关闭")
+
+
+async def _initialize_agent_registry() -> None:
+    """初始化Agent Registry"""
+    logger.info("🤖 初始化Agent Registry...")
+    try:
+        from aiwen.services.agents.agent_registry import (
+            init_agent_registry,
+            AgentRegistry,
+        )
+
+        await init_agent_registry()
+
+        templates = AgentRegistry.list()
+        logger.info(f"✅ Agent Registry初始化完成")
+        logger.info(f"   已注册模板: {templates}")
+
+        # 验证关键模板
+        if AgentRegistry.is_registered("DEFAULT001"):
+            logger.info("   ✅ DEFAULT001模板验证通过")
+        else:
+            logger.warning("   ⚠️  DEFAULT001模板未注册")
+    except Exception as e:
+        logger.error(f"❌ Agent Registry初始化失败: {e}")
+        # 不抛出异常，允许应用继续运行
+
+
 class ApplicationBootstrap:
     """应用初始化管理器"""
 
@@ -81,15 +164,15 @@ class ApplicationBootstrap:
 
         # Step 1: 日志系统（如果需要）
         if self.config.init_logging:
-            self._setup_logging()
+            _setup_logging()
 
         # Step 2: 数据库连接
         if self.config.init_database:
-            await self._initialize_databases()
+            await _initialize_databases()
 
         # Step 3: 数据库表创建（仅API服务）
         if self.config.create_tables:
-            await self._create_tables()
+            await _create_tables()
 
         # Step 4: Redis连接
         if self.config.init_redis:
@@ -101,7 +184,7 @@ class ApplicationBootstrap:
 
         # Step 6: Agent Registry初始化
         if self.config.init_agent_registry:
-            await self._initialize_agent_registry()
+            await _initialize_agent_registry()
 
         logger.info("=" * 60)
         logger.info("✅ 应用初始化完成")
@@ -115,11 +198,11 @@ class ApplicationBootstrap:
 
         # 关闭Redis连接
         if self.config.init_redis:
-            await self._shutdown_redis()
+            await _shutdown_redis()
 
         # 关闭数据库连接
         if self.config.init_database:
-            await self._shutdown_databases()
+            await _shutdown_databases()
 
         logger.info("=" * 60)
         logger.info("✅ 资源清理完成")
@@ -128,37 +211,6 @@ class ApplicationBootstrap:
     # ========================================================================
     # 私有方法 - 各个初始化步骤
     # ========================================================================
-
-    def _setup_logging(self) -> None:
-        """设置日志系统"""
-        logger.info("📝 设置日志系统...")
-        setup_logging()
-        logger.info("✅ 日志系统已配置")
-
-    async def _initialize_databases(self) -> None:
-        """初始化数据库连接"""
-        logger.info("🗄️  初始化数据库连接...")
-        _ensure_registered()
-        logger.info(f"✅ 已注册 {len(_engines)} 个数据库")
-
-    async def _create_tables(self) -> None:
-        """
-        创建数据库表（已禁用）
-
-        ⚠️  表的创建应该统一由 Alembic 管理，不应该在代码中自动创建。
-
-        使用 Alembic 创建表的步骤：
-        1. 运行: alembic upgrade head
-        2. 如果需要新表，先创建模型，然后: alembic revision --autogenerate -m "add new table"
-        3. 再运行: alembic upgrade head
-
-        如果确实需要在代码中创建表（仅用于测试环境），请手动调用 Base.metadata.create_all()
-        """
-        logger.warning("⚠️  跳过数据库表创建 - 表应该由 Alembic 管理")
-        logger.warning("   请确保已运行: alembic upgrade head")
-        # 不再自动创建表
-        # 如果需要创建表，请使用 Alembic:
-        # $ alembic upgrade head
 
     async def _initialize_redis(self) -> None:
         """初始化Redis连接"""
@@ -246,52 +298,6 @@ class ApplicationBootstrap:
             logger.error(f"❌ 创建管理员用户失败: {e}")
             # 不抛出异常，允许应用继续运行
 
-    async def _initialize_agent_registry(self) -> None:
-        """初始化Agent Registry"""
-        logger.info("🤖 初始化Agent Registry...")
-        try:
-            from aiwen.services.agents.agent_registry import (
-                init_agent_registry,
-                AgentRegistry,
-            )
-
-            await init_agent_registry()
-
-            templates = AgentRegistry.list()
-            logger.info(f"✅ Agent Registry初始化完成")
-            logger.info(f"   已注册模板: {templates}")
-
-            # 验证关键模板
-            if AgentRegistry.is_registered("DEFAULT001"):
-                logger.info("   ✅ DEFAULT001模板验证通过")
-            else:
-                logger.warning("   ⚠️  DEFAULT001模板未注册")
-        except Exception as e:
-            logger.error(f"❌ Agent Registry初始化失败: {e}")
-            # 不抛出异常，允许应用继续运行
-
-    async def _shutdown_redis(self) -> None:
-        """关闭Redis连接"""
-        logger.info("🔴 关闭Redis连接...")
-        try:
-            from aiwen.middleware.cache_middleware import close_redis_client
-
-            await close_redis_client()
-            logger.info("✅ Redis连接已关闭")
-        except Exception as e:
-            logger.error(f"⚠️  关闭Redis连接时出错: {e}")
-
-    async def _shutdown_databases(self) -> None:
-        """关闭所有数据库连接"""
-        logger.info("🗄️  关闭数据库连接...")
-        for bind_name, engine in _engines.items():
-            try:
-                await engine.dispose()
-                logger.info(f"   ✅ 数据库 {bind_name} 已关闭")
-            except Exception as e:
-                logger.error(f"   ⚠️  关闭数据库 {bind_name} 时出错: {e}")
-        logger.info("✅ 所有数据库连接已关闭")
-
     def get_redis_client(self):
         """获取Redis客户端（供Worker使用）"""
         return self._redis_client
@@ -356,9 +362,29 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
     )
 
 
-# ============================================================================
-# 便捷函数
-# ============================================================================
+def get_alembic_bootstrap_config() -> BootstrapConfig:
+    """
+    Alembic的初始化配置
+
+    注意：
+    - create_tables=False: 表由 Alembic 统一管理
+    - create_admin_user=False: Alembic 不需要创建用户
+    """
+    return BootstrapConfig(
+        init_logging=False,
+        init_redis=False,
+        init_database=True,
+        create_tables=False,
+        create_admin_user=False,
+        init_agent_registry=False,
+    )
+
+
+async def bootstrap_alembic() -> ApplicationBootstrap:
+    """初始化Alembic服务"""
+    bootstrap = ApplicationBootstrap(get_alembic_bootstrap_config())
+    await bootstrap.initialize()
+    return bootstrap
 
 
 async def bootstrap_api() -> ApplicationBootstrap:

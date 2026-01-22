@@ -9,8 +9,8 @@ Create Date: 2026-01-11 00:00:00.000000
 import logging
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def upgrade() -> None:
     else:
         logger.warning(
             "pgvector extension is not available on this PostgreSQL server. "
-            "Vector embedding features will be disabled. "
+            "Vector embedding_1536 features will be disabled. "
             "Install pgvector to enable similarity search: https://github.com/pgvector/pgvector"
         )
 
@@ -103,8 +103,8 @@ def upgrade() -> None:
 
     # Add vector column only if pgvector is available
     if pgvector_available:
-        op.execute("ALTER TABLE context ADD COLUMN embedding vector(1536)")
-        op.execute("COMMENT ON COLUMN context.embedding IS '向量嵌入'")
+        op.execute("ALTER TABLE context ADD COLUMN embedding_1536 vector(1536)")
+        op.execute("COMMENT ON COLUMN context.embedding_1536 IS '向量嵌入'")
 
     # Create standard indexes
     op.create_index("ix_context_app_id", "context", ["app_id"])
@@ -116,7 +116,7 @@ def upgrade() -> None:
     if pgvector_available:
         op.execute("""
             CREATE INDEX ix_context_embedding_hnsw ON context
-            USING hnsw (embedding vector_cosine_ops)
+                USING hnsw (embedding_1536 vector_cosine_ops)
             WITH (m = 16, ef_construction = 64)
         """)
 
