@@ -4,16 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="feat(api): 统一API端点命名并优化数据模型结构&#10;&#10;- 将数据库字段app_code统一重命名为app_id，确保ID字段命名一致性&#10;- 更新所有API路由端点，采用RESTful风格的路径设计&#10;- 重构前端API常量定义，匹配新的端点URL结构&#10;- 实现基于用户权限的数据访问控制机制&#10;- 优化数据传输对象(DTO)结构，提升API可读性&#10;- 更新后端路由处理函数以适应新的端点设计&#10;- 集成数据验证和错误处理机制，提高系统稳定性&#10;- 调整IDE配置文档格式为Google风格，便于代码维护">
-      <change afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/c4b2d1d39a5a_change_konwledge_embedding.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/aiwen/models/auth/__init__.py" afterDir="false" />
+    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置">
+      <change afterPath="$PROJECT_DIR$/docker/nginx/nginx.conf" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/core/bootstrap.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/core/bootstrap.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/env.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/env.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/migrations/versions/b2c3d4e5f6a7_create_context_table.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/migrations/versions/b2c3d4e5f6a7_create_context_table.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/models/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/models/agents/context.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker/docker-compose.yml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -145,7 +139,7 @@
   <component name="RecapUselessUpdatesCounter">
     <option name="suspendCountdown" value="0" />
   </component>
-  <component name="RunManager" selected="Python.work_cli">
+  <component name="RunManager" selected="Makefile Target.docker-up">
     <configuration name="db-upgrade" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
       <makefile filename="$PROJECT_DIR$/Makefile" target="db-upgrade" workingDirectory="" arguments="">
         <envs />
@@ -175,10 +169,10 @@
     <recent_temporary>
       <list>
         <item itemvalue="Makefile Target.docker-up" />
-        <item itemvalue="Makefile Target.db-upgrade" />
         <item itemvalue="Makefile Target.docker-up" />
-        <item itemvalue="Makefile Target.docker-down" />
-        <item itemvalue="Makefile Target.docker-down" />
+        <item itemvalue="Makefile Target.docker-up" />
+        <item itemvalue="Makefile Target.docker-up" />
+        <item itemvalue="Makefile Target.db-upgrade" />
       </list>
     </recent_temporary>
   </component>
@@ -241,7 +235,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769064402739</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置">
+      <option name="closed" value="true" />
+      <created>1769067675444</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1769067675444</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -254,7 +256,8 @@
     <MESSAGE value="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置" />
     <MESSAGE value="chore(migrations): 统一数据库迁移文件中的字符串引号格式并优化表结构定义&#10;&#10;- 将所有单引号统一替换为双引号以保持代码风格一致&#10;- 在初始数据库模式迁移中规范化表结构定义格式&#10;- 优化字段约束和索引定义的代码结构&#10;- 更新注释和文档字符串格式以提高可读性&#10;- 调整数据库表字段的注释和默认值设置&#10;- 优化外键约束和唯一约束的定义方式" />
     <MESSAGE value="feat(api): 统一API端点命名并优化数据模型结构&#10;&#10;- 将数据库字段app_code统一重命名为app_id，确保ID字段命名一致性&#10;- 更新所有API路由端点，采用RESTful风格的路径设计&#10;- 重构前端API常量定义，匹配新的端点URL结构&#10;- 实现基于用户权限的数据访问控制机制&#10;- 优化数据传输对象(DTO)结构，提升API可读性&#10;- 更新后端路由处理函数以适应新的端点设计&#10;- 集成数据验证和错误处理机制，提高系统稳定性&#10;- 调整IDE配置文档格式为Google风格，便于代码维护" />
-    <option name="LAST_COMMIT_MESSAGE" value="feat(api): 统一API端点命名并优化数据模型结构&#10;&#10;- 将数据库字段app_code统一重命名为app_id，确保ID字段命名一致性&#10;- 更新所有API路由端点，采用RESTful风格的路径设计&#10;- 重构前端API常量定义，匹配新的端点URL结构&#10;- 实现基于用户权限的数据访问控制机制&#10;- 优化数据传输对象(DTO)结构，提升API可读性&#10;- 更新后端路由处理函数以适应新的端点设计&#10;- 集成数据验证和错误处理机制，提高系统稳定性&#10;- 调整IDE配置文档格式为Google风格，便于代码维护" />
+    <MESSAGE value="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(database): 重构上下文表结构并优化数据库初始化流程&#10;&#10;- 新增Context模型的多维度向量嵌入支持(embedding_384/768/1024/1536)&#10;- 移除app_id和conversation_id字段，简化Context表结构&#10;- 添加keywords和meta字段增强上下文数据存储能力&#10;- 创建多个HNSW索引优化不同维度向量相似性搜索性能&#10;- 重构bootstrap.py将私有方法转换为独立异步函数&#10;- 新增get_alembic_bootstrap_config和bootstrap_alembic函数&#10;- 修改迁移脚本环境配置使用异步引导程序初始化&#10;- 统一数据库操作使用新的向量字段名称和索引策略&#10;- 更新ContextType枚举使用CONVERSATION作为默认值&#10;- 新增auth模块初始化Tenant和User模型导入配置" />
     <option name="OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT" value="true" />
     <option name="REFORMAT_BEFORE_PROJECT_COMMIT" value="true" />
   </component>
@@ -275,8 +278,8 @@
     </breakpoint-manager>
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769063626054" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
-    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769063628667" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$api_cli.coverage" NAME="api_cli Coverage Results" MODIFIED="1769069209997" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
+    <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769069213844" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
     <SUITE FILE_PATH="coverage/agent_chat$worker_cli.coverage" NAME="worker_cli Coverage Results" MODIFIED="1768980510907" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />
   </component>
   <component name="github-copilot-workspace">
