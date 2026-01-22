@@ -69,14 +69,13 @@ dependencies = [
     "fuzzywuzzy[speedup]>=0.18.0",
     "pypinyin>=0.55.0",
     "click>=8.1.0",
-    "ty>=0.0.7",
     "pip>=25.3",
     "pgvector>=0.4.2",
     # Task Queue
-    "celery[redis]>=5.4.0",
+    "celery[redis]",
+    "boto3>=1.42.32",
 ]
-
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=9.0.1",
     "pytest-asyncio>=0.24.0",
@@ -87,6 +86,7 @@ dev = [
     "faker>=30.0.0",
     "ty>=0.0.7",
     "types-redis>=4.6.0",
+    "celery-types>=0.24.0",
 ]
 
 [project.scripts]
@@ -164,3 +164,4 @@ exclude_lines = [
     "@(abc\\.)?abstractmethod",
 ]
 precision = 2
+

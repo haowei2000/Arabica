@@ -1,113 +1,72 @@
-#!/usr/bin/env python3
-"""
-Celery Application Configuration
-
-用于后台任务处理的 Celery 应用配置。
-流式任务继续使用 Redis Streams Worker，非流式后台任务使用 Celery。
-
-使用示例:
-    # 启动 worker
-    celery -A aiwen.workers.celery_app worker --loglevel=info
-
-    # 启动 beat (定时任务)
-    celery -A aiwen.workers.celery_app beat --loglevel=info
-
-    # 启动 flower (监控面板)
-    celery -A aiwen.workers.celery_app flower --port=5555
-"""
-
-import logging
+import asyncio
+import threading
 
 from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
 
 from aiwen.config.factory import get_settings
+from aiwen.core.bootstrap import ApplicationBootstrap
 
-logger = logging.getLogger(__name__)
+# 全局变量存储资源
+_worker_resources = threading.local()
 
+celery_app = Celery('aiwen')
+settings = get_settings()
 
-def _build_redis_url() -> str:
-    """构建 Redis URL"""
-    settings = get_settings()
-    redis_config = settings.redis
-
-    if not redis_config:
-        raise ValueError("Redis configuration is required for Celery")
-
-    # 构建认证部分
-    auth = ""
-    if redis_config.username and redis_config.password:
-        auth = f"{redis_config.username}:{redis_config.password}@"
-    elif redis_config.password:
-        auth = f":{redis_config.password}@"
-
-    return f"redis://{auth}{redis_config.host}:{redis_config.port}/{redis_config.db}"
+# 配置 Celery
+celery_app.conf.update(
+    broker_url=f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
+    result_backend=f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='Asia/Shanghai',
+    enable_utc=False,
+)
 
 
-def create_celery_app() -> Celery:
-    """创建并配置 Celery 应用"""
-    redis_url = _build_redis_url()
+@worker_process_init.connect
+def init_worker(**kwargs):
+    """Worker 进程初始化时执行"""
+    print("Worker process initializing...")
+    try:
+        from aiwen.core.bootstrap import bootstrap_celery, ApplicationBootstrap
+        bootstrap: ApplicationBootstrap = asyncio.run(bootstrap_celery())
+        _worker_resources.bootstrap = bootstrap
+        _worker_resources.redis_client = bootstrap.redis_client
+        print("Worker resources initialized successfully")
 
-    app = Celery(
-        "aiwen",
-        broker=redis_url,
-        backend=redis_url,
-        include=[
-            "aiwen.workers.tasks.background_tasks",
-        ],
-    )
-
-    # Celery 配置
-    app.conf.update(
-        # 任务序列化
-        task_serializer="json",
-        accept_content=["json"],
-        result_serializer="json",
-
-        # 时区
-        timezone="Asia/Shanghai",
-        enable_utc=True,
-
-        # 任务配置
-        task_track_started=True,
-        task_time_limit=3600,  # 1小时超时
-        task_soft_time_limit=3300,  # 55分钟软超时
-        task_acks_late=True,  # 任务完成后再确认
-        task_reject_on_worker_lost=True,
-
-        # Worker 配置
-        worker_prefetch_multiplier=4,
-        worker_max_tasks_per_child=1000,  # 防止内存泄漏
-        worker_disable_rate_limits=False,
-
-        # 结果配置
-        result_expires=86400,  # 结果保存24小时
-
-        # 重试配置
-        broker_connection_retry_on_startup=True,
-
-        # 任务路由（可选）
-        task_routes={
-            "aiwen.workers.tasks.background_tasks.send_email": {"queue": "email"},
-            "aiwen.workers.tasks.background_tasks.generate_report": {"queue": "report"},
-            "aiwen.workers.tasks.background_tasks.*": {"queue": "default"},
-        },
-
-        # Beat 定时任务配置
-        beat_schedule={
-            # 示例：每小时清理过期数据
-            # "cleanup-expired-data": {
-            #     "task": "aiwen.workers.tasks.background_tasks.cleanup_expired_data",
-            #     "schedule": crontab(minute=0),  # 每小时执行
-            # },
-        },
-    )
-
-    logger.info(f"Celery app configured with broker: {redis_url.split('@')[-1]}")
-    return app
+    except Exception as e:
+        print(f"Error initializing worker: {e}")
+        raise
 
 
-# 创建全局 Celery 实例
-celery_app = create_celery_app()
+@worker_process_shutdown.connect
+def shutdown_worker(sig, how, **kwargs):
+    """Worker 进程关闭时执行"""
+    print(f"Worker shutting down, signal={sig}, how={how}")
+    try:
+        # 关闭 Redis 连接
+        if hasattr(_worker_resources, 'bootstrap'):
+            assert isinstance(_worker_resources.bootstrap, ApplicationBootstrap)
+            _worker_resources.bootstrap.cleanup()
+            print("Bootstrap Cleaned")
 
-# 用于 CLI 启动
-app = celery_app
+        # 关闭数据库引擎（如果有需要）
+        # 通常由全局清理处理
+
+        print("Worker resources cleaned up")
+    except Exception as e:
+        print(f"Error during worker shutdown: {e}")
+
+
+# 在任务中使用资源的示例
+@celery_app.task
+def example_task():
+    """示例任务，演示如何在任务中使用资源"""
+    # 从线程局部存储获取 Redis 客户端
+    redis_client = getattr(_worker_resources, 'redis_client', None)
+    if redis_client:
+        redis_client.incr("task_counter")
+
+    return "Task completed"

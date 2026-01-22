@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Index, Integer, String, Text, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -165,6 +166,28 @@ class Chunk(Base):
     status: Mapped[str] = mapped_column(String(20), default="completed", comment="处理状态")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")
 
+    # Vector embeddings for similarity search
+    embedding_384: Mapped[list[float] | None] = mapped_column(
+        Vector(384),
+        nullable=True,
+        comment="384维向量嵌入 (MiniLM / E5-small / bge-small)",
+    )
+    embedding_768: Mapped[list[float] | None] = mapped_column(
+        Vector(768),
+        nullable=True,
+        comment="768维向量嵌入 (BERT / bge-base / e5-base)",
+    )
+    embedding_1024: Mapped[list[float] | None] = mapped_column(
+        Vector(1024),
+        nullable=True,
+        comment="1024维向量嵌入 (bge-large / e5-large)",
+    )
+    embedding_1536: Mapped[list[float] | None] = mapped_column(
+        Vector(1536),
+        nullable=True,
+        comment="1536维向量嵌入 (OpenAI / DashScope)",
+    )
+
     # Metadata
     meta: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, comment="分段元数据"
@@ -183,6 +206,42 @@ class Chunk(Base):
 
     # Relationships
     document: Mapped[Document] = relationship("Document", back_populates="chunks")
+
+    # Indexes for vector similarity search
+    __table_args__ = (
+        Index("ix_chunk_document_id", "document_id"),
+        Index("ix_chunk_user_id", "user_id"),
+        Index("ix_chunk_status", "status"),
+        # HNSW indexes for vector similarity search
+        Index(
+            "ix_chunk_embedding_384_hnsw",
+            "embedding_384",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_384": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_chunk_embedding_768_hnsw",
+            "embedding_768",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_768": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_chunk_embedding_1024_hnsw",
+            "embedding_1024",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_1024": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_chunk_embedding_1536_hnsw",
+            "embedding_1536",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding_1536": "vector_cosine_ops"},
+        ),
+    )
 
     def __repr__(self) -> str:
         return f"<Chunk(id={self.id}, document_id='{self.document_id}', position={self.position})>"

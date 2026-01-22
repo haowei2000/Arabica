@@ -18,6 +18,7 @@ from sqlalchemy import select
 from aiwen.config.factory import get_settings
 from aiwen.extensions.database import _engines, _ensure_registered, get_session
 from aiwen.extensions.logger import setup_logging
+from aiwen.extensions.storage.global_storage import get_global_s3_storage
 from aiwen.models.auth.tenant import Tenant
 from aiwen.models.auth.user import User
 from aiwen.utils.security import hash_password
@@ -53,6 +54,8 @@ class BootstrapConfig:
 
     # 是否初始化 Agent Registry
     init_agent_registry: bool = True
+
+    init_storage: bool = True
 
 
 async def _initialize_databases() -> None:
@@ -150,7 +153,8 @@ class ApplicationBootstrap:
         """
         self.config = config or BootstrapConfig()
         self.settings = get_settings()
-        self._redis_client = None
+        self.redis_client = None
+        self.storage = None
 
     async def initialize(self) -> None:
         """
@@ -186,6 +190,8 @@ class ApplicationBootstrap:
         if self.config.init_agent_registry:
             await _initialize_agent_registry()
 
+        if self.config.init_storage:
+            await self._init_storage_backend()
         logger.info("=" * 60)
         logger.info("✅ 应用初始化完成")
         logger.info("=" * 60)
@@ -222,9 +228,9 @@ class ApplicationBootstrap:
             )
 
             await init_redis_client()
-            self._redis_client = get_redis_client(is_async=True)
+            self.redis_client = get_redis_client(is_async=True)
 
-            if not self._redis_client:
+            if not self.redis_client:
                 raise RuntimeError("Redis client initialization returned None")
 
             logger.info(
@@ -233,6 +239,19 @@ class ApplicationBootstrap:
         except Exception as e:
             logger.error(f"❌ Redis初始化失败: {e}")
             raise
+
+    async def _init_storage_backend(self) -> None:
+        """获取存储后端（供Worker使用）"""
+        from aiwen.extensions.storage.global_storage import init_global_s3_storage
+        init_global_s3_storage(
+            endpoint_url=self.settings.rustfs.endpoint,
+            bucket=self.settings.rustfs.bucket,
+            access_key=self.settings.rustfs.access_key,
+            secret_key=self.settings.rustfs.secret_key,
+            use_ssl=self.settings.rustfs.secure
+        )
+        self.storage = get_global_s3_storage()
+        logger.info("Storage Init Successfully")
 
     async def _create_admin_user(self) -> None:
         """创建管理员用户"""
@@ -300,7 +319,7 @@ class ApplicationBootstrap:
 
     def get_redis_client(self):
         """获取Redis客户端（供Worker使用）"""
-        return self._redis_client
+        return self.redis_client
 
 
 # ============================================================================
@@ -323,6 +342,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         create_tables=False,  # ⚠️  表由 Alembic 管理，不在代码中创建
         create_admin_user=True,  # API负责创建用户
         init_agent_registry=True,
+        init_storage=True,
     )
 
 
@@ -341,6 +361,7 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
         create_tables=False,  # 表由 Alembic 管理
         create_admin_user=False,  # Worker不创建用户
         init_agent_registry=True,  # Worker需要Agent Registry
+        init_storage=True
     )
 
 
@@ -359,6 +380,7 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
         create_tables=False,  # 表由 Alembic 管理
         create_admin_user=False,  # MCP不创建用户
         init_agent_registry=False,  # MCP不需要Agent Registry
+        init_storage=False
     )
 
 
@@ -377,6 +399,23 @@ def get_alembic_bootstrap_config() -> BootstrapConfig:
         create_tables=False,
         create_admin_user=False,
         init_agent_registry=False,
+        init_storage=False
+    )
+
+
+def get_celery_bootstrap_config() -> BootstrapConfig:
+    """
+    Celery的初始化配置
+
+    """
+    return BootstrapConfig(
+        init_logging=False,
+        init_redis=False,
+        init_database=True,
+        create_tables=False,
+        create_admin_user=False,
+        init_agent_registry=False,
+        init_storage=True
     )
 
 
@@ -404,5 +443,12 @@ async def bootstrap_worker() -> ApplicationBootstrap:
 async def bootstrap_mcp() -> ApplicationBootstrap:
     """初始化MCP服务"""
     bootstrap = ApplicationBootstrap(get_mcp_bootstrap_config())
+    await bootstrap.initialize()
+    return bootstrap
+
+
+async def bootstrap_celery() -> ApplicationBootstrap:
+    """初始化Celery服务"""
+    bootstrap = ApplicationBootstrap(get_celery_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap

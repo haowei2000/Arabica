@@ -70,3 +70,6 @@ db-status: ## 显示迁移状态
 	@echo ""
 	@echo "$(BLUE)待执行迁移:$(NC)"
 	@uv run alembic history --indicate-current
+
+uv-dev:
+	uv sync

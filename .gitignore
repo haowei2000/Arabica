@@ -165,4 +165,5 @@ cython_debug/
 /docker/postgres/data/
 /docker/mysql/data/
 /docker/redis/data/
+/docker/rustfs
 /.idea/
