@@ -12,10 +12,10 @@ from aiwen.models.agents.message import Message
 def normalize_uuid_to_str(val: str | UUID) -> str:
     """
     Normalize a UUID value to string.
-    
+
     Args:
         val: UUID object or string representation
-        
+
     Returns:
         String representation of the UUID
     """
@@ -43,7 +43,19 @@ class MessageCRUD:
         """
         self.db = db_session
 
-    async def create(self, app_id: str | UUID, conversation_id: str | UUID, query: str, message_content: str, answer: str, status: str, from_source: str | None = None, from_end_user_id: str | UUID | None = None, from_account_id: str | UUID | None = None, auto_commit: bool = False) -> Message:
+    async def create(
+        self,
+        app_id: str | UUID,
+        conversation_id: str | UUID,
+        query: str,
+        message_content: str,
+        answer: str,
+        status: str,
+        from_source: str | None = None,
+        from_end_user_id: str | UUID | None = None,
+        from_account_id: str | UUID | None = None,
+        auto_commit: bool = False,
+    ) -> Message:
         """
         Create a new message.
 
@@ -66,8 +78,12 @@ class MessageCRUD:
         # Normalize UUID fields to strings
         app_id = normalize_uuid_to_str(app_id)
         conversation_id = normalize_uuid_to_str(conversation_id)
-        from_end_user_id = normalize_uuid_to_str(from_end_user_id) if from_end_user_id else None
-        from_account_id = normalize_uuid_to_str(from_account_id) if from_account_id else None
+        from_end_user_id = (
+            normalize_uuid_to_str(from_end_user_id) if from_end_user_id else None
+        )
+        from_account_id = (
+            normalize_uuid_to_str(from_account_id) if from_account_id else None
+        )
 
         message_obj = Message(
             app_id=app_id,
@@ -117,7 +133,7 @@ class MessageCRUD:
         from_source: str | None = None,
         from_end_user_id: str | UUID | None = None,
         from_account_id: str | UUID | None = None,
-        auto_commit: bool = False
+        auto_commit: bool = False,
     ) -> Message | None:
         """
         Update an existing message_content.
@@ -145,19 +161,19 @@ class MessageCRUD:
         # Prepare update data based on provided parameters
         update_data = {}
         if query is not None:
-            update_data['query'] = query
+            update_data["query"] = query
         if message_content is not None:
-            update_data['message_content'] = message_content
+            update_data["message_content"] = message_content
         if answer is not None:
-            update_data['answer'] = answer
+            update_data["answer"] = answer
         if status is not None:
-            update_data['status'] = status
+            update_data["status"] = status
         if from_source is not None:
-            update_data['from_source'] = from_source
+            update_data["from_source"] = from_source
         if from_end_user_id is not None:
-            update_data['from_end_user_id'] = normalize_uuid_to_str(from_end_user_id)
+            update_data["from_end_user_id"] = normalize_uuid_to_str(from_end_user_id)
         if from_account_id is not None:
-            update_data['from_account_id'] = normalize_uuid_to_str(from_account_id)
+            update_data["from_account_id"] = normalize_uuid_to_str(from_account_id)
 
         # Apply updates
         for key, value in update_data.items():
@@ -179,7 +195,7 @@ class MessageCRUD:
         from_end_user_id: str | UUID | None = None,
         from_account_id: str | UUID | None = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> tuple[list[Message], int]:
         """
         List messages with filtering and pagination.
@@ -204,7 +220,9 @@ class MessageCRUD:
         if conversation_id:
             normalized_conversation_id = normalize_uuid_to_str(conversation_id)
             stmt = stmt.where(Message.conversation_id == normalized_conversation_id)
-            count_stmt = count_stmt.where(Message.conversation_id == normalized_conversation_id)
+            count_stmt = count_stmt.where(
+                Message.conversation_id == normalized_conversation_id
+            )
 
         if app_id:
             normalized_app_id = normalize_uuid_to_str(app_id)
@@ -218,12 +236,16 @@ class MessageCRUD:
         if from_end_user_id:
             normalized_from_end_user_id = normalize_uuid_to_str(from_end_user_id)
             stmt = stmt.where(Message.from_end_user_id == normalized_from_end_user_id)
-            count_stmt = count_stmt.where(Message.from_end_user_id == normalized_from_end_user_id)
+            count_stmt = count_stmt.where(
+                Message.from_end_user_id == normalized_from_end_user_id
+            )
 
         if from_account_id:
             normalized_from_account_id = normalize_uuid_to_str(from_account_id)
             stmt = stmt.where(Message.from_account_id == normalized_from_account_id)
-            count_stmt = count_stmt.where(Message.from_account_id == normalized_from_account_id)
+            count_stmt = count_stmt.where(
+                Message.from_account_id == normalized_from_account_id
+            )
 
         # Get total count
         count_result = await self.db.execute(count_stmt)
@@ -243,7 +265,7 @@ class MessageCRUD:
         conversation_id: str | UUID | None = None,
         app_id: str | UUID | None = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> tuple[builtins.list[Message], int]:
         """
         Full-text search in messages (query and answer fields).
@@ -263,20 +285,22 @@ class MessageCRUD:
         stmt = select(Message).where(
             or_(
                 Message.query.ilike(search_pattern),
-                Message.answer.ilike(search_pattern)
+                Message.answer.ilike(search_pattern),
             )
         )
         count_stmt = select(func.count(Message.id)).where(
             or_(
                 Message.query.ilike(search_pattern),
-                Message.answer.ilike(search_pattern)
+                Message.answer.ilike(search_pattern),
             )
         )
 
         if conversation_id:
             normalized_conversation_id = normalize_uuid_to_str(conversation_id)
             stmt = stmt.where(Message.conversation_id == normalized_conversation_id)
-            count_stmt = count_stmt.where(Message.conversation_id == normalized_conversation_id)
+            count_stmt = count_stmt.where(
+                Message.conversation_id == normalized_conversation_id
+            )
 
         if app_id:
             normalized_app_id = normalize_uuid_to_str(app_id)
@@ -295,10 +319,7 @@ class MessageCRUD:
         return items, total
 
     async def get_by_conversation(
-        self,
-        conversation_id: str | UUID,
-        skip: int = 0,
-        limit: int = 100
+        self, conversation_id: str | UUID, skip: int = 0, limit: int = 100
     ) -> tuple[builtins.list[Message], int]:
         """
         Get all messages for a specific conversation.
@@ -311,8 +332,4 @@ class MessageCRUD:
         Returns:
             Tuple of (list of messages, total count)
         """
-        return await self.list(
-            conversation_id=conversation_id,
-            skip=skip,
-            limit=limit
-        )
+        return await self.list(conversation_id=conversation_id, skip=skip, limit=limit)

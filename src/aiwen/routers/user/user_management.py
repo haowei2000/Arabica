@@ -1,4 +1,5 @@
 """REST API endpoints for User management."""
+
 from typing import Annotated, Optional
 from uuid import UUID
 
@@ -22,7 +23,7 @@ async def get_user_crud(db=Depends(get_aiwen_db)):
 async def create_user(
     user_data: UserCreate,
     user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_admin_user)
+    current_user: UserInDB = Depends(get_admin_user),
 ):
     """
     Create a new user.
@@ -44,7 +45,7 @@ async def create_user(
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail="Username already registered",
         )
 
     if user_data.email:
@@ -52,7 +53,7 @@ async def create_user(
         if existing_email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                detail="Email already registered",
             )
 
     # For demo purposes, assign user to default tenant
@@ -72,7 +73,7 @@ async def create_user(
 async def get_user(
     user_id: UUID,
     user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
 ):
     """
     Get user by ID.
@@ -93,7 +94,7 @@ async def get_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID '{user_id}' not found"
+            detail=f"User with ID '{user_id}' not found",
         )
 
     # Check if current user has permission to access this user
@@ -101,7 +102,7 @@ async def get_user(
     if user.id != current_user.id and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to access this user"
+            detail="You don't have permission to access this user",
         )
 
     return user
@@ -112,9 +113,11 @@ async def list_users(
     user_crud: UserCRUD = Depends(get_user_crud),
     current_user: UserInDB = Depends(get_current_user),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    limit: int = Query(
+        100, ge=1, le=1000, description="Maximum number of records to return"
+    ),
     tenant_id: UUID | None = Query(None, description="Filter by tenant ID"),
-    is_active: bool | None = Query(None, description="Filter by active status")
+    is_active: bool | None = Query(None, description="Filter by active status"),
 ):
     """
     List all users with pagination.
@@ -137,14 +140,11 @@ async def list_users(
     if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin users can list all users"
+            detail="Only admin users can list all users",
         )
 
     users, total = await user_crud.list_users(
-        skip=skip,
-        limit=limit,
-        tenant_id=tenant_id,
-        is_active=is_active
+        skip=skip, limit=limit, tenant_id=tenant_id, is_active=is_active
     )
 
     return users
@@ -160,7 +160,7 @@ async def update_user(
     is_active: bool | None = Body(None),
     is_superuser: bool | None = Body(None),
     user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
 ):
     """
     Update an existing user.
@@ -187,14 +187,14 @@ async def update_user(
     if not current_user.is_superuser and current_user.id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to update this user"
+            detail="You don't have permission to update this user",
         )
 
     user = await user_crud.get_user_by_id(user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID '{user_id}' not found"
+            detail=f"User with ID '{user_id}' not found",
         )
 
     updated_user = await user_crud.update_user(
@@ -214,7 +214,7 @@ async def update_user(
 async def delete_user(
     user_id: UUID,
     user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_admin_user)
+    current_user: UserInDB = Depends(get_admin_user),
 ):
     """
     Delete a user.
@@ -235,14 +235,14 @@ async def delete_user(
     if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to delete users"
+            detail="You don't have permission to delete users",
         )
 
     user = await user_crud.get_user_by_id(user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID '{user_id}' not found"
+            detail=f"User with ID '{user_id}' not found",
         )
 
     await user_crud.delete_user(user_id)

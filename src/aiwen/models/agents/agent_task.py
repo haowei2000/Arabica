@@ -42,14 +42,13 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [
-            _to_jsonable(v) for v in value
-        ]
+        return [_to_jsonable(v) for v in value]
     return value
 
 
 class PydanticJSONB(TypeDecorator):
     """自动处理 Pydantic 模型的 JSONB 类型"""
+
     impl = JSONB
     cache_ok = True
 
@@ -63,41 +62,48 @@ class PydanticJSONB(TypeDecorator):
 
 
 class AgentTask(Base):
-    __tablename__ = 'agent_task'
+    __tablename__ = "agent_task"
 
     # Primary key
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
 
     # Task identification
-    app_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, comment='关联的agent标识')
-    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, comment='关联的用户标识')
-    task_type: Mapped[str | None] = mapped_column(String, comment='任务类型')
+    app_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, comment="关联的agent标识"
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, comment="关联的用户标识"
+    )
+    task_type: Mapped[str | None] = mapped_column(String, comment="任务类型")
 
     # Status and data
-    status: Mapped[str] = mapped_column(String, default="pending",
-                                        comment='任务状态: pending, running, success, failed')
+    status: Mapped[str] = mapped_column(
+        String, default="pending", comment="任务状态: pending, running, success, failed"
+    )
 
-    payload: Mapped[Any | None] = mapped_column(PydanticJSONB, comment='任务输入数据')
-    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, comment='任务结果')
-    error: Mapped[str | None] = mapped_column(Text, comment='错误信息')
+    payload: Mapped[Any | None] = mapped_column(PydanticJSONB, comment="任务输入数据")
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, comment="任务结果")
+    error: Mapped[str | None] = mapped_column(Text, comment="错误信息")
 
     # Progress tracking
-    progress: Mapped[int | None] = mapped_column(Integer, comment='任务进度百分比')
+    progress: Mapped[int | None] = mapped_column(Integer, comment="任务进度百分比")
 
     # Audit fields
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        comment='创建时间'
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), comment="创建时间"
     )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
-        comment='更新时间'
+        comment="更新时间",
     )
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment='开始执行时间')
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment='完成时间')
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="开始执行时间"
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="完成时间"
+    )
 
     def __repr__(self) -> str:
         return f"<AgentTask(id={self.id}, app_id='{self.app_id}', user_id='{self.user_id}', status='{self.status}')>"

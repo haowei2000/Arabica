@@ -47,7 +47,7 @@ async def run():
 
         # 获取Redis客户端和数据库工厂
         redis_client = bootstrap.get_redis_client()
-        db = get_session('aiwen')
+        db = get_session("aiwen")
 
         # 设置信号处理器
         def signal_handler(signum, frame):

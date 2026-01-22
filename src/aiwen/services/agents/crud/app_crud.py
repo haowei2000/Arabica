@@ -58,7 +58,7 @@ class AppCRUD:
             enabled=data.enabled,
             config=data.config or {},
             version=data.version,
-            created_at=datetime.now(UTC)
+            created_at=datetime.now(UTC),
         )
 
         self.db_session.add(app)
@@ -81,9 +81,7 @@ class AppCRUD:
         Returns:
             App instance if found, None otherwise
         """
-        result = await self.db_session.execute(
-            select(App).where(App.id == app_id)
-        )
+        result = await self.db_session.execute(select(App).where(App.id == app_id))
         return result.scalar_one_or_none()
 
     async def get_app_by_code(self, app_code: str) -> App | None:
@@ -106,7 +104,7 @@ class AppCRUD:
         skip: int = 0,
         limit: int = 100,
         enabled_only: bool = False,
-        user_id: UUID | None = None  # Add filter by user_id
+        user_id: UUID | None = None,  # Add filter by user_id
     ) -> tuple[list[App], int]:
         """
         List all apps with pagination.
@@ -146,10 +144,7 @@ class AppCRUD:
         return items, total
 
     async def update_app(
-        self,
-        app_code: str,
-        data: AppUpdate,
-        auto_commit: bool = False
+        self, app_code: str, data: AppUpdate, auto_commit: bool = False
     ) -> App | None:
         """
         Update an existing app.
@@ -208,10 +203,7 @@ class AppCRUD:
         return True
 
     async def get_apps_by_template(
-        self,
-        agent_template_id: UUID,
-        skip: int = 0,
-        limit: int = 100
+        self, agent_template_id: UUID, skip: int = 0, limit: int = 100
     ) -> tuple[list[App], int]:
         """
         Get all apps using a specific agent template.
@@ -226,7 +218,9 @@ class AppCRUD:
         """
         # Base query
         stmt = select(App).where(App.agent_template_id == agent_template_id)
-        count_stmt = select(func.count(App.id)).where(App.agent_template_id == agent_template_id)
+        count_stmt = select(func.count(App.id)).where(
+            App.agent_template_id == agent_template_id
+        )
 
         # Get total count
         count_result = await self.db_session.execute(count_stmt)
@@ -241,10 +235,7 @@ class AppCRUD:
         return items, total
 
     async def get_apps_by_user(
-        self,
-        user_id: UUID,
-        skip: int = 0,
-        limit: int = 100
+        self, user_id: UUID, skip: int = 0, limit: int = 100
     ) -> tuple[list[App], int]:
         """
         Get all apps created by a specific user.

@@ -4,8 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="fix(chat): 修复聊天服务中的消息处理和任务流问题&#10;&#10;- 重命名 get_task_messages 为 get_messages_by_task 以提高语义清晰度&#10;- 从 StartTaskResult 中移除 message_id 字段&#10;- 从 chat_helper 中移除 create_message 函数&#10;- 更新 _prepare_task_payload 函数参数并移除 message 参数&#10;- 将任务类型从 agent:streams 更改为 agent_stream&#10;- 修复日志格式中 message_content 的引用错误&#10;- 将 Message 模型中的 message 字段从 dict 类型更改为 list[dict] 类型&#10;- 添加 MessageContent 数据模型定义&#10;- 更新 MessageCRUD 中的创建和更新方法参数结构&#10;- 移动 _handle_event 函数到">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+    <list default="true" id="4e889cff-dd4b-439e-ba56-0d6fb0285d9d" name="Changes" comment="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/aiwen/schemas/agents/message.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -208,7 +209,15 @@
       <option name="project" value="LOCAL" />
       <updated>1769052382322</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置">
+      <option name="closed" value="true" />
+      <created>1769052416877</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1769052416878</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -218,7 +227,8 @@
     <MESSAGE value="Revert &quot;refactor(workers): 优化 Celery 工作器配置和数据库连接管理&quot;&#10;&#10;This reverts commit e576dc08" />
     <MESSAGE value="fix(workers): 修复Pydantic模型在任务消费和执行中的处理问题&#10;&#10;- 在task_consumer.py中添加BaseModel导入用于模型数据处理&#10;- 修复_event处理函数中对BaseModel实例的数据转换问题&#10;- 修改task_worker.py中_execute_agent_stream调用以正确传递模型数据&#10;- 清理workspace.xml中的冗余变更列表配置" />
     <MESSAGE value="fix(chat): 修复聊天服务中的消息处理和任务流问题&#10;&#10;- 重命名 get_task_messages 为 get_messages_by_task 以提高语义清晰度&#10;- 从 StartTaskResult 中移除 message_id 字段&#10;- 从 chat_helper 中移除 create_message 函数&#10;- 更新 _prepare_task_payload 函数参数并移除 message 参数&#10;- 将任务类型从 agent:streams 更改为 agent_stream&#10;- 修复日志格式中 message_content 的引用错误&#10;- 将 Message 模型中的 message 字段从 dict 类型更改为 list[dict] 类型&#10;- 添加 MessageContent 数据模型定义&#10;- 更新 MessageCRUD 中的创建和更新方法参数结构&#10;- 移动 _handle_event 函数到" />
-    <option name="LAST_COMMIT_MESSAGE" value="fix(chat): 修复聊天服务中的消息处理和任务流问题&#10;&#10;- 重命名 get_task_messages 为 get_messages_by_task 以提高语义清晰度&#10;- 从 StartTaskResult 中移除 message_id 字段&#10;- 从 chat_helper 中移除 create_message 函数&#10;- 更新 _prepare_task_payload 函数参数并移除 message 参数&#10;- 将任务类型从 agent:streams 更改为 agent_stream&#10;- 修复日志格式中 message_content 的引用错误&#10;- 将 Message 模型中的 message 字段从 dict 类型更改为 list[dict] 类型&#10;- 添加 MessageContent 数据模型定义&#10;- 更新 MessageCRUD 中的创建和更新方法参数结构&#10;- 移动 _handle_event 函数到" />
+    <MESSAGE value="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置" />
+    <option name="LAST_COMMIT_MESSAGE" value="chore(ide): 更新IDE配置文件忽略规则和工作区设置&#10;&#10;- 将.idea/目录添加到.gitignore中&#10;- 清理workspace.xml中的冗余变更列表配置&#10;- 更新本地任务计数器和提交历史记录&#10;- 移除之前的workers相关变更记录&#10;- 保留聊天服务修复相关的任务配置" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/agent_chat$work_cli.coverage" NAME="work_cli Coverage Results" MODIFIED="1769044860653" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$Sourcepath$" />

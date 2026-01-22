@@ -16,10 +16,10 @@ from aiwen.schemas.agents.conversation import ConversationCreate, ConversationUp
 def normalize_uuid_to_str(val: str | UUID) -> str:
     """
     Normalize a UUID value to string.
-    
+
     Args:
         val: UUID object or string representation
-        
+
     Returns:
         String representation of the UUID
     """
@@ -47,7 +47,9 @@ class ConversationCRUD:
         """
         self.db = db_session
 
-    async def create(self, data: ConversationCreate, auto_commit: bool = False) -> Conversation:
+    async def create(
+        self, data: ConversationCreate, auto_commit: bool = False
+    ) -> Conversation:
         """
         Create a new conversation.
 
@@ -62,25 +64,21 @@ class ConversationCRUD:
         # Convert schema to dict and handle field name mapping
         data_dict = data.model_dump()
 
-        data_dict['app_id'] = normalize_uuid_to_str(data.app_id)
+        data_dict["app_id"] = normalize_uuid_to_str(data.app_id)
         if data.from_account_id:
-            data_dict['account_id'] = normalize_uuid_to_str(data.from_account_id)
+            data_dict["account_id"] = normalize_uuid_to_str(data.from_account_id)
         if data.from_end_user_id:
-            data_dict['from_end_user_id'] = normalize_uuid_to_str(data.from_end_user_id)
+            data_dict["from_end_user_id"] = normalize_uuid_to_str(data.from_end_user_id)
 
         # Handle optional ID (if provided, use it; otherwise let the model generate one)
         if data.id:
-            data_dict['id'] = normalize_uuid_to_str(data.id)
+            data_dict["id"] = normalize_uuid_to_str(data.id)
 
         # Remove API layer field names that don't exist in the model
-        if 'from_account_id' in data_dict:
-            del data_dict['from_account_id']
+        if "from_account_id" in data_dict:
+            del data_dict["from_account_id"]
 
-        conversation = Conversation(
-            **data_dict,
-            dialogue_count=0,
-            is_deleted=False
-        )
+        conversation = Conversation(**data_dict, dialogue_count=0, is_deleted=False)
 
         self.db.add(conversation)
 
@@ -93,9 +91,7 @@ class ConversationCRUD:
         return conversation
 
     async def get_by_id(
-        self,
-        conversation_id: str | UUID,
-        include_deleted: bool = False
+        self, conversation_id: str | UUID, include_deleted: bool = False
     ) -> Conversation | None:
         """
         Get conversation by ID.
@@ -117,9 +113,7 @@ class ConversationCRUD:
         return result.scalar_one_or_none()
 
     async def get_by_id_with_messages(
-        self,
-        conversation_id: str | UUID,
-        include_deleted: bool = False
+        self, conversation_id: str | UUID, include_deleted: bool = False
     ) -> Conversation | None:
         """
         Get conversation by ID with messages eagerly loaded.
@@ -132,9 +126,11 @@ class ConversationCRUD:
             Conversation instance with messages or None if not found
         """
         normalized_id = normalize_uuid_to_str(conversation_id)
-        stmt = select(Conversation).options(
-            selectinload(Conversation.messages)
-        ).where(Conversation.id == normalized_id)
+        stmt = (
+            select(Conversation)
+            .options(selectinload(Conversation.messages))
+            .where(Conversation.id == normalized_id)
+        )
 
         if not include_deleted:
             stmt = stmt.where(Conversation.is_deleted == False)
@@ -146,7 +142,7 @@ class ConversationCRUD:
         self,
         conversation_id: str | UUID,
         data: ConversationUpdate,
-        auto_commit: bool = False
+        auto_commit: bool = False,
     ) -> Conversation | None:
         """
         Update an existing conversation.
@@ -177,7 +173,9 @@ class ConversationCRUD:
         await self.db.refresh(conversation)
         return conversation
 
-    async def soft_delete(self, conversation_id: str | UUID, auto_commit: bool = False) -> bool:
+    async def soft_delete(
+        self, conversation_id: str | UUID, auto_commit: bool = False
+    ) -> bool:
         """
         Soft delete a conversation by setting is_deleted=True.
 
@@ -212,7 +210,7 @@ class ConversationCRUD:
         from_account_id: str | UUID | None = None,
         skip: int = 0,
         limit: int = 100,
-        include_deleted: bool = False
+        include_deleted: bool = False,
     ) -> tuple[list[Conversation], int]:
         """
         List conversations with filtering and pagination.
@@ -245,13 +243,19 @@ class ConversationCRUD:
 
         if from_end_user_id:
             normalized_from_end_user_id = normalize_uuid_to_str(from_end_user_id)
-            stmt = stmt.where(Conversation.from_end_user_id == normalized_from_end_user_id)
-            count_stmt = count_stmt.where(Conversation.from_end_user_id == normalized_from_end_user_id)
+            stmt = stmt.where(
+                Conversation.from_end_user_id == normalized_from_end_user_id
+            )
+            count_stmt = count_stmt.where(
+                Conversation.from_end_user_id == normalized_from_end_user_id
+            )
 
         if from_account_id:
             normalized_from_account_id = normalize_uuid_to_str(from_account_id)
             stmt = stmt.where(Conversation.account_id == normalized_from_account_id)
-            count_stmt = count_stmt.where(Conversation.account_id == normalized_from_account_id)
+            count_stmt = count_stmt.where(
+                Conversation.account_id == normalized_from_account_id
+            )
 
         if not include_deleted:
             stmt = stmt.where(Conversation.is_deleted == False)
@@ -274,7 +278,7 @@ class ConversationCRUD:
         search_term: str,
         app_id: str | UUID | None = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> tuple[builtins.list[Conversation], int]:
         """
         Full-text search in conversations (name and summary fields).
@@ -293,13 +297,13 @@ class ConversationCRUD:
         stmt = select(Conversation).where(
             or_(
                 Conversation.name.ilike(search_pattern),
-                Conversation.summary.ilike(search_pattern)
+                Conversation.summary.ilike(search_pattern),
             )
         )
         count_stmt = select(func.count(Conversation.id)).where(
             or_(
                 Conversation.name.ilike(search_pattern),
-                Conversation.summary.ilike(search_pattern)
+                Conversation.summary.ilike(search_pattern),
             )
         )
 
@@ -323,7 +327,9 @@ class ConversationCRUD:
 
         return items, total
 
-    async def increment_dialogue_count(self, conversation_id: str | UUID, auto_commit: bool = False) -> Conversation | None:
+    async def increment_dialogue_count(
+        self, conversation_id: str | UUID, auto_commit: bool = False
+    ) -> Conversation | None:
         """
         Increment the dialogue count for a conversation.
 

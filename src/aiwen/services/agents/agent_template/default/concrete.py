@@ -40,26 +40,16 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         "config": {
             "context": {
                 "enabled": True,
-                "sources":
-                    {
-                        "conversation_history": {
-                            "enabled": True,
-                            "max_conversations": 20
-                        },
-                        "message_history": {
-                            "enabled": True,
-                            "max_messages": 20
-                        },
-                        "knowledge_base": {
-                            "enabled": True,
-                            "kb_ids": []
-                        }
-                }
+                "sources": {
+                    "conversation_history": {"enabled": True, "max_conversations": 20},
+                    "message_history": {"enabled": True, "max_messages": 20},
+                    "knowledge_base": {"enabled": True, "kb_ids": []},
+                },
             },
             "model_provider": "ollama",
             "model_name": "qwen3:30b",
             "max_history_messages": 20,  # Maximum number of historical messages to load
-        }
+        },
     }
 
     def __init__(self, config: dict):
@@ -79,6 +69,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
         # Initialize LLM
         from aiwen.extensions.llm.llm import get_llm
+
         self.llm = get_llm(self.model_name, self.model_provider)
 
         # Initialize agent
@@ -103,10 +94,12 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
         # Load conversation history if conversation_id is provided
         if input_data.conversation_id:
-            logger.info(f"Loading history for conversation {input_data.conversation_id}")
+            logger.info(
+                f"Loading history for conversation {input_data.conversation_id}"
+            )
             history = await get_messages_from_context(
                 conversation_id=input_data.conversation_id,
-                max_messages=self.max_history_messages
+                max_messages=self.max_history_messages,
             )
             logger.info(f"Loaded {len(history)} historical messages")
         else:
@@ -191,7 +184,6 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
         logger.info(f"Streaming input with {len(messages)} total messages in context")
 
-
         # Use PostgresSaver for checkpointing
         # Stream events from agent
         full_response = ""
@@ -200,7 +192,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                 yield f"Input: {event['data']['input']}"
             elif event["event"] == "on_chat_model_stream":
                 yield f"Token: {event['data']['chunk'].content}"
-                full_response += event['data']['chunk'].content
+                full_response += event["data"]["chunk"].content
             elif event["event"] == "on_chat_model_end":
                 yield f"Full input: {event['data']['output'].content}"
             else:

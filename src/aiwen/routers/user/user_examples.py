@@ -1,4 +1,5 @@
 """Example routes showing how to use FastAPI's recommended authentication approach."""
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/user-examples", tags=["user-examples"])
 
 @router.get("/profile")
 async def get_user_profile(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Get current user profile using dependency injection.
@@ -37,13 +38,13 @@ async def get_user_profile(
         "role": current_user.role,
         "tenant_id": str(current_user.tenant_id),
         "is_active": current_user.is_active,
-        "input": "Successfully retrieved user profile"
+        "input": "Successfully retrieved user profile",
     }
 
 
 @router.get("/secure-profile")
 async def get_secure_profile(
-    current_user: Annotated[UserResponse, Depends(get_current_active_user)]
+    current_user: Annotated[UserResponse, Depends(get_current_active_user)],
 ):
     """
     Get current user profile with active user check.
@@ -64,14 +65,12 @@ async def get_secure_profile(
         "role": current_user.role,
         "tenant_id": str(current_user.tenant_id),
         "status": "active",
-        "input": "Successfully retrieved secure profile"
+        "input": "Successfully retrieved secure profile",
     }
 
 
 @router.get("/admin-panel")
-async def admin_panel(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
-):
+async def admin_panel(current_user: Annotated[UserResponse, Depends(get_current_user)]):
     """
     Admin-only panel.
 
@@ -86,8 +85,7 @@ async def admin_panel(
     """
     if current_user.role != "admin":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
         )
 
     return {
@@ -95,13 +93,13 @@ async def admin_panel(
         "username": current_user.username,
         "role": current_user.role,
         "input": "Welcome to admin panel",
-        "admin_data": "sensitive_admin_information"
+        "admin_data": "sensitive_admin_information",
     }
 
 
 @router.get("/moderator-area")
 async def moderator_area(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Moderator area accessible by admins and moderators.
@@ -118,7 +116,7 @@ async def moderator_area(
     if current_user.role not in ["admin", "moderator"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Moderator or admin access required"
+            detail="Moderator or admin access required",
         )
 
     return {
@@ -126,13 +124,13 @@ async def moderator_area(
         "username": current_user.username,
         "role": current_user.role,
         "input": "Welcome to moderator area",
-        "moderator_data": "moderation_tools"
+        "moderator_data": "moderation_tools",
     }
 
 
 @router.get("/premium-content")
 async def premium_content(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Premium content for premium users.
@@ -147,8 +145,7 @@ async def premium_content(
     """
     if current_user.role != "premium":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Premium access required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Premium access required"
         )
 
     return {
@@ -156,14 +153,13 @@ async def premium_content(
         "username": current_user.username,
         "role": current_user.role,
         "input": "Premium features unlocked",
-        "premium_data": "exclusive_content"
+        "premium_data": "exclusive_content",
     }
 
 
 @router.get("/request-and-user")
 async def request_and_user_example(
-    request: Request,
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+    request: Request, current_user: Annotated[UserResponse, Depends(get_current_user)]
 ):
     """
     Example showing how to access both request and user information.
@@ -186,14 +182,12 @@ async def request_and_user_example(
         "request_method": request.method,
         "request_path": request.url.path,
         "client_host": request.client.host,
-        "input": "Successfully accessed request and user info"
+        "input": "Successfully accessed request and user info",
     }
 
 
 @router.get("/token-only")
-async def token_only_example(
-    token_data: Annotated[TokenData, Depends(get_token_data)]
-):
+async def token_only_example(token_data: Annotated[TokenData, Depends(get_token_data)]):
     """
     Example using only token data without database lookup.
 
@@ -209,5 +203,5 @@ async def token_only_example(
         "user_id": str(token_data.user_id),
         "role": token_data.role,
         "tenant_id": str(token_data.tenant_id),
-        "input": "Token data retrieved without database lookup"
+        "input": "Token data retrieved without database lookup",
     }

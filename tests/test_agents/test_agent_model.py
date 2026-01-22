@@ -17,7 +17,7 @@ def test_agent_model_creation():
         enabled=True,
         config={"model": "gpt-4.1"},
         version=1,
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
     )
 
     assert agent.app_code == agent_code
@@ -29,11 +29,7 @@ def test_agent_model_creation():
 
 def test_agent_model_defaults():
     """Test that Agent model defaults are applied correctly."""
-    agent = App(
-        id=uuid4(),
-        agent_code="test-agent",
-        agent_type="TestAgent"
-    )
+    agent = App(id=uuid4(), agent_code="test-agent", agent_type="TestAgent")
 
     assert agent.enabled is True
     assert agent.version == 1

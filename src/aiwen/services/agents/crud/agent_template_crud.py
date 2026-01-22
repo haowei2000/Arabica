@@ -13,6 +13,7 @@
 使用示例:
     {提供简单的使用示例代码}
 """
+
 # aiwen/services/agents/agent_template_crud.py
 from collections.abc import Sequence
 from uuid import UUID
@@ -28,13 +29,13 @@ class AgentTemplateCRUD:
         self.db_session = db_session
 
     async def create_template(
-            self,
-            template_code: str,
-            template_name: str,
-            config: dict = None,
-            enabled: bool = True,
-            version: int = 1,
-            auto_commit: bool = True
+        self,
+        template_code: str,
+        template_name: str,
+        config: dict = None,
+        enabled: bool = True,
+        version: int = 1,
+        auto_commit: bool = True,
     ) -> AgentTemplate:
         """
         Create a new agent template.
@@ -56,7 +57,7 @@ class AgentTemplateCRUD:
             template_name=template_name,
             config=config or {},
             enabled=enabled,
-            version=version
+            version=version,
         )
         self.db_session.add(template)
 

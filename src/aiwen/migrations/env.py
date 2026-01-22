@@ -58,7 +58,9 @@ target_metadata = get_base("aiwen").metadata
 # Set the database URL
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
-    print(f"Using database URL: {db_url.split(':')[0]}:******@{db_url.split('@')[1] if '@' in db_url else db_url}")
+    print(
+        f"Using database URL: {db_url.split(':')[0]}:******@{db_url.split('@')[1] if '@' in db_url else db_url}"
+    )
 
 
 # other values from the config, defined by the needs of env.py,
@@ -106,9 +108,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

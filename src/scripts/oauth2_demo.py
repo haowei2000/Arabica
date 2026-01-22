@@ -13,6 +13,7 @@ from pathlib import Path
 # 添加src目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+
 def setup_environment():
     """设置环境变量"""
     os.environ.setdefault("ENV", "development")
@@ -22,6 +23,7 @@ def setup_environment():
     os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
     os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "aiwen")
     print("环境变量已设置")
+
 
 def login_and_get_token(base_url: str, username: str, password: str) -> str:
     """
@@ -36,10 +38,7 @@ def login_and_get_token(base_url: str, username: str, password: str) -> str:
         访问令牌
     """
     login_url = f"{base_url}/api/auth/login"
-    payload = {
-        "username": username,
-        "password": password
-    }
+    payload = {"username": username, "password": password}
 
     response = requests.post(login_url, json=payload)
 
@@ -48,6 +47,7 @@ def login_and_get_token(base_url: str, username: str, password: str) -> str:
         return data["access_token"]
     else:
         raise Exception(f"登录失败: {response.status_code} - {response.text}")
+
 
 def access_protected_endpoint(base_url: str, token: str) -> dict:
     """
@@ -71,6 +71,7 @@ def access_protected_endpoint(base_url: str, token: str) -> dict:
     else:
         raise Exception(f"访问受保护端点失败: {response.status_code} - {response.text}")
 
+
 def access_me_endpoint(base_url: str, token: str) -> dict:
     """
     访问/me端点获取当前用户信息
@@ -91,6 +92,7 @@ def access_me_endpoint(base_url: str, token: str) -> dict:
         return response.json()
     else:
         raise Exception(f"访问/me端点失败: {response.status_code} - {response.text}")
+
 
 def main():
     """主函数"""
@@ -137,6 +139,7 @@ def main():
     except Exception as e:
         print(f"✗ 错误: {e}")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

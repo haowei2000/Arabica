@@ -13,13 +13,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load environment variables first
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / '.env')
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from aiwen.middleware.cache_middleware import init_redis_client, clear_cache_pattern
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 async def clear_sql_cache():
     """Clear SQL generation cache from Redis"""
@@ -44,6 +46,7 @@ async def clear_sql_cache():
         logger.error(f"Failed to clear cache: {e}")
         print(f"❌ Failed to clear cache: {e}")
         return False
+
 
 if __name__ == "__main__":
     asyncio.run(clear_sql_cache())

@@ -16,7 +16,7 @@ class NL2SQLAgentTemplate(BaseAgentTemplate):
         "template_name": "Natural Language to SQL Agent",
         "enabled": True,
         "version": 1,
-        "config": {}
+        "config": {},
     }
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
@@ -35,11 +35,7 @@ class NL2SQLAgentTemplate(BaseAgentTemplate):
         sql = await self.generate_sql(intent)
         data = await self.execute_sql(sql)
 
-        return {
-            "intent": intent,
-            "sql": sql,
-            "data": data
-        }
+        return {"intent": intent, "sql": sql, "data": data}
 
     async def stream(self, input_data: dict[str, Any]) -> AsyncGenerator[str, None]:
         """
@@ -79,11 +75,7 @@ class NL2SQLAgentTemplate(BaseAgentTemplate):
         await asyncio.sleep(0.1)
 
         # Final result
-        result = {
-            "intent": intent,
-            "sql": sql,
-            "data": data
-        }
+        result = {"intent": intent, "sql": sql, "data": data}
         yield f"Final result: {result}\n"
 
     async def parse_intent(self, query: str) -> dict[str, Any]:
@@ -98,10 +90,7 @@ class NL2SQLAgentTemplate(BaseAgentTemplate):
         """
         # Implementation would go here
         # This is a placeholder implementation
-        return {
-            "original_query": query,
-            "parsed_elements": {}
-        }
+        return {"original_query": query, "parsed_elements": {}}
 
     async def generate_sql(self, intent: dict[str, Any]) -> str:
         """

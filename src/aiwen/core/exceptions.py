@@ -98,7 +98,9 @@ def register_exception_handlers(app) -> None:
     """Register all exception handlers to the FastAPI app."""
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
-    app.add_exception_handler(ResponseValidationError, response_validation_exception_handler)
+    app.add_exception_handler(
+        ResponseValidationError, response_validation_exception_handler
+    )
     app.add_exception_handler(ValueError, value_error_handler)
     app.add_exception_handler(Exception, general_exception_handler)
 

@@ -1,4 +1,5 @@
 """Permission decorators for role-based access control."""
+
 from functools import wraps
 from typing import List
 
@@ -15,6 +16,7 @@ def require_roles(roles: list[str]):
     Returns:
         Decorated function
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -34,14 +36,13 @@ def require_roles(roles: list[str]):
             if request is None:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Request object not found"
+                    detail="Request object not found",
                 )
 
             # Check if user is authenticated
-            if not hasattr(request.state, 'user') or not request.state.user:
+            if not hasattr(request.state, "user") or not request.state.user:
                 raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated"
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
                 )
 
             # Check if user has required role
@@ -49,11 +50,13 @@ def require_roles(roles: list[str]):
             if user_role not in roles:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied. Required roles: {roles}"
+                    detail=f"Access denied. Required roles: {roles}",
                 )
 
             return await func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -67,6 +70,7 @@ def require_auth(func):
     Returns:
         Decorated function
     """
+
     @wraps(func)
     async def wrapper(*args, **kwargs):
         # Extract request object from args or kwargs
@@ -85,15 +89,15 @@ def require_auth(func):
         if request is None:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Request object not found"
+                detail="Request object not found",
             )
 
         # Check if user is authenticated
-        if not hasattr(request.state, 'user') or not request.state.user:
+        if not hasattr(request.state, "user") or not request.state.user:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
             )
 
         return await func(*args, **kwargs)
+
     return wrapper

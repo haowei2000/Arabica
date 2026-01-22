@@ -12,6 +12,7 @@ Chat Service - 聊天服务
     - CRUD services: 数据库操作
     - Agent Registry: Agent 注册管理
 """
+
 import logging
 from collections.abc import AsyncGenerator
 from uuid import UUID
@@ -37,12 +38,12 @@ logger = logging.getLogger(__name__)
 
 
 async def _stream_queue_events(
-        *,
-        task_consumer: AgentTaskConsumer,
-        task_id: UUID,
-        conversation: Conversation,
-        message: Message,
-        message_crud: MessageCRUD,
+    *,
+    task_consumer: AgentTaskConsumer,
+    task_id: UUID,
+    conversation: Conversation,
+    message: Message,
+    message_crud: MessageCRUD,
 ) -> AsyncGenerator[str, None]:
     """
     从 Redis Stream 流式读取事件
@@ -61,20 +62,22 @@ async def _stream_queue_events(
         Exception: 事件处理失败时抛出异常
     """
     try:
-        logger.info(f"Starting to consume events for task {task_id} via AgentTaskConsumer")
+        logger.info(
+            f"Starting to consume events for task {task_id} via AgentTaskConsumer"
+        )
 
         async def consumer_stream():
             """内部 AgentTaskConsumer 消息流生成器"""
             async for event_payload in task_consumer.get_task_events(
-                    task_id=str(task_id),
+                task_id=str(task_id),
             ):
                 yield event_payload
 
         # Stream and finalize
         async for event in stream_and_finalize(
-                stream_iter=consumer_stream(),
-                conversation=conversation,
-                message=message,
+            stream_iter=consumer_stream(),
+            conversation=conversation,
+            message=message,
         ):
             yield event
 
@@ -88,9 +91,9 @@ async def _stream_queue_events(
 
 
 def _prepare_task_payload(
-        text_input: TextInput,
-        conversation: Conversation,
-        app_id: str,
+    text_input: TextInput,
+    conversation: Conversation,
+    app_id: str,
 ) -> TaskPayload:
     """
     准备载荷字典
@@ -112,9 +115,9 @@ def _prepare_task_payload(
 
 
 async def get_messages_by_task(
-        *,
-        task_id: UUID,
-        task_consumer: AgentTaskConsumer,
+    *,
+    task_id: UUID,
+    task_consumer: AgentTaskConsumer,
 ) -> AsyncGenerator[str, None]:
     """
     订阅任务消息流
@@ -129,13 +132,15 @@ async def get_messages_by_task(
         SSE 格式的事件字符串
     """
     try:
-        logger.info(f"Starting to consume messages for task {task_id} via AgentTaskConsumer")
+        logger.info(
+            f"Starting to consume messages for task {task_id} via AgentTaskConsumer"
+        )
 
         # Yield metadata event with task_id
         yield sse("metadata", {"task_id": str(task_id)})
 
         async for event_payload in task_consumer.get_task_events(
-                task_id=str(task_id),
+            task_id=str(task_id),
         ):
             yield sse("chunk", event_payload)
 
@@ -149,18 +154,20 @@ async def get_messages_by_task(
             logger.info(f"Task {task_id} was cancelled")
             yield sse("cancelled", {"input": "Task was cancelled"})
         else:
-            logger.error(f"Error streaming events for task {task_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error streaming events for task {task_id}: {e}", exc_info=True
+            )
             yield sse("error", error_msg)
 
 
 async def start_task(
-        app_id: UUID,
-        user_id: UUID,
-        text_input: TextInput,
-        task_crud: AgentTaskCRUD,
-        conversation_crud: ConversationCRUD,
-        message_crud: MessageCRUD,
-        task_producer: AgentTaskProducer,
+    app_id: UUID,
+    user_id: UUID,
+    text_input: TextInput,
+    task_crud: AgentTaskCRUD,
+    conversation_crud: ConversationCRUD,
+    message_crud: MessageCRUD,
+    task_producer: AgentTaskProducer,
 ) -> StartTaskResult:
     """
     启动聊天任务（不等待结果）

@@ -1,4 +1,5 @@
 """Token service for JWT token management."""
+
 from datetime import timedelta
 from typing import Dict, Optional, Tuple
 from uuid import UUID
@@ -27,22 +28,16 @@ class TokenService:
             Tuple of (access_token, refresh_token)
         """
         # Token data
-        token_data = {
-            "sub": str(user_id),
-            "role": role,
-            "tenant_id": str(tenant_id)
-        }
+        token_data = {"sub": str(user_id), "role": role, "tenant_id": str(tenant_id)}
 
         # Create access token (30 minutes expiry)
         access_token = create_access_token(
-            data=token_data,
-            expires_delta=timedelta(minutes=30)
+            data=token_data, expires_delta=timedelta(minutes=30)
         )
 
         # Create refresh token (7 days expiry)
         refresh_token = create_refresh_token(
-            data=token_data,
-            expires_delta=timedelta(days=7)
+            data=token_data, expires_delta=timedelta(days=7)
         )
 
         return access_token, refresh_token
@@ -67,7 +62,7 @@ class TokenService:
         new_access_token, new_refresh_token = TokenService.create_tokens(
             user_id=UUID(user_data["user_id"]),
             role=user_data["role"],
-            tenant_id=UUID(user_data["tenant_id"])
+            tenant_id=UUID(user_data["tenant_id"]),
         )
 
         return new_access_token, new_refresh_token

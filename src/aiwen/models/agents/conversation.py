@@ -28,10 +28,21 @@ class Conversation(Base):
     from_end_user_id = mapped_column(UUID(as_uuid=True))
     read_at = mapped_column(sa.DateTime(timezone=True))
     dialogue_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+    created_at = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+    )
     updated_at = mapped_column(
-        sa.DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp()
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
     )
 
-    messages = relationship("Message", back_populates="conversation", lazy="select", passive_deletes=True)
-    is_deleted: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("false"))
+    messages = relationship(
+        "Message", back_populates="conversation", lazy="select", passive_deletes=True
+    )
+    is_deleted: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )

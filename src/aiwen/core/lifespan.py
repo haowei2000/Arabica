@@ -16,7 +16,9 @@ async def create_admin_user():
     try:
         async with get_session("aiwen") as session:
             # Check if default tenant exists, create if not
-            result = await session.execute(select(Tenant).where(Tenant.name == "default"))
+            result = await session.execute(
+                select(Tenant).where(Tenant.name == "default")
+            )
             tenant = result.scalar_one_or_none()
 
             if not tenant:
@@ -34,7 +36,9 @@ async def create_admin_user():
             admin_username = settings.auth.admin_username
             admin_email = settings.auth.admin_email
             # Check if admin user already exists
-            result = await session.execute(select(User).where(User.username == admin_username))
+            result = await session.execute(
+                select(User).where(User.username == admin_username)
+            )
             admin_user = result.scalar_one_or_none()
 
             if admin_user:
@@ -56,7 +60,7 @@ async def create_admin_user():
                 tenant_id=tenant.id,
                 role="admin",
                 is_superuser=True,
-                is_active=True
+                is_active=True,
             )
 
             session.add(admin_user)
@@ -82,6 +86,7 @@ async def register_all_dimensions():
     import importlib
 
     import aiwen.services.nl2sql.dimension_registry.dimensions
+
     importlib.reload(aiwen.services.nl2sql.dimension_registry.dimensions)
 
 

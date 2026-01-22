@@ -2,10 +2,13 @@
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from aiwen.models.agents.message import Message
 
 
 class MessageCreate(BaseModel):
@@ -16,13 +19,15 @@ class MessageCreate(BaseModel):
     app_id refers to the agent_id.
     """
 
-    app_id: str | UUID | None = Field(default=None, description="Agent ID (app_id and agent_id are the same)")
+    app_id: str | UUID | None = Field(
+        default=None, description="Agent ID (app_id and agent_id are the same)"
+    )
     conversation_id: str | UUID = Field(..., description="Conversation ID")
-    query: str = Field(default='', description="User query/input")
+    query: str = Field(default="", description="User query/input")
     message: list[dict[str, Any]] = Field(..., description="Message content as JSON")
     answer: str = Field(default="", description="Model answer/response")
     status: str = Field(default="normal", description="Message status")
-    from_source: str = Field(default='system', description="Source of the input")
+    from_source: str = Field(default="system", description="Source of the input")
     from_end_user_id: str | UUID | None = Field(default=None, description="End user ID")
     from_account_id: str | UUID | None = Field(default=None, description="Account ID")
 
@@ -37,10 +42,15 @@ class MessageUpdate(BaseModel):
     total_price: Decimal | None = Field(None, description="Total price for the input")
 
 
+class Role(StrEnum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class MessageContent(BaseModel):
-    human: str | None
-    assistant: str | None
-    system: str | None
+    role: Role
+    content: str
 
 
 class MessageResponse(BaseModel):
@@ -51,7 +61,7 @@ class MessageResponse(BaseModel):
     conversation_id: str
     query: str
     answer: str
-    message: list[dict[str, Any]]
+    message: list[MessageContent]
     status: str
     message_tokens: int
     answer_tokens: int
@@ -72,6 +82,6 @@ class MessageListResponse(BaseModel):
     """Schema for paginated list of messages."""
 
     total: int = Field(..., description="Total number of messages")
-    items: list[MessageResponse] = Field(..., description="List of messages")
+    items: list[MessageResponse | Message] = Field(..., description="List of messages")
     page: int = Field(..., description="Current page number")
     page_size: int = Field(..., description="Number of items per page")

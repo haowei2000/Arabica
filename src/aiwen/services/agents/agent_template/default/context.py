@@ -24,9 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 async def add_message_to_context(
-    message: dict,
-    conversation_id: UUID,
-    app_id: Optional[UUID] = None
+    message: dict, conversation_id: UUID, app_id: Optional[UUID] = None
 ):
     """
     Add a input to the context.
@@ -70,7 +68,7 @@ async def add_message_to_context(
                     status="normal",
                     from_source="system",
                 ),
-                auto_commit=False
+                auto_commit=False,
             )
             logger.info(f"Created conversation {conversation.id} with app_id {app_id}")
 
@@ -80,15 +78,15 @@ async def add_message_to_context(
             MessageCreate(
                 conversation_id=conversation_id,
                 message=message,
-                app_id=app_id or conversation.app_id  # Use app_id from conversation if not provided
+                app_id=app_id
+                or conversation.app_id,  # Use app_id from conversation if not provided
             )
         )
         logger.debug(f"Added input to context: {message}")
 
 
 async def get_messages_from_context(
-        conversation_id: Optional[UUID],
-        max_messages: int = 20
+    conversation_id: Optional[UUID], max_messages: int = 20
 ) -> list[dict]:
     """
     Load conversation history from database by conversation ID.
@@ -118,7 +116,7 @@ async def get_messages_from_context(
         return []
 
     try:
-        async with get_session('aiwen') as db:
+        async with get_session("aiwen") as db:
             # Query messages for this conversation, ordered by created_at
             stmt = (
                 select(Message.message)
@@ -138,8 +136,7 @@ async def get_messages_from_context(
             messages = list(reversed(messages))
 
             logger.info(
-                f"Loaded {len(messages)} input pairs "
-                f"for conversation {conversation_id}"
+                f"Loaded {len(messages)} input pairs for conversation {conversation_id}"
             )
 
             return messages

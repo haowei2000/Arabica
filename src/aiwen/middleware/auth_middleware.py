@@ -1,4 +1,5 @@
 """Authentication middleware for validating JWT tokens."""
+
 import logging
 from typing import Optional
 
@@ -33,11 +34,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/health",
             "/api/auth/login",
             "/api/auth/register",
-            "/api/auth/refresh"
+            "/api/auth/refresh",
         ]
-        self.exclude_prefixes = exclude_prefixes or [
-            "/api/nl2sql"
-        ]
+        self.exclude_prefixes = exclude_prefixes or ["/api/nl2sql"]
 
     async def dispatch(self, request: Request, call_next):
         """
@@ -61,13 +60,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Extract token from the Authorization header
         auth_header = request.headers.get("Authorization")
-        logger.debug(f"Auth header for {request.url.path}: {auth_header[:50] if auth_header else 'None'}...")
+        logger.debug(
+            f"Auth header for {request.url.path}: {auth_header[:50] if auth_header else 'None'}..."
+        )
 
         if not auth_header or not auth_header.startswith("Bearer "):
-            logger.warning(f"Missing or invalid authorization header for {request.url.path}")
+            logger.warning(
+                f"Missing or invalid authorization header for {request.url.path}"
+            )
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Missing or invalid authorization header"}
+                content={"detail": "Missing or invalid authorization header"},
             )
 
         token = auth_header.split("Bearer ")[1]
@@ -79,16 +82,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
             logger.warning(f"Token verification failed for {request.url.path}")
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Invalid or expired token"}
+                content={"detail": "Invalid or expired token"},
             )
 
-        logger.debug(f"Token verified successfully for user_id: {user_data.get('user_id')}")
+        logger.debug(
+            f"Token verified successfully for user_id: {user_data.get('user_id')}"
+        )
 
         # Add user data to request state for use in endpoints
         request.state.user = TokenData(
             user_id=user_data["user_id"],
             role=user_data["role"],
-            tenant_id=user_data["tenant_id"]
+            tenant_id=user_data["tenant_id"],
         )
 
         # Continue with the request

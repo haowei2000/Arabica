@@ -22,6 +22,7 @@
     POST /flush-redis-cache
     POST /flush-redis-cache?pattern=cache:user:*
 """
+
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -33,20 +34,20 @@ router = APIRouter(prefix="/admin", tags=["Admin Operations"])
 
 @router.post("/flush-redis-cache", summary="清空Redis缓存")
 async def flush_redis_cache(
-        pattern: str | None = Query(
-            "cache:*",
-            description="要清空的缓存键模式，例如: cache:* 表示清空所有缓存, cache:user:* 表示清空用户相关缓存"
-        )
+    pattern: str | None = Query(
+        "cache:*",
+        description="要清空的缓存键模式，例如: cache:* 表示清空所有缓存, cache:user:* 表示清空用户相关缓存",
+    ),
 ):
     """
     清空Redis缓存接口
-    
+
     Args:
         pattern (str, optional): 要清空的缓存键模式，默认为 "cache:*" 清空所有缓存
-        
+
     Returns:
         dict: 包含清除结果的信息
-        
+
     Raises:
         HTTPException: 当Redis未初始化或清空过程中发生错误时抛出异常
     """
@@ -55,7 +56,7 @@ async def flush_redis_cache(
         return {
             "success": True,
             "input": f"成功清空 {deleted_count} 条缓存记录",
-            "pattern": pattern
+            "pattern": pattern,
         }
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=f"Redis未初始化: {e!s}")

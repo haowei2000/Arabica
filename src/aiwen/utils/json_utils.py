@@ -1,4 +1,5 @@
 """JSON serialization utilities with support for UUID, datetime, and other types."""
+
 from datetime import date, datetime
 from decimal import Decimal
 import json

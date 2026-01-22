@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 
 # 加载环境变量 - CRITICAL: Must be before importing any aiwen modules!
 from dotenv import load_dotenv
+
 env_file = project_root / "src" / ".env"
 print(f"🔧 Loading environment from: {env_file}")
 if env_file.exists():
@@ -39,11 +40,11 @@ log_dir.mkdir(exist_ok=True)
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(input)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(input)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_dir / 'agent_worker.log')
-    ]
+        logging.FileHandler(log_dir / "agent_worker.log"),
+    ],
 )
 
 logger = logging.getLogger(__name__)
@@ -76,11 +77,14 @@ async def main():
 
             # 验证注册是否成功
             from aiwen.services.agents.agent_registry import AgentRegistry
+
             registered_templates = AgentRegistry.list()
 
             print(f"✅ Agent Registry initialized successfully!")
             print(f"📋 Registered templates: {registered_templates}")
-            logger.info(f"Agent Registry initialized with templates: {registered_templates}")
+            logger.info(
+                f"Agent Registry initialized with templates: {registered_templates}"
+            )
 
             # 特别检查 DEFAULT001
             if AgentRegistry.is_registered("DEFAULT001"):
@@ -98,6 +102,7 @@ async def main():
 
         # 获取数据库会话工厂 - 明确指定使用 aiwen 数据库
         from functools import partial
+
         db_factory = partial(get_session, db_name="aiwen")
 
         # 启动 worker

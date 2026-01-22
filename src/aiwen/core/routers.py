@@ -30,10 +30,8 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (test_auth_router, "/api"),
         (user_examples_router, "/api"),
         (user_management_router, "/api"),
-
         # Core Features
         (flush_redis_router, "/api"),
-
         # Agent System
         (agents_router, "/api"),
         (chat_router, "/api"),
@@ -49,7 +47,7 @@ def register_routers(app: FastAPI) -> None:
     for router, prefix in routers:
         app.include_router(router, prefix=prefix)
         # Get router tags for logging
-        tags = getattr(router, 'tags', ['unknown'])
+        tags = getattr(router, "tags", ["unknown"])
         logger.info("Registered router: %s (prefix: %s)", tags, prefix)
 
     logger.info("All routers registered successfully (%d total)", len(routers))

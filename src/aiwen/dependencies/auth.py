@@ -4,6 +4,7 @@ Authentication dependencies using FastAPI's recommended approach.
 This module provides reusable dependencies for authentication and authorization
 following FastAPI best practices with OAuth2PasswordBearer.
 """
+
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -23,7 +24,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)]
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ) -> UserResponse:
     """
     Get the current authenticated user from the JWT token.
@@ -70,7 +71,7 @@ async def get_current_user(
 
 
 async def get_current_active_user(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> UserResponse:
     """
     Get the current authenticated and active user.
@@ -96,15 +97,12 @@ async def get_current_active_user(
     """
     if not current_user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )
     return current_user
 
 
-def get_token_data(
-    token: Annotated[str, Depends(oauth2_scheme)]
-) -> TokenData:
+def get_token_data(token: Annotated[str, Depends(oauth2_scheme)]) -> TokenData:
     """
     Extract token data without database lookup.
 
@@ -141,12 +139,12 @@ def get_token_data(
     return TokenData(
         user_id=user_data["user_id"],
         role=user_data["role"],
-        tenant_id=user_data["tenant_id"]
+        tenant_id=user_data["tenant_id"],
     )
 
 
 async def get_admin_user(
-    current_user: Annotated[UserResponse, Depends(get_current_active_user)]
+    current_user: Annotated[UserResponse, Depends(get_current_active_user)],
 ) -> UserResponse:
     """
     Get the current authenticated user with admin privileges.
@@ -173,7 +171,6 @@ async def get_admin_user(
     """
     if not current_user.is_superuser:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required"
         )
     return current_user

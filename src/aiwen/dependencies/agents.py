@@ -15,9 +15,7 @@ from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
 
 
-async def get_app_crud(
-        db: AsyncSession = Depends(get_aiwen_db)
-) -> AppCRUD:
+async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
     """
     Dependency to get AppCRUD instance.
 
@@ -31,7 +29,7 @@ async def get_app_crud(
 
 
 async def get_conversation_crud(
-        db: AsyncSession = Depends(get_aiwen_db)
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> ConversationCRUD:
     """
     Dependency to get ConversationCRUD instance.
@@ -45,9 +43,7 @@ async def get_conversation_crud(
     return ConversationCRUD(db)
 
 
-async def get_message_crud(
-        db: AsyncSession = Depends(get_aiwen_db)
-) -> MessageCRUD:
+async def get_message_crud(db: AsyncSession = Depends(get_aiwen_db)) -> MessageCRUD:
     """
     Dependency to get MessageCRUD instance.
 
@@ -61,7 +57,7 @@ async def get_message_crud(
 
 
 async def get_template_crud(
-        db: AsyncSession = Depends(get_aiwen_db)
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTemplateCRUD:
     """
     Dependency to get AgentTemplateCRUD instance.
@@ -69,10 +65,8 @@ async def get_template_crud(
     return AgentTemplateCRUD(db)
 
 
-
-
 async def get_task_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTaskCRUD:
     return AgentTaskCRUD(db)
 

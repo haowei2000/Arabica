@@ -85,4 +85,8 @@ async def health_check():
 # ==================== Application Ready ====================
 logger.info("FastAPI application initialized successfully")
 logger.info("Debug mode: %s", settings.DEBUG)
-logger.info("Documentation available at: /docs" if settings.DEBUG else "Documentation disabled in production")
+logger.info(
+    "Documentation available at: /docs"
+    if settings.DEBUG
+    else "Documentation disabled in production"
+)

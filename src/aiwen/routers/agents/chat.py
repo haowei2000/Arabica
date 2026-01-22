@@ -9,6 +9,7 @@ Chat Router - 聊天路由
 - POST /chat/{app_id} - 队列模式聊天（组合端点，保留兼容）
 - POST /chat/{app_id}/direct - 直接模式聊天
 """
+
 from typing import Annotated
 from uuid import UUID
 
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 # ---------- Start task (split endpoint) ----------
+
 
 @router.post("/{app_id}/start", response_model=StartTaskResult)
 async def start_chat_task(
@@ -83,6 +85,7 @@ async def start_chat_task(
 
 
 # ---------- Get task messages (split endpoint) ----------
+
 
 @router.get("/{task_id}/messages")
 async def stream_task_messages(

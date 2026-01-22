@@ -59,7 +59,7 @@ def _initialize_cache_middleware(settings) -> ResponseCachingMiddleware:
         return ResponseCachingMiddleware(
             cache_storage=cache_store,
             list_tools_settings=ListToolsSettings(ttl=30),
-            call_tool_settings=CallToolSettings(included_tools=[])
+            call_tool_settings=CallToolSettings(included_tools=[]),
         )
     except Exception as e:
         logger.error(f"Failed to initialize cache middleware: {e}", exc_info=True)
@@ -144,9 +144,9 @@ def run() -> None:
         )
         uvicorn.run(
             mcp_instance.http_app(),
-            host=os.environ.get("AIWEN_MCP_HOST",'0.0.0.0'),
-            port=int(os.environ.get("AIWEN_MCP_PORT",9000)),
-            log_level="error"
+            host=os.environ.get("AIWEN_MCP_HOST", "0.0.0.0"),
+            port=int(os.environ.get("AIWEN_MCP_PORT", 9000)),
+            log_level="error",
         )
     except Exception as e:
         logger.error(f"Failed to start MCP Server: {e}", exc_info=True)

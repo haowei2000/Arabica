@@ -39,6 +39,5 @@ async def test_agent_worker_publish_event():
 
     # Verify that redis client publish was called
     mock_redis.publish.assert_called_once_with(
-        f"agent:task:{test_task_id}",
-        '{"event": "test", "data": "test input"}'
+        f"agent:task:{test_task_id}", '{"event": "test", "data": "test input"}'
     )

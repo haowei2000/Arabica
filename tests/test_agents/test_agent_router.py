@@ -22,4 +22,7 @@ def test_run_agent_not_found():
     response = client.post("/api/agents/nonexistent-agent/run", json={"test": "data"})
     # This will return 404 because the agent doesn't exist in the database
     # In a real test, we would need to mock the database session
-    assert response.status_code in [404, 500]  # Could be 404 or 500 depending on implementation
+    assert response.status_code in [
+        404,
+        500,
+    ]  # Could be 404 or 500 depending on implementation

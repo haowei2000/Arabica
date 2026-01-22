@@ -42,47 +42,47 @@ class TestDatabaseExtensions:
         # Assert
         assert masked_url == url_without_password
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     def test_list_registered_databases(self, mock_engines):
         """测试列出已注册的数据库"""
         # Arrange
-        mock_engines.keys.return_value = ['primary', 'dify', 'mes']
+        mock_engines.keys.return_value = ["primary", "dify", "mes"]
 
         # Act
         databases = list_registered_databases()
 
         # Assert
         assert isinstance(databases, list)
-        assert 'primary' in databases
-        assert 'dify' in databases
-        assert 'mes' in databases
+        assert "primary" in databases
+        assert "dify" in databases
+        assert "mes" in databases
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     def test_is_database_registered_true(self, mock_engines):
         """测试数据库已注册的情况"""
         # Arrange
         mock_engines.__contains__.return_value = True
 
         # Act
-        result = is_database_registered('primary')
+        result = is_database_registered("primary")
 
         # Assert
         assert result is True
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     def test_is_database_registered_false(self, mock_engines):
         """测试数据库未注册的情况"""
         # Arrange
         mock_engines.__contains__.return_value = False
 
         # Act
-        result = is_database_registered('nonexistent')
+        result = is_database_registered("nonexistent")
 
         # Assert
         assert result is False
 
-    @patch('aiwen.extensions.database._bases')
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._bases")
+    @patch("aiwen.extensions.database._engines")
     def test_get_base_success(self, mock_engines, mock_bases):
         """测试成功获取Base类"""
         # Arrange
@@ -91,22 +91,24 @@ class TestDatabaseExtensions:
         mock_bases.__getitem__.return_value = mock_base_class
 
         # Act
-        base = get_base('primary')
+        base = get_base("primary")
 
         # Assert
         assert base == mock_base_class
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     def test_get_base_not_found(self, mock_engines):
         """测试获取不存在的Base类"""
         # Arrange
         mock_engines.__contains__.return_value = False
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Base for database 'nonexistent' not found"):
-            get_base('nonexistent')
+        with pytest.raises(
+            ValueError, match="Base for database 'nonexistent' not found"
+        ):
+            get_base("nonexistent")
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     def test_get_engine_success(self, mock_engines):
         """测试成功获取引擎"""
         # Arrange
@@ -115,12 +117,12 @@ class TestDatabaseExtensions:
         mock_engines.__getitem__.return_value = mock_engine
 
         # Act
-        engine = get_engine('primary')
+        engine = get_engine("primary")
 
         # Assert
         assert engine == mock_engine
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     def test_get_engine_not_found(self, mock_engines):
         """测试获取不存在的引擎"""
         # Arrange
@@ -128,9 +130,9 @@ class TestDatabaseExtensions:
 
         # Act & Assert
         with pytest.raises(ValueError, match="Engine for 'nonexistent' not found"):
-            get_engine('nonexistent')
+            get_engine("nonexistent")
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     async def test_check_database_health_success(self, mock_engines):
         """测试数据库健康检查成功"""
         # Arrange
@@ -147,36 +149,38 @@ class TestDatabaseExtensions:
         mock_engine.pool.overflow.return_value = 0
 
         # Act
-        result = await check_database_health('primary')
+        result = await check_database_health("primary")
 
         # Assert
-        assert result['status'] == 'healthy'
-        assert result['bind_name'] == 'primary'
-        assert 'pool' in result
-        assert result['pool']['size'] == 5
+        assert result["status"] == "healthy"
+        assert result["bind_name"] == "primary"
+        assert "pool" in result
+        assert result["pool"]["size"] == 5
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     async def test_check_database_health_failure(self, mock_engines):
         """测试数据库健康检查失败"""
         # Arrange
         mock_engine = MagicMock()
         mock_engines.__contains__.return_value = True
         mock_engines.__getitem__.return_value = mock_engine
-        mock_engine.connect.return_value.__aenter__.side_effect = Exception("Connection failed")
+        mock_engine.connect.return_value.__aenter__.side_effect = Exception(
+            "Connection failed"
+        )
 
         # Act
-        result = await check_database_health('primary')
+        result = await check_database_health("primary")
 
         # Assert
-        assert result['status'] == 'unhealthy'
-        assert result['bind_name'] == 'primary'
-        assert 'error' in result
+        assert result["status"] == "unhealthy"
+        assert result["bind_name"] == "primary"
+        assert "error" in result
 
-    @patch('aiwen.extensions.database._engines')
+    @patch("aiwen.extensions.database._engines")
     async def test_check_all_databases(self, mock_engines):
         """测试检查所有数据库"""
         # Arrange
-        mock_engines.__iter__.return_value = iter(['primary', 'mes'])
+        mock_engines.__iter__.return_value = iter(["primary", "mes"])
         mock_engines.__contains__.return_value = True
         mock_engine = MagicMock()
         mock_engines.__getitem__.return_value = mock_engine
@@ -190,16 +194,17 @@ class TestDatabaseExtensions:
         result = await check_all_databases()
 
         # Assert
-        assert 'primary' in result
-        assert 'mes' in result
-        assert result['primary']['status'] == 'healthy'
-        assert result['mes']['status'] == 'healthy'
+        assert "primary" in result
+        assert "mes" in result
+        assert result["primary"]["status"] == "healthy"
+        assert result["mes"]["status"] == "healthy"
 
-    @patch('aiwen.extensions.database.get_settings')
+    @patch("aiwen.extensions.database.get_settings")
     def test_ensure_registered_already_initialized(self, mock_get_settings):
         """测试数据库已经初始化的情况"""
         # Arrange
         import aiwen.extensions.database as db_module
+
         db_module._initialized = True
 
         # Act

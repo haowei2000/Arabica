@@ -9,10 +9,10 @@ from aiwen.utils.time import utc_now
 
 
 async def create_conversation(
-        *,
-        app_id: UUID,  # Note: agent_id is used as app_id (agent and app are merged concepts)
-        text_message:TextInput,
-        conversation_crud,
+    *,
+    app_id: UUID,  # Note: agent_id is used as app_id (agent and app are merged concepts)
+    text_message: TextInput,
+    conversation_crud,
 ):
     """Get or create conversation"""
     if text_message.conversation_id:
@@ -35,11 +35,11 @@ async def create_conversation(
 
 
 async def create_message(
-        *,
-        app_id: UUID,  # Note: agent_id is used as app_id (agent and app are merged concepts)
-        conversation_id: UUID,
-        text_message:TextInput,
-        message_crud,
+    *,
+    app_id: UUID,  # Note: agent_id is used as app_id (agent and app are merged concepts)
+    conversation_id: UUID,
+    text_message: TextInput,
+    message_crud,
 ):
     """Create initial input"""
     return await message_crud.create(
@@ -59,10 +59,10 @@ async def create_message(
 
 
 async def stream_and_finalize(
-        *,
-        stream_iter,
-        conversation,
-        message,
+    *,
+    stream_iter,
+    conversation,
+    message,
 ):
     """Unified SSE streaming + DB finalize logic"""
     collected_chunks: list[str] = []

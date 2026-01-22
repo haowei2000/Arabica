@@ -10,19 +10,32 @@ from pydantic import BaseModel, Field
 class AppCreate(BaseModel):
     """Schema for creating a new app (agent)."""
 
-    app_code: str = Field(..., description="Unique identifier for the app/agent", min_length=1, max_length=100)
-    agent_template_code: str | None = Field("DEFAULT001", description="Code of the agent template to use")
-    agent_template_id: UUID | None = Field(None, description="ID of the agent template to use")
+    app_code: str = Field(
+        ...,
+        description="Unique identifier for the app/agent",
+        min_length=1,
+        max_length=100,
+    )
+    agent_template_code: str | None = Field(
+        "DEFAULT001", description="Code of the agent template to use"
+    )
+    agent_template_id: UUID | None = Field(
+        None, description="ID of the agent template to use"
+    )
     user_id: UUID | None = Field(None, description="ID of the user creating the app")
     enabled: bool = Field(default=True, description="Whether the app is enabled")
-    config: dict[str, Any] | None = Field(default=None, description="App configuration as JSON")
+    config: dict[str, Any] | None = Field(
+        default=None, description="App configuration as JSON"
+    )
     version: int = Field(default=1, ge=1, description="App version number")
 
 
 class AppUpdate(BaseModel):
     """Schema for updating an existing app."""
 
-    agent_template_id: UUID | None = Field(None, description="ID of the agent template to use")
+    agent_template_id: UUID | None = Field(
+        None, description="ID of the agent template to use"
+    )
     enabled: bool | None = Field(None, description="Whether the app is enabled")
     config: dict[str, Any] | None = Field(None, description="App configuration as JSON")
     version: int | None = Field(None, ge=1, description="App version number")

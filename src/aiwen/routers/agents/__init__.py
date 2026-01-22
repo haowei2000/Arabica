@@ -8,7 +8,7 @@ from .conversations import router as conversation_router
 from .messages import router as message_router
 
 # Create main agents router
-router = APIRouter(prefix='/agents', tags=['agents'])
+router = APIRouter(prefix="/agents", tags=["agents"])
 
 # Include all sub-routers
 router.include_router(app_router)

@@ -16,6 +16,7 @@ Task Producer - 任务生产者
 依赖模块:
     - redis.asyncio: Redis 异步客户端
 """
+
 import logging
 from typing import Annotated
 from uuid import UUID
@@ -63,9 +64,7 @@ class AgentTaskProducer:
         self.task_name = "agent"
 
     async def publish_task(
-            self,
-            task_id: UUID,
-            payload: TaskPayload | None = None
+        self, task_id: UUID, payload: TaskPayload | None = None
     ) -> str:
         """
         发布任务到 Redis Stream
@@ -86,19 +85,13 @@ class AgentTaskProducer:
                 "input": payload.model_dump_json() if payload else "{}",
             }
             task_stream_id = await self.redis_client.xadd(
-                name=self.task_name,
-                fields=fields,
-                maxlen=10000,
-                approximate=True
+                name=self.task_name, fields=fields, maxlen=10000, approximate=True
             )
-            logger.info(
-                f"Published task {task_id} to stream (input: {task_stream_id})"
-            )
+            logger.info(f"Published task {task_id} to stream (input: {task_stream_id})")
             return task_stream_id
         except Exception as e:
             logger.error(
-                f"Error publishing task {task_id} to stream: {e}",
-                exc_info=True
+                f"Error publishing task {task_id} to stream: {e}", exc_info=True
             )
             raise
 
@@ -109,7 +102,7 @@ async def _get_redis_client():
 
 
 async def get_task_producer(
-        redis_client: redis_async.Redis = Depends(_get_redis_client),
+    redis_client: redis_async.Redis = Depends(_get_redis_client),
 ) -> AgentTaskProducer:
     """
     FastAPI 依赖函数，获取 AgentTaskProducer 实例

@@ -17,9 +17,12 @@ async def test_create_agent():
         app_code="test-agent-1",
         agent_template_id=None,  # New field instead of agent_type
         enabled=True,
-        config={"model": "gpt-4.1", "agent_type": "NL2SQLAgent"},  # Store agent_type in config
+        config={
+            "model": "gpt-4.1",
+            "agent_type": "NL2SQLAgent",
+        },  # Store agent_type in config
         version=1,
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
     )
 
     assert agent.app_code == "test-agent-1"
@@ -37,7 +40,7 @@ async def test_agent_repr():
         id=agent_id,
         app_code="test-agent-1",
         agent_template_id=None,  # New field instead of agent_type
-        enabled=True
+        enabled=True,
     )
 
     expected = f"<App(id={agent_id}, app_code='test-agent-1', agent_template_id='None', enabled=True)>"

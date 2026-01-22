@@ -23,11 +23,8 @@ async def demo_streaming_chat():
         "agent_code": f"nl2sql-stream-demo-{uuid4().hex[:8]}",
         "agent_type": "NL2SQLAgent",
         "enabled": True,
-        "config": {
-            "model": "gpt-4.1",
-            "temperature": 0.7
-        },
-        "version": 1
+        "config": {"model": "gpt-4.1", "temperature": 0.7},
+        "version": 1,
     }
 
     async with httpx.AsyncClient() as client:
@@ -35,10 +32,7 @@ async def demo_streaming_chat():
 
         # 1. Create agent
         print("1. Creating NL2SQL agent...")
-        response = await client.post(
-            f"{base_url}/agents/",
-            json=agent_data
-        )
+        response = await client.post(f"{base_url}/agents/", json=agent_data)
         if response.status_code == 200:
             created_agent = response.json()
             agent_code = created_agent["agent_code"]
@@ -49,14 +43,10 @@ async def demo_streaming_chat():
 
         # 2. Chat with agent using streaming (direct endpoint)
         print("2. Chatting with agent using direct streaming...")
-        chat_payload = {
-            "query": "Show me sales data for last month"
-        }
+        chat_payload = {"query": "Show me sales data for last month"}
 
         async with client.stream(
-            "POST",
-            f"{base_url}/chat/{agent_code}/direct",
-            json=chat_payload
+            "POST", f"{base_url}/chat/{agent_code}/direct", json=chat_payload
         ) as response:
             if response.status_code == 200:
                 print("Streaming response:")
@@ -85,14 +75,10 @@ async def demo_streaming_chat():
 
         # 3. Chat with agent using queued streaming
         print("3. Chatting with agent using queued streaming...")
-        chat_payload = {
-            "query": "Find customers with high spending patterns"
-        }
+        chat_payload = {"query": "Find customers with high spending patterns"}
 
         async with client.stream(
-            "POST",
-            f"{base_url}/chat/{agent_code}",
-            json=chat_payload
+            "POST", f"{base_url}/chat/{agent_code}", json=chat_payload
         ) as response:
             if response.status_code == 200:
                 print("Queued streaming response:")

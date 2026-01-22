@@ -51,7 +51,7 @@ async def init_redis_client():
             decode_responses=True,
             socket_connect_timeout=5,
             socket_timeout=5,
-            retry_on_timeout=True
+            retry_on_timeout=True,
         )
 
         # Sync client for decorator operations
@@ -63,13 +63,15 @@ async def init_redis_client():
             decode_responses=True,
             socket_connect_timeout=5,
             socket_timeout=5,
-            retry_on_timeout=True
+            retry_on_timeout=True,
         )
 
         # Test connection
         await _redis_client_async.ping()
         _initialized = True
-        logger.info(f"✓ Redis clients initialized: {redis_config.host}:{redis_config.port}/{redis_config.db}")
+        logger.info(
+            f"✓ Redis clients initialized: {redis_config.host}:{redis_config.port}/{redis_config.db}"
+        )
     except Exception as e:
         logger.error(f"✗ Failed to initialize Redis clients: {e}")
         raise
@@ -100,7 +102,9 @@ async def close_redis_client():
 def get_redis_client(is_async: bool = True):
     """Get Redis client instance"""
     if not _initialized:
-        raise RuntimeError("Redis clients not initialized. Call init_redis_client() first.")
+        raise RuntimeError(
+            "Redis clients not initialized. Call init_redis_client() first."
+        )
 
     if is_async:
         if _redis_client_async is None:
@@ -145,10 +149,15 @@ class CacheMiddleware(BaseHTTPMiddleware):
         app: ASGIApp,
         exclude_paths: list = None,
         include_paths: list = None,
-        cache_expiry: int = 30
+        cache_expiry: int = 30,
     ):
         super().__init__(app)
-        self.exclude_paths = exclude_paths or ["/docs", "/openapi.json", "/redoc", "/health"]
+        self.exclude_paths = exclude_paths or [
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+            "/health",
+        ]
         self.include_paths = include_paths or []  # 默认只包含指定的路径
         self.cache_expiry = cache_expiry
 
@@ -176,7 +185,7 @@ class CacheMiddleware(BaseHTTPMiddleware):
                         content=cached_data["content"],
                         status_code=cached_data["status_code"],
                         headers=cached_data.get("headers", {}),
-                        media_type=cached_data.get("media_type")
+                        media_type=cached_data.get("media_type"),
                     )
                 except Exception as e:
                     logger.error(f"Cache deserialize error: {e}")
@@ -217,19 +226,21 @@ class CacheMiddleware(BaseHTTPMiddleware):
             # Let's create a simplified cache entry without problematic headers
             headers = dict(response.headers)
             # Remove headers that could cause conflicts when serving cached responses
-            headers.pop('content-length', None)
-            headers.pop('content-encoding', None)
-            headers.pop('transfer-encoding', None)
+            headers.pop("content-length", None)
+            headers.pop("content-encoding", None)
+            headers.pop("transfer-encoding", None)
 
             cache_data = {
                 "content": "",  # Body content is difficult to capture in middleware
                 "status_code": response.status_code,
                 "headers": headers,
-                "media_type": response.media_type
+                "media_type": response.media_type,
             }
 
             redis_client = get_redis_client(is_async=True)
-            await redis_client.set(cache_key, json_dumps(cache_data), ex=self.cache_expiry)
+            await redis_client.set(
+                cache_key, json_dumps(cache_data), ex=self.cache_expiry
+            )
             logger.debug(f"Cached response for key: {cache_key}")
         except Exception as e:
             logger.error(f"Cache response error: {e}")
@@ -242,6 +253,7 @@ def cache_route(expire: int = 300):
     Args:
         expire: Cache expiration time in seconds
     """
+
     def decorator(func: Callable):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -261,7 +273,7 @@ def cache_route(expire: int = 300):
             # Generate cache key from function name and arguments
             key_parts = [f"route:{func.__name__}"]
             for arg in args:
-                if hasattr(arg, '__dict__'):
+                if hasattr(arg, "__dict__"):
                     key_parts.append(str(arg.__dict__))
                 else:
                     key_parts.append(str(arg))
@@ -279,12 +291,12 @@ def cache_route(expire: int = 300):
                         logger.debug(f"Route cache HIT for key: {cache_key}")
 
                         # Reconstruct the original object if needed
-                        if 'pydantic_model' in cached_data and 'data' in cached_data:
+                        if "pydantic_model" in cached_data and "data" in cached_data:
                             # This is a Pydantic model that was cached
-                            model_class = cached_data['pydantic_model']
+                            model_class = cached_data["pydantic_model"]
                             # For simplicity, we'll just return the raw data
                             # In a more sophisticated implementation, we'd reconstruct the model
-                            return cached_data['data']
+                            return cached_data["data"]
                         # Regular cached data
                         return cached_data
                     except Exception as e:
@@ -304,14 +316,14 @@ def cache_route(expire: int = 300):
                 # Cache the result
                 try:
                     # Handle Pydantic models and other complex objects
-                    if hasattr(result, 'model_dump'):
+                    if hasattr(result, "model_dump"):
                         # Pydantic model - cache both the model info and data
                         cached_result = {
-                            'pydantic_model': result.__class__.__name__,
-                            'data': result.model_dump(mode='json')
+                            "pydantic_model": result.__class__.__name__,
+                            "data": result.model_dump(mode="json"),
                         }
                         serialized_result = json_dumps(cached_result)
-                    elif hasattr(result, '__dict__'):
+                    elif hasattr(result, "__dict__"):
                         # Regular object
                         serialized_result = json_dumps(result.__dict__)
                     else:
@@ -329,6 +341,7 @@ def cache_route(expire: int = 300):
                 raise
 
         return wrapper
+
     return decorator
 
 

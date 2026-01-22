@@ -10,6 +10,7 @@ Task Utilities - 任务工具模块
 版本: v1.0.0
 
 """
+
 import json
 from typing import Any
 
@@ -32,10 +33,7 @@ def decode_bytes(value: bytes | str, default: str = "") -> str:
     return default
 
 
-def decode_data_field(
-        data: dict[bytes | str, bytes | str],
-        field: str
-) -> str:
+def decode_data_field(data: dict[bytes | str, bytes | str], field: str) -> str:
     """
     从消息数据中解码指定字段
 
@@ -52,9 +50,7 @@ def decode_data_field(
 
 
 def parse_json_field(
-        data: dict[bytes | str, bytes | str],
-        field: str,
-        default: Any = None
+    data: dict[bytes | str, bytes | str], field: str, default: Any = None
 ) -> Any:
     """
     从消息数据中解码并解析 JSON 字段
@@ -98,10 +94,9 @@ def encode_message_data(data: dict[str, Any]) -> dict[str, str]:
     return encoded
 
 
-
-
-
-def build_stream_name_key(task_id: str, task_name: str = 'chat', task_type: str = "events") -> str:
+def build_stream_name_key(
+    task_id: str, task_name: str = "chat", task_type: str = "events"
+) -> str:
     """
     构建 Stream 名称
 

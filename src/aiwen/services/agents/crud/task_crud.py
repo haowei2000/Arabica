@@ -28,7 +28,7 @@ class AgentTaskCRUD:
         user_id: UUID,
         task_type: str | None = None,
         payload: dict[str, Any] | TextInput | None = None,
-        auto_commit: bool = False
+        auto_commit: bool = False,
     ) -> AgentTask:
         """
         Create a new agent task.
@@ -50,7 +50,7 @@ class AgentTaskCRUD:
             user_id=user_id,
             task_type=task_type,
             payload=payload,
-            created_at=datetime.now(UTC)  # 保留时区信息
+            created_at=datetime.now(UTC),  # 保留时区信息
         )
 
         self.db_session.add(task)
@@ -83,7 +83,7 @@ class AgentTaskCRUD:
         result: dict[str, Any] | None = None,
         error: str | None = None,
         progress: int | None = None,
-        auto_commit: bool = False
+        auto_commit: bool = False,
     ) -> AgentTask | None:
         """
         Update task status and related fields.
@@ -135,7 +135,7 @@ class AgentTaskCRUD:
         user_id: UUID | None = None,
         status: str | None = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> list[AgentTask]:
         """
         List tasks with optional filtering.

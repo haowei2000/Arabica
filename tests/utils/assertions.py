@@ -70,8 +70,7 @@ def assert_response_error(
     if message_contains:
         assert "input" in response, "Response missing 'input' field"
         assert message_contains in response["input"], (
-            f"Expected input to contain '{message_contains}', "
-            f"got '{response['input']}'"
+            f"Expected input to contain '{message_contains}', got '{response['input']}'"
         )
 
 

@@ -21,6 +21,7 @@
 使用示例:
     {提供简单的使用示例代码}
 """
+
 # aiwen/services/agents/app_factory.py
 from typing import Any, Dict
 
@@ -36,10 +37,10 @@ class AppAgentFactory:
     """
 
     def __init__(
-            self,
-            appid: str,
-            template_code: str,
-            app_config: dict[str, Any],
+        self,
+        appid: str,
+        template_code: str,
+        app_config: dict[str, Any],
     ):
         """
         初始化应用代理工厂
@@ -59,12 +60,12 @@ class AppAgentFactory:
     def create(self, payload: dict[str, Any]) -> BaseAgentTemplate:
         """
         为单个任务创建代理实例
-        
+
         该方法将应用ID、应用配置和任务载荷合并为最终配置，然后创建代理实例
-        
+
         Args:
             payload (Dict[str, Any]): 任务特定的配置参数，将与应用默认配置合并
-            
+
         Returns:
             BaseAgentTemplate: 创建的代理实例
         """

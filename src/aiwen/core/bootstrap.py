@@ -35,6 +35,7 @@ class BootstrapConfig:
     - Worker: 需要 Redis + Agent Registry，不需要创建表（API已创建）
     - MCP: 需要数据库，其他可选
     """
+
     # 是否初始化日志
     init_logging: bool = True
 
@@ -52,7 +53,6 @@ class BootstrapConfig:
 
     # 是否初始化 Agent Registry
     init_agent_registry: bool = True
-
 
 
 class ApplicationBootstrap:
@@ -164,7 +164,10 @@ class ApplicationBootstrap:
         """初始化Redis连接"""
         logger.info("🔴 初始化Redis连接...")
         try:
-            from aiwen.middleware.cache_middleware import init_redis_client, get_redis_client
+            from aiwen.middleware.cache_middleware import (
+                init_redis_client,
+                get_redis_client,
+            )
 
             await init_redis_client()
             self._redis_client = get_redis_client(is_async=True)
@@ -172,7 +175,9 @@ class ApplicationBootstrap:
             if not self._redis_client:
                 raise RuntimeError("Redis client initialization returned None")
 
-            logger.info(f"✅ Redis连接成功: {self.settings.redis.host}:{self.settings.redis.port}")
+            logger.info(
+                f"✅ Redis连接成功: {self.settings.redis.host}:{self.settings.redis.port}"
+            )
         except Exception as e:
             logger.error(f"❌ Redis初始化失败: {e}")
             raise
@@ -183,7 +188,9 @@ class ApplicationBootstrap:
         try:
             async with get_session("aiwen") as session:
                 # 检查默认租户
-                result = await session.execute(select(Tenant).where(Tenant.name == "default"))
+                result = await session.execute(
+                    select(Tenant).where(Tenant.name == "default")
+                )
                 tenant = result.scalar_one_or_none()
 
                 if not tenant:
@@ -198,7 +205,9 @@ class ApplicationBootstrap:
 
                 # 检查管理员用户
                 admin_username = self.settings.auth.admin_username
-                result = await session.execute(select(User).where(User.username == admin_username))
+                result = await session.execute(
+                    select(User).where(User.username == admin_username)
+                )
                 admin_user = result.scalar_one_or_none()
 
                 if admin_user:
@@ -216,7 +225,7 @@ class ApplicationBootstrap:
                     tenant_id=tenant.id,
                     role="admin",
                     is_superuser=True,
-                    is_active=True
+                    is_active=True,
                 )
 
                 session.add(admin_user)
@@ -241,7 +250,10 @@ class ApplicationBootstrap:
         """初始化Agent Registry"""
         logger.info("🤖 初始化Agent Registry...")
         try:
-            from aiwen.services.agents.agent_registry import init_agent_registry, AgentRegistry
+            from aiwen.services.agents.agent_registry import (
+                init_agent_registry,
+                AgentRegistry,
+            )
 
             await init_agent_registry()
 
@@ -257,7 +269,6 @@ class ApplicationBootstrap:
         except Exception as e:
             logger.error(f"❌ Agent Registry初始化失败: {e}")
             # 不抛出异常，允许应用继续运行
-
 
     async def _shutdown_redis(self) -> None:
         """关闭Redis连接"""
@@ -290,6 +301,7 @@ class ApplicationBootstrap:
 # 预定义的配置模板
 # ============================================================================
 
+
 def get_api_bootstrap_config() -> BootstrapConfig:
     """
     API服务的初始化配置
@@ -302,8 +314,8 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         init_logging=True,
         init_redis=True,
         init_database=True,
-        create_tables=False,         # ⚠️  表由 Alembic 管理，不在代码中创建
-        create_admin_user=True,      # API负责创建用户
+        create_tables=False,  # ⚠️  表由 Alembic 管理，不在代码中创建
+        create_admin_user=True,  # API负责创建用户
         init_agent_registry=True,
     )
 
@@ -320,9 +332,9 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
         init_logging=True,
         init_redis=True,
         init_database=True,
-        create_tables=False,         # 表由 Alembic 管理
-        create_admin_user=False,     # Worker不创建用户
-        init_agent_registry=True,    # Worker需要Agent Registry
+        create_tables=False,  # 表由 Alembic 管理
+        create_admin_user=False,  # Worker不创建用户
+        init_agent_registry=True,  # Worker需要Agent Registry
     )
 
 
@@ -336,17 +348,18 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
     """
     return BootstrapConfig(
         init_logging=True,
-        init_redis=False,            # MCP不需要Redis
+        init_redis=False,  # MCP不需要Redis
         init_database=True,
-        create_tables=False,         # 表由 Alembic 管理
-        create_admin_user=False,     # MCP不创建用户
-        init_agent_registry=False,   # MCP不需要Agent Registry
+        create_tables=False,  # 表由 Alembic 管理
+        create_admin_user=False,  # MCP不创建用户
+        init_agent_registry=False,  # MCP不需要Agent Registry
     )
 
 
 # ============================================================================
 # 便捷函数
 # ============================================================================
+
 
 async def bootstrap_api() -> ApplicationBootstrap:
     """初始化API服务"""

@@ -10,9 +10,14 @@ class TextInput(BaseModel):
     Note: Agent and App are merged into a single concept.
     The agent_id (app_id) can be passed in the text_message or via the URL path.
     """
+
     query: str = Field(..., description="User query/input input")
-    conversation_id: UUID | None = Field(default=None, description="Existing conversation ID (optional)")
-    app_id: UUID | None = Field(default=None, description="Agent/App ID (optional, may be in URL path)")
+    conversation_id: UUID | None = Field(
+        default=None, description="Existing conversation ID (optional)"
+    )
+    app_id: UUID | None = Field(
+        default=None, description="Agent/App ID (optional, may be in URL path)"
+    )
 
     # Optional metadata for conversation creation
     conversation_name: str | None = Field(None, description="Name for new conversation")

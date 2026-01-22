@@ -22,11 +22,8 @@ async def demo_agent_system():
         "agent_code": f"nl2sql-demo-{uuid4().hex[:8]}",
         "agent_type": "NL2SQLAgent",
         "enabled": True,
-        "config": {
-            "model": "gpt-4.1",
-            "temperature": 0.7
-        },
-        "version": 1
+        "config": {"model": "gpt-4.1", "temperature": 0.7},
+        "version": 1,
     }
 
     # Create an Anomaly Detection agent
@@ -34,11 +31,8 @@ async def demo_agent_system():
         "agent_code": f"anomaly-demo-{uuid4().hex[:8]}",
         "agent_type": "AnomalyAgent",
         "enabled": True,
-        "config": {
-            "threshold": 0.9,
-            "method": "isolation_forest"
-        },
-        "version": 1
+        "config": {"threshold": 0.9, "method": "isolation_forest"},
+        "version": 1,
     }
 
     async with httpx.AsyncClient() as client:
@@ -67,7 +61,9 @@ async def demo_agent_system():
         response = await client.post(f"{base_url}/agents/", json=anomaly_agent_data)
         if response.status_code == 200:
             anomaly_agent = response.json()
-            print(f"Created Anomaly agent: {anomaly_agent['agent_code']}\n")  # Updated to agent_code
+            print(
+                f"Created Anomaly agent: {anomaly_agent['agent_code']}\n"
+            )  # Updated to agent_code
         else:
             print(f"Failed to create Anomaly agent: {response.status_code}\n")
             return
@@ -79,7 +75,9 @@ async def demo_agent_system():
             agents = response.json()
             print(f"Found {len(agents)} agents:\n")
             for agent in agents:
-                print(f"  - {agent['agent_code']} ({agent['agent_type']})")  # Updated to agent_code
+                print(
+                    f"  - {agent['agent_code']} ({agent['agent_type']})"
+                )  # Updated to agent_code
             print()
 
         # 5. Get specific agent details
@@ -93,12 +91,9 @@ async def demo_agent_system():
 
         # 6. Run NL2SQL agent (this would normally work with a real implementation)
         print("6. Running NL2SQL agent...")
-        run_payload = {
-            "query": "Show me sales data for last month"
-        }
+        run_payload = {"query": "Show me sales data for last month"}
         response = await client.post(
-            f"{base_url}/agents/{nl2sql_agent_id}/run",
-            json=run_payload
+            f"{base_url}/agents/{nl2sql_agent_id}/run", json=run_payload
         )
         if response.status_code == 200:
             result = response.json()

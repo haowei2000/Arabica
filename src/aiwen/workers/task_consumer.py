@@ -16,6 +16,7 @@ Task Consumer - 任务消费者
     - redis.asyncio: Redis 异步客户端
     - task_utils: 消息编码/解码工具
 """
+
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
@@ -26,13 +27,19 @@ from typing import Any
 import redis.asyncio as aioredis
 from pydantic import BaseModel
 
-from .task_utils import decode_data_field, parse_json_field, build_stream_name_key, decode_bytes
+from .task_utils import (
+    decode_data_field,
+    parse_json_field,
+    build_stream_name_key,
+    decode_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class EventAction(Enum):
     """事件处理动作"""
+
     YIELD = auto()
     RETURN = auto()
     RAISE = auto()
@@ -42,6 +49,7 @@ class EventAction(Enum):
 @dataclass
 class EventResult:
     """事件处理结果"""
+
     action: EventAction
     data: Any = None
 
@@ -91,10 +99,10 @@ class AgentTaskConsumer:
     """
 
     def __init__(
-            self,
-            redis_client: aioredis.Redis,
-            read_count: int = 10,
-            read_block_ms: int = 1000,
+        self,
+        redis_client: aioredis.Redis,
+        read_count: int = 10,
+        read_block_ms: int = 1000,
     ):
         """
         初始化任务消费者
@@ -111,9 +119,7 @@ class AgentTaskConsumer:
 
     @staticmethod
     def _check_timeout(
-            start_time: float,
-            timeout_seconds: float | None,
-            task_id: str
+        start_time: float, timeout_seconds: float | None, task_id: str
     ) -> None:
         """检查是否超时，超时则抛出异常"""
         if timeout_seconds is None:
@@ -129,7 +135,7 @@ class AgentTaskConsumer:
             return await self.redis.xread(
                 streams={stream_name: last_id},
                 count=self.read_count,
-                block=self.read_block_ms
+                block=self.read_block_ms,
             )
         except TimeoutError:
             return None
@@ -138,10 +144,7 @@ class AgentTaskConsumer:
             raise
 
     async def get_task_events(
-            self,
-            task_id: str,
-            last_id: str = "0-0",
-            timeout_seconds: float | None = None
+        self, task_id: str, last_id: str = "0-0", timeout_seconds: float | None = None
     ) -> AsyncGenerator[Any, None]:
         """
         消费任务事件流
@@ -167,7 +170,9 @@ class AgentTaskConsumer:
         stream_name = build_stream_name_key(task_id, self.task_name)
         start_time = asyncio.get_event_loop().time()
 
-        logger.info(f"Starting to consume events for task {task_id} from stream {stream_name}")
+        logger.info(
+            f"Starting to consume events for task {task_id} from stream {stream_name}"
+        )
 
         try:
             while True:
