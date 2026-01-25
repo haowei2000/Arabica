@@ -1,8 +1,7 @@
 """CRUD operations for Conversation model."""
 
 import builtins
-from datetime import UTC, datetime, timezone
-from typing import List, Optional, Tuple, Union
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -87,7 +86,7 @@ class ConversationCRUD:
         else:
             await self.db.flush()
 
-        await self.db.refresh(conversation)
+        # Removed unnecessary refresh - object already has all fields after flush
         return conversation
 
     async def get_by_id(

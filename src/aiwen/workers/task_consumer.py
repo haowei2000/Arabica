@@ -180,7 +180,7 @@ class AgentTaskConsumer:
 
                 messages = await self._read_messages(stream_name, last_id)
                 if not messages:
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.001)  # Reduced from 10ms to 1ms
                     continue
 
                 for _stream_key, msgs in messages:

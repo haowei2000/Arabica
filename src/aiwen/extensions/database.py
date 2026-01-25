@@ -1,11 +1,11 @@
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
 import datetime as _dt
 import decimal as _decimal
 import json
 import logging
-from typing import Any
 import uuid as _uuid
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -60,11 +60,11 @@ _dependency_functions: dict[str, Callable[[], AsyncGenerator[AsyncSession, None]
 # 配置常量
 # ==============================
 DEFAULT_POOL_CONFIG = {
-    "pool_size": 10,
-    "max_overflow": 20,
-    "pool_timeout": 30,
-    "pool_recycle": 3600,  # 1小时回收连接
-    "pool_pre_ping": True,
+    "pool_size": 20,  # Increased from 10 for better concurrency
+    "max_overflow": 30,  # Increased from 20
+    "pool_timeout": 10,  # Reduced from 30s for faster failure
+    "pool_recycle": 1800,  # 30 minutes instead of 1 hour
+    "pool_pre_ping": False,  # Disabled to reduce latency (rely on pool_recycle)
 }
 
 # 数据库特定配置
@@ -77,8 +77,8 @@ DB_SPECIFIC_CONFIG = {
         },
     },
     "postgresql": {
-        "pool_size": 8,
-        "max_overflow": 15,
+        "pool_size": 20,
+        "max_overflow": 30,
     },
 }
 

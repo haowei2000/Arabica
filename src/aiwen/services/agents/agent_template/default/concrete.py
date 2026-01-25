@@ -38,7 +38,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         "template_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,
-        "config": AppConfig(model=Model(provider="ollama", name="qwen3:30b"), context=None)
+        "config": AppConfig(model=Model(provider="tongyi", name="qwen-plus"), context=None)
     }
 
     def __init__(self, config: dict):
@@ -52,8 +52,8 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                 - max_history_messages: Max messages to load from history (default: 20)
         """
         super().__init__(config)
-        self.model_provider = config.get("model_provider", "ollama")
-        self.model_name = config.get("model_name", "qwen3:30b")
+        self.model_provider = config.get("model_provider", "tongyi")
+        self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
 
         # Initialize LLM

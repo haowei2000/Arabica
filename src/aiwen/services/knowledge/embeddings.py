@@ -15,7 +15,7 @@ EmbeddingProvider = Literal["tongyi", "openai", "ollama"]
 # Common embedding models and their dimensions
 EMBEDDING_MODELS = {
     # DashScope/Tongyi models
-    "text-embedding-v3": 1536,
+    "text-embedding-v3": 1024,
     "text-embedding-v2": 1536,
     "text-embedding-v1": 1536,
     # OpenAI models
@@ -82,6 +82,7 @@ class EmbeddingService:
                     model=self.model,
                     openai_api_key=api_key,
                     openai_api_base=base_url,
+                    dimensions=self.dimension,  # Pass dimension for text-embedding-v3
                 )
 
             case "openai":
@@ -118,6 +119,27 @@ class EmbeddingService:
         embedding = self._client.embed_query(text)
         return embedding
 
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """Sanitize text for embedding API.
+
+        Removes null bytes, control characters, and ensures proper encoding.
+
+        Args:
+            text: Input text.
+
+        Returns:
+            str: Sanitized text.
+        """
+        if not isinstance(text, str):
+            text = str(text)
+        # Remove null bytes and control characters (except newlines and tabs)
+        text = text.replace('\x00', '')
+        text = ''.join(char for char in text if char == '\n' or char == '\t' or not (0 <= ord(char) < 32))
+        # Normalize whitespace
+        text = ' '.join(text.split())
+        return text
+
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
@@ -130,28 +152,96 @@ class EmbeddingService:
         if not texts:
             return []
 
-        # Filter and validate texts - ensure all are non-empty strings
+        # Validate and sanitize texts - ensure all are non-empty strings
         valid_texts = []
         for i, text in enumerate(texts):
             if text is None:
-                logger.warning(f"Text at index {i} is None, skipping")
-                continue
+                raise ValueError(f"Text at index {i} is None")
             if not isinstance(text, str):
                 logger.warning(f"Text at index {i} is not a string (type={type(text)}), converting")
                 text = str(text)
+            # Sanitize text to remove problematic characters
+            text = self._sanitize_text(text)
             if not text.strip():
-                logger.warning(f"Text at index {i} is empty, skipping")
-                continue
+                raise ValueError(f"Text at index {i} is empty after sanitization")
             valid_texts.append(text)
 
         if not valid_texts:
-            logger.warning("No valid texts to embed after filtering")
+            logger.warning("No valid texts to embed")
             return []
 
-        logger.debug(f"Embedding {len(valid_texts)} texts (filtered from {len(texts)})")
-        embeddings = self._client.embed_documents(valid_texts)
-        logger.info(f"Generated {len(embeddings)} embeddings")
-        return embeddings
+        # Log debug info for troubleshooting
+        logger.info(f"Embedding {len(valid_texts)} texts")
+        for i, text in enumerate(valid_texts[:3]):  # Log first 3 for debugging
+            logger.debug(f"Text {i}: type={type(text).__name__}, len={len(text)}, preview={text[:50]!r}...")
+
+        try:
+            # For Tongyi/DashScope, use direct API call to avoid langchain issues
+            if self.provider == "tongyi":
+                embeddings = self._embed_tongyi_direct(valid_texts)
+            else:
+                embeddings = self._client.embed_documents(valid_texts)
+            logger.info(f"Generated {len(embeddings)} embeddings")
+            return embeddings
+        except Exception as e:
+            # Log the problematic texts on error
+            logger.error(f"Embedding error: {e}")
+            logger.error(f"Texts info: count={len(valid_texts)}, types={[type(t).__name__ for t in valid_texts[:5]]}")
+            for i, text in enumerate(valid_texts[:3]):
+                logger.error(f"Text {i}: {text[:100]!r}")
+            raise
+
+    def _embed_tongyi_direct(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts using direct DashScope API call.
+
+        This bypasses langchain to avoid compatibility issues.
+
+        Args:
+            texts: List of texts to embed.
+
+        Returns:
+            list[list[float]]: List of embedding vectors.
+        """
+        from openai import OpenAI
+        settings = get_settings()
+        if settings.openai:
+            api_key = settings.openai.api_key or settings.dashscope_api_key
+            base_url = settings.openai.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        else:
+            api_key = settings.dashscope_api_key
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+        # Process in batches of 10 strings each
+        all_embeddings = []
+        batch_size = 10
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+
+            # url = f"{base_url.rstrip('/')}/embeddings"
+            url = base_url
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": self.model,
+                "input": batch,
+                "dimensions": self.dimension,
+                # "encoding_format": "float",
+            }
+
+            logger.debug(f"DashScope API request: url={url}, texts_count={len(batch)}")
+            client = OpenAI(
+                base_url=url,
+                api_key=api_key
+            )
+            completion = client.embeddings.create(**payload)
+            completion = completion.model_dump()
+            batch_embeddings = [item["embedding"] for item in completion["data"]]
+            all_embeddings.extend(batch_embeddings)
+
+        return all_embeddings
 
     def embed_texts_batch(
             self, texts: list[str], batch_size: int = 100

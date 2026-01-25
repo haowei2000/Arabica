@@ -78,7 +78,7 @@ async def upload_document(
         chunk_overlap: int = Form(default=50, ge=0, le=500, description="Overlap between chunks"),
         embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
         embedding_model: str = Form(default="text-embedding-v3", description="Embedding model"),
-        embedding_dimension: int = Form(default=1536, description="Embedding dimension"),
+        embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
         document_crud: DocumentCRUD = Depends(get_document_crud),
         knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):

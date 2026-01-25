@@ -22,9 +22,9 @@ from aiwen.dependencies.agents import (
     get_task_crud,
     get_task_producer,
 )
-from aiwen.dependencies.auth import get_current_user
+from aiwen.dependencies.auth import get_token_data
 from aiwen.schemas.agents.input import TextInput
-from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.auth.auth import TokenData
 from aiwen.services.agents.chat.chat_service import (
     StartTaskResult,
     get_messages_by_task,
@@ -45,7 +45,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def start_chat_task(
         app_id: UUID,
         text_input: TextInput,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        token_data: Annotated[TokenData, Depends(get_token_data)],  # Faster: no DB lookup
         task_crud: AgentTaskCRUD = Depends(get_task_crud),
         conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
         task_producer: AgentTaskProducer = Depends(get_task_producer),
@@ -60,7 +60,7 @@ async def start_chat_task(
     Args:
         app_id: 应用 ID
         text_input: 聊天消息载荷
-        current_user: 当前用户
+        token_data: JWT token data (no DB lookup)
         task_crud: 任务 CRUD 服务
         conversation_crud: 对话 CRUD 服务
         task_producer: 任务生产者
@@ -68,10 +68,11 @@ async def start_chat_task(
     Returns:
         StartTaskResult: 包含 task_id, conversation_id, message_id
     """
-    text_input.from_account_id = current_user.id
+    user_id = UUID(token_data.user_id)
+    text_input.from_account_id = user_id
     return await start_task(
         app_id=app_id,
-        user_id=current_user.id,
+        user_id=user_id,
         text_input=text_input,
         task_crud=task_crud,
         conversation_crud=conversation_crud,
@@ -85,7 +86,7 @@ async def start_chat_task(
 @router.get("/task/{task_id}/stream")
 async def stream_task_messages(
         task_id: UUID,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        token_data: Annotated[TokenData, Depends(get_token_data)],  # Faster: no DB lookup
         task_crud: AgentTaskCRUD = Depends(get_task_crud),
         task_consumer: AgentTaskConsumer = Depends(get_task_consumer),
 ):
@@ -102,7 +103,7 @@ async def stream_task_messages(
 
     Args:
         task_id: 任务 ID
-        current_user: 当前用户
+        token_data: JWT token data (no DB lookup)
         task_crud: 任务 CRUD 服务
         task_consumer: 任务消费者
 
@@ -121,7 +122,7 @@ async def stream_task_messages(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task {task_id} not found",
         )
-    if task.user_id and str(task.user_id) != str(current_user.id):
+    if task.user_id and str(task.user_id) != token_data.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this task",

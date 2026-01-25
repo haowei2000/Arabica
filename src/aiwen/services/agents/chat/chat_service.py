@@ -13,6 +13,7 @@ Chat Service - 聊天服务
     - Agent Registry: Agent 注册管理
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from uuid import UUID
@@ -189,37 +190,30 @@ async def start_task(
     Returns:
         StartTaskResult: 包含 task_id, conversation_id, message_id
     """
-    # 1. Prepare conversation
-    conversation = await create_conversation(
+    # 1. Run conversation and task creation in parallel for lower latency
+    conversation_task = create_conversation(
         app_id=app_id,
         text_message=text_input,
         conversation_crud=conversation_crud,
     )
-    logger.info(f"Prepared conversation {conversation.id} for app {app_id}")
-
-    # 2. Create input
-    # message_content = await create_message(
-    #     app_id=app_id,
-    #     conversation_id=conversation.id,
-    #     text_message=text_input,
-    #     message_crud=message_crud,
-    # )
-    # logger.info(f"Created input {message_content.id} in conversation {conversation.id}")
-
-    # 3. Create a task
-    task = await task_crud.create_agent_task(
+    task_creation = task_crud.create_agent_task(
         app_id=app_id,
         user_id=user_id,
         task_type="agent_stream",
         payload=text_input,
     )
-    logger.debug(f"Created task {task.id} for {text_input.query}")
+
+    # Execute both in parallel
+    conversation, task = await asyncio.gather(conversation_task, task_creation)
+
+    logger.debug(f"Created conversation {conversation.id} and task {task.id} for {text_input.query}")
+
+    # 2. Prepare payload with conversation info
     text_input.conversation_id = conversation.id
     text_input.app_id = app_id
-    # 4. Prepare a text_message with app, conversation and input IDs
     task_payload = _prepare_task_payload(text_input, conversation, str(app_id), user_id)
 
-    # 5. Publish a task using AgentTaskProducer
+    # 3. Publish task to Redis
     await task_producer.publish_task(
         task_id=task.id,
         payload=task_payload,
