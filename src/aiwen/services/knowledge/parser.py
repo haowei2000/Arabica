@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentParser:
-    """Parse documents of various formats into plain text."""
+    """Parse knowledge of various formats into plain text."""
 
     SUPPORTED_MIME_TYPES = {
         "text/plain": "txt",

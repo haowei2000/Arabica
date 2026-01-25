@@ -1,29 +1,42 @@
+import {useEffect} from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LoginPage from './pages/LoginPage';
 import ChatPage from './pages/ChatPage';
-import AppsPage from './pages/AppsPage';
+import HomePage from './pages/HomePage';
+import DocumentPage from './pages/context/DocumentPage';
+import {useUIStore} from './stores/useUIStore';
 
-// 创建 QueryClient 实例
+// Create QueryClient instance
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 分钟
+        staleTime: 5 * 60 * 1000, // 5 minutes
     },
   },
 });
 
 function App() {
+    const {theme, setTheme} = useUIStore();
+
+    // Initialize theme on mount
+    useEffect(() => {
+        setTheme(theme);
+    }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/apps" element={<AppsPage />} />
+            <Route path="/home" element={<HomePage/>}/>
           <Route path="/chat" element={<ChatPage />} />
-          <Route path="/" element={<Navigate to="/apps" replace />} />
+            <Route path="/knowledge/:knowledgeId/documents" element={<DocumentPage/>}/>
+            <Route path="/" element={<Navigate to="/home" replace/>}/>
+            {/* Backwards compatibility */}
+            <Route path="/apps" element={<Navigate to="/home" replace/>}/>
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

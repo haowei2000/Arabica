@@ -3,22 +3,16 @@
 Celery CLI - Celery 命令行入口
 
 提供便捷的 Celery worker/beat/flower 启动命令。
-
-使用示例:
-    # 启动 worker
-    aiwen-celery worker
-
-    # 启动 worker（指定并发数和队列）
-    aiwen-celery worker --concurrency=4 --queues=default,email
-
-    # 启动 beat
-    aiwen-celery beat
-
-    # 启动 flower
-    aiwen-celery flower --port=5555
 """
 
+import subprocess
+import sys
+
 import click
+
+
+def _normalize_queues(queues: str) -> str:
+    return ",".join([q.strip() for q in queues.split(",") if q.strip()]) or "default"
 
 
 @click.group()
@@ -28,54 +22,68 @@ def cli():
 
 
 @cli.command()
-@click.option("--concurrency", "-c", default=4, help="Worker 并发数")
-@click.option("--queues", "-Q", default="default", help="监听的队列（逗号分隔）")
-@click.option("--loglevel", "-l", default="info", help="日志级别")
-def worker(concurrency: int, queues: str, loglevel: str):
+@click.option("--concurrency", "-c", default=4, show_default=True, help="Worker 并发数")
+@click.option("--queues", "-Q", default="celery", show_default=True, help="监听的队列（逗号分隔）")
+@click.option("--loglevel", "-l", default="info", show_default=True, help="日志级别")
+@click.option("--hostname", default=None, help="Worker hostname")
+@click.option("--pool", "-P", default="prefork", show_default=True, help="Pool类型: prefork/solo/gevent/eventlet")
+def worker(concurrency: int, queues: str, loglevel: str, hostname: str | None, pool: str):
     """启动 Celery Worker"""
-    from aiwen.workers.celery_app import celery_app
+    queues = _normalize_queues(queues)
 
-    celery_app.worker_main(
-        argv=[
-            "worker",
-            f"--concurrency={concurrency}",
-            f"--queues={queues}",
-            f"--loglevel={loglevel}",
-        ]
-    )
+    cmd = [
+        sys.executable, "-m", "celery",
+        "-A", "aiwen.workers.celery_app",
+        "worker",
+        f"--concurrency={concurrency}",
+        f"--queues={queues}",
+        f"--loglevel={loglevel}",
+        f"--pool={pool}",
+    ]
+
+    if hostname:
+        cmd.append(f"--hostname={hostname}")
+
+    subprocess.run(cmd)
 
 
 @cli.command()
-@click.option("--loglevel", "-l", default="info", help="日志级别")
+@click.option("--loglevel", "-l", default="info", show_default=True, help="日志级别")
 def beat(loglevel: str):
     """启动 Celery Beat（定时任务调度器）"""
-    from aiwen.workers.celery_app import celery_app
+    cmd = [
+        sys.executable, "-m", "celery",
+        "-A", "aiwen.workers.celery_app",
+        "beat",
+        f"--loglevel={loglevel}",
+    ]
 
-    celery_app.worker_main(
-        argv=[
-            "beat",
-            f"--loglevel={loglevel}",
-        ]
-    )
+    subprocess.run(cmd)
 
 
 @cli.command()
-@click.option("--port", "-p", default=5555, help="Flower 端口")
-def flower(port: int):
+@click.option("--port", "-p", default=5555, show_default=True, help="Flower 端口")
+@click.option("--address", "-a", default="0.0.0.0", show_default=True, help="Flower 监听地址")
+def flower(port: int, address: str):
     """启动 Flower（Celery 监控面板）"""
-    from aiwen.workers.celery_app import celery_app
+    try:
+        import flower  # noqa: F401
+    except ImportError:
+        click.echo("Error: Flower is not installed. Install it with: uv add flower")
+        raise SystemExit(1)
 
-    celery_app.worker_main(
-        argv=[
-            "flower",
-            f"--port={port}",
-        ]
-    )
+    cmd = [
+        sys.executable, "-m", "celery",
+        "-A", "aiwen.workers.celery_app",
+        "flower",
+        f"--port={port}",
+        f"--address={address}",
+    ]
+
+    subprocess.run(cmd)
 
 
 def main():
-    """CLI 入口"""
-
     cli()
 
 

@@ -15,7 +15,7 @@ class RustfsConfig(BaseModel):
     access_key: str = Field(default="", description="rustfs access key")
     secret_key: str = Field(default="", description="rustfs secret key")
     secure: bool = Field(default=False, description="Use HTTPS")
-    bucket: str = Field(default="documents", description="Default bucket name")
+    bucket: str = Field(default="knowledge", description="Default bucket name")
 
     @property
     def endpoint(self) -> str:

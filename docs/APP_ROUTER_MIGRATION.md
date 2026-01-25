@@ -359,12 +359,13 @@ async def func(
 
 ```python
 from dotenv import load_dotenv
+
 load_dotenv('.env')
 
 # 测试所有导入
 from aiwen.models.agents.app import App
 from aiwen.schemas.agents.app import AppCreate, AppUpdate, AppResponse, AppListResponse
-from aiwen.services.agents.crud.app_crud import AppCRUD
+from aiwen.services.crud import AppCRUD
 from aiwen.routers.agents.app import router
 from aiwen.dependencies.agents import get_app_crud
 

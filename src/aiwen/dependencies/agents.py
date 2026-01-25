@@ -5,11 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.agents.crud.app_crud import AppCRUD
-from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
-from aiwen.services.agents.crud.message_crud import MessageCRUD
-from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
+from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.crud.app_crud import AppCRUD
+from aiwen.services.crud.context_crud import ContextCRUD
+from aiwen.services.crud.conversation_crud import ConversationCRUD
+from aiwen.services.crud.document_crud import DocumentCRUD
+from aiwen.services.crud.knowledge_crud import KnowledgeCRUD
+from aiwen.services.crud.message_crud import MessageCRUD
+from aiwen.services.crud.task_crud import AgentTaskCRUD
 from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
@@ -69,6 +72,51 @@ async def get_task_crud(
     db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTaskCRUD:
     return AgentTaskCRUD(db)
+
+
+async def get_knowledge_crud(
+        db: AsyncSession = Depends(get_aiwen_db),
+) -> KnowledgeCRUD:
+    """
+    Dependency to get KnowledgeCRUD instance.
+
+    Args:
+        db: Database session from dependency injection
+
+    Returns:
+        KnowledgeCRUD instance
+    """
+    return KnowledgeCRUD(db)
+
+
+async def get_context_crud(
+        db: AsyncSession = Depends(get_aiwen_db),
+) -> ContextCRUD:
+    """
+    Dependency to get ContextCRUD instance.
+
+    Args:
+        db: Database session from dependency injection
+
+    Returns:
+        ContextCRUD instance
+    """
+    return ContextCRUD(db)
+
+
+async def get_document_crud(
+        db: AsyncSession = Depends(get_aiwen_db),
+) -> DocumentCRUD:
+    """
+    Dependency to get DocumentCRUD instance.
+
+    Args:
+        db: Database session from dependency injection
+
+    Returns:
+        DocumentCRUD instance
+    """
+    return DocumentCRUD(db)
 
 
 async def get_redis_client_dep():

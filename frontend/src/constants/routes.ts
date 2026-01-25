@@ -1,12 +1,18 @@
-// 路由路径常量
+// Route path constants
 export const ROUTES = {
-  HOME: '/',
+    ROOT: '/',
   LOGIN: '/login',
-  CONVERSATIONS: '/conversations',
-  CHAT: '/chat/:conversationId',
+    HOME: '/home',
+    CHAT: '/chat',
+    KNOWLEDGE_DOCUMENTS: '/knowledge/:knowledgeId/documents',
+    // Legacy routes (redirect to home)
   APPS: '/apps',
+    CONVERSATIONS: '/conversations',
 } as const;
 
-// 生成动态路由的辅助函数
+// Helper function for dynamic routes
 export const generateChatRoute = (conversationId: string) =>
   `/chat/${conversationId}`;
+
+export const generateKnowledgeDocumentsRoute = (knowledgeId: string) =>
+    `/knowledge/${knowledgeId}/documents`;

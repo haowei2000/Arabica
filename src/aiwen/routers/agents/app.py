@@ -10,8 +10,8 @@ from aiwen.dependencies.auth import get_current_user
 from aiwen.schemas.agents.agent_template import AgentTemplateResponse
 from aiwen.schemas.agents.app import AppCreate, AppListResponse, AppResponse, AppUpdate
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.agents.crud.app_crud import AppCRUD
+from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.crud.app_crud import AppCRUD
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 

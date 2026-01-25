@@ -130,7 +130,26 @@ class EmbeddingService:
         if not texts:
             return []
 
-        embeddings = self._client.embed_documents(texts)
+        # Filter and validate texts - ensure all are non-empty strings
+        valid_texts = []
+        for i, text in enumerate(texts):
+            if text is None:
+                logger.warning(f"Text at index {i} is None, skipping")
+                continue
+            if not isinstance(text, str):
+                logger.warning(f"Text at index {i} is not a string (type={type(text)}), converting")
+                text = str(text)
+            if not text.strip():
+                logger.warning(f"Text at index {i} is empty, skipping")
+                continue
+            valid_texts.append(text)
+
+        if not valid_texts:
+            logger.warning("No valid texts to embed after filtering")
+            return []
+
+        logger.debug(f"Embedding {len(valid_texts)} texts (filtered from {len(texts)})")
+        embeddings = self._client.embed_documents(valid_texts)
         logger.info(f"Generated {len(embeddings)} embeddings")
         return embeddings
 

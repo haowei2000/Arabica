@@ -18,8 +18,8 @@ from aiwen.schemas.agents.message import (
     MessageUpdate,
 )
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
-from aiwen.services.agents.crud.message_crud import MessageCRUD
+from aiwen.services.crud.conversation_crud import ConversationCRUD
+from aiwen.services.crud.message_crud import MessageCRUD
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 

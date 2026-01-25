@@ -19,7 +19,7 @@ from aiwen.schemas.agents.conversation import (
     ConversationUpdate,
 )
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
+from aiwen.services.crud.conversation_crud import ConversationCRUD
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 

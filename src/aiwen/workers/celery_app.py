@@ -14,14 +14,17 @@ celery_app = Celery('aiwen')
 settings = get_settings()
 
 # 配置 Celery
+_redis_auth = f":{settings.redis.password}@" if settings.redis.password else ""
 celery_app.conf.update(
-    broker_url=f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
-    result_backend=f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
+    broker_url=f"redis://{_redis_auth}{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
+    result_backend=f"redis://{_redis_auth}{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
     timezone='Asia/Shanghai',
     enable_utc=False,
+    # Task discovery
+    imports=['aiwen.workers.tasks.document_tasks'],
 )
 
 
@@ -33,7 +36,6 @@ def init_worker(**kwargs):
         from aiwen.core.bootstrap import bootstrap_celery, ApplicationBootstrap
         bootstrap: ApplicationBootstrap = asyncio.run(bootstrap_celery())
         _worker_resources.bootstrap = bootstrap
-        _worker_resources.redis_client = bootstrap.redis_client
         print("Worker resources initialized successfully")
 
     except Exception as e:
@@ -42,8 +44,10 @@ def init_worker(**kwargs):
 
 
 @worker_process_shutdown.connect
-def shutdown_worker(sig, how, **kwargs):
+def shutdown_worker(**kwargs):
     """Worker 进程关闭时执行"""
+    sig = kwargs.get('sig', 'unknown')
+    how = kwargs.get('how', 'unknown')
     print(f"Worker shutting down, signal={sig}, how={how}")
     try:
         # 关闭 Redis 连接

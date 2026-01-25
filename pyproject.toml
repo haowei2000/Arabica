@@ -74,6 +74,8 @@ dependencies = [
     # Task Queue
     "celery[redis]",
     "boto3>=1.42.32",
+    "pypdf>=6.6.0",
+    "beautifulsoup4>=4.14.3",
 ]
 [dependency-groups]
 dev = [
@@ -87,6 +89,7 @@ dev = [
     "ty>=0.0.7",
     "types-redis>=4.6.0",
     "celery-types>=0.24.0",
+    "boto3-stubs>=1.42.33",
 ]
 
 [project.scripts]
@@ -99,7 +102,8 @@ aiwen-celery = "aiwen.celery_cli:main"
 sync-env = "scripts.sync_env:main"
 
 [tool.uv]
-index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+#index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+index-url = "https://mirrors.aliyun.com/pypi/simple/"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aiwen", "src/scripts"]

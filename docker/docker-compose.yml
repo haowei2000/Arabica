@@ -388,9 +388,9 @@ services:
     env_file:
       - ../.env
     environment:
-      - RUSTFS_ACCESS_KEY:${RUSTFS__ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_CONSOLE_ENABLE:${RUSTFS_CONSOLE_ENABLE:-true}
-      - RUSTFS_SECRET_KEY:${RUSTFS__SECRET_KEY:-rustfsadmin}
+      RUSTFS_ACCESS_KEY: ${RUSTFS__ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS__SECRET_KEY:-rustfsadmin}
+      RUSTFS_CONSOLE_ENABLE: ${RUSTFS_CONSOLE_ENABLE:-true}
     user: "0:0"
     volumes:
       - ./rustfs/data:/data

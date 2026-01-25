@@ -46,4 +46,23 @@ export const API_ENDPOINTS = {
     DELETE: (appId: string) => `/apps/${appId}/delete`,
     QUERY: '/apps/query',
   },
+
+    // Knowledge 管理
+    KNOWLEDGE: {
+        LIST: '/agents/knowledge/query',
+        CREATE: '/agents/knowledge/create',
+        GET: (id: string) => `/agents/knowledge/${id}/get`,
+        UPDATE: (id: string) => `/agents/knowledge/${id}/update`,
+        DELETE: (id: string) => `/agents/knowledge/${id}/delete`,
+        SEARCH: '/agents/knowledge/search',
+    },
+
+    // Document 管理
+    DOCUMENT: {
+        UPLOAD: '/agents/document/upload',
+        GET: (id: string) => `/agents/document/${id}`,
+        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/document/knowledge/${knowledgeId}`,
+        DELETE: (id: string) => `/agents/document/${id}/delete`,
+        TASK_STATUS: (taskId: string) => `/agents/document/task/${taskId}/status`,
+    },
 } as const;

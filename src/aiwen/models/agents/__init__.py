@@ -9,5 +9,26 @@ from aiwen.models.agents.context import Context
 # Conversation must be imported before Message due to the relationship
 from aiwen.models.agents.conversation import Conversation
 from aiwen.models.agents.message import Message
+# Knowledge base related models
+from aiwen.models.agents.knowledge import Knowledge
+from aiwen.models.agents.docments import Document
+from aiwen.models.agents.chunk import Chunk
+from aiwen.models.agents.preprocess import Preprocess
+# Model configuration
+from aiwen.models.agents.chat_model import ChatModel
+from aiwen.models.agents.embedding_model import EmbeddingModel
 
-__all__ = ["Conversation", "Message", "AgentTemplate", "App", "AgentTask", "Context"]
+__all__ = [
+    "Conversation",
+    "Message",
+    "AgentTemplate",
+    "App",
+    "AgentTask",
+    "Context",
+    "Knowledge",
+    "Document",
+    "Chunk",
+    "Preprocess",
+    "ChatModel",
+    "EmbeddingModel",
+]

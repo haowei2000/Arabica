@@ -5,13 +5,12 @@ in-memory and database persistence.
 """
 
 import logging
-from typing import List, Optional, Type
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.agent_template import AgentTemplate
 from aiwen.services.agents.base import BaseAgentTemplate
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -273,14 +272,11 @@ def _import_all_agents() -> None:
     ensuring their decorators execute and register the classes.
     """
     # Import all agent template modules
-    from aiwen.services.agents.agent_template.default.concrete import (
-        DefaultAgentTemplate,
-    )  # noqa
-    from aiwen.services.agents.agent_template.nl2sql.concrete import NL2SQLAgentTemplate
 
     # Future agents can be added here
     # from aiwen.services.agents.agent_template.custom.concrete import CustomAgentTemplate
-
+    from aiwen.services.agents.agent_template.nl2sql.concrete import NL2SQLAgentTemplate
+    from aiwen.services.agents.agent_template.default.concrete import DefaultAgentTemplate
     logger.info("All agent modules imported")
 
 

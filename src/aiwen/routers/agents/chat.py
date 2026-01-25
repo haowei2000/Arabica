@@ -30,8 +30,8 @@ from aiwen.services.agents.chat.chat_service import (
     get_messages_by_task,
     start_task,
 )
-from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
-from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
+from aiwen.services.crud.conversation_crud import ConversationCRUD
+from aiwen.services.crud.task_crud import AgentTaskCRUD
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
 

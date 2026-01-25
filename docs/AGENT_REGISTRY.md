@@ -247,7 +247,7 @@ INFO:aiwen.core.lifespan:Agent registry initialized successfully
 
 ```python
 from aiwen.extensions.database import get_session
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
 async with get_session("aiwen") as session:
     crud = AgentTemplateCRUD(session)
@@ -278,6 +278,7 @@ SELECT COUNT(*) FROM agent_template WHERE enabled = true;
 import asyncio
 from aiwen.services.agents.agent_registry import AgentRegistry, init_agent_registry
 
+
 async def test_agent_registry():
     # 初始化注册表
     await init_agent_registry()
@@ -292,7 +293,7 @@ async def test_agent_registry():
 
     # 测试数据库持久化
     from aiwen.extensions.database import get_session
-    from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
+    from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
     async with get_session("aiwen") as session:
         crud = AgentTemplateCRUD(session)
@@ -301,6 +302,7 @@ async def test_agent_registry():
         assert template.template_name == "Default Detection Agent"
 
     print("✓ All tests passed!")
+
 
 if __name__ == "__main__":
     asyncio.run(test_agent_registry())

@@ -27,9 +27,9 @@ from aiwen.services.agents.chat.chat_helper import (
     create_conversation,
     stream_and_finalize,
 )
-from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
-from aiwen.services.agents.crud.message_crud import MessageCRUD
-from aiwen.services.agents.crud.task_crud import AgentTaskCRUD
+from aiwen.services.crud.conversation_crud import ConversationCRUD
+from aiwen.services.crud.message_crud import MessageCRUD
+from aiwen.services.crud.task_crud import AgentTaskCRUD
 from aiwen.utils.sse import sse
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer

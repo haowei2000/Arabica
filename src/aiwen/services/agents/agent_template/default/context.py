@@ -18,7 +18,7 @@ from sqlalchemy import select
 from aiwen.extensions.database import get_session
 from aiwen.models.agents.message import Message
 from aiwen.schemas.agents.message import MessageCreate
-from aiwen.services.agents.crud.message_crud import MessageCRUD
+from aiwen.services.crud.message_crud import MessageCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def add_message_to_context(
         conversation_id: UUID of the conversation
         app_id: Optional UUID of the app/agent (used when creating conversation)
     """
-    from aiwen.services.agents.crud.conversation_crud import ConversationCRUD
+    from aiwen.services.crud import ConversationCRUD
     from aiwen.schemas.agents.conversation import ConversationCreate
     from aiwen.utils.time import utc_now
 
