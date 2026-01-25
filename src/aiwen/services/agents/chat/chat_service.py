@@ -13,7 +13,6 @@ Chat Service - 聊天服务
     - Agent Registry: Agent 注册管理
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from uuid import UUID
@@ -190,21 +189,20 @@ async def start_task(
     Returns:
         StartTaskResult: 包含 task_id, conversation_id, message_id
     """
-    # 1. Run conversation and task creation in parallel for lower latency
-    conversation_task = create_conversation(
+    # 1. Create conversation and task sequentially
+    # Note: Cannot use asyncio.gather here because both operations share the same
+    # database session, and SQLAlchemy sessions cannot handle concurrent flush operations
+    conversation = await create_conversation(
         app_id=app_id,
         text_message=text_input,
         conversation_crud=conversation_crud,
     )
-    task_creation = task_crud.create_agent_task(
+    task = await task_crud.create_agent_task(
         app_id=app_id,
         user_id=user_id,
         task_type="agent_stream",
         payload=text_input,
     )
-
-    # Execute both in parallel
-    conversation, task = await asyncio.gather(conversation_task, task_creation)
 
     logger.debug(f"Created conversation {conversation.id} and task {task.id} for {text_input.query}")
 

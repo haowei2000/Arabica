@@ -71,5 +71,48 @@ db-status: ## 显示迁移状态
 	@echo "$(BLUE)待执行迁移:$(NC)"
 	@uv run alembic history --indicate-current
 
-uv-dev:
+uv-dev: ## 安装开发依赖
 	uv sync
+
+# ============================================================================
+# 服务启动
+# ============================================================================
+
+start-api: ## 启动 API 服务 (端口 8000)
+	cd src && uv run aiwen-api
+
+start-worker: ## 启动 Worker 服务
+	cd src && uv run aiwen-worker
+
+start-celery: ## 启动 Celery Worker
+	cd src && uv run aiwen-celery worker --concurrency=4 --loglevel=info
+
+start-celery-beat: ## 启动 Celery Beat 调度器
+	cd src && uv run aiwen-celery beat --loglevel=info
+
+start-mcp: ## 启动 MCP 服务 (端口 9000)
+	cd src && uv run aiwen-mcp
+
+start-frontend: ## 启动前端开发服务器
+	cd frontend && npm run dev
+
+start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
+	@echo "$(BLUE)启动所有服务...$(NC)"
+	@echo "$(YELLOW)提示: 每个服务将在后台运行，使用 'make stop-all' 停止所有服务$(NC)"
+	@echo ""
+	@# 先运行数据库迁移
+	uv run alembic upgrade head
+	@# 启动后端服务
+	cd src && uv run aiwen-api & \
+	cd src && uv run aiwen-worker & \
+	cd src && uv run aiwen-celery worker --concurrency=4 --loglevel=info & \
+	cd frontend && npm run dev & \
+	wait
+
+stop-all: ## 停止所有本地服务
+	@echo "$(YELLOW)停止所有服务...$(NC)"
+	@-pkill -f "aiwen-api" 2>/dev/null || true
+	@-pkill -f "aiwen-worker" 2>/dev/null || true
+	@-pkill -f "aiwen-celery" 2>/dev/null || true
+	@-pkill -f "vite" 2>/dev/null || true
+	@echo "$(GREEN)所有服务已停止$(NC)"
