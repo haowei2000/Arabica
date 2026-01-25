@@ -12,48 +12,77 @@ from typing import Any
 from uuid import UUID
 
 from celery import chain
+from celery.signals import worker_process_init, worker_process_shutdown
 
 from aiwen.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+# Worker-level event loop - one per worker process
+_worker_loop: asyncio.AbstractEventLoop | None = None
+_db_initialized: bool = False
 
-def run_async(coro):
-    """Run async coroutine in a new event loop safely for Celery workers.
 
-    This function resets the global database state before running to avoid
-    event loop mismatch errors when engines are cached across different loops.
-    """
-    from aiwen.extensions.database import _engines, _sessionmakers, _bases, _dependency_functions
-    import aiwen.extensions.database as db_module
+@worker_process_init.connect
+def _init_worker_process(**kwargs):
+    """Initialize event loop and database connections when worker process starts."""
+    global _worker_loop, _db_initialized
 
-    # Reset global database state to avoid event loop mismatch
-    # Each Celery task gets a new event loop, so cached engines from
-    # previous tasks will have connections bound to the old loop
-    _engines.clear()
-    _sessionmakers.clear()
-    _bases.clear()
-    _dependency_functions.clear()
-    db_module._initialized = False
+    # Create a persistent event loop for this worker
+    _worker_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_worker_loop)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        # Clean up: dispose engines before closing loop
+    # Initialize database connections once
+    from aiwen.extensions.database import _ensure_registered
+    _ensure_registered()
+    _db_initialized = True
+
+    logger.info("Worker process initialized: event loop and database connections ready")
+
+
+@worker_process_shutdown.connect
+def _shutdown_worker_process(**kwargs):
+    """Clean up database connections and event loop when worker process shuts down."""
+    global _worker_loop, _db_initialized
+
+    if _worker_loop is not None:
+        # Dispose all database engines
         async def _cleanup():
-            for engine in list(_engines.values()):
-                try:
-                    await engine.dispose()
-                except Exception:
-                    pass
+            from aiwen.extensions.database import dispose_all
+            await dispose_all()
 
         try:
-            loop.run_until_complete(_cleanup())
-        except Exception:
-            pass
-        loop.close()
+            _worker_loop.run_until_complete(_cleanup())
+        except Exception as e:
+            logger.warning(f"Error during worker shutdown cleanup: {e}")
+
+        _worker_loop.close()
+        _worker_loop = None
+
+    _db_initialized = False
+    logger.info("Worker process shutdown: database connections disposed")
+
+
+def run_async(coro):
+    """Run async coroutine using the worker's persistent event loop.
+
+    This reuses a single event loop per worker process, avoiding the overhead
+    of creating new loops and re-registering database connections for each task.
+    """
+    global _worker_loop, _db_initialized
+
+    # Fallback for non-worker contexts (e.g., testing, direct calls)
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+
+    # Ensure database is initialized
+    if not _db_initialized:
+        from aiwen.extensions.database import _ensure_registered
+        _ensure_registered()
+        _db_initialized = True
+
+    return _worker_loop.run_until_complete(coro)
 
 
 @celery_app.task(
