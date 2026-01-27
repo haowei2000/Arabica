@@ -39,9 +39,9 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (agents_router, "/api"),
         (chat_router, "/api"),
         (conversations_router, "/api"),
-        (knowledge_router, "/api/agents"),
-        (context_router, "/api/agents"),
-        (document_router, "/api/agents"),
+        (knowledge_router, "/api/agent"),
+        (context_router, "/api/agent"),
+        (document_router, "/api/agent"),
         (messages_router, "/api"),
     ]
 

@@ -1,4 +1,4 @@
-# aiwen/models/agents/knowledge.py
+# aiwen/models/agent/knowledge.py
 """Knowledge management models for storing knowledge bases, knowledge and chunks."""
 
 from datetime import UTC, datetime
@@ -78,4 +78,3 @@ class Knowledge(Base):
 
     def __repr__(self) -> str:
         return f"<Knowledge(id={self.id}, name='{self.name}', user_id='{self.user_id}')>"
-

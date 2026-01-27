@@ -1,4 +1,4 @@
-# aiwen/models/agents/workspace.py
+# aiwen/models/agent/workspace.py
 """Workspace model for the event-sourced architecture."""
 
 from __future__ import annotations

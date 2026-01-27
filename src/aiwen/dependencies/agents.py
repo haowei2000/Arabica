@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
+from aiwen.services.agent.runtime import AgentRuntime
 from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.crud.app_crud import AppCRUD
 from aiwen.services.crud.context_crud import ContextCRUD
@@ -13,7 +14,6 @@ from aiwen.services.crud.document_crud import DocumentCRUD
 from aiwen.services.crud.knowledge_crud import KnowledgeCRUD
 from aiwen.services.crud.message_crud import MessageCRUD
 from aiwen.services.crud.task_crud import AgentTaskCRUD
-from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.workers.task_consumer import AgentTaskConsumer
 from aiwen.workers.task_producer import AgentTaskProducer
 
@@ -32,7 +32,7 @@ async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
 
 
 async def get_conversation_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+        db: AsyncSession = Depends(get_aiwen_db),
 ) -> ConversationCRUD:
     """
     Dependency to get ConversationCRUD instance.
@@ -60,7 +60,7 @@ async def get_message_crud(db: AsyncSession = Depends(get_aiwen_db)) -> MessageC
 
 
 async def get_template_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+        db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTemplateCRUD:
     """
     Dependency to get AgentTemplateCRUD instance.
@@ -69,7 +69,7 @@ async def get_template_crud(
 
 
 async def get_task_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+        db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTaskCRUD:
     return AgentTaskCRUD(db)
 
@@ -138,7 +138,7 @@ def get_agent_runtime() -> AgentRuntime:
 
 
 async def get_task_producer(
-    redis_client=Depends(get_redis_client_dep),
+        redis_client=Depends(get_redis_client_dep),
 ) -> AgentTaskProducer:
     """
     Get AgentTaskProducer instance.
@@ -153,7 +153,7 @@ async def get_task_producer(
 
 
 async def get_task_consumer(
-    redis_client=Depends(get_redis_client_dep),
+        redis_client=Depends(get_redis_client_dep),
 ) -> AgentTaskConsumer:
     """
     Get AgentTaskConsumer instance.

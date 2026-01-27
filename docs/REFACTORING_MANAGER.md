@@ -263,21 +263,21 @@ class MyWorker:
 **用途:** 管理 agent 模板的注册
 
 ```python
-from aiwen.services.agents.agent_registry import AgentRegistry
+from aiwen.services.agent.agent_registry import AgentRegistry
 
 # 注册新的 agent 模板
 await AgentRegistry.register(
-    template_code="my_agent",
-    template_name="My Agent",
-    agent_cls=MyAgentClass,
-    db_session=session,
-    config={},
-    enabled=True
+   template_code="my_agent",
+   template_name="My Agent",
+   agent_cls=MyAgentClass,
+   db_session=session,
+   config={},
+   enabled=True
 )
 
 # 检查是否已注册
 if AgentRegistry.is_registered("my_agent"):
-    agent_cls = AgentRegistry.get("my_agent")
+   agent_cls = AgentRegistry.get("my_agent")
 
 # 列出所有模板
 templates = AgentRegistry.list()
@@ -288,13 +288,13 @@ templates = AgentRegistry.list()
 **用途:** 为单个应用创建配置好的 agent 实例
 
 ```python
-from aiwen.services.agents.app_factory import AppAgentFactory
+from aiwen.services.agent.app_factory import AppAgentFactory
 
 # 创建工厂
 factory = AppAgentFactory(
-    appid="uuid-string",
-    agent_type="chat",  # 必须在 AgentRegistry 中注册
-    app_config={"model": "gpt-4", "temperature": 0.7}
+   appid="uuid-string",
+   agent_type="chat",  # 必须在 AgentRegistry 中注册
+   app_config={"model": "gpt-4", "temperature": 0.7}
 )
 
 # 创建实例（会合并 app_config 和 text_message）
@@ -309,7 +309,7 @@ result = await agent.run({"query": "Hello"})
 **用途:** 管理运行中的 agent 实例生命周期
 
 ```python
-from aiwen.services.agents.runtime import AgentRuntime
+from aiwen.services.agent.runtime import AgentRuntime
 
 runtime = AgentRuntime()
 
@@ -331,25 +331,25 @@ all_instances = runtime._instances
 **用途:** 辅助处理对话和消息
 
 ```python
-from aiwen.services.agents.chat.chat_helper import (
-    create_conversation,
-    create_message,
-    stream_and_finalize
+from aiwen.services.agent.chat.chat_helper import (
+   create_conversation,
+   create_message,
+   stream_and_finalize
 )
 
 # 准备会话
 conversation = await create_conversation(
-    app_id=app_id,
-    text_message=payload,
-    conversation_crud=conversation_crud
+   app_id=app_id,
+   text_message=payload,
+   conversation_crud=conversation_crud
 )
 
 # 创建消息
 message = await create_message(
-    app_id=app_id,
-    conversation_id=conversation.id,
-    text_message=payload,
-    message_crud=message_crud
+   app_id=app_id,
+   conversation_id=conversation.id,
+   text_message=payload,
+   message_crud=message_crud
 )
 
 # 流式执行并自动保存结果
@@ -358,7 +358,7 @@ async for event in stream_and_finalize(
         conversation=conversation,
         message=message
 ):
-    yield event
+   yield event
 ```
 
 ## 测试清单

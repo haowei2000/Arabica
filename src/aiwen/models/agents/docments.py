@@ -1,4 +1,4 @@
-# aiwen/models/agents/docments.py
+# aiwen/models/agent/docments.py
 """Document model for storing documents belonging to knowledge bases."""
 
 from datetime import UTC, datetime

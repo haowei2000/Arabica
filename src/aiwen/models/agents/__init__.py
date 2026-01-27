@@ -1,4 +1,4 @@
-# aiwen/models/agents/__init__.py
+# aiwen/models/agent/__init__.py
 """Agent models package - exports all agent-related models."""
 
 from aiwen.models.agents.agent_task import AgentTask

@@ -2,14 +2,14 @@
 
 from fastapi import APIRouter
 
+from aiwen.routers.context.knowledge import router as knowledge_router
 from .app import router as app_router
 from .chat import router as chat_router
 from .conversations import router as conversation_router
-from aiwen.routers.context.knowledge import router as knowledge_router
 from .messages import router as message_router
 
-# Create main agents router
-router = APIRouter(prefix="/agents", tags=["agents"])
+# Create main agent router
+router = APIRouter(prefix="/agent", tags=["agent"])
 
 # Include all sub-routers
 router.include_router(app_router)

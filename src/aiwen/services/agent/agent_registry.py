@@ -9,7 +9,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.agent_template import AgentTemplate
-from aiwen.services.agents.base import BaseAgentTemplate
+from aiwen.services.agent.base import BaseAgentTemplate
 from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
 logger = logging.getLogger(__name__)
@@ -102,9 +102,9 @@ class AgentRegistry:
         template_name: str,
         agent_cls: type[BaseAgentTemplate],
         db_session: AsyncSession,
-        config: dict | None = None,
+            config: dict | None = None,
         enabled: bool = True,
-        version: int = 1,
+            version: int = 1,
     ) -> AgentTemplate:
         """
         Register an agent template in both memory and database.
@@ -273,10 +273,8 @@ def _import_all_agents() -> None:
     """
     # Import all agent template modules
 
-    # Future agents can be added here
-    # from aiwen.services.agents.agent_template.custom.concrete import CustomAgentTemplate
-    from aiwen.services.agents.agent_template.nl2sql.concrete import NL2SQLAgentTemplate
-    from aiwen.services.agents.agent_template.default.concrete import DefaultAgentTemplate
+    # Future agent can be added here
+    # from aiwen.services.agent.agent_template.custom.concrete import CustomAgentTemplate
     logger.info("All agent modules imported")
 
 
@@ -294,7 +292,7 @@ async def init_agent_registry() -> None:
     logger.info("Starting agent registry initialization...")
 
     try:
-        # Step 1: Import all agents (triggers decorators)
+        # Step 1: Import all agent (triggers decorators)
         logger.info("Importing agent modules...")
         _import_all_agents()
 
@@ -304,7 +302,7 @@ async def init_agent_registry() -> None:
 
         if not registered:
             logger.warning(
-                "No agents registered! Check that agent modules are being imported."
+                "No agent registered! Check that agent modules are being imported."
             )
 
         # Step 3: Sync to database

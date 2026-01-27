@@ -23,7 +23,7 @@ from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.agents.message import MessageUpdate
 from aiwen.schemas.chat import StartTaskResult
 from aiwen.schemas.task.payload import TaskPayload
-from aiwen.services.agents.chat.chat_helper import (
+from aiwen.services.agent.chat.chat_helper import (
     create_conversation,
     stream_and_finalize,
 )

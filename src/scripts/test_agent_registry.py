@@ -27,7 +27,7 @@ if env_file.exists():
 else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
 
-from aiwen.services.agents.agent_registry import AgentRegistry, init_agent_registry
+from aiwen.services.agent.agent_registry import AgentRegistry, init_agent_registry
 
 # 配置日志
 logging.basicConfig(

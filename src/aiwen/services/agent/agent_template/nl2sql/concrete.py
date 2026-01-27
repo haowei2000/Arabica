@@ -1,10 +1,10 @@
-# aiwen/services/agents/concrete.py
+# aiwen/services/agent/concrete.py
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any, Dict, List
+from typing import Any
 
-from aiwen.services.agents.agent_registry import register_agent
-from aiwen.services.agents.base import BaseAgentTemplate
+from aiwen.services.agent.agent_registry import register_agent
+from aiwen.services.agent.base import BaseAgentTemplate
 
 
 @register_agent
