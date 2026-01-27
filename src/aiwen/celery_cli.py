@@ -23,7 +23,7 @@ def cli():
 
 @cli.command()
 @click.option("--concurrency", "-c", default=4, show_default=True, help="Worker 并发数")
-@click.option("--queues", "-Q", default="default", show_default=True, help="监听的队列（逗号分隔）")
+@click.option("--queues", "-Q", default="default,knowledge", show_default=True, help="监听的队列（逗号分隔）")
 @click.option("--loglevel", "-l", default="info", show_default=True, help="日志级别")
 @click.option("--hostname", default=None, help="Worker hostname")
 @click.option("--pool", "-P", default="prefork", show_default=True, help="Pool类型: prefork/solo/gevent/eventlet")
