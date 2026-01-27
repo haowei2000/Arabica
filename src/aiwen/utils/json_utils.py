@@ -1,4 +1,5 @@
 """JSON serialization utilities with support for UUID, datetime, and other types."""
+
 from datetime import date, datetime
 from decimal import Decimal
 import json
@@ -56,7 +57,7 @@ def safe_dumps(obj: Any, **kwargs) -> str:
         **kwargs: Additional arguments passed to json.dumps
 
     Returns:
-        JSON formatted string or error message
+        JSON formatted string or error input
     """
     try:
         return dumps(obj, **kwargs)

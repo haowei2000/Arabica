@@ -5,13 +5,12 @@ in-memory and database persistence.
 """
 
 import logging
-from typing import List, Optional, Type
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.agent_template import AgentTemplate
 from aiwen.services.agents.base import BaseAgentTemplate
-from aiwen.services.agents.crud.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ def register_agent(cls: type[BaseAgentTemplate]) -> type[BaseAgentTemplate]:
         ValueError: If TEMPLATE attribute is missing or invalid
     """
     # 1. Validate TEMPLATE attribute exists
-    if not hasattr(cls, 'TEMPLATE'):
+    if not hasattr(cls, "TEMPLATE"):
         raise ValueError(
             f"Agent class {cls.__name__} must define a TEMPLATE class attribute. "
             f"Example:\n"
@@ -62,14 +61,14 @@ def register_agent(cls: type[BaseAgentTemplate]) -> type[BaseAgentTemplate]:
     template = cls.TEMPLATE
 
     # 2. Validate required fields
-    required_fields = ['template_code', 'template_name']
+    required_fields = ["template_code", "template_name"]
     missing = [f for f in required_fields if f not in template]
     if missing:
         raise ValueError(
             f"Agent class {cls.__name__} TEMPLATE missing required fields: {missing}"
         )
 
-    template_code = template['template_code']
+    template_code = template["template_code"]
 
     # 3. Check for duplicates
     if template_code in AgentRegistry._registry:
@@ -103,9 +102,9 @@ class AgentRegistry:
         template_name: str,
         agent_cls: type[BaseAgentTemplate],
         db_session: AsyncSession,
-        config: dict|None = None,
+        config: dict | None = None,
         enabled: bool = True,
-        version: int = 1
+        version: int = 1,
     ) -> AgentTemplate:
         """
         Register an agent template in both memory and database.
@@ -144,11 +143,15 @@ class AgentRegistry:
                 template_name=template_name,
                 config=config or {},
                 enabled=enabled,
-                version=version
+                version=version,
             )
-            logger.info(f"✓ Registered new agent template: {template_code} (id: {template.id})")
+            logger.info(
+                f"✓ Registered new agent template: {template_code} (id: {template.id})"
+            )
             return template
-        logger.info(f"Agent template already exists: {template_code} (id: {existing.id})")
+        logger.info(
+            f"Agent template already exists: {template_code} (id: {existing.id})"
+        )
         return existing
 
     @classmethod
@@ -238,10 +241,10 @@ async def sync_registry_to_database(db_session: AsyncSession) -> None:
                 # Create new database record
                 await crud.create_template(
                     template_code=template_code,
-                    template_name=template['template_name'],
-                    config=template.get('config', {}),
-                    enabled=template.get('enabled', True),
-                    version=template.get('version', 1)
+                    template_name=template["template_name"],
+                    config=template.get("config", {}),
+                    enabled=template.get("enabled", True),
+                    version=template.get("version", 1),
                 )
                 logger.info(f"✓ Created database record for: {template_code}")
                 synced_count += 1
@@ -252,7 +255,7 @@ async def sync_registry_to_database(db_session: AsyncSession) -> None:
         except Exception as e:
             logger.error(
                 f"Failed to sync template {template_code} to database: {e}",
-                exc_info=True
+                exc_info=True,
             )
             failed_count += 1
 
@@ -269,12 +272,11 @@ def _import_all_agents() -> None:
     ensuring their decorators execute and register the classes.
     """
     # Import all agent template modules
-    from aiwen.services.agents.agent_template.default.concrete import DefaultAgentTemplate # noqa
-    from aiwen.services.agents.agent_template.nl2sql.concrete import NL2SQLAgentTemplate
 
     # Future agents can be added here
     # from aiwen.services.agents.agent_template.custom.concrete import CustomAgentTemplate
-
+    from aiwen.services.agents.agent_template.nl2sql.concrete import NL2SQLAgentTemplate
+    from aiwen.services.agents.agent_template.default.concrete import DefaultAgentTemplate
     logger.info("All agent modules imported")
 
 
@@ -301,7 +303,9 @@ async def init_agent_registry() -> None:
         logger.info(f"In-memory registry: {registered}")
 
         if not registered:
-            logger.warning("No agents registered! Check that agent modules are being imported.")
+            logger.warning(
+                "No agents registered! Check that agent modules are being imported."
+            )
 
         # Step 3: Sync to database
         async with get_session("aiwen") as session:
@@ -310,7 +314,9 @@ async def init_agent_registry() -> None:
 
         # Step 4: Final verification
         final_count = len(AgentRegistry.list())
-        logger.info(f"Agent registry initialized with {final_count} templates: {AgentRegistry.list()}")
+        logger.info(
+            f"Agent registry initialized with {final_count} templates: {AgentRegistry.list()}"
+        )
 
     except Exception as e:
         logger.error(f"Failed to initialize agent registry: {e}", exc_info=True)

@@ -1,22 +1,27 @@
-from typing import Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
-class TextMessage(BaseModel):
+class TextInput(BaseModel):
     """
-    Chat message input schema.
+    Chat input input schema.
 
     Note: Agent and App are merged into a single concept.
-    The agent_id is passed via the URL path, not in the message body.
+    The agent_id (app_id) can be passed in the text_message or via the URL path.
     """
-    query: str = Field(..., description="User query/input message")
-    conversation_id: UUID | None = Field(default=None, description="Existing conversation ID (optional)")
+
+    query: str = Field(..., description="User query/input input")
+    conversation_id: UUID | None = Field(
+        default=None, description="Existing conversation ID (optional)"
+    )
+    app_id: UUID | None = Field(
+        default=None, description="Agent/App ID (optional, may be in URL path)"
+    )
 
     # Optional metadata for conversation creation
     conversation_name: str | None = Field(None, description="Name for new conversation")
-    from_source: str = Field(default="api", description="Source of the message")
+    from_source: str = Field(default="api", description="Source of the input")
     from_account_id: UUID | None = Field(None, description="Account ID")
 
     def model_dump(self, **kwargs):

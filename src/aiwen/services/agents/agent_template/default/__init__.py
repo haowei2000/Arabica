@@ -1,6 +1,10 @@
 """Default agent template module."""
 
 from .concrete import DefaultAgentTemplate
-from .memory import ConversationMemory, load_conversation_history
+from .context import add_message_to_context, get_messages_from_context
 
-__all__ = ["DefaultAgentTemplate", "ConversationMemory", "load_conversation_history"]
+__all__ = [
+    "DefaultAgentTemplate",
+    "add_message_to_context",
+    "get_messages_from_context",
+]

@@ -1,4 +1,5 @@
 """JWT utilities for token creation and verification."""
+
 from datetime import UTC, datetime, timedelta, timezone
 import logging
 from typing import Dict, Optional
@@ -29,11 +30,15 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(minutes=settings.auth.access_token_expire_minutes)
+        expire = datetime.now(UTC) + timedelta(
+            minutes=settings.auth.access_token_expire_minutes
+        )
 
     to_encode.update({"exp": expire})
 
-    encoded_jwt = jwt.encode(to_encode, settings.auth.jwt_secret_key, algorithm=settings.auth.jwt_algorithm)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.auth.jwt_secret_key, algorithm=settings.auth.jwt_algorithm
+    )
     return encoded_jwt
 
 
@@ -53,26 +58,34 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None) -> 
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(days=settings.auth.refresh_token_expire_days)
+        expire = datetime.now(UTC) + timedelta(
+            days=settings.auth.refresh_token_expire_days
+        )
 
     to_encode.update({"exp": expire})
 
-    encoded_jwt = jwt.encode(to_encode, settings.auth.jwt_secret_key, algorithm=settings.auth.jwt_algorithm)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.auth.jwt_secret_key, algorithm=settings.auth.jwt_algorithm
+    )
     return encoded_jwt
 
 
 def verify_token(token: str) -> dict | None:
     """
-    Verify a JWT token and return the payload.
+    Verify a JWT token and return the text_message.
 
     Args:
         token: The JWT token to verify
 
     Returns:
-        The decoded payload if valid, None otherwise
+        The decoded text_message if valid, None otherwise
     """
     try:
-        payload = jwt.decode(token, settings.auth.jwt_secret_key, algorithms=[settings.auth.jwt_algorithm])
+        payload = jwt.decode(
+            token,
+            settings.auth.jwt_secret_key,
+            algorithms=[settings.auth.jwt_algorithm],
+        )
         logger.debug(f"Token decoded successfully: {payload.keys()}")
         return payload
     except JWTError as e:
@@ -107,7 +120,9 @@ def get_user_from_token(token: str) -> dict | None:
     user_data = {
         "user_id": payload.get("sub"),
         "role": payload.get("role"),
-        "tenant_id": payload.get("tenant_id")
+        "tenant_id": payload.get("tenant_id"),
     }
-    logger.debug(f"Extracted user data: user_id={user_data['user_id']}, role={user_data['role']}")
+    logger.debug(
+        f"Extracted user data: user_id={user_data['user_id']}, role={user_data['role']}"
+    )
     return user_data

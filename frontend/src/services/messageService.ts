@@ -1,11 +1,7 @@
-import { apiClient } from './api';
-import { API_ENDPOINTS } from '@/constants/api';
-import type {
-  Message,
-  MessageCreate,
-  MessageUpdate,
-} from '@/types/message';
-import type { PaginatedResponse } from '@/types/api';
+import {apiClient} from './api';
+import {API_ENDPOINTS} from '@/constants/api';
+import type {Message, MessageCreate, MessageUpdate,} from '@/types/message';
+import type {PaginatedResponse} from '@/types/api';
 
 export const messageService = {
   /**
@@ -42,19 +38,7 @@ export const messageService = {
     id: string,
     data: MessageUpdate
   ): Promise<Message> {
-    return apiClient.put(API_ENDPOINTS.MESSAGES.UPDATE(id), data);
+      return apiClient.post(API_ENDPOINTS.MESSAGES.UPDATE(id), data);
   },
 
-  /**
-   * 搜索消息
-   */
-  async searchMessages(params: {
-    q: string;
-    conversation_id?: string;
-    app_id?: string;
-    page?: number;
-    page_size?: number;
-  }): Promise<PaginatedResponse<Message>> {
-    return apiClient.get(API_ENDPOINTS.MESSAGES.SEARCH, { params });
-  },
 };

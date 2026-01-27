@@ -8,27 +8,30 @@ from langchain_openai import ChatOpenAI
 from aiwen.config.factory import get_settings
 from aiwen.middleware.cache_middleware import get_redis_client
 
-logger= logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
-def get_llm(name: str, provider: str = "tongyi", add_cache: bool = False)->BaseChatModel:
+
+def get_llm(
+    name: str, provider: str = "tongyi", add_cache: bool = False
+) -> BaseChatModel:
     """
     Factory function to return langchain model instance based on model name and provider.
-    
+
     Args:
         name (str): The name of the model.
         provider (str): The provider of the model. Defaults to "tongyi".
         add_cache (bool): Whether to add cache to the model. Defaults to False.
-        
+
     Returns:
         BaseChatModel: Langchain model instance.
-        
+
     根据模型名称和供应商返回langchain模型调用实例的工厂函数。
-    
+
     参数:
         name (str): 模型名称。
         provider (str): 模型供应商。默认为"tongyi"。
         add_cache (bool): 是否给模型添加缓存。默认为False。
-        
+
     返回:
         BaseChatModel: Langchain模型实例。
     """
@@ -67,16 +70,11 @@ def get_llm(name: str, provider: str = "tongyi", add_cache: bool = False)->BaseC
                 model=name,
                 api_key=api_key,  # type: ignore
                 base_url=base_url,
-                cache=redis_cache
+                cache=redis_cache,
             )
         case "ollama":
             return ChatOllama(
-                model=name,
-                base_url=settings.ollama.base_url ,
-                cache=redis_cache
+                model=name, base_url=settings.ollama.base_url, cache=redis_cache
             )
         case _:
             raise ValueError(f"Unsupported provider: {provider}")
-
-
-

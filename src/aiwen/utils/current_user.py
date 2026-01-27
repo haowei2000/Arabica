@@ -1,4 +1,5 @@
 """Dependency injection utilities for getting current user information."""
+
 from typing import Optional
 from uuid import UUID
 
@@ -28,7 +29,7 @@ async def get_current_user(request: Request) -> TokenData:
     Raises:
         HTTPException: If user is not authenticated
     """
-    if not hasattr(request.state, 'user') or not request.state.user:
+    if not hasattr(request.state, "user") or not request.state.user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
@@ -39,7 +40,7 @@ async def get_current_user(request: Request) -> TokenData:
 
 
 async def get_current_active_user(
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_user),
 ) -> TokenData:
     """
     Dependency to get current active user.
@@ -74,7 +75,7 @@ def require_role(required_role: str):
     Usage:
         @router.get("/admin")
         async def admin_endpoint(current_user: TokenData = Depends(require_role("admin"))):
-            return {"message": "Admin access granted"}
+            return {"input": "Admin access granted"}
 
     Args:
         required_role: The role required to access the endpoint
@@ -82,8 +83,9 @@ def require_role(required_role: str):
     Returns:
         Dependency function that validates the user role
     """
+
     async def role_checker(
-        current_user: TokenData = Depends(get_current_user)
+        current_user: TokenData = Depends(get_current_user),
     ) -> TokenData:
         if current_user.role != required_role:
             raise HTTPException(
@@ -104,7 +106,7 @@ def require_any_role(required_roles: list[str]):
     Usage:
         @router.get("/moderator")
         async def moderator_endpoint(current_user: TokenData = Depends(require_any_role(["admin", "moderator"]))):
-            return {"message": "Moderator access granted"}
+            return {"input": "Moderator access granted"}
 
     Args:
         required_roles: List of roles that can access the endpoint
@@ -112,8 +114,9 @@ def require_any_role(required_roles: list[str]):
     Returns:
         Dependency function that validates the user role
     """
+
     async def role_checker(
-        current_user: TokenData = Depends(get_current_user)
+        current_user: TokenData = Depends(get_current_user),
     ) -> TokenData:
         if current_user.role not in required_roles:
             raise HTTPException(

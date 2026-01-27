@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 
 # 加载环境变量 - CRITICAL: Must be before importing any aiwen modules!
 from dotenv import load_dotenv
+
 env_file = project_root / "src" / ".env"
 print(f"Loading environment from: {env_file}")
 if env_file.exists():
@@ -30,8 +31,7 @@ from aiwen.services.agents.agent_registry import AgentRegistry, init_agent_regis
 
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(input)s"
 )
 
 logger = logging.getLogger(__name__)

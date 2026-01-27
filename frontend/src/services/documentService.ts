@@ -1,0 +1,77 @@
+import {apiClient} from './api';
+import {API_ENDPOINTS} from '@/constants/api';
+import type {Document, DocumentUploadResponse, DocumentListResponse, TaskStatusResponse} from '@/types/document';
+
+export interface UploadDocumentParams {
+    file: File;
+    knowledge_id: string;
+    chunk_size?: number;
+    chunk_overlap?: number;
+    embedding_provider?: string;
+    embedding_model?: string;
+    embedding_dimension?: number;
+}
+
+export const documentService = {
+    /**
+     * Upload a document to a knowledge base
+     */
+    async uploadDocument(params: UploadDocumentParams): Promise<DocumentUploadResponse> {
+        const formData = new FormData();
+        formData.append('file', params.file);
+        formData.append('knowledge_id', params.knowledge_id);
+
+        if (params.chunk_size) {
+            formData.append('chunk_size', params.chunk_size.toString());
+        }
+        if (params.chunk_overlap !== undefined) {
+            formData.append('chunk_overlap', params.chunk_overlap.toString());
+        }
+        if (params.embedding_provider) {
+            formData.append('embedding_provider', params.embedding_provider);
+        }
+        if (params.embedding_model) {
+            formData.append('embedding_model', params.embedding_model);
+        }
+        if (params.embedding_dimension) {
+            formData.append('embedding_dimension', params.embedding_dimension.toString());
+        }
+
+        return apiClient.post(API_ENDPOINTS.DOCUMENT.UPLOAD, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+    },
+
+    /**
+     * Get document by ID
+     */
+    async getDocument(id: string): Promise<Document> {
+        return apiClient.get(API_ENDPOINTS.DOCUMENT.GET(id));
+    },
+
+    /**
+     * List documents in a knowledge base
+     */
+    async listDocuments(knowledgeId: string, params?: {
+        page?: number;
+        page_size?: number;
+    }): Promise<DocumentListResponse> {
+        return apiClient.get(API_ENDPOINTS.DOCUMENT.LIST_BY_KNOWLEDGE(knowledgeId), {params});
+    },
+
+    /**
+     * Delete a document
+     */
+    async deleteDocument(id: string): Promise<void> {
+        return apiClient.post(API_ENDPOINTS.DOCUMENT.DELETE(id));
+    },
+
+    /**
+     * Get task status for document processing
+     */
+    async getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
+        return apiClient.get(API_ENDPOINTS.DOCUMENT.TASK_STATUS(taskId));
+    },
+};

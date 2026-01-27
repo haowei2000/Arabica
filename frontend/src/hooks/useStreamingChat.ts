@@ -56,7 +56,7 @@ export const useStreamingChat = (appId: string) => {
 
           // 获取当前的流式消息内容
           const currentStreamingMessage = useChatStore.getState().streamingMessage;
-          console.log('💾 Saving assistant message:', currentStreamingMessage);
+          console.log('💾 Saving assistant input:', currentStreamingMessage);
 
           // 保存完整的 AI 消息
           if (currentStreamingMessage) {
@@ -68,7 +68,7 @@ export const useStreamingChat = (appId: string) => {
             };
             addMessage(assistantMessage);
           } else {
-            console.warn('⚠️  No streaming message to save!');
+            console.warn('⚠️  No streaming input to save!');
           }
 
           clearStreamingMessage();
@@ -100,10 +100,16 @@ export const useStreamingChat = (appId: string) => {
     ]
   );
 
-  const stopStreaming = useCallback(() => {
-    streamService.abort();
+  const stopStreaming = useCallback(async () => {
+    // Abort the stream and cancel the backend task
+    await streamService.abort();
     setIsStreaming(false);
-  }, [setIsStreaming]);
+
+    // Clear any partial streaming input
+    clearStreamingMessage();
+
+    console.log('🛑 Streaming stopped and task cancelled');
+  }, [setIsStreaming, clearStreamingMessage]);
 
   return {
     sendMessage,

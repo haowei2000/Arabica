@@ -1,11 +1,11 @@
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
 import datetime as _dt
 import decimal as _decimal
 import json
 import logging
-from typing import Any
 import uuid as _uuid
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -60,11 +60,11 @@ _dependency_functions: dict[str, Callable[[], AsyncGenerator[AsyncSession, None]
 # 配置常量
 # ==============================
 DEFAULT_POOL_CONFIG = {
-    "pool_size": 10,
-    "max_overflow": 20,
-    "pool_timeout": 30,
-    "pool_recycle": 3600,  # 1小时回收连接
-    "pool_pre_ping": True,
+    "pool_size": 20,  # Increased from 10 for better concurrency
+    "max_overflow": 30,  # Increased from 20
+    "pool_timeout": 10,  # Reduced from 30s for faster failure
+    "pool_recycle": 1800,  # 30 minutes instead of 1 hour
+    "pool_pre_ping": False,  # Disabled to reduce latency (rely on pool_recycle)
 }
 
 # 数据库特定配置
@@ -74,11 +74,11 @@ DB_SPECIFIC_CONFIG = {
         "max_overflow": 20,
         "connect_args": {
             "charset": "utf8mb4",
-        }
+        },
     },
     "postgresql": {
-        "pool_size": 8,
-        "max_overflow": 15,
+        "pool_size": 20,
+        "max_overflow": 30,
     },
 }
 
@@ -99,14 +99,12 @@ def _ensure_registered():
         register_database(bind_name, url)
 
     _initialized = True
-    logger.info(f"Database initialization complete. Registered {len(_engines)} databases")
+    logger.info(
+        f"Database initialization complete. Registered {len(_engines)} databases"
+    )
 
 
-def register_database(
-        bind_name: str,
-        url: str,
-        pool_config: dict | None = None
-):
+def register_database(bind_name: str, url: str, pool_config: dict | None = None):
     """
     注册单个数据库
 
@@ -166,8 +164,10 @@ def register_database(
         # 屏蔽密码信息
         safe_url = _mask_url(url)
         logger.info(f"✓ Registered database: {bind_name} -> {safe_url}")
-        logger.debug(f"  Pool: size={final_config.get('pool_size')}, "
-                     f"max_overflow={final_config.get('max_overflow')}")
+        logger.debug(
+            f"  Pool: size={final_config.get('pool_size')}, "
+            f"max_overflow={final_config.get('max_overflow')}"
+        )
 
     except Exception as e:
         logger.error(f"✗ Failed to register database '{bind_name}': {e}")
@@ -176,21 +176,21 @@ def register_database(
 
 def _mask_url(url: str) -> str:
     """隐藏 URL 中的密码"""
-    if '@' in url:
-        parts = url.split('@')
+    if "@" in url:
+        parts = url.split("@")
         prefix = parts[0]
-        suffix = '@'.join(parts[1:])
+        suffix = "@".join(parts[1:])
 
-        if ':' in prefix:
-            user_part = prefix.split('://')
+        if ":" in prefix:
+            user_part = prefix.split("://")
             if len(user_part) >= 2:
                 protocol = user_part[0]
-                credentials = user_part[1].split(':')
+                credentials = user_part[1].split(":")
                 if len(credentials) >= 2:
                     prefix = f"{protocol}://{credentials[0]}:****"
 
         return f"{prefix}@{suffix[:50]}{'...' if len(suffix) > 50 else ''}"
-    return url[:50] + ('...' if len(url) > 50 else '')
+    return url[:50] + ("..." if len(url) > 50 else "")
 
 
 # ==============================
@@ -211,7 +211,9 @@ def _create_session_dependency(bind_name: str):
                 await session.commit()
             except Exception as e:
                 await session.rollback()
-                logger.error(f"Database session error in '{bind_name}': {e}", exc_info=True)
+                logger.error(
+                    f"Database session error in '{bind_name}': {e}", exc_info=True
+                )
                 raise
             finally:
                 await session.close()
@@ -252,8 +254,7 @@ async def get_session(bind_name: str = "primary") -> AsyncGenerator[AsyncSession
     if bind_name not in _sessionmakers:
         available = ", ".join(_sessionmakers.keys())
         raise ValueError(
-            f"Database '{bind_name}' is not configured. "
-            f"Available: {available}"
+            f"Database '{bind_name}' is not configured. Available: {available}"
         )
 
     session_factory = _sessionmakers[bind_name]
@@ -293,8 +294,7 @@ def get_base(bind_name: str) -> type[DeclarativeBase]:
     if bind_name not in _bases:
         available = ", ".join(_bases.keys())
         raise ValueError(
-            f"Base for database '{bind_name}' not found. "
-            f"Available: {available}"
+            f"Base for database '{bind_name}' not found. Available: {available}"
         )
     return _bases[bind_name]
 
@@ -319,10 +319,7 @@ def get_engine(bind_name: str = "primary") -> AsyncEngine:
 
     if bind_name not in _engines:
         available = ", ".join(_engines.keys())
-        raise ValueError(
-            f"Engine for '{bind_name}' not found. "
-            f"Available: {available}"
-        )
+        raise ValueError(f"Engine for '{bind_name}' not found. Available: {available}")
 
     return _engines[bind_name]
 
@@ -346,7 +343,7 @@ async def check_database_health(bind_name: str = "primary") -> dict:
         available = ", ".join(_engines.keys())
         return {
             "status": "error",
-            "message": f"Database '{bind_name}' not found. Available: {available}"
+            "input": f"Database '{bind_name}' not found. Available: {available}",
         }
 
     engine = _engines[bind_name]
@@ -442,7 +439,9 @@ async def dispose_all():
 # 只读会话（性能优化）
 # ==============================
 @asynccontextmanager
-async def get_readonly_session(bind_name: str = "primary") -> AsyncGenerator[AsyncSession, None]:
+async def get_readonly_session(
+    bind_name: str = "primary",
+) -> AsyncGenerator[AsyncSession, None]:
     """
     只读 session（适用于纯查询场景，不会自动提交）
 
@@ -479,9 +478,7 @@ async def get_readonly_session(bind_name: str = "primary") -> AsyncGenerator[Asy
 # 批量操作辅助函数
 # ==============================
 async def bulk_insert_objects(
-        session: AsyncSession,
-        objects: list,
-        batch_size: int = 1000
+    session: AsyncSession, objects: list, batch_size: int = 1000
 ):
     """
     批量插入对象（分批处理避免内存溢出）
@@ -498,7 +495,7 @@ async def bulk_insert_objects(
     """
     total = len(objects)
     for i in range(0, total, batch_size):
-        batch = objects[i:i + batch_size]
+        batch = objects[i : i + batch_size]
         session.add_all(batch)
         await session.flush()
         logger.debug(f"Inserted batch {i // batch_size + 1}: {len(batch)} records")

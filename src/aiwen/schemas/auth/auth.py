@@ -1,4 +1,5 @@
 """Pydantic models for authentication and token management."""
+
 from typing import Optional
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 class Token(BaseModel):
     """Token response model."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -14,6 +16,7 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     """Token data model."""
+
     user_id: str | None = None
     role: str | None = None
     tenant_id: UUID | None = None
@@ -21,4 +24,5 @@ class TokenData(BaseModel):
 
 class TokenRefresh(BaseModel):
     """Token refresh request model."""
+
     refresh_token: str

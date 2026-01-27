@@ -230,11 +230,11 @@ from tests.utils.assertions import (
 )
 
 # 断言 API 成功响应
-response = {"code": 200, "message": "Success", "data": {...}}
+response = {"code": 200, "input": "Success", "data": {...}}
 assert_response_success(response)
 
 # 断言 API 错误响应
-error_response = {"code": 400, "message": "Invalid parameter"}
+error_response = {"code": 400, "input": "Invalid parameter"}
 assert_response_error(error_response, 400, message_contains="Invalid")
 
 # 断言字典包含特定内容

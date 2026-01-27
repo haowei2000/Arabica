@@ -101,9 +101,7 @@ def create_mock_session() -> AsyncMock:
     return session
 
 
-def create_mock_result(
-    rows: list[tuple], keys: list[str] | None = None
-) -> MagicMock:
+def create_mock_result(rows: list[tuple], keys: list[str] | None = None) -> MagicMock:
     """创建一个模拟的数据库查询结果
 
     Args:

@@ -29,30 +29,22 @@ def mock_indicator_info():
     return IndicatorInfoSchema(
         name="设备开机率（生产）",
         sql_template="SELECT * FROM equipment_runtime WHERE status = 'running'",
-        dimensions=[
-            DimensionInfoSchema(
-                name="时间",
-                code="SJ",
-                alias="runtime_time"
-            )
-        ],
-        related_tables=[
-            TableSchema(
-                table_name="equipment_runtime",
-                schema_name=None
-            )
-        ]
+        dimensions=[DimensionInfoSchema(name="时间", code="SJ", alias="runtime_time")],
+        related_tables=[TableSchema(table_name="equipment_runtime", schema_name=None)],
     )
 
 
 class TestGetIndicatorInfoService:
     """测试指标信息服务"""
 
-    @patch('aiwen.services.nl2sql.get_indicator_info.get_indicator_info_service')
-    def test_get_indicator_info_success(self, mock_service, sample_indicator_name, mock_indicator_info):
+    @patch("aiwen.services.nl2sql.get_indicator_info.get_indicator_info_service")
+    def test_get_indicator_info_success(
+        self, mock_service, sample_indicator_name, mock_indicator_info
+    ):
         """测试成功获取指标信息的情况"""
         # Arrange
         from aiwen.extensions.database import get_readonly_session
+
         mock_service.return_value = mock_indicator_info
 
         # Act
@@ -62,6 +54,7 @@ class TestGetIndicatorInfoService:
                 return result
 
         import asyncio
+
         result = asyncio.run(run_test())
 
         # Assert
@@ -71,11 +64,12 @@ class TestGetIndicatorInfoService:
         assert len(result.related_tables) == 1
         mock_service.assert_called_once()
 
-    @patch('aiwen.services.nl2sql.get_indicator_info.get_indicator_info_service')
+    @patch("aiwen.services.nl2sql.get_indicator_info.get_indicator_info_service")
     def test_get_indicator_info_not_found(self, mock_service, sample_indicator_name):
         """测试指标不存在的情况"""
         # Arrange
         from aiwen.extensions.database import get_readonly_session
+
         mock_service.side_effect = ValueError("指标 设备开机率（生产） 不存在")
 
         # Act & Assert
@@ -84,6 +78,7 @@ class TestGetIndicatorInfoService:
                 await mock_service(sample_indicator_name, db)
 
         import asyncio
+
         with pytest.raises(ValueError, match="指标 设备开机率（生产） 不存在"):
             asyncio.run(run_test())
 

@@ -11,21 +11,27 @@ export interface StreamOptions {
   onStatus?: (status: string) => void;
 }
 
-interface StreamEvent {
-  event: 'metadata' | 'status' | 'chunk' | 'success' | 'error';
-  data: any;
-}
-
-interface MetadataEvent {
+interface StartTaskResponse {
+  task_id: string;
   conversation_id: string;
   message_id: string;
 }
 
+interface StreamEvent {
+  event: 'metadata' | 'status' | 'chunk' | 'success' | 'error' | 'cancelled';
+  data: any;
+}
+
 class StreamService {
   private controller: AbortController | null = null;
+  private currentTaskId: string | null = null;
 
   /**
-   * 发送流式消息
+   * 发送流式消息（使用拆分端点）
+   *
+   * 流程:
+   * 1. POST /chat/{appId}/start - 启动任务，获取 task_id
+   * 2. GET /chat/{task_id}/messages - 订阅消息流
    */
   async sendStreamingMessage(options: StreamOptions): Promise<void> {
     const {
@@ -38,12 +44,12 @@ class StreamService {
       onError,
     } = options;
 
-    this.controller = new AbortController();
     const token = localStorage.getItem('access_token');
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}${API_ENDPOINTS.CHAT.STREAM(appId)}`,
+      // Step 1: Start the task
+      const startResponse = await fetch(
+        `${API_BASE_URL}${API_ENDPOINTS.CHAT.START(appId)}`,
         {
           method: 'POST',
           headers: {
@@ -56,15 +62,36 @@ class StreamService {
             conversation_name: conversationName,
             from_source: 'web',
           }),
+        }
+      );
+
+      if (!startResponse.ok) {
+        throw new Error(`Failed to start task: ${startResponse.status}`);
+      }
+
+      const taskInfo: StartTaskResponse = await startResponse.json();
+      this.currentTaskId = taskInfo.task_id;
+      console.log('✅ Task started:', taskInfo);
+
+      // Step 2: Subscribe to messages stream
+      this.controller = new AbortController();
+
+      const messagesResponse = await fetch(
+        `${API_BASE_URL}${API_ENDPOINTS.CHAT.MESSAGES(taskInfo.task_id)}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
           signal: this.controller.signal,
         }
       );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (!messagesResponse.ok) {
+        throw new Error(`Failed to get messages: ${messagesResponse.status}`);
       }
 
-      const reader = response.body?.getReader();
+      const reader = messagesResponse.body?.getReader();
       const decoder = new TextDecoder();
 
       if (!reader) {
@@ -72,33 +99,32 @@ class StreamService {
       }
 
       let buffer = '';
-      let returnedConversationId: string | undefined;
+      const returnedConversationId = taskInfo.conversation_id;
 
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
+          this.currentTaskId = null;
           onComplete(returnedConversationId);
           break;
         }
 
-        // 解码数据块
         buffer += decoder.decode(value, { stream: true });
 
-        // 按行分割
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // 保留最后一个不完整的行
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           const trimmedLine = line.trim();
 
           if (!trimmedLine) continue;
 
-          // SSE 格式: "data: {...}"
           if (trimmedLine.startsWith('data: ')) {
             const data = trimmedLine.slice(6).trim();
 
             if (data === '[DONE]') {
+              this.currentTaskId = null;
               onComplete(returnedConversationId);
               return;
             }
@@ -109,16 +135,11 @@ class StreamService {
 
               switch (parsed.event) {
                 case 'metadata':
-                  // 提取 conversation_id
-                  const metadata = parsed.data as MetadataEvent;
-                  if (metadata.conversation_id && !conversationId) {
-                    returnedConversationId = metadata.conversation_id;
-                    console.log('✅ Conversation ID:', returnedConversationId);
-                  }
+                  // Already have metadata from start response
+                  console.log('📋 Metadata:', parsed.data);
                   break;
 
                 case 'status':
-                  // 状态消息（可选处理）
                   console.log('📊 Status:', parsed.data);
                   if (options.onStatus) {
                     options.onStatus(parsed.data);
@@ -126,40 +147,37 @@ class StreamService {
                   break;
 
                 case 'chunk':
-                  // 处理 chunk 数据
                   const chunkData = parsed.data as string;
 
-                  // 提取 token（格式: "Token: xxx"）
                   if (chunkData.startsWith('Token: ')) {
-                    const token = chunkData.slice(7); // 移除 "Token: " 前缀
+                    const token = chunkData.slice(7);
                     if (token) {
                       console.log('🔤 Token:', token);
                       onChunk(token);
                     }
-                  }
-                  // 或者是完整消息（格式: "Full message: xxx"）
-                  else if (chunkData.startsWith('Full message: ')) {
-                    console.log('📝 Full message received');
-                    // 忽略完整消息，因为我们已经通过 token 累积了完整内容
-                    // 或者可以用来验证
-                  }
-                  // 或者是其他格式的 chunk
-                  else if (chunkData && !chunkData.startsWith('Input: ')) {
+                  } else if (chunkData.startsWith('Full input: ')) {
+                    console.log('📝 Full input received');
+                  } else if (chunkData && !chunkData.startsWith('Input: ')) {
                     console.log('💬 Other chunk:', chunkData);
                     onChunk(chunkData);
                   }
                   break;
 
                 case 'success':
-                  // 成功完成
                   console.log('✅ Stream completed successfully');
+                  this.currentTaskId = null;
                   onComplete(returnedConversationId);
                   return;
 
                 case 'error':
-                  // 错误事件
                   console.error('❌ Stream error:', parsed.data);
                   throw new Error(typeof parsed.data === 'string' ? parsed.data : 'Stream error');
+
+                case 'cancelled':
+                  console.log('🛑 Task cancelled:', parsed.data);
+                  this.currentTaskId = null;
+                  onComplete(returnedConversationId);
+                  return;
 
                 default:
                   console.warn('⚠️  Unknown event type:', parsed.event);
@@ -167,7 +185,6 @@ class StreamService {
               }
             } catch (parseError) {
               console.error('Failed to parse SSE data:', parseError, data);
-              // 继续处理下一行，不中断整个流
             }
           }
         }
@@ -182,15 +199,50 @@ class StreamService {
   }
 
   /**
-   * 中止当前流式请求
+   * 中止当前流式请求并取消后端任务
    */
-  abort(): void {
+  async abort(): Promise<void> {
+    // 1. Send cancel request to backend if we have a task ID
+    if (this.currentTaskId) {
+      try {
+        const token = localStorage.getItem('access_token');
+        const response = await fetch(
+          `${API_BASE_URL}${API_ENDPOINTS.CHAT.CANCEL(this.currentTaskId)}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('✅ Task cancelled on backend:', result);
+        } else {
+          console.warn('⚠️ Failed to cancel task on backend:', response.status);
+        }
+      } catch (error) {
+        console.error('❌ Error cancelling task on backend:', error);
+      } finally {
+        this.currentTaskId = null;
+      }
+    }
+
+    // 2. Abort the fetch request
     if (this.controller) {
       this.controller.abort();
       this.controller = null;
     }
   }
+
+  /**
+   * 获取当前任务 ID
+   */
+  getCurrentTaskId(): string | null {
+    return this.currentTaskId;
+  }
 }
 
-// 导出单例
 export const streamService = new StreamService();

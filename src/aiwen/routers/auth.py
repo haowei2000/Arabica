@@ -1,4 +1,5 @@
 """Authentication routes for user login, registration, and token management."""
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,10 +21,11 @@ async def get_auth_service(db: AsyncSession = Depends(get_aiwen_db)) -> AuthServ
     return AuthService(db)
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
 async def register_user(
-        user_data: UserCreate,
-        auth_service: AuthService = Depends(get_auth_service)
+    user_data: UserCreate, auth_service: AuthService = Depends(get_auth_service)
 ):
     """
     Register a new user.
@@ -40,7 +42,7 @@ async def register_user(
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail="Username already registered",
         )
 
     if user_data.email:
@@ -48,7 +50,7 @@ async def register_user(
         if existing_email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                detail="Email already registered",
             )
 
     # For demo purposes, assign user to default tenant
@@ -65,8 +67,8 @@ async def register_user(
 
 @router.post("/login", response_model=Token)
 async def login_user(
-        form_data: OAuth2PasswordRequestForm = Depends(),
-        auth_service: AuthService = Depends(get_auth_service)
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Login a user and return JWT tokens.
@@ -89,15 +91,11 @@ async def login_user(
 
     # Create tokens
     access_token, refresh_token = TokenService.create_tokens(
-        user_id=user.id,
-        role=user.role,
-        tenant_id=user.tenant_id
+        user_id=user.id, role=user.role, tenant_id=user.tenant_id
     )
 
     return Token(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer"
+        access_token=access_token, refresh_token=refresh_token, token_type="bearer"
     )
 
 
@@ -120,17 +118,11 @@ async def refresh_token(token_data: TokenRefresh):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return Token(
-        access_token=tokens[0],
-        refresh_token=tokens[1],
-        token_type="bearer"
-    )
+    return Token(access_token=tokens[0], refresh_token=tokens[1], token_type="bearer")
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(
-        current_user: Annotated[UserResponse, Depends(get_current_user)]
-):
+async def get_me(current_user: Annotated[UserResponse, Depends(get_current_user)]):
     """
     Get current authenticated user information.
 

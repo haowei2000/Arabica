@@ -15,9 +15,10 @@ def test_app():
     # 添加简化版的路由
     @app.post("/api/nl2sql/get_graph")
     async def get_graph():
-        return {"code": 200, "message": "Graph retrieved successfully", "data": {}}
+        return {"code": 200, "input": "Graph retrieved successfully", "data": {}}
 
     return app
+
 
 @pytest.fixture
 def test_client(test_app):
@@ -41,13 +42,14 @@ def invalid_indicator_id():
 def mock_graph_data():
     """Create mock graph data for successful response"""
     from aiwen.schemas.nl2sql.graph import GraphResponse, Node
+
     nodes = [
         Node(
             id=str(uuid.uuid4()),
             name="Test Indicator",
             type=1,
             code="TEST-001",
-            description="A test indicator"
+            description="A test indicator",
         )
     ]
     return GraphResponse(nodes=nodes, edges=[])
@@ -56,23 +58,24 @@ def mock_graph_data():
 class TestGetGraphEndpoint:
     """Test cases for the /api/nl2sql/get_graph endpoint"""
 
-    @patch('aiwen.routers.nl2sql.get_indicator_graph')
-    def test_get_graph_success(self, mock_get_indicator_graph, test_client, valid_indicator_id, mock_graph_data):
+    @patch("aiwen.routers.nl2sql.get_indicator_graph")
+    def test_get_graph_success(
+        self, mock_get_indicator_graph, test_client, valid_indicator_id, mock_graph_data
+    ):
         """Test successful graph retrieval"""
         # Arrange
         mock_get_indicator_graph.return_value = mock_graph_data
 
         # Act
         response = test_client.post(
-            "/api/nl2sql/get_graph",
-            json={"indicator_id": valid_indicator_id}
+            "/api/nl2sql/get_graph", json={"indicator_id": valid_indicator_id}
         )
 
         # Assert
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
-        assert data["message"] == "Graph retrieved successfully"
+        assert data["input"] == "Graph retrieved successfully"
         assert "data" in data
         mock_get_indicator_graph.assert_called_once()
 
@@ -80,42 +83,44 @@ class TestGetGraphEndpoint:
         """Test handling of invalid UUID"""
         # Act
         response = test_client.post(
-            "/api/nl2sql/get_graph",
-            json={"indicator_id": invalid_indicator_id}
+            "/api/nl2sql/get_graph", json={"indicator_id": invalid_indicator_id}
         )
 
         # Assert
         # 注意：由于我们使用的是简化版应用，这里不会触发实际的验证逻辑
         # 但在真实应用中会返回422错误
 
-    @patch('aiwen.routers.nl2sql.get_indicator_graph')
-    def test_get_graph_service_exception(self, mock_get_indicator_graph, test_client, valid_indicator_id):
+    @patch("aiwen.routers.nl2sql.get_indicator_graph")
+    def test_get_graph_service_exception(
+        self, mock_get_indicator_graph, test_client, valid_indicator_id
+    ):
         """Test handling of service exceptions"""
         # Arrange
         mock_get_indicator_graph.side_effect = Exception("Database connection failed")
 
         # Act
         response = test_client.post(
-            "/api/nl2sql/get_graph",
-            json={"indicator_id": valid_indicator_id}
+            "/api/nl2sql/get_graph", json={"indicator_id": valid_indicator_id}
         )
 
         # Assert
         # 注意：由于我们使用的是简化版应用，这里的行为可能与真实应用不同
 
-    @patch('aiwen.routers.nl2sql.get_indicator_graph')
-    def test_get_graph_validation_error(self, mock_get_indicator_graph, test_client, valid_indicator_id):
+    @patch("aiwen.routers.nl2sql.get_indicator_graph")
+    def test_get_graph_validation_error(
+        self, mock_get_indicator_graph, test_client, valid_indicator_id
+    ):
         """Test handling of Pydantic validation errors"""
         # Arrange
         from pydantic import ValidationError
 
         from aiwen.schemas.nl2sql.graph import GraphResponse
+
         mock_get_indicator_graph.side_effect = ValidationError([], GraphResponse)
 
         # Act
         response = test_client.post(
-            "/api/nl2sql/get_graph",
-            json={"indicator_id": valid_indicator_id}
+            "/api/nl2sql/get_graph", json={"indicator_id": valid_indicator_id}
         )
 
         # Assert

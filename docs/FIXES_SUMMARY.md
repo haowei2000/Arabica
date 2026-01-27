@@ -149,11 +149,12 @@ async def main():
 ```
 
 ### Worker 处理任务
+
 ```python
-# workers/agent_worker.py
+# workers/task_worker.py
 async def process_task(self, message_data):
     # 1. 获取 App
-    app = await app_crud.get_app_by_id(app_id)
+    app = await app_crud.get_app(app_id)
 
     # 2. 获取 AgentTemplate
     template = await template_crud.get_template_by_id(app.agent_template_id)

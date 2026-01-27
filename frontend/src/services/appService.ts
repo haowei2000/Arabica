@@ -1,12 +1,7 @@
-import { apiClient } from './api';
-import { API_ENDPOINTS } from '@/constants/api';
-import type {
-  App,
-  AppCreate,
-  AppUpdate,
-  AgentTemplate,
-} from '@/types/app';
-import type { PaginatedResponse } from '@/types/api';
+import {apiClient} from './api';
+import {API_ENDPOINTS} from '@/constants/api';
+import type {AgentTemplate, App, AppCreate, AppUpdate,} from '@/types/app';
+import type {PaginatedResponse} from '@/types/api';
 
 export const appService = {
   /**
@@ -28,10 +23,10 @@ export const appService = {
   },
 
   /**
-   * 获取单个 App（使用 app_code）
+   * 获取单个 App（使用 app_id）
    */
-  async getApp(appCode: string): Promise<App> {
-    return apiClient.get(API_ENDPOINTS.APPS.GET(appCode));
+  async getApp(appId: string): Promise<App> {
+      return apiClient.get(API_ENDPOINTS.APPS.GET(appId));
   },
 
   /**
@@ -42,31 +37,28 @@ export const appService = {
   },
 
   /**
-   * 更新 App（使用 app_code）
+   * 更新 App（使用 app_id）
    */
-  async updateApp(appCode: string, data: AppUpdate): Promise<App> {
-    return apiClient.put(API_ENDPOINTS.APPS.UPDATE(appCode), data);
+  async updateApp(appId: string, data: AppUpdate): Promise<App> {
+      return apiClient.post(API_ENDPOINTS.APPS.UPDATE(appId), data);
   },
 
   /**
-   * 删除 App（使用 app_code）
+   * 删除 App（使用 app_id）
    */
-  async deleteApp(appCode: string): Promise<void> {
-    return apiClient.delete(API_ENDPOINTS.APPS.DELETE(appCode));
+  async deleteApp(appId: string): Promise<void> {
+      return apiClient.post(API_ENDPOINTS.APPS.DELETE(appId));
   },
 
   /**
-   * 获取使用特定模板的所有 Apps
+   * 查询 Apps（支持多种过滤条件）
    */
-  async getAppsByTemplate(
-    templateId: string,
-    params?: {
+  async queryApps(params?: {
+      template_id?: string;
+      enabled?: boolean;
       page?: number;
       page_size?: number;
-    }
-  ): Promise<PaginatedResponse<App>> {
-    return apiClient.get(API_ENDPOINTS.APPS.BY_TEMPLATE(templateId), {
-      params,
-    });
+  }): Promise<PaginatedResponse<App>> {
+      return apiClient.get(API_ENDPOINTS.APPS.QUERY, {params});
   },
 };

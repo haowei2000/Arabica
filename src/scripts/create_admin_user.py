@@ -28,7 +28,9 @@ async def create_admin_user():
         # Use the database session context manager
         async with get_session("aiwen") as session:
             # Check if default tenant exists, create if not
-            result = await session.execute(select(Tenant).where(Tenant.name == "default"))
+            result = await session.execute(
+                select(Tenant).where(Tenant.name == "default")
+            )
             tenant = result.scalar_one_or_none()
 
             if not tenant:
@@ -64,7 +66,7 @@ async def create_admin_user():
                 tenant_id=tenant.id,
                 role="admin",
                 is_superuser=True,
-                is_active=True
+                is_active=True,
             )
 
             session.add(admin_user)

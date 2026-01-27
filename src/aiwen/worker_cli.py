@@ -17,8 +17,6 @@ Agent Worker 启动脚本
 修改人员: haowei
 版本: v2.0.0
 
-公司名称: 艾普工华(武汉)有限责任公司
-版权信息: © 2025 艾普工华(武汉)有限责任公司. 保留所有权利.
 """
 
 import asyncio
@@ -30,7 +28,7 @@ import sys
 # 不需要在这里调用 load_dotenv()
 from aiwen.core.bootstrap import bootstrap_worker
 from aiwen.extensions.database import get_session
-from aiwen.workers.agent_worker import start_worker
+from aiwen.workers.task_worker import start_worker
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +47,7 @@ async def run():
 
         # 获取Redis客户端和数据库工厂
         redis_client = bootstrap.get_redis_client()
-        db = get_session('aiwen')
+        db = get_session("aiwen")
 
         # 设置信号处理器
         def signal_handler(signum, frame):

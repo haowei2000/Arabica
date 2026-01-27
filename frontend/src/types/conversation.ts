@@ -1,4 +1,4 @@
-import { Message } from './message';
+import type { Message } from './message';
 
 // 对话模式
 export type ConversationMode = 'completion' | 'chat';

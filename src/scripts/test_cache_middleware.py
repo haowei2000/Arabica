@@ -12,9 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load environment variables first
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / '.env')
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from aiwen.middleware.cache_middleware import init_redis_client, clear_cache_pattern
+
 
 async def test_cache_middleware():
     """Test cache middleware initialization and basic functionality"""
@@ -33,6 +35,7 @@ async def test_cache_middleware():
     except Exception as e:
         print(f"❌ Cache middleware test failed: {e}")
         return False
+
 
 if __name__ == "__main__":
     asyncio.run(test_cache_middleware())

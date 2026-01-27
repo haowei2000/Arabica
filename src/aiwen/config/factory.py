@@ -26,6 +26,7 @@
     settings = get_settings()
     print(settings.postgres.aiwen_dbname)
 """
+
 import logging
 import os
 from functools import lru_cache
@@ -45,9 +46,9 @@ _project_root = _current_file.parent.parent.parent.parent  # 往上4层到项目
 
 # 优先级顺序查找 .env 文件
 _env_search_paths = [
-    _project_root / "src" / ".env",          # src/.env (标准位置)
-    _project_root / ".env",                  # 项目根目录 .env
-    Path.cwd() / ".env",                     # 当前工作目录 .env
+    _project_root / "src" / ".env",  # src/.env (标准位置)
+    _project_root / ".env",  # 项目根目录 .env
+    Path.cwd() / ".env",  # 当前工作目录 .env
 ]
 
 
@@ -69,7 +70,7 @@ def _load_environment_file() -> None:
     env_filenames = {
         "development": ".env",
         "production": ".env.prod",
-        "testing": ".env.test"
+        "testing": ".env.test",
     }
     base_filename = env_filenames.get(env, ".env")
 
@@ -77,7 +78,11 @@ def _load_environment_file() -> None:
     loaded = False
     for search_path in _env_search_paths:
         # 尝试特定环境文件（如 .env.prod）
-        env_file = search_path.parent / base_filename if base_filename != ".env" else search_path
+        env_file = (
+            search_path.parent / base_filename
+            if base_filename != ".env"
+            else search_path
+        )
 
         if env_file.exists():
             load_dotenv(env_file, override=False)

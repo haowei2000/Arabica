@@ -1,6 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { appService } from '@/services/appService';
-import type { AppCreate, AppUpdate } from '@/types/app';
+import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
+import {appService} from '@/services/appService';
+import type {AppCreate, AppUpdate} from '@/types/app';
 
 /**
  * 获取 App 列表
@@ -19,11 +19,11 @@ export const useApps = (params?: {
 /**
  * 获取单个 App
  */
-export const useApp = (appCode: string) => {
+export const useApp = (appId: string) => {
   return useQuery({
-    queryKey: ['app', appCode],
-    queryFn: () => appService.getApp(appCode),
-    enabled: !!appCode,
+      queryKey: ['app', appId],
+      queryFn: () => appService.getApp(appId),
+      enabled: !!appId,
   });
 };
 
@@ -58,8 +58,8 @@ export const useUpdateApp = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ appCode, data }: { appCode: string; data: AppUpdate }) =>
-      appService.updateApp(appCode, data),
+      mutationFn: ({appId, data}: { appId: string; data: AppUpdate }) =>
+          appService.updateApp(appId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['apps'] });
     },
@@ -73,9 +73,24 @@ export const useDeleteApp = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (appCode: string) => appService.deleteApp(appCode),
+      mutationFn: (appId: string) => appService.deleteApp(appId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['apps'] });
     },
   });
+};
+
+/**
+ * 查询 Apps（支持多种过滤条件）
+ */
+export const useQueryApps = (params?: {
+    template_id?: string;
+    enabled?: boolean;
+    page?: number;
+    page_size?: number;
+}) => {
+    return useQuery({
+        queryKey: ['apps', 'query', params],
+        queryFn: () => appService.queryApps(params),
+    });
 };

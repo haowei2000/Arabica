@@ -1,0 +1,8 @@
+[
+    {
+        "label": "Run API",
+        "command": "$ZED_WORKTREE_ROOT/.venv/bin/python",
+        "args": ["aiwen/api_cli.py"],
+        "cwd": "$ZED_WORKTREE_ROOT/src"
+    }
+]

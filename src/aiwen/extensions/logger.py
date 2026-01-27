@@ -12,6 +12,7 @@ LOG_DIR = BASE_DIR / "logs"
 # 确保日志目录存在
 LOG_DIR.mkdir(exist_ok=True)
 
+
 def setup_logging():
     settings = get_settings()
     log_level = logging.DEBUG if settings.DEBUG else logging.INFO
@@ -19,7 +20,7 @@ def setup_logging():
     # 日志格式
     formatter = logging.Formatter(
         fmt="%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # 根日志器
@@ -42,7 +43,7 @@ def setup_logging():
         when="midnight",
         interval=1,
         backupCount=30,
-        encoding="utf-8"
+        encoding="utf-8",
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
@@ -55,7 +56,7 @@ def setup_logging():
             when="midnight",
             interval=1,
             backupCount=30,
-            encoding="utf-8"
+            encoding="utf-8",
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(formatter)

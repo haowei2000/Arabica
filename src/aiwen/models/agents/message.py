@@ -44,13 +44,15 @@ class Message(Base):
     conversation_id: Mapped[str] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False
+        nullable=False,
     )
     summary: Mapped[str | None] = mapped_column(LongText)
     query: Mapped[str] = mapped_column(LongText, nullable=False)
-    message: Mapped[dict[str, Any]] = mapped_column(sa.JSON, nullable=False)
+    message: Mapped[list[dict[str, Any]]] = mapped_column(sa.JSON, nullable=False)
     answer: Mapped[str] = mapped_column(LongText, nullable=False)
-    status: Mapped[str] = mapped_column(String(255), nullable=False, server_default=sa.text("'normal'"))
+    status: Mapped[str] = mapped_column(
+        String(255), nullable=False, server_default=sa.text("'normal'")
+    )
     error: Mapped[str | None] = mapped_column(LongText)
     message_metadata: Mapped[str | None] = mapped_column(LongText)
     from_source: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -58,8 +60,13 @@ class Message(Base):
     from_end_user_id: Mapped[str | None] = mapped_column(UUID(as_uuid=True))
     workflow_run_id: Mapped[str | None] = mapped_column(UUID(as_uuid=True))
     app_mode: Mapped[str | None] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=func.current_timestamp())
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=func.current_timestamp()
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp()
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
     )
     conversation = relationship("Conversation", back_populates="messages")

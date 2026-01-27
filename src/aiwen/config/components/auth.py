@@ -5,9 +5,10 @@ from pydantic import BaseModel, Field
 class AuthConfig(BaseModel):
     """
     配置认证相关设置的模型类
-    
+
     该类定义了JWT认证所需的各种配置参数，包括密钥、算法和令牌过期时间等设置。
     """
+
     admin_username: str = Field(
         default="admin",
         description="管理员用户名，默认为admin",

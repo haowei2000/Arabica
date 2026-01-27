@@ -1,4 +1,5 @@
 """CRUD operations for User model."""
+
 from typing import List, Optional, Tuple
 from uuid import UUID
 
@@ -21,7 +22,9 @@ class UserCRUD:
         """
         self.db_session = db_session
 
-    async def create_user(self, user_data: UserCreate, tenant_id: UUID, auto_commit: bool = True) -> User:
+    async def create_user(
+        self, user_data: UserCreate, tenant_id: UUID, auto_commit: bool = True
+    ) -> User:
         """
         Create a new user.
 
@@ -45,7 +48,7 @@ class UserCRUD:
             phone=user_data.phone,
             password_hash=hashed_password,
             tenant_id=tenant_id,
-            role="user"  # Default role
+            role="user",  # Default role
         )
 
         self.db_session.add(user)
@@ -68,9 +71,7 @@ class UserCRUD:
         Returns:
             User instance if found, None otherwise
         """
-        result = await self.db_session.execute(
-            select(User).where(User.id == user_id)
-        )
+        result = await self.db_session.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
 
     async def get_user_by_username(self, username: str) -> User | None:
@@ -98,9 +99,7 @@ class UserCRUD:
         Returns:
             User instance if found, None otherwise
         """
-        result = await self.db_session.execute(
-            select(User).where(User.email == email)
-        )
+        result = await self.db_session.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
     async def list_users(
@@ -108,7 +107,7 @@ class UserCRUD:
         skip: int = 0,
         limit: int = 100,
         tenant_id: UUID | None = None,
-        is_active: bool | None = None
+        is_active: bool | None = None,
     ) -> tuple[list[User], int]:
         """
         List all users with pagination.
@@ -156,7 +155,7 @@ class UserCRUD:
         role: str | None = None,
         is_active: bool | None = None,
         is_superuser: bool | None = None,
-        auto_commit: bool = True
+        auto_commit: bool = True,
     ) -> User | None:
         """
         Update an existing user.

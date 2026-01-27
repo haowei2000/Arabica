@@ -1,4 +1,5 @@
 """Authentication service for user management."""
+
 from typing import Optional
 from uuid import UUID
 
@@ -90,7 +91,9 @@ class AuthService:
 
         return user
 
-    async def create_user(self, user_data: UserCreate, tenant_id: UUID, auto_commit: bool = True) -> User:
+    async def create_user(
+        self, user_data: UserCreate, tenant_id: UUID, auto_commit: bool = True
+    ) -> User:
         """
         Create a new user.
 
@@ -113,7 +116,7 @@ class AuthService:
             phone=user_data.phone,
             password_hash=hashed_password,
             tenant_id=tenant_id,
-            role="user"  # Default role
+            role="user",  # Default role
         )
 
         # Add to database
@@ -141,7 +144,13 @@ class AuthService:
         result = await self.db.execute(select(Tenant).where(Tenant.name == name))
         return result.scalar_one_or_none()
 
-    async def create_tenant(self, name: str, admin_id, description: str | None = None, auto_commit: bool = True) -> Tenant:
+    async def create_tenant(
+        self,
+        name: str,
+        admin_id,
+        description: str | None = None,
+        auto_commit: bool = True,
+    ) -> Tenant:
         """
         Create a new tenant.
 
@@ -155,11 +164,7 @@ class AuthService:
         Returns:
             Created tenant object
         """
-        tenant = Tenant(
-            name=name,
-            admin_id=admin_id,
-            description=description
-        )
+        tenant = Tenant(name=name, admin_id=admin_id, description=description)
 
         self.db.add(tenant)
 

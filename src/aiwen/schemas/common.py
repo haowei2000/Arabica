@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 T = TypeVar("T")
 
+
 class SuccessResponse(BaseModel, Generic[T]):
     """
     成功响应模型
@@ -14,9 +15,11 @@ class SuccessResponse(BaseModel, Generic[T]):
         message (str): 响应消息，默认为"success"
         data (Optional[T]): 响应数据，可以是任意类型
     """
+
     code: int = 200
     message: str = "success"
     data: T | None
+
 
 class ErrorResponse(BaseModel):
     """
@@ -27,9 +30,11 @@ class ErrorResponse(BaseModel):
         message (str): 错误消息
         detail (Optional[Any]): 详细错误信息，可选
     """
+
     code: int
     message: str
     detail: Any | None = None  # 可选：调试信息（生产环境慎用）
+
 
 # 快捷函数
 def success(data: T, message: str = "success") -> SuccessResponse[T]:
@@ -44,6 +49,7 @@ def success(data: T, message: str = "success") -> SuccessResponse[T]:
         SuccessResponse[T]: 包含数据的成功响应对象
     """
     return SuccessResponse(data=data, message=message)
+
 
 def error(code: int, message: str, detail: Any = None) -> ErrorResponse:
     """

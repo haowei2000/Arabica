@@ -19,4 +19,3 @@ class AgentTemplateResponse(BaseModel):
 
     class Config:
         from_attributes = True
-

@@ -1,17 +1,100 @@
 @import "tailwindcss";
 
-@layer base {
-  * {
-    @apply border-gray-200;
-  }
+@theme {
+    /* Primary - Orange #FF6500 */
+    --color-primary-50: oklch(0.97 0.02 50);
+    --color-primary-100: oklch(0.92 0.05 50);
+    --color-primary-200: oklch(0.85 0.10 50);
+    --color-primary-300: oklch(0.78 0.15 50);
+    --color-primary-400: oklch(0.70 0.18 50);
+    --color-primary-500: oklch(0.65 0.20 50);
+    --color-primary-600: oklch(0.55 0.18 50);
+    --color-primary-700: oklch(0.45 0.15 50);
+    --color-primary-800: oklch(0.35 0.12 50);
+    --color-primary-900: oklch(0.25 0.08 50);
+    --color-primary-950: oklch(0.18 0.05 50);
 
-  body {
-    @apply bg-gray-50 text-gray-900 antialiased;
-  }
+    /* Secondary - Dark Blue #1E3E62 */
+    --color-secondary-50: oklch(0.95 0.02 250);
+    --color-secondary-100: oklch(0.88 0.04 250);
+    --color-secondary-200: oklch(0.78 0.06 250);
+    --color-secondary-300: oklch(0.65 0.08 250);
+    --color-secondary-400: oklch(0.52 0.10 250);
+    --color-secondary-500: oklch(0.40 0.10 250);
+    --color-secondary-600: oklch(0.32 0.08 250);
+    --color-secondary-700: oklch(0.26 0.06 250);
+    --color-secondary-800: oklch(0.20 0.05 250);
+    --color-secondary-900: oklch(0.15 0.03 250);
+    --color-secondary-950: oklch(0.10 0.02 250);
 
-  @media (prefers-color-scheme: dark) {
-    body {
-      @apply bg-gray-900 text-gray-100;
-    }
-  }
+    /* Dark - Navy #0B192C */
+    --color-navy-50: oklch(0.95 0.01 250);
+    --color-navy-100: oklch(0.88 0.02 250);
+    --color-navy-200: oklch(0.75 0.03 250);
+    --color-navy-300: oklch(0.60 0.04 250);
+    --color-navy-400: oklch(0.45 0.05 250);
+    --color-navy-500: oklch(0.30 0.05 250);
+    --color-navy-600: oklch(0.22 0.04 250);
+    --color-navy-700: oklch(0.18 0.04 250);
+    --color-navy-800: oklch(0.14 0.03 250);
+    --color-navy-900: oklch(0.10 0.02 250);
+    --color-navy-950: oklch(0.06 0.02 250);
+}
+
+/* Light mode base styles */
+html {
+    color-scheme: light;
+}
+
+body {
+    @apply bg-navy-50 text-navy-900 antialiased;
+}
+
+/* Dark mode */
+html.dark {
+    color-scheme: dark;
+}
+
+html.dark body {
+    @apply bg-navy-950 text-navy-100;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    @apply w-2 h-2;
+}
+
+::-webkit-scrollbar-track {
+    @apply bg-navy-100;
+}
+
+html.dark ::-webkit-scrollbar-track {
+    @apply bg-navy-900;
+}
+
+::-webkit-scrollbar-thumb {
+    @apply bg-secondary-400 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary-500;
+}
+
+/* Selection */
+::selection {
+    @apply bg-primary-500 text-white;
+}
+
+/* Focus */
+:focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary-500;
+}
+
+/* Links */
+a {
+    @apply text-primary-500 hover:text-primary-600 transition-colors;
+}
+
+html.dark a {
+    @apply text-primary-400 hover:text-primary-300;
 }

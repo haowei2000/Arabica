@@ -25,10 +25,10 @@ def test_sse_format():
     # 2. Each event ends with "\n\n"
     # 3. Data is JSON-encoded
 
-    event_data = {"event": "test", "data": "test message"}
+    event_data = {"event": "test", "data": "test input"}
     sse_formatted = f"data: {json.dumps(event_data)}\n\n"
 
     assert sse_formatted.startswith("data: ")
     assert sse_formatted.endswith("\n\n")
     assert '"event": "test"' in sse_formatted
-    assert '"data": "test message"' in sse_formatted
+    assert '"data": "test input"' in sse_formatted

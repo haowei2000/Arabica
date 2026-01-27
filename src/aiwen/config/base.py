@@ -10,6 +10,7 @@ from aiwen.config.components.ollama import OllamaConfig
 from aiwen.config.components.openai import OpenAIConfig
 from aiwen.config.components.postgres import PostgresConfig
 from aiwen.config.components.redis import RedisConfig
+from aiwen.config.components.rustfs import RustfsConfig
 from aiwen.constants.path import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=PROJECT_ROOT / "src" / ".env",
+        env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="allow",
@@ -32,6 +33,7 @@ class AppSettings(BaseSettings):
 
     dashscope_api_key: str = Field(default="", description="DashScope API Key")
     env: str = "development"
+    agent_task_name: str = "agent:stream"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -62,3 +64,4 @@ class AppSettings(BaseSettings):
     auth: AuthConfig | None = None
     ollama: OllamaConfig | None = None
     openai: OpenAIConfig | None = None
+    rustfs: RustfsConfig | None = None
