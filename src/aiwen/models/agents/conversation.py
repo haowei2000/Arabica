@@ -12,7 +12,7 @@ Base = get_base("aiwen")
 
 
 class Conversation(Base):
-    """Conversation model for tracking user conversations with agents."""
+    """Conversation model for tracking user conversations with agent."""
 
     __tablename__ = "conversations"
 

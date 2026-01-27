@@ -1,14 +1,14 @@
-"""aiwen/models/agents/agent.py
+"""aiwen/models/agent/agent.py
 Edited to use timezone-aware DateTime columns and timezone-aware Python defaults.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from aiwen.extensions.database import get_base
 
-Base = get_base("aiwen")  # Assuming agents are stored in the default database
+Base = get_base("aiwen")  # Assuming agent are stored in the default database
 
 
 class App(Base):

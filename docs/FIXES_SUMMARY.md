@@ -38,17 +38,18 @@ Worker 是独立进程，不会执行 FastAPI 的 `lifespan` 钩子，因此 `Ag
 
 ```python
 # src/scripts/run_agent_worker.py
-from aiwen.services.agents.agent_registry import init_agent_registry
+from aiwen.services.agent.agent_registry import init_agent_registry
+
 
 async def main():
-    # 初始化 Redis
-    await init_redis_client()
+   # 初始化 Redis
+   await init_redis_client()
 
-    # 初始化 Agent Registry（新增）
-    await init_agent_registry()
+   # 初始化 Agent Registry（新增）
+   await init_agent_registry()
 
-    # 启动 worker
-    await start_worker(redis_client, db_factory)
+   # 启动 worker
+   await start_worker(redis_client, db_factory)
 ```
 
 **修改的文件：**

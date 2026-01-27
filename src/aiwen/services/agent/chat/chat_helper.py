@@ -1,9 +1,8 @@
-from decimal import Decimal
 from uuid import UUID
 
 from aiwen.schemas.agents.conversation import ConversationCreate
 from aiwen.schemas.agents.input import TextInput
-from aiwen.schemas.agents.message import MessageCreate, MessageUpdate
+from aiwen.schemas.agents.message import MessageCreate
 from aiwen.utils.sse import sse
 from aiwen.utils.time import utc_now
 

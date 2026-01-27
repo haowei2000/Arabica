@@ -1,6 +1,5 @@
 # tests/test_agents/test_agent_router.py
 from fastapi.testclient import TestClient
-import pytest
 
 from aiwen.app import app
 
@@ -8,8 +7,8 @@ client = TestClient(app)
 
 
 def test_list_agent_types():
-    """Test that the agent types endpoint returns available agents."""
-    response = client.get("/api/agents/types")
+    """Test that the agent types endpoint returns available agent."""
+    response = client.get("/api/agent/types")
     assert response.status_code == 200
     data = response.json()
     assert "agent_types" in data
@@ -19,7 +18,7 @@ def test_list_agent_types():
 
 def test_run_agent_not_found():
     """Test that running a non-existent agent returns 404."""
-    response = client.post("/api/agents/nonexistent-agent/run", json={"test": "data"})
+    response = client.post("/api/agent/nonexistent-agent/run", json={"test": "data"})
     # This will return 404 because the agent doesn't exist in the database
     # In a real test, we would need to mock the database session
     assert response.status_code in [

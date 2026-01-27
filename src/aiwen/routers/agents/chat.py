@@ -25,7 +25,7 @@ from aiwen.dependencies.agents import (
 from aiwen.dependencies.auth import get_token_data
 from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.auth.auth import TokenData
-from aiwen.services.agents.chat.chat_service import (
+from aiwen.services.agent.chat.chat_service import (
     StartTaskResult,
     get_messages_by_task,
     start_task,

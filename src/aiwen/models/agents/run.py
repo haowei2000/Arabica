@@ -1,4 +1,4 @@
-# aiwen/models/agents/run.py
+# aiwen/models/agent/run.py
 """Run model for the event-sourced architecture."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# aiwen/models/agents/event.py
+# aiwen/models/agent/event.py
 """Event model for event-sourced architecture."""
 
 from __future__ import annotations

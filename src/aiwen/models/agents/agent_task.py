@@ -1,9 +1,9 @@
-# aiwen/models/agents/agent_task.py
+# aiwen/models/agent/agent_task.py
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional, Union
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel

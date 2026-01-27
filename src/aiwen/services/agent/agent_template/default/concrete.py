@@ -15,8 +15,8 @@ from langchain.agents import create_agent
 
 from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.agents.input import TextInput
-from aiwen.services.agents.agent_registry import register_agent
-from aiwen.services.agents.base import BaseAgentTemplate
+from aiwen.services.agent.agent_registry import register_agent
+from aiwen.services.agent.base import BaseAgentTemplate
 from .context import get_messages_from_context
 
 logger = logging.getLogger(__name__)

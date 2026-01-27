@@ -1,11 +1,10 @@
 # tests/test_agents/test_agent_manager.py
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock
 
-from aiwen.services.agents.manager import AgentManager
 import pytest
+from aiwen.services.agent.manager import AgentManager
 
-from aiwen.models.agents.app import App
-from aiwen.services.agents.app_factory import AppFactory
+from aiwen.services.agent.app_factory import AppFactory
 
 
 @pytest.fixture

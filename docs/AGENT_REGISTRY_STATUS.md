@@ -153,24 +153,24 @@ uvicorn aiwen.app:app --reload
 
 # 日志输出
 INFO:aiwen.core.lifespan:=== Application starting up ===
-INFO:aiwen.services.agents.agent_registry:=== Registering default agent templates ===
-INFO:aiwen.services.agents.agent_registry:✓ Registered new agent template: DEFAULT001
-INFO:aiwen.services.agents.agent_registry:=== Agent template registration complete: 1 succeeded, 0 failed ===
+INFO:aiwen.services.agent.agent_registry:=== Registering default agent templates ===
+INFO:aiwen.services.agent.agent_registry:✓ Registered new agent template: DEFAULT001
+INFO:aiwen.services.agent.agent_registry:=== Agent template registration complete: 1 succeeded, 0 failed ===
 INFO:aiwen.core.lifespan:Agent registry initialized successfully
 ```
 
 ### 在代码中使用
 
 ```python
-from aiwen.services.agents.agent_registry import AgentRegistry
+from aiwen.services.agent.agent_registry import AgentRegistry
 
 # 获取 Agent 类
 template_cls = AgentRegistry.get("DEFAULT001")
 
 # 创建实例
 agent = template_cls(config={
-    "model_provider": "ollama",
-    "model_name": "qwen3:30b"
+   "model_provider": "ollama",
+   "model_name": "qwen3:30b"
 })
 
 # 运行 Agent
@@ -241,33 +241,34 @@ alembic heads
 ### 步骤 1: 创建模板类
 
 ```python
-# src/aiwen/services/agents/agent_template/my_agent/concrete.py
-from aiwen.services.agents.base import BaseAgentTemplate
+# src/aiwen/services/agent/agent_template/my_agent/concrete.py
+from aiwen.services.agent.base import BaseAgentTemplate
+
 
 class MyCustomAgent(BaseAgentTemplate):
-    """自定义 Agent 模板"""
+   """自定义 Agent 模板"""
 
-    TEMPLATE = {
-        "template_code": "CUSTOM001",
-        "template_name": "My Custom Agent",
-        "enabled": True,
-        "version": 1,
-        "config": {
-            "model_provider": "openai",
-            "model_name": "gpt-4"
-        }
-    }
+   TEMPLATE = {
+      "template_code": "CUSTOM001",
+      "template_name": "My Custom Agent",
+      "enabled": True,
+      "version": 1,
+      "config": {
+         "model_provider": "openai",
+         "model_name": "gpt-4"
+      }
+   }
 
-    async def run(self, input_data: dict):
-        # 实现 Agent 逻辑
-        query = input_data.get("query", "")
-        # ... 处理逻辑
-        return {"answer": "response"}
+   async def run(self, input_data: dict):
+      # 实现 Agent 逻辑
+      query = input_data.get("query", "")
+      # ... 处理逻辑
+      return {"answer": "response"}
 
-    async def stream(self, input_data: dict):
-        # 实现流式输出
-        async for chunk in self.llm.astream(...):
-            yield chunk
+   async def stream(self, input_data: dict):
+      # 实现流式输出
+      async for chunk in self.llm.astream(...):
+         yield chunk
 ```
 
 ### 步骤 2: 注册到默认模板列表
@@ -276,15 +277,15 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-    from aiwen.services.agents.agent_template.default.concrete import DefaultAgentTemplate
-    from aiwen.services.agents.agent_template.my_agent.concrete import MyCustomAgent  # 新增
+   from aiwen.services.agent.agent_template.default.concrete import DefaultAgentTemplate
+   from aiwen.services.agent.agent_template.my_agent.concrete import MyCustomAgent  # 新增
 
-    templates = [
-        (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
-        (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
-    ]
+   templates = [
+      (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
+      (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
+   ]
 
-    # ... 注册逻辑保持不变
+   # ... 注册逻辑保持不变
 ```
 
 ### 步骤 3: 重启应用
@@ -342,7 +343,7 @@ conversation_id: Mapped[str] = mapped_column(
 ### 查看注册的模板数量
 
 ```python
-from aiwen.services.agents.agent_registry import AgentRegistry
+from aiwen.services.agent.agent_registry import AgentRegistry
 
 template_count = len(AgentRegistry.list())
 print(f"Registered templates: {template_count}")

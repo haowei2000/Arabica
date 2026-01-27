@@ -1,4 +1,4 @@
-# aiwen/models/agents/workspace_member.py
+# aiwen/models/agent/workspace_member.py
 """WorkspaceMember model for workspace collaboration."""
 
 from __future__ import annotations

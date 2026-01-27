@@ -20,10 +20,10 @@
     {提供简单的使用示例代码}
 """
 
-# aiwen/services/agents/runtime.py
+# aiwen/services/agent/runtime.py
 from uuid import UUID
 
-from aiwen.services.agents.base import BaseAgentTemplate
+from aiwen.services.agent.base import BaseAgentTemplate
 
 
 class AgentRuntime:

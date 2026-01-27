@@ -14,7 +14,7 @@
     {提供简单的使用示例代码}
 """
 
-# aiwen/services/agents/agent_template_crud.py
+# aiwen/services/agent/agent_template_crud.py
 from collections.abc import Sequence
 from uuid import UUID
 

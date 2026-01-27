@@ -24,7 +24,7 @@ Agent Worker - 异步处理 Agent 任务
 
 依赖模块:
     - redis.asyncio: Redis 异步客户端
-    - aiwen.services.agents: Agent 管理和运行时
+    - aiwen.services.agent: Agent 管理和运行时
 """
 
 # aiwen/workers/task_worker.py
@@ -41,13 +41,13 @@ from aiwen.extensions.database import get_session
 from aiwen.schemas.agents.input import TextInput
 from aiwen.schemas.agents.message import MessageContent, Role
 from aiwen.schemas.task.payload import TaskPayload
-from aiwen.services.agents.agent_registry import AgentRegistry
-from aiwen.services.agents.app_factory import AppAgentFactory
-from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.agent.agent_registry import AgentRegistry
+from aiwen.services.agent.app_factory import AppAgentFactory
+from aiwen.services.agent.runtime import AgentRuntime
 from aiwen.services.crud import AppCRUD
+from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.crud.message_crud import MessageCRUD
 from aiwen.services.crud.task_crud import AgentTaskCRUD
-from aiwen.services.agents.runtime import AgentRuntime
 from aiwen.utils.json_utils import dumps as json_dumps
 from aiwen.workers.task_utils import (
     decode_data_field,

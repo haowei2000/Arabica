@@ -49,17 +49,17 @@ export const API_ENDPOINTS = {
 
     // Knowledge 管理
     KNOWLEDGE: {
-        LIST: '/agents/knowledge/query',
-        CREATE: '/agents/knowledge/create',
+        LIST: '/agent/knowledge/query',
+        CREATE: '/agent/knowledge/create',
         GET: (id: string) => `/agents/knowledge/${id}/get`,
         UPDATE: (id: string) => `/agents/knowledge/${id}/update`,
         DELETE: (id: string) => `/agents/knowledge/${id}/delete`,
-        SEARCH: '/agents/knowledge/search',
+        SEARCH: '/agent/knowledge/search',
     },
 
     // Document 管理
     DOCUMENT: {
-        UPLOAD: '/agents/document/upload',
+        UPLOAD: '/agent/document/upload',
         GET: (id: string) => `/agents/document/${id}`,
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/document/knowledge/${knowledgeId}`,
         DELETE: (id: string) => `/agents/document/${id}/delete`,

@@ -120,7 +120,7 @@ async def _initialize_agent_registry() -> None:
     """初始化Agent Registry"""
     logger.info("🤖 初始化Agent Registry...")
     try:
-        from aiwen.services.agents.agent_registry import (
+        from aiwen.services.agent.agent_registry import (
             init_agent_registry,
             AgentRegistry,
         )

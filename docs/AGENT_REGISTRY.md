@@ -132,7 +132,7 @@ async def lifespan(app: FastAPI):
 ### 2. 获取已注册的模板
 
 ```python
-from aiwen.services.agents.agent_registry import AgentRegistry
+from aiwen.services.agent.agent_registry import AgentRegistry
 
 # 获取模板类
 template_cls = AgentRegistry.get("DEFAULT001")
@@ -165,26 +165,27 @@ if AgentRegistry.is_registered("DEFAULT001"):
 ### 步骤 1: 创建模板类
 
 ```python
-# src/aiwen/services/agents/agent_template/my_agent/concrete.py
-from aiwen.services.agents.base import BaseAgentTemplate
+# src/aiwen/services/agent/agent_template/my_agent/concrete.py
+from aiwen.services.agent.base import BaseAgentTemplate
+
 
 class MyCustomAgent(BaseAgentTemplate):
-    """自定义 Agent 模板"""
+   """自定义 Agent 模板"""
 
-    TEMPLATE = {
-        "template_code": "CUSTOM001",
-        "template_name": "My Custom Agent",
-        "enabled": True,
-        "version": 1,
-        "config": {
-            "model_provider": "openai",
-            "model_name": "gpt-4"
-        }
-    }
+   TEMPLATE = {
+      "template_code": "CUSTOM001",
+      "template_name": "My Custom Agent",
+      "enabled": True,
+      "version": 1,
+      "config": {
+         "model_provider": "openai",
+         "model_name": "gpt-4"
+      }
+   }
 
-    async def run(self, input_data: dict):
-        # 实现 Agent 逻辑
-        return {"result": "success"}
+   async def run(self, input_data: dict):
+      # 实现 Agent 逻辑
+      return {"result": "success"}
 ```
 
 ### 步骤 2: 注册到默认模板列表
@@ -193,15 +194,15 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-    from aiwen.services.agents.agent_template.default.concrete import DefaultAgentTemplate
-    from aiwen.services.agents.agent_template.my_agent.concrete import MyCustomAgent  # 新增
+   from aiwen.services.agent.agent_template.default.concrete import DefaultAgentTemplate
+   from aiwen.services.agent.agent_template.my_agent.concrete import MyCustomAgent  # 新增
 
-    templates = [
-        (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
-        (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
-    ]
+   templates = [
+      (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
+      (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
+   ]
 
-    # ... 注册逻辑
+   # ... 注册逻辑
 ```
 
 ### 步骤 3: 重启应用
@@ -276,36 +277,36 @@ SELECT COUNT(*) FROM agent_template WHERE enabled = true;
 
 ```python
 import asyncio
-from aiwen.services.agents.agent_registry import AgentRegistry, init_agent_registry
+from aiwen.services.agent.agent_registry import AgentRegistry, init_agent_registry
 
 
 async def test_agent_registry():
-    # 初始化注册表
-    await init_agent_registry()
+   # 初始化注册表
+   await init_agent_registry()
 
-    # 测试内存注册
-    assert AgentRegistry.is_registered("DEFAULT001")
-    assert "DEFAULT001" in AgentRegistry.list()
+   # 测试内存注册
+   assert AgentRegistry.is_registered("DEFAULT001")
+   assert "DEFAULT001" in AgentRegistry.list()
 
-    # 测试获取模板
-    template_cls = AgentRegistry.get("DEFAULT001")
-    assert template_cls is not None
+   # 测试获取模板
+   template_cls = AgentRegistry.get("DEFAULT001")
+   assert template_cls is not None
 
-    # 测试数据库持久化
-    from aiwen.extensions.database import get_session
-    from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
+   # 测试数据库持久化
+   from aiwen.extensions.database import get_session
+   from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
-    async with get_session("aiwen") as session:
-        crud = AgentTemplateCRUD(session)
-        template = await crud.get_template_by_code("DEFAULT001")
-        assert template is not None
-        assert template.template_name == "Default Detection Agent"
+   async with get_session("aiwen") as session:
+      crud = AgentTemplateCRUD(session)
+      template = await crud.get_template_by_code("DEFAULT001")
+      assert template is not None
+      assert template.template_name == "Default Detection Agent"
 
-    print("✓ All tests passed!")
+   print("✓ All tests passed!")
 
 
 if __name__ == "__main__":
-    asyncio.run(test_agent_registry())
+   asyncio.run(test_agent_registry())
 ```
 
 ## 性能考虑

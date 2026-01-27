@@ -1,4 +1,4 @@
-# aiwen/models/agents/context.py
+# aiwen/models/agent/context.py
 """Context model for storing agent context with vector embeddings."""
 
 from __future__ import annotations

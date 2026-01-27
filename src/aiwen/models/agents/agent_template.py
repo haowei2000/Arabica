@@ -1,11 +1,11 @@
-"""aiwen/models/agents/agent_template.py
+"""aiwen/models/agent/agent_template.py
 Agent template model for storing agent templates.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, Integer, String, func

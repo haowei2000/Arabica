@@ -22,11 +22,11 @@
     {提供简单的使用示例代码}
 """
 
-# aiwen/services/agents/app_factory.py
+# aiwen/services/agent/app_factory.py
 from typing import Any, Dict
 
-from aiwen.services.agents.agent_registry import AgentRegistry
-from aiwen.services.agents.base import BaseAgentTemplate
+from aiwen.services.agent.agent_registry import AgentRegistry
+from aiwen.services.agent.base import BaseAgentTemplate
 
 
 class AppAgentFactory:

@@ -1,4 +1,4 @@
-# aiwen/models/agents/embedding_model.py
+# aiwen/models/agent/embedding_model.py
 """EmbeddingModel for managing embedding model configurations."""
 
 from datetime import UTC, datetime

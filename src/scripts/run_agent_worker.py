@@ -31,7 +31,7 @@ else:
 from aiwen.workers.task_worker import start_worker
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
-from aiwen.services.agents.agent_registry import init_agent_registry
+from aiwen.services.agent.agent_registry import init_agent_registry
 
 # 确保日志目录存在
 log_dir = project_root / "logs"
@@ -76,7 +76,7 @@ async def main():
             await init_agent_registry()
 
             # 验证注册是否成功
-            from aiwen.services.agents.agent_registry import AgentRegistry
+            from aiwen.services.agent.agent_registry import AgentRegistry
 
             registered_templates = AgentRegistry.list()
 

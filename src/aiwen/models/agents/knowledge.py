@@ -1,4 +1,4 @@
-# aiwen/models/agents/knowledge.py
+# aiwen/models/agent/knowledge.py
 """Knowledge management models for storing knowledge bases, knowledge and chunks."""
 
 from datetime import UTC, datetime

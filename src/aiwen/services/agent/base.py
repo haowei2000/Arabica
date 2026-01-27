@@ -1,11 +1,11 @@
-# aiwen/services/agents/base.py
+# aiwen/services/agent/base.py
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar
 
 
 class BaseAgentTemplate(ABC):
-    """Base class for all agents in the system."""
+    """Base class for all agent in the system."""
 
     # Template metadata - must be defined by subclasses
     TEMPLATE: ClassVar[dict[str, Any]]

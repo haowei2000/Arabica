@@ -1,4 +1,4 @@
-# aiwen/models/agents/chat_model.py
+# aiwen/models/agent/chat_model.py
 """ChatModel for managing LLM/chat model configurations."""
 
 from datetime import UTC, datetime
