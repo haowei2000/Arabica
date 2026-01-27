@@ -64,5 +64,13 @@ export const API_ENDPOINTS = {
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/document/knowledge/${knowledgeId}`,
         DELETE: (id: string) => `/agents/document/${id}/delete`,
         TASK_STATUS: (taskId: string) => `/agents/document/task/${taskId}/status`,
+        DOWNLOAD: (id: string) => `/agents/document/${id}/download`,
+        PREVIEW: (id: string) => `/agents/document/${id}/preview`,
+    },
+
+    // Context/Chunk 管理
+    CONTEXT: {
+        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/context/knowledge/${knowledgeId}/chunks`,
+        LIST_BY_DOCUMENT: (documentId: string) => `/agents/context/document/${documentId}/chunks`,
     },
 } as const;

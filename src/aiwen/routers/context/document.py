@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from aiwen.dependencies.agents import get_document_crud, get_knowledge_crud
@@ -361,3 +362,102 @@ async def delete_document(
     await knowledge_crud.increment_document_count(str(document.knowledge_id), increment=-1)
 
     return
+
+
+@router.get("/{document_id}/download")
+async def download_document(
+        document_id: str,
+        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        document_crud: DocumentCRUD = Depends(get_document_crud),
+):
+    """
+    Download the original document file.
+
+    Args:
+        document_id: The document ID
+        current_user: Current authenticated user
+        document_crud: Document CRUD service
+
+    Returns:
+        StreamingResponse with the file content
+
+    Raises:
+        HTTPException: If document not found or unauthorized
+    """
+    document = await document_crud.get_by_id_and_user(document_id, current_user.id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found",
+        )
+
+    try:
+        storage = get_global_s3_storage()
+        file_data = storage.get_bytes(document.object_key)
+
+        # Determine content type
+        content_type = document.mime_type or "application/octet-stream"
+
+        # URL encode the filename for Content-Disposition header
+        from urllib.parse import quote
+        encoded_filename = quote(document.original_name)
+
+        return Response(
+            content=file_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+                "Content-Length": str(len(file_data)),
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download file: {str(e)}",
+        )
+
+
+class DocumentPreviewResponse(BaseModel):
+    """Schema for document preview response."""
+
+    document_id: str
+    original_name: str
+    mime_type: str | None
+    content: str | None
+    content_length: int
+
+
+@router.get("/{document_id}/preview", response_model=DocumentPreviewResponse)
+async def preview_document(
+        document_id: str,
+        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        document_crud: DocumentCRUD = Depends(get_document_crud),
+):
+    """
+    Get a preview of the document content (parsed text).
+
+    Args:
+        document_id: The document ID
+        current_user: Current authenticated user
+        document_crud: Document CRUD service
+
+    Returns:
+        Document preview with parsed text content
+
+    Raises:
+        HTTPException: If document not found or unauthorized
+    """
+    document = await document_crud.get_by_id_and_user(document_id, current_user.id)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found",
+        )
+
+    return DocumentPreviewResponse(
+        document_id=str(document.id),
+        original_name=document.original_name,
+        mime_type=document.mime_type,
+        content=document.content,
+        content_length=len(document.content) if document.content else 0,
+    )

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_context_crud
 from aiwen.dependencies.auth import get_current_user
+from aiwen.schemas.agents.app import ContextType
 from aiwen.schemas.agents.context import (
     ContextCreate,
     ContextListResponse,
@@ -475,3 +476,73 @@ async def delete_contexts_by_source(
     """
     count = await crud.delete_by_source_id(source_id, user_id=current_user.id)
     return {"deleted_count": count}
+
+
+# ==================== Chunk Listing Endpoints ====================
+
+
+@router.get("/knowledge/{knowledge_id}/chunks", response_model=ContextListResponse)
+async def list_chunks_by_knowledge(
+        knowledge_id: str,
+        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        page: int = Query(1, ge=1, description="Page number"),
+        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+        crud: ContextCRUD = Depends(get_context_crud),
+):
+    """
+    List all chunks in a knowledge base.
+
+    Args:
+        knowledge_id: The knowledge base ID
+        page: Page number (starting from 1)
+        page_size: Number of items per page
+        current_user: Current authenticated user
+        crud: Context CRUD service
+
+    Returns:
+        Paginated list of chunks
+    """
+    skip = (page - 1) * page_size
+    items, total = await crud.list(
+        user_id=current_user.id,
+        context_type=ContextType.CHUNK.value,
+        source_id=knowledge_id,
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )
+
+
+@router.get("/document/{document_id}/chunks", response_model=ContextListResponse)
+async def list_chunks_by_document(
+        document_id: str,
+        current_user: Annotated[UserResponse, Depends(get_current_user)],
+        page: int = Query(1, ge=1, description="Page number"),
+        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+        crud: ContextCRUD = Depends(get_context_crud),
+):
+    """
+    List all chunks for a specific document.
+
+    Args:
+        document_id: The document ID
+        page: Page number (starting from 1)
+        page_size: Number of items per page
+        current_user: Current authenticated user
+        crud: Context CRUD service
+
+    Returns:
+        Paginated list of chunks for the document
+    """
+    skip = (page - 1) * page_size
+    items, total = await crud.list_by_document_id(
+        document_id=document_id,
+        user_id=current_user.id,
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )

@@ -419,6 +419,8 @@ def embed_chunks(
         # Update document status
         async with get_session("aiwen") as session:
             await session.execute(
+                update(Chunk).where(Chunk.id.in_([UUID(cid) for cid in chunk_ids])).values(status="embedded"))
+            await session.execute(
                 update(Document).where(Document.id == UUID(document_id)).values(status="embedded")
             )
             await session.commit()
