@@ -35,6 +35,27 @@ class DocumentParser:
         ".csv": "csv",
     }
 
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """Remove null bytes and other invalid characters for PostgreSQL UTF-8.
+
+        Args:
+            text: Input text that may contain invalid characters.
+
+        Returns:
+            str: Sanitized text safe for PostgreSQL.
+        """
+        # Remove null bytes (0x00) which are invalid in PostgreSQL
+        text = text.replace("\x00", "")
+        # Remove other control characters except common whitespace
+        sanitized = []
+        for char in text:
+            code = ord(char)
+            # Keep: tab (9), newline (10), carriage return (13), and printable chars (32+)
+            if code == 9 or code == 10 or code == 13 or code >= 32:
+                sanitized.append(char)
+        return "".join(sanitized)
+
     def parse(self, data: bytes | BinaryIO, mime_type: str) -> str:
         """Parse document content to plain text.
 
@@ -64,6 +85,8 @@ class DocumentParser:
             raise ValueError(f"No parser available for type: {file_type}")
 
         text = parser_method(stream)
+        # Sanitize text to remove invalid characters for PostgreSQL
+        text = self._sanitize_text(text)
         logger.info(f"Parsed {file_type} document: {len(text)} characters")
         return text
 
@@ -94,6 +117,8 @@ class DocumentParser:
             raise ValueError(f"No parser available for type: {file_type}")
 
         text = parser_method(stream)
+        # Sanitize text to remove invalid characters for PostgreSQL
+        text = self._sanitize_text(text)
         logger.info(f"Parsed {file_type} document: {len(text)} characters")
         return text
 

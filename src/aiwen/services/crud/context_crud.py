@@ -6,10 +6,11 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import and_, cast, func, or_, select, text
+from sqlalchemy import Integer, and_, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.context import Context
+from aiwen.schemas.agents.app import ContextType
 from aiwen.schemas.agents.context import ContextCreate, ContextUpdate
 
 
@@ -690,3 +691,50 @@ class ContextCRUD:
             await self.db.flush()
 
         return count
+
+    async def list_by_document_id(
+            self,
+            document_id: str | UUID,
+            user_id: str | UUID,
+            skip: int = 0,
+            limit: int = 100,
+    ) -> tuple[list[Context], int]:
+        """
+        List contexts by document_id in meta field (for chunks).
+
+        Args:
+            document_id: The document ID to filter by (from meta.document_id)
+            user_id: Filter by user ID (required)
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+
+        Returns:
+            Tuple of (list of contexts, total count)
+        """
+        normalized_user_id = normalize_uuid_to_str(user_id)
+        normalized_document_id = normalize_uuid_to_str(document_id)
+
+        # Filter by meta->>'document_id' using PostgreSQL JSONB operators
+        conditions = [
+            Context.user_id == normalized_user_id,
+            Context.context_type == ContextType.CHUNK.value,
+            Context.meta.op("->>")("document_id") == normalized_document_id,
+        ]
+
+        # Count query
+        count_stmt = select(func.count(Context.id)).where(and_(*conditions))
+        count_result = await self.db.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        # Data query - order by position from meta JSONB field
+        stmt = (
+            select(Context)
+            .where(and_(*conditions))
+            .order_by(cast(Context.meta.op("->>")("position"), Integer))
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        items = list(result.scalars().all())
+
+        return items, total

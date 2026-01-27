@@ -1,6 +1,14 @@
 import {apiClient} from './api';
-import {API_ENDPOINTS} from '@/constants/api';
-import type {Document, DocumentUploadResponse, DocumentListResponse, TaskStatusResponse} from '@/types/document';
+import {API_BASE_URL, API_ENDPOINTS} from '@/constants/api';
+import type {Document, DocumentListResponse, DocumentUploadResponse, TaskStatusResponse} from '@/types/document';
+
+export interface DocumentPreviewResponse {
+    document_id: string;
+    original_name: string;
+    mime_type: string | null;
+    content: string | null;
+    content_length: number;
+}
 
 export interface UploadDocumentParams {
     file: File;
@@ -73,5 +81,20 @@ export const documentService = {
      */
     async getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
         return apiClient.get(API_ENDPOINTS.DOCUMENT.TASK_STATUS(taskId));
+    },
+
+    /**
+     * Get document preview (parsed text content)
+     */
+    async getPreview(id: string): Promise<DocumentPreviewResponse> {
+        return apiClient.get(API_ENDPOINTS.DOCUMENT.PREVIEW(id));
+    },
+
+    /**
+     * Get download URL for a document
+     */
+    getDownloadUrl(id: string): string {
+        const token = localStorage.getItem('access_token');
+        return `${API_BASE_URL}${API_ENDPOINTS.DOCUMENT.DOWNLOAD(id)}?token=${token}`;
     },
 };

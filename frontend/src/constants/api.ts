@@ -13,38 +13,38 @@ export const API_ENDPOINTS = {
 
   // 流式对话
   CHAT: {
-    // Split endpoints (recommended)
-    START: (appId: string) => `/chat/app/${appId}/stream`,
-    MESSAGES: (taskId: string) => `/chat/task/${taskId}/stream`,
-    CANCEL: (taskId: string) => `/chat/task/${taskId}/cancel`,
+      // Split endpoints (recommended)
+      START: (appId: string) => `/chat/app/${appId}/stream`,
+      MESSAGES: (taskId: string) => `/chat/task/${taskId}/stream`,
+      CANCEL: (taskId: string) => `/chat/task/${taskId}/cancel`,
   },
 
   // 对话管理
   CONVERSATIONS: {
-    LIST: '/conversations/query',
-    CREATE: '/conversations/create',
-    GET: (id: string) => `/conversations/${id}/get`,
-    UPDATE: (id: string) => `/conversations/${id}/update`,
-    DELETE: (id: string) => `/conversations/${id}/delete`,
+      LIST: '/conversations/query',
+      CREATE: '/conversations/create',
+      GET: (id: string) => `/conversations/${id}/get`,
+      UPDATE: (id: string) => `/conversations/${id}/update`,
+      DELETE: (id: string) => `/conversations/${id}/delete`,
   },
 
   // 消息管理
   MESSAGES: {
-    LIST: '/messages/query',
-    CREATE: '/messages/create',
-    GET: (id: string) => `/messages/${id}/get`,
-    UPDATE: (id: string) => `/messages/${id}/update`,
+      LIST: '/messages/query',
+      CREATE: '/messages/create',
+      GET: (id: string) => `/messages/${id}/get`,
+      UPDATE: (id: string) => `/messages/${id}/update`,
   },
 
   // App 管理
   APPS: {
-    TEMPLATES: '/apps/templates/list',
-    LIST: '/apps/list',
-    CREATE: '/apps/create',
-    GET: (appId: string) => `/apps/${appId}/get`,
-    UPDATE: (appId: string) => `/apps/${appId}/update`,
-    DELETE: (appId: string) => `/apps/${appId}/delete`,
-    QUERY: '/apps/query',
+      TEMPLATES: '/apps/templates/list',
+      LIST: '/apps/list',
+      CREATE: '/apps/create',
+      GET: (appId: string) => `/apps/${appId}/get`,
+      UPDATE: (appId: string) => `/apps/${appId}/update`,
+      DELETE: (appId: string) => `/apps/${appId}/delete`,
+      QUERY: '/apps/query',
   },
 
     // Knowledge 管理
@@ -64,5 +64,13 @@ export const API_ENDPOINTS = {
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/document/knowledge/${knowledgeId}`,
         DELETE: (id: string) => `/agents/document/${id}/delete`,
         TASK_STATUS: (taskId: string) => `/agents/document/task/${taskId}/status`,
+        DOWNLOAD: (id: string) => `/agents/document/${id}/download`,
+        PREVIEW: (id: string) => `/agents/document/${id}/preview`,
+    },
+
+    // Context/Chunk 管理
+    CONTEXT: {
+        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/context/knowledge/${knowledgeId}/chunks`,
+        LIST_BY_DOCUMENT: (documentId: string) => `/agents/context/document/${documentId}/chunks`,
     },
 } as const;
