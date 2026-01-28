@@ -40,7 +40,7 @@ class EventConsumer:
             self,
             run_id: UUID | str,
             last_id: str = "$",
-            timeout_ms: int = 30000,
+            timeout_ms: int = 300000,
     ) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events for a specific run.
 
@@ -87,7 +87,7 @@ class EventConsumer:
             self,
             workspace_id: UUID | str,
             last_id: str = "$",
-            timeout_ms: int = 30000,
+            timeout_ms: int = 300000,
     ) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events for a specific workspace.
 
