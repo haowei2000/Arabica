@@ -26,6 +26,11 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from aiwen.routers.test_auth import router as test_auth_router
     from aiwen.routers.user.user_examples import router as user_examples_router
     from aiwen.routers.user.user_management import router as user_management_router
+    # Workspace routers (event-sourced architecture)
+    from aiwen.routers.workspaces.workspace import router as workspace_router
+    from aiwen.routers.workspaces.runs import router as runs_router
+    from aiwen.routers.workspaces.runs import runs_standalone_router
+    from aiwen.routers.workspaces.events import router as events_router
 
     return [
         # Authentication & User Management
@@ -43,6 +48,11 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (context_router, "/api/agent"),
         (document_router, "/api/agent"),
         (messages_router, "/api"),
+        # Workspace System (event-sourced)
+        (workspace_router, "/api"),
+        (runs_router, "/api"),
+        (runs_standalone_router, "/api"),
+        (events_router, "/api"),
     ]
 
 

@@ -70,9 +70,11 @@ dependencies = [
     "pypinyin>=0.55.0",
     "click>=8.1.0",
     "ty>=0.0.7",
+    "pgvector>=0.4.2",
+    "boto3>=1.42.36",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=9.0.1",
     "pytest-asyncio>=0.24.0",
