@@ -48,14 +48,6 @@ class Run(Base):
         comment="工作空间ID",
     )
 
-    # App used for this run
-    app_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("app.id", ondelete="SET NULL"),
-        nullable=False,
-        comment="应用ID",
-    )
-
     # User who initiated the run
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), nullable=False, comment="发起用户ID"
