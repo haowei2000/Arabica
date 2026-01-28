@@ -1,35 +1,34 @@
 import {create} from 'zustand';
-import type {MessageRoleType, SimpleMessage} from '@/types/message';
-import {messageService} from '@/services/messageService';
+import type { MessageRoleType, SimpleMessage } from '@/types/message';
+import { runService } from '@/services/runService';
 
 interface ChatState {
-  currentConversationId: string | null;
+  currentRunId: string | null;
   messages: SimpleMessage[];
   streamingMessage: string;
   isStreaming: boolean;
   isLoadingConversation: boolean;
 
-  setCurrentConversation: (id: string | null) => void;
+  setCurrentRun: (id: string | null) => void;
   setMessages: (messages: SimpleMessage[]) => void;
   addMessage: (message: SimpleMessage) => void;
   updateStreamingMessage: (content: string) => void;
   appendStreamingMessage: (content: string) => void;
   clearStreamingMessage: () => void;
   setIsStreaming: (isStreaming: boolean) => void;
-  loadConversation: (conversationId: string) => Promise<void>;
-  startNewConversation: () => void;
+  loadRun: (runId: string) => Promise<void>;
+  startNewRun: () => void;
   reset: () => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
-  currentConversationId: null,
+  currentRunId: null,
   messages: [],
   streamingMessage: '',
   isStreaming: false,
   isLoadingConversation: false,
 
-  setCurrentConversation: (id) =>
-    set({ currentConversationId: id }),
+  setCurrentRun: (id) => set({ currentRunId: id }),
 
   setMessages: (messages) => set({ messages }),
 
@@ -52,35 +51,20 @@ export const useChatStore = create<ChatState>((set) => ({
   setIsStreaming: (isStreaming) =>
     set({ isStreaming }),
 
-  loadConversation: async (conversationId: string) => {
+  loadRun: async (runId: string) => {
     try {
       set({ isLoadingConversation: true });
 
-        // Fetch messages using message service with conversation_id filter
-        const messagesResponse = await messageService.getMessages({
-            conversation_id: conversationId,
-            page: 1,
-            page_size: 100,
-        });
-
-        // Convert API messages to SimpleMessage format
-        const messages: SimpleMessage[] = [];
-        for (const msg of messagesResponse.items) {
-            // Each message contains a list of message content (user + assistant)
-            if (Array.isArray(msg.message)) {
-                for (const content of msg.message) {
-                    messages.push({
-                        id: `${msg.id}-${content.role}`,
-                        role: content.role as MessageRoleType,
-                        content: content.content || '',
-                        timestamp: new Date(msg.created_at),
-                    });
-                }
-            }
-        }
+      const runState = await runService.getRunState(runId);
+      const messages: SimpleMessage[] = runState.messages.map((msg, index) => ({
+        id: `${runId}-${index}`,
+        role: msg.role as MessageRoleType,
+        content: msg.content || '',
+        timestamp: new Date(msg.timestamp),
+      }));
 
       set({
-        currentConversationId: conversationId,
+        currentRunId: runId,
         messages,
         streamingMessage: '',
         isLoadingConversation: false,
@@ -91,16 +75,16 @@ export const useChatStore = create<ChatState>((set) => ({
     }
   },
 
-  startNewConversation: () =>
+  startNewRun: () =>
     set({
-      currentConversationId: null,
+      currentRunId: null,
       messages: [],
       streamingMessage: '',
     }),
 
   reset: () =>
     set({
-      currentConversationId: null,
+      currentRunId: null,
       messages: [],
       streamingMessage: '',
       isStreaming: false,

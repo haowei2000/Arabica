@@ -19,6 +19,25 @@ export const API_ENDPOINTS = {
       CANCEL: (taskId: string) => `/chat/task/${taskId}/cancel`,
   },
 
+
+  // Workspaces & Runs
+  WORKSPACES: {
+      LIST: '/workspaces',
+      CREATE: '/workspaces',
+      GET: (workspaceId: string) => `/workspaces/${workspaceId}`,
+      UPDATE: (workspaceId: string) => `/workspaces/${workspaceId}`,
+      DELETE: (workspaceId: string) => `/workspaces/${workspaceId}`,
+      RUNS: (workspaceId: string) => `/workspaces/${workspaceId}/runs`,
+      RUN: (workspaceId: string, runId: string) =>
+          `/workspaces/${workspaceId}/runs/${runId}`,
+      RUN_CANCEL: (workspaceId: string, runId: string) =>
+          `/workspaces/${workspaceId}/runs/${runId}/cancel`,
+  },
+  EVENTS: {
+      RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
+      RUN_STATE: (runId: string) => `/runs/${runId}/state`,
+  },
+
   // 对话管理
   CONVERSATIONS: {
       LIST: '/conversations/query',

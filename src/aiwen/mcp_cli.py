@@ -22,6 +22,7 @@ import uvicorn
 from aiwen.config.factory import get_settings
 from aiwen.core.bootstrap import bootstrap_mcp
 from aiwen.extensions.logger import setup_logging
+from aiwen.mcp_router.browser import browser_mcp, shutdown_browser_sessions
 from aiwen.mcp_router.nl2sql import nl2sql_mcp
 
 # 初始化日志
@@ -72,6 +73,7 @@ def _setup_mcp_server() -> FastMCP:
 
     mcp_instance = FastMCP("Aiwen MCP", lifespan=lifespan)
     mcp_instance.mount(nl2sql_mcp)
+    mcp_instance.mount(browser_mcp)
     mcp_instance.add_middleware(SimpleLoggingMiddleware())
     if settings.mcp_cache_enable:
         mcp_instance.add_middleware(_initialize_cache_middleware(settings))
@@ -105,6 +107,10 @@ async def lifespan(app: FastMCP):
                 await bootstrap.cleanup()
             except Exception as e:
                 logger.error(f"⚠️  Error during cleanup: {e}", exc_info=True)
+        try:
+            await shutdown_browser_sessions()
+        except Exception as e:
+            logger.error(f"⚠️  Error during browser cleanup: {e}", exc_info=True)
         logger.info("✅ MCP shutdown complete")
 
 

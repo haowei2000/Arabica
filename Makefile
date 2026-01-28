@@ -71,8 +71,6 @@ db-status: ## 显示迁移状态
 	@echo "$(BLUE)待执行迁移:$(NC)"
 	@uv run alembic history --indicate-current
 
-uv-dev: ## 安装开发依赖
-	uv sync
 
 # ============================================================================
 # 服务启动

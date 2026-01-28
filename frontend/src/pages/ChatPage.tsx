@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import {Menu, Moon, Sun} from 'lucide-react';
+import { Menu, Moon, Sun } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
-import { useAppStore } from '@/stores/useAppStore';
+import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
 import { authService } from '@/services/authService';
@@ -15,37 +15,37 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
-  const { currentAppId, currentAppCode, clearCurrentApp } = useAppStore();
-    const {toggleSidebar, toggleTheme, theme} = useUIStore();
+  const {
+    currentWorkspaceId,
+    currentWorkspaceName,
+    currentWorkspaceAppId,
+    clearCurrentWorkspace,
+  } = useWorkspaceStore();
+  const { toggleSidebar, toggleTheme, theme } = useUIStore();
   const {
     messages,
     streamingMessage,
     isStreaming,
     isLoadingConversation,
-    startNewConversation,
+    startNewRun,
     reset,
   } = useChatStore();
 
-  console.log('🎯 ChatPage render - currentAppId:', currentAppId, 'currentAppCode:', currentAppCode);
-
-  const { sendMessage, stopStreaming } = useStreamingChat(currentAppId || '');
+  const { sendMessage, stopStreaming } = useStreamingChat(
+    currentWorkspaceId || '',
+    currentWorkspaceAppId
+  );
 
   useEffect(() => {
-    console.log('🔍 ChatPage useEffect - checking auth and app');
-
     if (!authService.isAuthenticated()) {
-      console.log('❌ Not authenticated, redirecting to /login');
       navigate('/login');
       return;
     }
 
-    if (!currentAppId) {
-      console.log('❌ No app selected, redirecting to /apps');
-      navigate('/apps');
-    } else {
-      console.log('✅ App selected:', currentAppId);
+    if (!currentWorkspaceId) {
+      navigate('/home');
     }
-  }, [navigate, currentAppId]);
+  }, [navigate, currentWorkspaceId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -53,54 +53,47 @@ export default function ChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('📤 Form submitted');
 
     if (!input.trim() || isStreaming) {
-      console.log('⚠️  Skipping send - empty input or already streaming');
       return;
     }
 
-    if (!currentAppId) {
-      console.error('❌ No app ID, cannot send input');
+    if (!currentWorkspaceId) {
       return;
     }
 
     const message = input.trim();
     setInput('');
-    console.log('📨 Sending input:', message);
-    await sendMessage(message, '新对话');
+    await sendMessage(message);
   };
 
   const handleLogout = () => {
     authService.logout();
     reset();
-    clearCurrentApp();
+    clearCurrentWorkspace();
     navigate('/login');
   };
 
-  const handleBackToApps = () => {
+  const handleBackToHome = () => {
     reset();
-    clearCurrentApp();
-    navigate('/apps');
+    clearCurrentWorkspace();
+    navigate('/home');
   };
 
   const handleNewChat = () => {
-    startNewConversation();
+    startNewRun();
   };
 
-  if (!currentAppId) {
-      return null;
+  if (!currentWorkspaceId) {
+    return null;
   }
 
   return (
-      <div className="flex h-screen bg-navy-50 dark:bg-navy-950">
-      {/* Sidebar */}
-      <Sidebar appId={currentAppId} onNewChat={handleNewChat} />
+    <div className="flex h-screen bg-navy-50 dark:bg-navy-950">
+      <Sidebar workspaceId={currentWorkspaceId} onNewChat={handleNewChat} />
 
-      {/* Main Content */}
       <div className="flex flex-col flex-1">
-        {/* Header */}
-          <header className="bg-white dark:bg-navy-900 border-b border-secondary-200 dark:border-navy-700 px-6 py-4">
+        <header className="bg-white dark:bg-navy-900 border-b border-secondary-200 dark:border-navy-700 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
@@ -111,9 +104,9 @@ export default function ChatPage() {
                 <Menu className="w-6 h-6" />
               </button>
               <button
-                onClick={handleBackToApps}
+                onClick={handleBackToHome}
                 className="text-secondary-600 dark:text-secondary-400 hover:text-navy-900 dark:hover:text-navy-100"
-                title="返回 Apps"
+                title="返回"
               >
                 <svg
                   className="w-6 h-6"
@@ -130,38 +123,41 @@ export default function ChatPage() {
                 </svg>
               </button>
               <div>
-                  <h1 className="text-xl font-semibold text-navy-900 dark:text-navy-100">对话</h1>
-                  <p className="text-sm text-secondary-500 dark:text-secondary-400">App: {currentAppCode}</p>
+                <h1 className="text-xl font-semibold text-navy-900 dark:text-navy-100">
+                  Workspace Chat
+                </h1>
+                <p className="text-sm text-secondary-500 dark:text-secondary-400">
+                  Workspace: {currentWorkspaceName || currentWorkspaceId}
+                </p>
               </div>
             </div>
-              <div className="flex items-center gap-4">
-                  <button
-                      onClick={toggleTheme}
-                      className="p-2 text-secondary-600 dark:text-secondary-400 hover:text-navy-900 dark:hover:text-navy-100 rounded-lg hover:bg-navy-100 dark:hover:bg-navy-800"
-                      title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-                  >
-                      {theme === 'dark' ? <Sun className="w-5 h-5"/> : <Moon className="w-5 h-5"/>}
-                  </button>
-                  <button
-                      onClick={handleLogout}
-                      className="text-sm text-secondary-600 dark:text-secondary-400 hover:text-navy-900 dark:hover:text-navy-100"
-                  >
-                      退出登录
-                  </button>
-              </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={toggleTheme}
+                className="p-2 text-secondary-600 dark:text-secondary-400 hover:text-navy-900 dark:hover:text-navy-100 rounded-lg hover:bg-navy-100 dark:hover:bg-navy-800"
+                title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              >
+                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={handleLogout}
+                className="text-sm text-secondary-600 dark:text-secondary-400 hover:text-navy-900 dark:hover:text-navy-100"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </header>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {isLoadingConversation ? (
             <div className="flex items-center justify-center h-full">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500"></div>
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500"></div>
             </div>
           ) : messages.length === 0 && !streamingMessage ? (
-              <div className="text-center text-secondary-500 dark:text-secondary-400 mt-20">
+            <div className="text-center text-secondary-500 dark:text-secondary-400 mt-20">
               <p className="text-lg">开始新的对话</p>
-              <p className="text-sm mt-2">向 AI 发送消息开始对话</p>
+              <p className="text-sm mt-2">发送消息创建新的 Run</p>
             </div>
           ) : null}
 
@@ -169,14 +165,11 @@ export default function ChatPage() {
             <div
               key={message.id}
               className={`flex gap-3 ${
-                message.role === MessageRole.USER
-                  ? 'justify-end'
-                  : 'justify-start'
+                message.role === MessageRole.USER ? 'justify-end' : 'justify-start'
               }`}
             >
               {message.role === MessageRole.ASSISTANT && (
-                  <div
-                      className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0">
+                <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0">
                   AI
                 </div>
               )}
@@ -184,8 +177,8 @@ export default function ChatPage() {
               <div
                 className={`max-w-2xl rounded-lg px-4 py-3 ${
                   message.role === MessageRole.USER
-                      ? 'bg-primary-500 text-white'
-                      : 'bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700'
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700'
                 }`}
               >
                 {message.role === MessageRole.ASSISTANT ? (
@@ -198,28 +191,24 @@ export default function ChatPage() {
               </div>
 
               {message.role === MessageRole.USER && (
-                  <div
-                      className="w-8 h-8 rounded-full bg-secondary-500 flex items-center justify-center text-white text-sm shrink-0">
+                <div className="w-8 h-8 rounded-full bg-secondary-500 flex items-center justify-center text-white text-sm shrink-0">
                   You
                 </div>
               )}
             </div>
           ))}
 
-          {/* Streaming Message */}
           {isStreaming && streamingMessage && (
             <div className="flex gap-3 justify-start">
-                <div
-                    className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0">
+              <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0">
                 AI
               </div>
-                <div
-                    className="max-w-2xl rounded-lg px-4 py-3 bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700">
+              <div className="max-w-2xl rounded-lg px-4 py-3 bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700">
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <ReactMarkdown>{streamingMessage}</ReactMarkdown>
                 </div>
-                    <div className="flex items-center gap-1 mt-2 text-secondary-400 dark:text-secondary-500">
-                        <span className="w-2 h-2 bg-primary-500 rounded-full animate-pulse"></span>
+                <div className="flex items-center gap-1 mt-2 text-secondary-400 dark:text-secondary-500">
+                  <span className="w-2 h-2 bg-primary-500 rounded-full animate-pulse"></span>
                   <span className="text-xs">正在输入...</span>
                 </div>
               </div>
@@ -229,8 +218,7 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-          <div className="border-t border-secondary-200 dark:border-navy-700 bg-white dark:bg-navy-900 px-6 py-4">
+        <div className="border-t border-secondary-200 dark:border-navy-700 bg-white dark:bg-navy-900 px-6 py-4">
           <form onSubmit={handleSubmit} className="flex gap-3">
             <input
               type="text"

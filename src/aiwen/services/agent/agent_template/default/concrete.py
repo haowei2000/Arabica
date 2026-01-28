@@ -12,11 +12,13 @@ import logging
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessage
 
 from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.agents.input import TextInput
 from aiwen.services.agent.agent_registry import register_agent
 from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.tools import BROWSER_TOOLS
 from .context import get_messages_from_context
 
 logger = logging.getLogger(__name__)
@@ -55,14 +57,23 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         self.model_provider = config.get("model_provider", "tongyi")
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
+        self.enable_browser_tools = config.get("enable_browser_tools", True)
 
         # Initialize LLM
         from aiwen.extensions.llm.llm import get_llm
 
         self.llm = get_llm(self.model_name, self.model_provider)
 
-        # Initialize agent
-        self.agent = create_agent(model=self.llm)
+        # Initialize agent with optional browser tools
+        tools = BROWSER_TOOLS if self.enable_browser_tools else []
+        system_prompt = (
+            "You can use browser tools to interact with websites when needed. "
+            "Launch a session first, reuse the session_id for subsequent actions, "
+            "and close the session when finished."
+        )
+        self.agent = create_agent(
+            model=self.llm, tools=tools, system_prompt=system_prompt
+        )
 
     async def _prepare_messages(self, input_data: TextInput) -> list:
         """
@@ -125,11 +136,12 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
         logger.info(f"Processing input with {len(messages)} total messages in context")
 
-        # Use PostgresSaver for checkpointing
-        # Invoke LLM with full input history
-        response = await self.llm.ainvoke(messages)
-
-        return {"answer": response.content}
+        response = await self.agent.ainvoke({"messages": messages})
+        final_messages = response.get("messages", [])
+        final_text = ""
+        if final_messages and isinstance(final_messages[-1], AIMessage):
+            final_text = final_messages[-1].content or ""
+        return {"answer": final_text}
 
     async def stream(self, input_data: TextInput | dict):
         """

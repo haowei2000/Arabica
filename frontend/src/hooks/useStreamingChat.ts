@@ -1,29 +1,25 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { useChatStore } from '@/stores/useChatStore';
 import { streamService } from '@/services/streamService';
 import { MessageRole } from '@/types/message';
 import { generateUUID } from '@/utils/uuid';
 
-export const useStreamingChat = (appId: string) => {
+export const useStreamingChat = (workspaceId: string, appId?: string | null) => {
   const {
-    currentConversationId,
     addMessage,
     appendStreamingMessage,
     clearStreamingMessage,
     setIsStreaming,
-    setCurrentConversation,
+    setCurrentRun,
   } = useChatStore();
 
-  const conversationIdRef = useRef<string | null>(currentConversationId);
-
   const sendMessage = useCallback(
-    async (content: string, conversationName?: string) => {
-      if (!appId) {
-        console.error('No app selected');
+    async (content: string) => {
+      if (!workspaceId) {
+        console.error('No workspace selected');
         return;
       }
 
-      // 添加用户消息
       const userMessage = {
         id: generateUUID(),
         role: MessageRole.USER,
@@ -32,33 +28,22 @@ export const useStreamingChat = (appId: string) => {
       };
       addMessage(userMessage);
 
-      // 开始流式响应
       setIsStreaming(true);
       clearStreamingMessage();
 
       await streamService.sendStreamingMessage({
-        appId,
-        query: content,
-        conversationId: conversationIdRef.current || undefined,
-        conversationName,
+        workspaceId,
+        appId: appId || undefined,
+        message: content,
+        onRunStart: (runId) => {
+          setCurrentRun(runId);
+        },
         onChunk: (chunk) => {
-          console.log('📨 Received chunk, appending:', chunk);
           appendStreamingMessage(chunk);
         },
-        onComplete: (newConversationId) => {
-          console.log('✅ Stream complete, conversation ID:', newConversationId);
-
-          // 如果是新建对话，更新 conversationId
-          if (newConversationId && !conversationIdRef.current) {
-            conversationIdRef.current = newConversationId;
-            setCurrentConversation(newConversationId);
-          }
-
-          // 获取当前的流式消息内容
+        onComplete: () => {
           const currentStreamingMessage = useChatStore.getState().streamingMessage;
-          console.log('💾 Saving assistant input:', currentStreamingMessage);
 
-          // 保存完整的 AI 消息
           if (currentStreamingMessage) {
             const assistantMessage = {
               id: generateUUID(),
@@ -67,19 +52,15 @@ export const useStreamingChat = (appId: string) => {
               timestamp: new Date(),
             };
             addMessage(assistantMessage);
-          } else {
-            console.warn('⚠️  No streaming input to save!');
           }
 
           clearStreamingMessage();
           setIsStreaming(false);
         },
         onError: (error) => {
-          console.error('Streaming error:', error);
           setIsStreaming(false);
           clearStreamingMessage();
 
-          // 添加错误消息
           const errorMessage = {
             id: generateUUID(),
             role: MessageRole.ASSISTANT,
@@ -91,25 +72,21 @@ export const useStreamingChat = (appId: string) => {
       });
     },
     [
+      workspaceId,
       appId,
       addMessage,
       appendStreamingMessage,
       clearStreamingMessage,
       setIsStreaming,
-      setCurrentConversation,
+      setCurrentRun,
     ]
   );
 
   const stopStreaming = useCallback(async () => {
-    // Abort the stream and cancel the backend task
-    await streamService.abort();
+    await streamService.abort(workspaceId);
     setIsStreaming(false);
-
-    // Clear any partial streaming input
     clearStreamingMessage();
-
-    console.log('🛑 Streaming stopped and task cancelled');
-  }, [setIsStreaming, clearStreamingMessage]);
+  }, [workspaceId, setIsStreaming, clearStreamingMessage]);
 
   return {
     sendMessage,

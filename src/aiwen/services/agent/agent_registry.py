@@ -15,6 +15,18 @@ from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 logger = logging.getLogger(__name__)
 
 
+def _normalize_config(config: dict | object | None) -> dict:
+    if config is None:
+        return {}
+    if hasattr(config, "model_dump"):
+        return config.model_dump()
+    if hasattr(config, "dict"):
+        return config.dict()  # type: ignore[no-any-return]
+    if isinstance(config, dict):
+        return config
+    return {}
+
+
 def register_agent(cls: type[BaseAgentTemplate]) -> type[BaseAgentTemplate]:
     """
     Class decorator to register an agent template.
@@ -141,7 +153,7 @@ class AgentRegistry:
             template = await crud.create_template(
                 template_code=template_code,
                 template_name=template_name,
-                config=config or {},
+                config=_normalize_config(config),
                 enabled=enabled,
                 version=version,
             )
@@ -242,7 +254,7 @@ async def sync_registry_to_database(db_session: AsyncSession) -> None:
                 await crud.create_template(
                     template_code=template_code,
                     template_name=template["template_name"],
-                    config=template.get("config", {}),
+                    config=_normalize_config(template.get("config")),
                     enabled=template.get("enabled", True),
                     version=template.get("version", 1),
                 )
@@ -272,9 +284,7 @@ def _import_all_agents() -> None:
     ensuring their decorators execute and register the classes.
     """
     # Import all agent template modules
-
-    # Future agent can be added here
-    # from aiwen.services.agent.agent_template.custom.concrete import CustomAgentTemplate
+    import aiwen.services.agent.agent_template  # noqa: F401
     logger.info("All agent modules imported")
 
 
@@ -293,12 +303,12 @@ async def init_agent_registry() -> None:
 
     try:
         # Step 1: Import all agent (triggers decorators)
-        logger.info("Importing agent modules...")
+        logger.debug("Importing agent modules...")
         _import_all_agents()
 
         # Step 2: Verify in-memory registration
         registered = AgentRegistry.list()
-        logger.info(f"In-memory registry: {registered}")
+        logger.debug(f"In-memory registry: {registered}")
 
         if not registered:
             logger.warning(
