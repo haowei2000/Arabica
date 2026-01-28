@@ -4,8 +4,8 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 interface WorkspaceState {
   currentWorkspaceId: string | null;
   currentWorkspaceName: string | null;
-  currentWorkspaceAppId: string | null;
-  setCurrentWorkspace: (id: string, name: string, appId?: string | null) => void;
+  currentWorkspaceAgentTemplateId: string | null;
+  setCurrentWorkspace: (id: string, name: string, agentTemplateId?: string | null) => void;
   clearCurrentWorkspace: () => void;
 }
 
@@ -14,13 +14,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     (set) => ({
       currentWorkspaceId: null,
       currentWorkspaceName: null,
-      currentWorkspaceAppId: null,
+      currentWorkspaceAgentTemplateId: null,
 
-      setCurrentWorkspace: (id, name, appId = null) => {
+      setCurrentWorkspace: (id, name, agentTemplateId = null) => {
         set({
           currentWorkspaceId: id,
           currentWorkspaceName: name,
-          currentWorkspaceAppId: appId,
+          currentWorkspaceAgentTemplateId: agentTemplateId,
         });
       },
 
@@ -28,7 +28,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({
           currentWorkspaceId: null,
           currentWorkspaceName: null,
-          currentWorkspaceAppId: null,
+          currentWorkspaceAgentTemplateId: null,
         });
       },
     }),

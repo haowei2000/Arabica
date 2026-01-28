@@ -4,7 +4,7 @@ import { Moon, Sun } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useApps } from '@/hooks/useApps';
+import { useTemplates } from '@/hooks/useApps';
 import { useWorkspaces, useCreateWorkspace } from '@/hooks/useWorkspaces';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 
@@ -22,14 +22,14 @@ export default function HomePage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceDescription, setWorkspaceDescription] = useState('');
-  const [workspaceAppId, setWorkspaceAppId] = useState('');
+  const [workspaceTemplateId, setWorkspaceTemplateId] = useState('');
 
   const navigate = useNavigate();
   const { data: workspacesData, isLoading: workspacesLoading } = useWorkspaces({
     page: 1,
     page_size: 50,
   });
-  const { data: appsData } = useApps({ page: 1, page_size: 100 });
+  const { data: templatesData } = useTemplates();
   const createWorkspaceMutation = useCreateWorkspace();
   const { setCurrentWorkspace } = useWorkspaceStore();
   const { reset: resetChat } = useChatStore();
@@ -41,20 +41,24 @@ export default function HomePage() {
       await createWorkspaceMutation.mutateAsync({
         name: workspaceName,
         description: workspaceDescription || undefined,
-        app_id: workspaceAppId || undefined,
+        agent_template_id: workspaceTemplateId || undefined,
       });
       setShowCreateForm(false);
       setWorkspaceName('');
       setWorkspaceDescription('');
-      setWorkspaceAppId('');
+      setWorkspaceTemplateId('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
-  const handleOpenWorkspace = (workspaceId: string, name: string, appId?: string | null) => {
+  const handleOpenWorkspace = (
+    workspaceId: string,
+    name: string,
+    agentTemplateId?: string | null
+  ) => {
     resetChat();
-    setCurrentWorkspace(workspaceId, name, appId || null);
+    setCurrentWorkspace(workspaceId, name, agentTemplateId || null);
     navigate('/chat');
   };
 
@@ -147,19 +151,19 @@ export default function HomePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-secondary-600 dark:text-secondary-300 mb-1">
-                    Default App (optional)
+                    Default Agent Template (optional)
                   </label>
                   <select
-                    value={workspaceAppId}
-                    onChange={(e) => setWorkspaceAppId(e.target.value)}
+                    value={workspaceTemplateId}
+                    onChange={(e) => setWorkspaceTemplateId(e.target.value)}
                     className="w-full px-3 py-2 border border-secondary-200 dark:border-navy-600 rounded-md
                                bg-white dark:bg-navy-700 text-navy-900 dark:text-navy-100
                                focus:outline-none focus:ring-2 focus:ring-primary-500"
                   >
-                    <option value="">No default app</option>
-                    {appsData?.items?.map((app) => (
-                      <option key={app.id} value={app.id}>
-                        {app.app_code}
+                    <option value="">No default template</option>
+                    {templatesData?.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.template_name}
                       </option>
                     ))}
                   </select>
@@ -172,7 +176,7 @@ export default function HomePage() {
                       setShowCreateForm(false);
                       setWorkspaceName('');
                       setWorkspaceDescription('');
-                      setWorkspaceAppId('');
+                      setWorkspaceTemplateId('');
                     }}
                     className="flex-1 px-4 py-2 border border-secondary-200 dark:border-navy-600
                                text-secondary-600 dark:text-secondary-300 rounded-md
@@ -230,7 +234,11 @@ export default function HomePage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() =>
-                      handleOpenWorkspace(workspace.id, workspace.name, workspace.app_id)
+                      handleOpenWorkspace(
+                        workspace.id,
+                        workspace.name,
+                        workspace.agent_template_id
+                      )
                     }
                     className="flex-1 px-4 py-2 bg-primary-500 text-white text-sm rounded-md hover:bg-primary-600"
                   >

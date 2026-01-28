@@ -262,3 +262,19 @@ class AppCRUD:
         items = list(result.scalars().all())
 
         return items, total
+
+    async def get_latest_app_by_template_and_user(
+            self, agent_template_id: UUID, user_id: UUID
+    ) -> App | None:
+        """Get the most recent app for a template created by a user."""
+        stmt = (
+            select(App)
+            .where(
+                App.agent_template_id == agent_template_id,
+                App.user_id == user_id,
+            )
+            .order_by(App.created_at.desc())
+            .limit(1)
+        )
+        result = await self.db_session.execute(stmt)
+        return result.scalar_one_or_none()

@@ -353,7 +353,7 @@ class ConversationCompat:
 
         # Create legacy message
         message = Message(
-            app_id=str(workspace.app_id) if workspace.app_id else None,
+            app_id=None,
             conversation_id=str(conversation.id),
             query=query,
             answer=answer,

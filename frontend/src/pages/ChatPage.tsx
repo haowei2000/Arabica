@@ -18,7 +18,7 @@ export default function ChatPage() {
   const {
     currentWorkspaceId,
     currentWorkspaceName,
-    currentWorkspaceAppId,
+    currentWorkspaceAgentTemplateId,
     clearCurrentWorkspace,
   } = useWorkspaceStore();
   const { toggleSidebar, toggleTheme, theme } = useUIStore();
@@ -33,7 +33,7 @@ export default function ChatPage() {
 
   const { sendMessage, stopStreaming } = useStreamingChat(
     currentWorkspaceId || '',
-    currentWorkspaceAppId
+    currentWorkspaceAgentTemplateId
   );
 
   useEffect(() => {

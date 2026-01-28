@@ -2,9 +2,11 @@
 """REST API endpoints for run management."""
 
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from aiwen.dependencies.agents import get_app_crud
 from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
     EventPublisherDep,
@@ -22,6 +24,7 @@ from aiwen.schemas.runs.run import (
     RunStartRequest,
     RunStatus,
 )
+from aiwen.services.crud.app_crud import AppCRUD
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 
@@ -36,6 +39,7 @@ async def create_run(
         workspace_crud: WorkspaceCRUDDep,
         run_crud: RunCRUDDep,
         event_publisher: EventPublisherDep,
+        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
 ):
     """
     Create and start a new run with a user message.
@@ -60,12 +64,31 @@ async def create_run(
         )
 
     # Determine app_id
-    app_id = data.app_id or workspace.app_id
+    app_id = data.app_id
     if not app_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No app_id provided and workspace has no default app",
+        template_id = data.agent_template_id or workspace.agent_template_id
+        if not template_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No app_id or agent_template_id provided and workspace has no default template",
+            )
+        try:
+            template_uuid = UUID(str(template_id))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid agent_template_id",
+            ) from e
+        app = await app_crud.get_latest_app_by_template_and_user(
+            agent_template_id=template_uuid,
+            user_id=current_user.id,
         )
+        if not app:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No app found for the provided agent_template_id",
+            )
+        app_id = str(app.id)
 
     # Create run
     run = await run_crud.create(

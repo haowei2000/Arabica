@@ -4,7 +4,10 @@ import { streamService } from '@/services/streamService';
 import { MessageRole } from '@/types/message';
 import { generateUUID } from '@/utils/uuid';
 
-export const useStreamingChat = (workspaceId: string, appId?: string | null) => {
+export const useStreamingChat = (
+  workspaceId: string,
+  agentTemplateId?: string | null
+) => {
   const {
     addMessage,
     appendStreamingMessage,
@@ -33,7 +36,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
 
       await streamService.sendStreamingMessage({
         workspaceId,
-        appId: appId || undefined,
+        agentTemplateId: agentTemplateId || undefined,
         message: content,
         onRunStart: (runId) => {
           setCurrentRun(runId);
@@ -73,7 +76,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     },
     [
       workspaceId,
-      appId,
+      agentTemplateId,
       addMessage,
       appendStreamingMessage,
       clearStreamingMessage,

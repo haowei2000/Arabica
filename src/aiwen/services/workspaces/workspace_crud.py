@@ -50,7 +50,7 @@ class WorkspaceCRUD:
             owner_id: str | UUID,
             name: str,
             description: str | None = None,
-            app_id: str | UUID | None = None,
+            agent_template_id: str | UUID | None = None,
             visibility: str = "private",
             settings: dict[str, Any] | None = None,
             auto_commit: bool = False,
@@ -61,7 +61,7 @@ class WorkspaceCRUD:
             owner_id: ID of the workspace owner
             name: Workspace name
             description: Optional description
-            app_id: Default app ID (optional)
+            agent_template_id: Default agent template ID (optional)
             visibility: Visibility setting (private/team/public)
             settings: Workspace configuration
             auto_commit: If True, immediately commit the transaction
@@ -73,7 +73,7 @@ class WorkspaceCRUD:
             owner_id=normalize_uuid_to_str(owner_id),
             name=name,
             description=description,
-            app_id=normalize_uuid_to_str(app_id) if app_id else None,
+            agent_template_id=normalize_uuid_to_str(agent_template_id) if agent_template_id else None,
             visibility=visibility,
             settings=settings,
         )
@@ -229,7 +229,7 @@ class WorkspaceCRUD:
             user_id: str | UUID,
             name: str | None = None,
             description: str | None = None,
-            app_id: str | UUID | None = None,
+            agent_template_id: str | UUID | None = None,
             visibility: str | None = None,
             is_shared: bool | None = None,
             settings: dict[str, Any] | None = None,
@@ -243,7 +243,7 @@ class WorkspaceCRUD:
             user_id: The user ID (must be owner or admin)
             name: New name (optional)
             description: New description (optional)
-            app_id: New default app ID (optional)
+            agent_template_id: New default agent template ID (optional)
             visibility: New visibility (optional)
             is_shared: New sharing flag (optional)
             settings: New settings (optional)
@@ -266,8 +266,8 @@ class WorkspaceCRUD:
             workspace.name = name
         if description is not None:
             workspace.description = description
-        if app_id is not None:
-            workspace.app_id = normalize_uuid_to_str(app_id) if app_id else None
+        if agent_template_id is not None:
+            workspace.agent_template_id = normalize_uuid_to_str(agent_template_id) if agent_template_id else None
         if visibility is not None:
             workspace.visibility = visibility
         if is_shared is not None:

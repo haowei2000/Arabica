@@ -29,6 +29,7 @@ export interface RunListResponse {
 export interface RunStartRequest {
   message: string;
   app_id?: string;
+  agent_template_id?: string;
   attachments?: Record<string, any>[];
   metadata?: Record<string, any>;
 }

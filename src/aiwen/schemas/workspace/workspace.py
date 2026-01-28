@@ -47,7 +47,7 @@ class WorkspaceCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255, description="工作空间名称")
     description: str | None = Field(None, max_length=1000, description="工作空间描述")
-    app_id: str | UUID | None = Field(None, description="默认应用ID")
+    agent_template_id: str | UUID | None = Field(None, description="??Agent??ID")
     visibility: WorkspaceVisibility = Field(
         WorkspaceVisibility.PRIVATE, description="可见性"
     )
@@ -59,7 +59,7 @@ class WorkspaceUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255, description="工作空间名称")
     description: str | None = Field(None, max_length=1000, description="工作空间描述")
-    app_id: str | UUID | None = Field(None, description="默认应用ID")
+    agent_template_id: str | UUID | None = Field(None, description="??Agent??ID")
     visibility: WorkspaceVisibility | None = Field(None, description="可见性")
     is_shared: bool | None = Field(None, description="是否共享")
     settings: dict[str, Any] | None = Field(None, description="工作空间配置")
@@ -73,7 +73,7 @@ class WorkspaceResponse(BaseModel):
     name: str
     description: str | None = None
     owner_id: str
-    app_id: str | None = None
+    agent_template_id: str | None = None
     visibility: str
     is_shared: bool
     settings: dict[str, Any] | None = None

@@ -3,7 +3,7 @@ export interface Workspace {
   name: string;
   description?: string | null;
   owner_id: string;
-  app_id?: string | null;
+  agent_template_id?: string | null;
   visibility: string;
   is_shared: boolean;
   settings?: Record<string, unknown> | null;
@@ -25,7 +25,7 @@ export interface WorkspaceListResponse {
 export interface WorkspaceCreate {
   name: string;
   description?: string;
-  app_id?: string;
+  agent_template_id?: string;
   visibility?: 'private' | 'team' | 'public';
   settings?: Record<string, unknown>;
 }
