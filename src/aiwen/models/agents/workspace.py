@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import (
+    JSONB,
+    UUID as PGUUID,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aiwen.extensions.database import get_base

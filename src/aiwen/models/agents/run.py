@@ -153,8 +153,6 @@ class Run(Base):
         Index("ix_run_status", "status", "created_at"),
         # Index for user runs
         Index("ix_run_user", "user_id", "created_at"),
-        # Index for app runs
-        Index("ix_run_app", "app_id", "created_at"),
         # Index for parent run lookups
         Index("ix_run_parent", "parent_run_id"),
         # Index for legacy migration

@@ -2,11 +2,9 @@
 """REST API endpoints for run management."""
 
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from aiwen.dependencies.agents import get_app_crud
 from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
     EventPublisherDep,
@@ -24,7 +22,6 @@ from aiwen.schemas.runs.run import (
     RunStartRequest,
     RunStatus,
 )
-from aiwen.services.crud.app_crud import AppCRUD
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 
@@ -39,7 +36,6 @@ async def create_run(
         workspace_crud: WorkspaceCRUDDep,
         run_crud: RunCRUDDep,
         event_publisher: EventPublisherDep,
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
 ):
     """
     Create and start a new run with a user message.
@@ -63,43 +59,24 @@ async def create_run(
             detail=f"Workspace {workspace_id} not found or access denied",
         )
 
-    # Determine app_id
-    app_id = data.app_id
-    if not app_id:
-        template_id = data.agent_template_id or workspace.agent_template_id
-        if not template_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No app_id or agent_template_id provided and workspace has no default template",
-            )
-        try:
-            template_uuid = UUID(str(template_id))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid agent_template_id",
-            ) from e
-        app = await app_crud.get_latest_app_by_template_and_user(
-            agent_template_id=template_uuid,
-            user_id=current_user.id,
+    # Determine agent_template_id
+    template_id = data.agent_template_id or workspace.agent_template_id
+    if not template_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No agent_template_id provided and workspace has no default template",
         )
-        if not app:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No app found for the provided agent_template_id",
-            )
-        app_id = str(app.id)
 
     # Create run
     run = await run_crud.create(
         workspace_id=workspace_id,
-        app_id=app_id,
         user_id=current_user.id,
         trigger_type="user",
         input_data={
             "message": data.message,
             "attachments": data.attachments,
             "metadata": data.metadata,
+            "agent_template_id": str(template_id),
         },
         auto_commit=False,
     )
