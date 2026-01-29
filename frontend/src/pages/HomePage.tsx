@@ -1,65 +1,58 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Moon, Sun } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useTemplates } from '@/hooks/useApps';
-import { useWorkspaces, useCreateWorkspace } from '@/hooks/useWorkspaces';
-import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
+import { useApps, useCreateApp, useTemplates } from '@/hooks/useApps';
+import { useAppStore } from '@/stores/useAppStore';
 
 import KnowledgePage from './context/KnowledgePage';
 import ToolPage from './context/ToolPage';
 import MemoryPage from './context/MemoryPage';
 import SkillPage from './context/SkillPage';
 
-type MainTab = 'workspace' | 'context';
+type MainTab = 'app' | 'context';
 type ContextTab = 'knowledge' | 'tool' | 'memory' | 'skill';
 
 export default function HomePage() {
-  const [mainTab, setMainTab] = useState<MainTab>('workspace');
+  const [mainTab, setMainTab] = useState<MainTab>('app');
   const [contextTab, setContextTab] = useState<ContextTab>('knowledge');
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [workspaceName, setWorkspaceName] = useState('');
-  const [workspaceDescription, setWorkspaceDescription] = useState('');
-  const [workspaceTemplateId, setWorkspaceTemplateId] = useState('');
+  const [showCreateAppForm, setShowCreateAppForm] = useState(false);
+  const [appCode, setAppCode] = useState('');
+  const [templateCode, setTemplateCode] = useState('');
 
   const navigate = useNavigate();
-  const { data: workspacesData, isLoading: workspacesLoading } = useWorkspaces({
+  const { data: appsData, isLoading: appsLoading } = useApps({
     page: 1,
     page_size: 50,
   });
   const { data: templatesData } = useTemplates();
-  const createWorkspaceMutation = useCreateWorkspace();
-  const { setCurrentWorkspace } = useWorkspaceStore();
+  const createAppMutation = useCreateApp();
+  const { setCurrentApp } = useAppStore();
   const { reset: resetChat } = useChatStore();
   const { toggleTheme, theme } = useUIStore();
 
-  const handleCreateWorkspace = async (e: React.FormEvent) => {
+  const handleCreateApp = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createWorkspaceMutation.mutateAsync({
-        name: workspaceName,
-        description: workspaceDescription || undefined,
-        agent_template_id: workspaceTemplateId || undefined,
+      await createAppMutation.mutateAsync({
+        app_code: appCode,
+        agent_template_code: templateCode || undefined,
+        enabled: true,
       });
-      setShowCreateForm(false);
-      setWorkspaceName('');
-      setWorkspaceDescription('');
-      setWorkspaceTemplateId('');
+      setShowCreateAppForm(false);
+      setAppCode('');
+      setTemplateCode('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
-  const handleOpenWorkspace = (
-    workspaceId: string,
-    name: string,
-    agentTemplateId?: string | null
-  ) => {
+  const handleOpenApp = (appId: string, appCodeValue: string) => {
     resetChat();
-    setCurrentWorkspace(workspaceId, name, agentTemplateId || null);
-    navigate('/chat');
+    setCurrentApp(appId, appCodeValue);
+    navigate('/app');
   };
 
   const handleLogout = () => {
@@ -83,8 +76,8 @@ export default function HomePage() {
     }
   };
 
-  const renderWorkspaceContent = () => {
-    if (workspacesLoading) {
+  const renderAppContent = () => {
+    if (appsLoading) {
       return (
         <div className="flex items-center justify-center py-12">
           <div className="text-secondary-500 dark:text-secondary-400">Loading...</div>
@@ -94,38 +87,38 @@ export default function HomePage() {
 
     return (
       <div>
-        <div className="mb-6 flex justify-between items-center">
+        <div className="mb-6 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold text-navy-900 dark:text-navy-100">My Workspaces</h2>
+            <h2 className="text-xl font-bold text-navy-900 dark:text-navy-100">Apps</h2>
             <p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-              Manage runs and conversations in workspaces
+              Create an app and start a workspace
             </p>
           </div>
           <button
-            onClick={() => setShowCreateForm(true)}
+            onClick={() => setShowCreateAppForm(true)}
             className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
           >
-            + Create Workspace
+            + Create App
           </button>
         </div>
 
-        {showCreateForm && (
+        {showCreateAppForm && (
           <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-navy-800 rounded-lg p-6 max-w-md w-full mx-4 border border-secondary-200 dark:border-navy-700">
               <h3 className="text-lg font-semibold mb-4 text-navy-900 dark:text-navy-100">
-                Create New Workspace
+                Create New App
               </h3>
 
-              <form onSubmit={handleCreateWorkspace} className="space-y-4">
+              <form onSubmit={handleCreateApp} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-secondary-600 dark:text-secondary-300 mb-1">
-                    Workspace Name *
+                    App Code *
                   </label>
                   <input
                     type="text"
-                    value={workspaceName}
-                    onChange={(e) => setWorkspaceName(e.target.value)}
-                    placeholder="e.g., team-ai"
+                    value={appCode}
+                    onChange={(e) => setAppCode(e.target.value)}
+                    placeholder="e.g., product-agent"
                     className="w-full px-3 py-2 border border-secondary-200 dark:border-navy-600 rounded-md
                                bg-white dark:bg-navy-700 text-navy-900 dark:text-navy-100
                                placeholder-secondary-400 dark:placeholder-secondary-500
@@ -136,33 +129,18 @@ export default function HomePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-secondary-600 dark:text-secondary-300 mb-1">
-                    Description
-                  </label>
-                  <textarea
-                    value={workspaceDescription}
-                    onChange={(e) => setWorkspaceDescription(e.target.value)}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-secondary-200 dark:border-navy-600 rounded-md
-                               bg-white dark:bg-navy-700 text-navy-900 dark:text-navy-100
-                               placeholder-secondary-400 dark:placeholder-secondary-500
-                               focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-secondary-600 dark:text-secondary-300 mb-1">
-                    Default Agent Template (optional)
+                    Agent Template (optional)
                   </label>
                   <select
-                    value={workspaceTemplateId}
-                    onChange={(e) => setWorkspaceTemplateId(e.target.value)}
+                    value={templateCode}
+                    onChange={(e) => setTemplateCode(e.target.value)}
                     className="w-full px-3 py-2 border border-secondary-200 dark:border-navy-600 rounded-md
                                bg-white dark:bg-navy-700 text-navy-900 dark:text-navy-100
                                focus:outline-none focus:ring-2 focus:ring-primary-500"
                   >
                     <option value="">No default template</option>
                     {templatesData?.map((template) => (
-                      <option key={template.id} value={template.id}>
+                      <option key={template.id} value={template.template_code}>
                         {template.template_name}
                       </option>
                     ))}
@@ -173,10 +151,9 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setShowCreateForm(false);
-                      setWorkspaceName('');
-                      setWorkspaceDescription('');
-                      setWorkspaceTemplateId('');
+                      setShowCreateAppForm(false);
+                      setAppCode('');
+                      setTemplateCode('');
                     }}
                     className="flex-1 px-4 py-2 border border-secondary-200 dark:border-navy-600
                                text-secondary-600 dark:text-secondary-300 rounded-md
@@ -186,11 +163,11 @@ export default function HomePage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={createWorkspaceMutation.isPending}
+                    disabled={createAppMutation.isPending}
                     className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-md
                                hover:bg-primary-600 disabled:opacity-50"
                   >
-                    {createWorkspaceMutation.isPending ? 'Creating...' : 'Create'}
+                    {createAppMutation.isPending ? 'Creating...' : 'Create'}
                   </button>
                 </div>
               </form>
@@ -198,51 +175,42 @@ export default function HomePage() {
           </div>
         )}
 
-        {workspacesData?.items && workspacesData.items.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {workspacesData.items.map((workspace) => (
+        {appsData?.items && appsData.items.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {appsData.items.map((app) => (
               <div
-                key={workspace.id}
+                key={app.id}
                 className="bg-white dark:bg-navy-800 rounded-lg border border-secondary-200 dark:border-navy-700
                            p-6 hover:shadow-lg dark:hover:shadow-navy-900/50 transition-shadow"
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <h3 className="text-lg font-semibold text-navy-900 dark:text-navy-100 mb-1">
-                      {workspace.name}
+                      {app.app_code}
                     </h3>
-                    <span className="inline-block px-2 py-1 text-xs rounded bg-navy-100 dark:bg-navy-700 text-navy-600 dark:text-navy-300">
-                      {workspace.status}
+                    <span
+                      className={`inline-block px-2 py-1 text-xs rounded ${
+                        app.enabled
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                          : 'bg-navy-100 dark:bg-navy-700 text-navy-600 dark:text-navy-300'
+                      }`}
+                    >
+                      {app.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </div>
                 </div>
 
-                {workspace.description && (
-                  <p className="text-sm text-secondary-500 dark:text-secondary-400 mb-3">
-                    {workspace.description}
-                  </p>
-                )}
-
                 <div className="text-sm text-secondary-500 dark:text-secondary-400 mb-4 space-y-1">
-                  <p>Runs: {workspace.run_count}</p>
-                  <p>Members: {workspace.member_count}</p>
-                  <p className="text-xs">
-                    Created: {new Date(workspace.created_at).toLocaleDateString()}
-                  </p>
+                  <p>Version: v{app.version}</p>
+                  <p className="text-xs">Created: {new Date(app.created_at).toLocaleDateString()}</p>
                 </div>
 
                 <div className="flex gap-2">
                   <button
-                    onClick={() =>
-                      handleOpenWorkspace(
-                        workspace.id,
-                        workspace.name,
-                        workspace.agent_template_id
-                      )
-                    }
+                    onClick={() => handleOpenApp(app.id, app.app_code)}
                     className="flex-1 px-4 py-2 bg-primary-500 text-white text-sm rounded-md hover:bg-primary-600"
                   >
-                    Open
+                    Open App
                   </button>
                 </div>
               </div>
@@ -260,17 +228,15 @@ export default function HomePage() {
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-navy-900 dark:text-navy-100 mb-1">
-              No Workspaces Yet
-            </h3>
+            <h3 className="text-lg font-medium text-navy-900 dark:text-navy-100 mb-1">No Apps Yet</h3>
             <p className="text-secondary-500 dark:text-secondary-400 mb-4">
-              Create your first workspace to get started
+              Create your first app to start a workspace
             </p>
             <button
-              onClick={() => setShowCreateForm(true)}
+              onClick={() => setShowCreateAppForm(true)}
               className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600"
             >
-              Create Workspace
+              Create App
             </button>
           </div>
         )}
@@ -282,14 +248,12 @@ export default function HomePage() {
     <div className="min-h-screen bg-navy-50 dark:bg-navy-950">
       <header className="bg-white dark:bg-navy-900 border-b border-secondary-200 dark:border-navy-700 px-6 py-4">
         <div className="flex items-center justify-between max-w-6xl mx-auto">
-          <h1 className="text-xl font-semibold text-navy-900 dark:text-navy-100">
-            AI Agent Platform
-          </h1>
+          <h1 className="text-xl font-semibold text-navy-900 dark:text-navy-100">AI Agent Platform</h1>
           <div className="flex items-center gap-4">
             <button
               onClick={toggleTheme}
               className="p-2 text-secondary-600 dark:text-secondary-400 hover:text-navy-900 dark:hover:text-navy-100 rounded-lg hover:bg-navy-100 dark:hover:bg-navy-800"
-              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
@@ -308,14 +272,14 @@ export default function HomePage() {
           <div className="border-b border-secondary-200 dark:border-navy-700">
             <nav className="-mb-px flex space-x-8">
               <button
-                onClick={() => setMainTab('workspace')}
+                onClick={() => setMainTab('app')}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  mainTab === 'workspace'
+                  mainTab === 'app'
                     ? 'border-primary-500 text-primary-500'
                     : 'border-transparent text-secondary-500 dark:text-secondary-400 hover:text-secondary-700 dark:hover:text-secondary-300 hover:border-secondary-300'
                 }`}
               >
-                Workspaces
+                App
               </button>
               <button
                 onClick={() => setMainTab('context')}
@@ -333,7 +297,7 @@ export default function HomePage() {
 
         {mainTab === 'context' && (
           <div className="mb-6">
-            <div className="flex space-x-4">
+            <div className="flex flex-wrap gap-2">
               {(['knowledge', 'tool', 'memory', 'skill'] as ContextTab[]).map((tab) => (
                 <button
                   key={tab}
@@ -351,7 +315,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {mainTab === 'workspace' ? renderWorkspaceContent() : renderContextContent()}
+        {mainTab === 'app' ? renderAppContent() : renderContextContent()}
       </div>
     </div>
   );

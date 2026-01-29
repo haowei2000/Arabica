@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LoginPage from './pages/LoginPage';
 import ChatPage from './pages/ChatPage';
 import HomePage from './pages/HomePage';
+import AppWorkspacePage from './pages/AppWorkspacePage';
 import DocumentPage from './pages/context/DocumentPage';
 import {useUIStore} from './stores/useUIStore';
 
@@ -32,6 +33,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
             <Route path="/home" element={<HomePage/>}/>
+            <Route path="/app" element={<AppWorkspacePage />} />
           <Route path="/chat" element={<ChatPage />} />
             <Route path="/knowledge/:knowledgeId/documents" element={<DocumentPage/>}/>
             <Route path="/" element={<Navigate to="/home" replace/>}/>

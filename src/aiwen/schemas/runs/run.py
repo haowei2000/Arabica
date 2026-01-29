@@ -33,7 +33,8 @@ class RunCreate(BaseModel):
     """Schema for creating a new run."""
 
     workspace_id: str | UUID = Field(..., description="工作空间ID")
-    agent_template_id: str | UUID | None = Field(None, description="Default agent template ID")
+    app_id: str | UUID = Field(..., description="应用ID")
+    agent_template_id: str | UUID | None = Field(None, description="Agent??ID(??????????)")
     parent_run_id: str | UUID | None = Field(None, description="父运行ID")
     trigger_type: TriggerType = Field(TriggerType.USER, description="触发类型")
     input_data: dict[str, Any] | None = Field(None, description="初始输入数据")
@@ -54,6 +55,7 @@ class RunResponse(BaseModel):
 
     id: str
     workspace_id: str
+    app_id: str
     user_id: str
     parent_run_id: str | None = None
     status: str
@@ -102,7 +104,8 @@ class RunStartRequest(BaseModel):
     """Schema for starting a new run with a user message."""
 
     message: str = Field(..., description="用户消息")
-    agent_template_id: str | UUID | None = Field(None, description="Default agent template ID")
+    app_id: str | UUID | None = Field(None, description="应用ID(可选,使用工作空间默认)")
+    agent_template_id: str | UUID | None = Field(None, description="Agent??ID(??????????)")
     attachments: list[dict[str, Any]] | None = Field(None, description="附件")
     metadata: dict[str, Any] | None = Field(None, description="元数据")
 

@@ -41,6 +41,7 @@ class RunCRUD:
     async def create(
             self,
             workspace_id: str | UUID,
+            app_id: str | UUID,
             user_id: str | UUID,
             parent_run_id: str | UUID | None = None,
             trigger_type: str = "user",
@@ -51,6 +52,7 @@ class RunCRUD:
 
         Args:
             workspace_id: Workspace ID
+            app_id: App ID
             user_id: User ID who initiated
             parent_run_id: Parent run ID (for nested runs)
             trigger_type: Trigger type (user/tool_callback/agent/system)
@@ -62,6 +64,7 @@ class RunCRUD:
         """
         run = Run(
             workspace_id=normalize_uuid_to_str(workspace_id),
+            app_id=normalize_uuid_to_str(app_id),
             user_id=normalize_uuid_to_str(user_id),
             parent_run_id=normalize_uuid_to_str(parent_run_id) if parent_run_id else None,
             trigger_type=trigger_type,
