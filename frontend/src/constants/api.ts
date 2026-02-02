@@ -70,26 +70,26 @@ export const API_ENDPOINTS = {
     KNOWLEDGE: {
         LIST: '/agent/knowledge/query',
         CREATE: '/agent/knowledge/create',
-        GET: (id: string) => `/agents/knowledge/${id}/get`,
-        UPDATE: (id: string) => `/agents/knowledge/${id}/update`,
-        DELETE: (id: string) => `/agents/knowledge/${id}/delete`,
+        GET: (id: string) => `/agent/knowledge/${id}/get`,
+        UPDATE: (id: string) => `/agent/knowledge/${id}/update`,
+        DELETE: (id: string) => `/agent/knowledge/${id}/delete`,
         SEARCH: '/agent/knowledge/search',
     },
 
     // Document 管理
     DOCUMENT: {
         UPLOAD: '/agent/document/upload',
-        GET: (id: string) => `/agents/document/${id}`,
-        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/document/knowledge/${knowledgeId}`,
-        DELETE: (id: string) => `/agents/document/${id}/delete`,
-        TASK_STATUS: (taskId: string) => `/agents/document/task/${taskId}/status`,
-        DOWNLOAD: (id: string) => `/agents/document/${id}/download`,
-        PREVIEW: (id: string) => `/agents/document/${id}/preview`,
+        GET: (id: string) => `/agent/document/${id}`,
+        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/document/knowledge/${knowledgeId}`,
+        DELETE: (id: string) => `/agent/document/${id}/delete`,
+        TASK_STATUS: (taskId: string) => `/agent/document/task/${taskId}/status`,
+        DOWNLOAD: (id: string) => `/agent/document/${id}/download`,
+        PREVIEW: (id: string) => `/agent/document/${id}/preview`,
     },
 
     // Context/Chunk 管理
     CONTEXT: {
-        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agents/context/knowledge/${knowledgeId}/chunks`,
-        LIST_BY_DOCUMENT: (documentId: string) => `/agents/context/document/${documentId}/chunks`,
+        LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/context/knowledge/${knowledgeId}/chunks`,
+        LIST_BY_DOCUMENT: (documentId: string) => `/agent/context/document/${documentId}/chunks`,
     },
 } as const;
