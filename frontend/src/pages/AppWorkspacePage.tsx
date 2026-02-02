@@ -6,7 +6,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useAppStore } from '@/stores/useAppStore';
-import { useApp, useTemplates } from '@/hooks/useApps';
+import { useApp } from '@/hooks/useApps';
 import { useWorkspaces, useCreateWorkspace } from '@/hooks/useWorkspaces';
 import WorkspaceConsole from '@/components/WorkspaceConsole';
 
@@ -14,7 +14,6 @@ export default function AppWorkspacePage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceDescription, setWorkspaceDescription] = useState('');
-  const [workspaceTemplateId, setWorkspaceTemplateId] = useState('');
   const [historyOpen, setHistoryOpen] = useState(true);
 
   const navigate = useNavigate();
@@ -24,7 +23,6 @@ export default function AppWorkspacePage() {
     page: 1,
     page_size: 50,
   });
-  const { data: templatesData } = useTemplates();
   const createWorkspaceMutation = useCreateWorkspace();
   const { currentWorkspaceId, setCurrentWorkspace, clearCurrentWorkspace } = useWorkspaceStore();
   const { reset: resetChat } = useChatStore();
@@ -41,24 +39,17 @@ export default function AppWorkspacePage() {
     }
   }, [navigate, currentAppId]);
 
-  useEffect(() => {
-    if (appData?.agent_template_id && !workspaceTemplateId) {
-      setWorkspaceTemplateId(appData.agent_template_id);
-    }
-  }, [appData?.agent_template_id, workspaceTemplateId]);
-
   const handleCreateWorkspace = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await createWorkspaceMutation.mutateAsync({
         name: workspaceName,
         description: workspaceDescription || undefined,
-        agent_template_id: workspaceTemplateId || undefined,
+        app_id: currentAppId || undefined,
       });
       setShowCreateForm(false);
       setWorkspaceName('');
       setWorkspaceDescription('');
-      setWorkspaceTemplateId('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -67,10 +58,10 @@ export default function AppWorkspacePage() {
   const handleOpenWorkspace = (
     workspaceId: string,
     name: string,
-    agentTemplateId?: string | null
+    appId?: string | null
   ) => {
     resetChat();
-    setCurrentWorkspace(workspaceId, name, agentTemplateId || null);
+    setCurrentWorkspace(workspaceId, name, appId || null);
   };
 
   const handleBackToHome = () => {
@@ -106,9 +97,9 @@ export default function AppWorkspacePage() {
             <h1 className="text-xl font-semibold text-navy-900 dark:text-navy-100 mt-1">
               {currentAppCode || 'App'} Workspace
             </h1>
-            {appData?.agent_template_id && (
+            {currentAppId && (
               <p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-                Default template: {appData.agent_template_id}
+                App ID: {currentAppId}
               </p>
             )}
           </div>
@@ -177,7 +168,7 @@ export default function AppWorkspacePage() {
                         handleOpenWorkspace(
                           workspace.id,
                           workspace.name,
-                          workspace.agent_template_id
+                          workspace.app_id
                         )
                       }
                       className={`w-full text-left px-3 py-3 rounded-lg border transition-colors ${
@@ -281,26 +272,6 @@ export default function AppWorkspacePage() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-secondary-600 dark:text-secondary-300 mb-1">
-                  Agent Template (optional)
-                </label>
-                <select
-                  value={workspaceTemplateId}
-                  onChange={(e) => setWorkspaceTemplateId(e.target.value)}
-                  className="w-full px-3 py-2 border border-secondary-200 dark:border-navy-600 rounded-md
-                             bg-white dark:bg-navy-700 text-navy-900 dark:text-navy-100
-                             focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="">No default template</option>
-                  {templatesData?.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.template_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
@@ -308,7 +279,6 @@ export default function AppWorkspacePage() {
                     setShowCreateForm(false);
                     setWorkspaceName('');
                     setWorkspaceDescription('');
-                    setWorkspaceTemplateId('');
                   }}
                   className="flex-1 px-4 py-2 border border-secondary-200 dark:border-navy-600
                              text-secondary-600 dark:text-secondary-300 rounded-md

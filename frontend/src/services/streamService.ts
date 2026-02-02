@@ -2,7 +2,7 @@ import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
 
 export interface StreamOptions {
   workspaceId: string;
-  agentTemplateId?: string;
+  appId?: string;
   message: string;
   onRunStart: (runId: string) => void;
   onChunk: (content: string) => void;
@@ -22,7 +22,7 @@ class StreamService {
   private currentRunId: string | null = null;
 
   async sendStreamingMessage(options: StreamOptions): Promise<void> {
-    const { workspaceId, agentTemplateId, message, onChunk, onComplete, onError } = options;
+    const { workspaceId, appId, message, onChunk, onComplete, onError } = options;
     const token = localStorage.getItem('access_token');
 
     try {
@@ -36,7 +36,7 @@ class StreamService {
           },
           body: JSON.stringify({
             message,
-            agent_template_id: agentTemplateId,
+            app_id: appId,
           }),
         }
       );

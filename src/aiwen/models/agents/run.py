@@ -48,6 +48,14 @@ class Run(Base):
         comment="工作空间ID",
     )
 
+    # App reference
+    app_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="应用ID",
+    )
+
     # User who initiated the run
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), nullable=False, comment="发起用户ID"
@@ -141,6 +149,8 @@ class Run(Base):
     __table_args__ = (
         # Index for workspace runs
         Index("ix_run_workspace", "workspace_id", "created_at"),
+        # Index for app runs
+        Index("ix_run_app", "app_id", "created_at"),
         # Index for status queries
         Index("ix_run_status", "status", "created_at"),
         # Index for user runs

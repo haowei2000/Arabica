@@ -1,6 +1,7 @@
 export interface Run {
   id: string;
   workspace_id: string;
+  app_id: string;
   user_id: string;
   parent_run_id?: string | null;
   status: string;
@@ -27,7 +28,7 @@ export interface RunListResponse {
 
 export interface RunStartRequest {
   message: string;
-  agent_template_id?: string;
+  app_id?: string;
   attachments?: Record<string, any>[];
   metadata?: Record<string, any>;
 }

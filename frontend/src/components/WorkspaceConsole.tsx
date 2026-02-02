@@ -21,7 +21,7 @@ export default function WorkspaceConsole() {
   const [contextTab, setContextTab] = useState<ContextTab>('knowledge');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { currentWorkspaceId, currentWorkspaceAgentTemplateId } = useWorkspaceStore();
+  const { currentWorkspaceId, currentWorkspaceAppId } = useWorkspaceStore();
   const {
     currentRunId,
     messages,
@@ -39,7 +39,7 @@ export default function WorkspaceConsole() {
 
   const { sendMessage, stopStreaming } = useStreamingChat(
     currentWorkspaceId || '',
-    currentWorkspaceAgentTemplateId
+    currentWorkspaceAppId
   );
 
   useEffect(() => {

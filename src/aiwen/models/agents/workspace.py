@@ -48,12 +48,12 @@ class Workspace(Base):
         PGUUID(as_uuid=True), nullable=False, comment="所有者用户ID"
     )
 
-    # Default agent template (optional)
-    agent_template_id: Mapped[UUID | None] = mapped_column(
+    # Default app (optional)
+    app_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("agent_template.id", ondelete="SET NULL"),
+        ForeignKey("app.id", ondelete="SET NULL"),
         nullable=True,
-        comment="???Agent???ID",
+        comment="默认应用ID",
     )
 
     # Visibility and sharing

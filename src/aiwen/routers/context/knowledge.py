@@ -24,7 +24,7 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 async def create_knowledge(
         data: KnowledgeCreate,
         current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+        crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
 ):
     """
     Create a new knowledge base.
