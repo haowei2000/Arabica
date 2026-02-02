@@ -4,11 +4,12 @@ import logging
 from uuid import UUID
 
 import redis.asyncio as redis_async
-from aiwen.services.workspace.workspace import WorkspaceManager
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.models.agents.run import Run
 from aiwen.services.agent.agent_registry import AgentRegistry
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.base import Executor
 from aiwen.services.agent.runtime import AgentRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
@@ -24,7 +25,7 @@ class Worker:
         self.redis = redis_client
         self.db = db
         self.runtime = AgentRuntime()  # 管理活跃 Executor 实例
-        self.workspace = WorkspaceManager()  # 管理 workspace 上下文
+        # self.workspace = WorkspaceManager()  # 管理 workspace 上下文 - 当前未实现
         self.state_machine = RunStateMachine(db, redis_client)
 
     async def start(self, stream_name: str):
@@ -58,7 +59,7 @@ class Worker:
                 raise ValueError(f"Executor '{executor_code}' not registered")
 
             # 创建 agent 实例
-            executor: BaseAgentTemplate = executor_cls(run_id, self.db, self.redis, self.workspace)
+            executor: Executor = executor_cls(run_id, self.db, self.redis, None)  # 传入 None 替代未实现的 workspace
 
             # 附加到 runtime
             self.runtime.attach(run_id, executor)
@@ -66,7 +67,7 @@ class Worker:
             # 根据 Run 状态决定行为
             async with self.db.begin():
                 stmt_run = await self.state_machine.db.execute(
-                    f"SELECT * FROM run WHERE id='{run_id}'"
+                    select(Run).where(Run.id == str(run_id))
                 )
                 run = stmt_run.scalar_one_or_none()
                 if not run:
@@ -95,7 +96,7 @@ class Worker:
             except Exception:
                 pass
 
-    async def _execute_run(self, executor: BaseAgentTemplate, input_data: dict, run_id: UUID):
+    async def _execute_run(self, executor: Executor, input_data: dict, run_id: UUID):
         """
         核心执行流程，支持 token 流式输出、工具等待、取消。
         """
@@ -103,20 +104,22 @@ class Worker:
             # 流式输出
             async for token in executor.stream(input_data):
                 # token 发布事件
-                await self._publish_token(run_id, token)
+                await self._publish_token(run_id, {"type": "chunk", "data": token})
 
                 # 增量 push workspace 上下文
-                await self.workspace.push(run_id, token)
+                # await self.workspace.push(run_id, token)  # 当前未实现此功能
 
                 # 检查 run 状态是否被 cancel
-                run = await self.state_machine.db.get(executor.run_model_cls, run_id)
-                if run.status == RunStatus.CANCELLED.value:
+                # 由于使用的是SQLAlchemy异步会话，我们需要通过查询获取最新的run状态
+                result = await self.state_machine.db.execute(select(Run).where(Run.id == str(run_id)))
+                run = result.scalar_one_or_none()
+                if run and run.status == RunStatus.CANCELLED.value:
                     logger.info(f"Run {run_id} cancelled, stopping agent")
                     await executor.cancel()
                     return
 
             # 执行完成
-            await self.state_machine.complete(run_id, output_data=executor.get_final_output())
+            await self.state_machine.complete(run_id, output_data={"output": "Run completed"})
             logger.info(f"Run {run_id} completed")
 
         except executor.WaitingForTool as e:

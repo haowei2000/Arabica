@@ -28,7 +28,7 @@ import sys
 # 不需要在这里调用 load_dotenv()
 from aiwen.core.bootstrap import bootstrap_worker
 from aiwen.extensions.database import get_session
-from aiwen.workers.task_worker import start_worker
+from aiwen.workers.event_worker import Worker
 
 logger = logging.getLogger(__name__)
 

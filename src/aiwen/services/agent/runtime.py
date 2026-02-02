@@ -23,17 +23,17 @@
 # aiwen/services/agent/runtime.py
 from uuid import UUID
 
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.base import Executor
 
 
 class AgentRuntime:
     def __init__(self):
-        self._instances: dict[UUID, BaseAgentTemplate] = {}
+        self._instances: dict[UUID, Executor] = {}
 
-    def attach(self, task_id: UUID, agent: BaseAgentTemplate):
+    def attach(self, task_id: UUID, agent: Executor):
         self._instances[task_id] = agent
 
-    def get(self, task_id: UUID) -> BaseAgentTemplate:
+    def get(self, task_id: UUID) -> Executor:
         return self._instances[task_id]
 
     def release(self, task_id: UUID):

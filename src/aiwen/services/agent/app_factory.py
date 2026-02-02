@@ -26,7 +26,7 @@
 from typing import Any, Dict
 
 from aiwen.services.agent.agent_registry import AgentRegistry
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.base import Executor
 
 
 class AppAgentFactory:
@@ -57,7 +57,7 @@ class AppAgentFactory:
         # 启动时校验一次，失败即是配置错误
         self._agent_cls = AgentRegistry.get(template_code)
 
-    def create(self, payload: dict[str, Any]) -> BaseAgentTemplate:
+    def create(self, payload: dict[str, Any]) -> Executor:
         """
         为单个任务创建代理实例
 
@@ -67,7 +67,7 @@ class AppAgentFactory:
             payload (Dict[str, Any]): 任务特定的配置参数，将与应用默认配置合并
 
         Returns:
-            BaseAgentTemplate: 创建的代理实例
+            Executor: 创建的代理实例
         """
         config = {
             "appid": self.appid,

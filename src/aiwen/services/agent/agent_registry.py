@@ -9,7 +9,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.agent_template import AgentTemplate
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.base import Executor
 from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ def _normalize_config(config: dict | object | None) -> dict:
     return {}
 
 
-def register_agent(cls: type[BaseAgentTemplate]) -> type[BaseAgentTemplate]:
+def register_agent(cls: type[Executor]) -> type[Executor]:
     """
     Class decorator to register an agent template.
 
@@ -38,7 +38,7 @@ def register_agent(cls: type[BaseAgentTemplate]) -> type[BaseAgentTemplate]:
 
     Usage:
         @register_agent
-        class MyAgentTemplate(BaseAgentTemplate):
+        class MyAgentTemplate(Executor):
             TEMPLATE = {
                 "template_code": "MY001",
                 "template_name": "My Agent",
@@ -105,14 +105,14 @@ class AgentRegistry:
     and ensures templates are persisted in the database.
     """
 
-    _registry: dict[str, type[BaseAgentTemplate]] = {}
+    _registry: dict[str, type[Executor]] = {}
 
     @classmethod
     async def register(
         cls,
         template_code: str,
         template_name: str,
-        agent_cls: type[BaseAgentTemplate],
+        agent_cls: type[Executor],
         db_session: AsyncSession,
             config: dict | None = None,
         enabled: bool = True,
@@ -124,7 +124,7 @@ class AgentRegistry:
         Args:
             template_code: Unique identifier for the template
             template_name: Human-readable name for the template
-            agent_cls: The agent class implementing BaseAgentTemplate
+            agent_cls: The agent class implementing Executor
             db_session: Database session for persistence
             config: Optional configuration dictionary
             enabled: Whether the template is enabled
@@ -167,7 +167,7 @@ class AgentRegistry:
         return existing
 
     @classmethod
-    def get(cls, template_code: str) -> type[BaseAgentTemplate]:
+    def get(cls, template_code: str) -> type[Executor]:
         """
         Get an agent class by template code.
 

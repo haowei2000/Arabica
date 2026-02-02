@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
 
-class BaseAgentTemplate(ABC):
+class Executor(ABC):
     """Base class for all agent in the system."""
 
     # Template metadata - must be defined by subclasses
