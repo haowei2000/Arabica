@@ -5,7 +5,7 @@
     <scripts>
       <script value="dev" />
     </scripts>
-    <node-interpreter value="project" />
+    <node-interpreter value="node" />
     <envs>
       <env name="http_proxy" value="" />
       <env name="https_proxy" value="" />

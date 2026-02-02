@@ -15,7 +15,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         List of tuples (router, prefix)
     """
     from aiwen.routers.agents.app import router as agents_router
-    from aiwen.routers.agents.chat import router as chat_router
+    from aiwen.routers.streaming import router as streaming_router
     from aiwen.routers.agents.conversations import router as conversations_router
     from aiwen.routers.context.knowledge import router as knowledge_router
     from aiwen.routers.agents.messages import router as messages_router
@@ -30,7 +30,6 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from aiwen.routers.workspaces.workspace import router as workspace_router
     from aiwen.routers.workspaces.runs import router as runs_router
     from aiwen.routers.workspaces.runs import runs_standalone_router
-    from aiwen.routers.workspaces.events import router as events_router
 
     return [
         # Authentication & User Management
@@ -42,7 +41,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (flush_redis_router, "/api"),
         # Agent System
         (agents_router, "/api"),
-        (chat_router, "/api"),
+        (streaming_router, "/api"),
         (conversations_router, "/api"),
         (knowledge_router, "/api/agent"),
         (context_router, "/api/agent"),
@@ -52,7 +51,6 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (workspace_router, "/api"),
         (runs_router, "/api"),
         (runs_standalone_router, "/api"),
-        (events_router, "/api"),
     ]
 
 
