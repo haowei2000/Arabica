@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruff check:*)",
+      "Bash(python -c:*)",
+      "Bash(uv run alembic upgrade:*)",
+      "Bash(uv run alembic:*)",
+      "Bash(uv run python:*)",
+      "Bash(find:*)",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0, ''C:\\\\Users\\\\whw\\\\PycharmProjects\\\\agent_chat\\\\src''\\); from aiwen.services.agent.base import BaseAgentTemplate\")",
+      "Bash(uv run ruff check:*)",
+      "Bash(uv run ruff format:*)",
+      "Bash(npx tsc:*)"
+    ]
+  },
+  "outputStyle": "Explanatory"
+}

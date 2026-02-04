@@ -1,9 +1,11 @@
 # aiwen/routers/workspaces/runs.py
 """REST API endpoints for run management."""
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 
 from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
@@ -12,6 +14,8 @@ from aiwen.dependencies.workspace import (
     RunStateMachineDep,
     WorkspaceCRUDDep,
 )
+from aiwen.models.agents.agent_template import AgentTemplate
+from aiwen.models.agents.app import App
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventType
 from aiwen.schemas.runs.run import (
@@ -35,6 +39,7 @@ async def create_run(
         workspace_crud: WorkspaceCRUDDep,
         run_crud: RunCRUDDep,
         event_publisher: EventPublisherDep,
+        state_machine: RunStateMachineDep,
 ):
     """
     Create and start a new run with a user message.
@@ -92,6 +97,37 @@ async def create_run(
         },
         auto_commit=True,
     )
+
+    # ── trigger the worker ──────────────────────────────────
+    # Resolve executor_code from the app's linked agent template so the
+    # worker knows which Executor class to instantiate.
+    if state_machine.redis:
+        executor_code = "DEFAULT001"  # safe fallback
+        app_result = await state_machine.db.execute(
+            select(App).where(App.id == app_id)
+        )
+        app_row = app_result.scalar_one_or_none()
+        if app_row and app_row.agent_template_id:
+            tmpl_result = await state_machine.db.execute(
+                select(AgentTemplate).where(
+                    AgentTemplate.id == app_row.agent_template_id
+                )
+            )
+            tmpl = tmpl_result.scalar_one_or_none()
+            if tmpl:
+                executor_code = tmpl.template_code
+
+        from aiwen.workers.event_worker import AGENT_WORKER_STREAM
+
+        await state_machine.redis.xadd(
+            AGENT_WORKER_STREAM,
+            fields={
+                "run_id": str(run.id),
+                "executor_code": executor_code,
+                "input": json.dumps(run.input_data or {}),
+                "triggered_by": "user",
+            },
+        )
 
     return run
 
@@ -327,21 +363,39 @@ async def resume_run(
             detail=f"Run is not in waiting state (current: {run.status})",
         )
 
-    # Publish tool result event if provided
-    if data.tool_result:
-        await event_publisher.publish(
-            event_type=EventType.TOOL_RESULT,
-            workspace_id=workspace_id,
-            run_id=run_id,
-            user_id=str(current_user.id),
-            payload={
-                "result": data.tool_result,
+    # Read waiting_for BEFORE resume_from_tool clears it – we need
+    # executor_code to re-trigger the worker on the correct stream.
+    waiting_info = run.waiting_for or {}
+    executor_code = waiting_info.get("executor_code", "DEFAULT001")
+
+    # ── store approval for the worker ──────────────────────────
+    if state_machine.redis:
+        await state_machine.redis.set(
+            f"run:{run_id}:resume_approval",
+            json.dumps({
                 "approval": data.approval,
-            },
-            auto_commit=False,
+                "tool_result": data.tool_result,
+                "user_input": data.user_input,
+            }),
+            ex=300,  # 5-minute TTL – worker consumes almost instantly
         )
 
-    # Resume the run
+    # Publish tool-result event into the run's event log
+    await event_publisher.publish(
+        event_type=EventType.TOOL_RESULT,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        user_id=str(current_user.id),
+        payload={
+            "tool_name": waiting_info.get("tool_name", "unknown"),
+            "tool_id": waiting_info.get("tool_id", "unknown"),
+            "result": data.tool_result,
+            "success": data.approval if data.approval is not None else True,
+        },
+        auto_commit=False,
+    )
+
+    # Resume the run (waiting → running)
     try:
         run = await state_machine.resume_from_tool(
             run_id=run_id,
@@ -351,6 +405,22 @@ async def resume_run(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        )
+
+    # ── re-trigger the worker ──────────────────────────────────
+    # Push onto the same Redis stream the worker polls so it picks
+    # up the resumed run and calls stream() with the approval data.
+    if state_machine.redis:
+        from aiwen.workers.event_worker import AGENT_WORKER_STREAM
+
+        await state_machine.redis.xadd(
+            AGENT_WORKER_STREAM,
+            fields={
+                "run_id": run_id,
+                "executor_code": executor_code,
+                "input": json.dumps(run.input_data or {}),
+                "triggered_by": "resume",
+            },
         )
 
     return run

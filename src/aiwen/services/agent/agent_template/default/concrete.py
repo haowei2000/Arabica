@@ -1,70 +1,77 @@
 #!/usr/bin/env python3
+"""Default Agent Template – conversation context + structured event stream.
+
+Streaming event map (LangGraph ``astream_events`` → project schema):
+    on_chat_model_stream  →  AGENT_THINKING  (while inside a <think> block)
+                          →  AGENT_TOKEN     (normal response text)
+    on_chat_model_end     →  AGENT_MESSAGE   (final response only; skipped on
+                                              intermediate tool-call steps)
+    on_tool_start         →  TOOL_CALL
+    on_tool_end           →  TOOL_RESULT
+    on_tool_error         →  TOOL_ERROR
+
+默认Agent模版，支持会话上下文和结构化事件流。
 """
-Default Agent Template with Conversation Context
 
-Provides a default agent implementation with short-term conversation context
-loaded from database conversation and input tables.
-
-默认Agent模版，支持从数据库加载短期会话级上下文
-"""
-
+from collections.abc import AsyncGenerator
 import logging
-from typing import Any
+import time
+from typing import Any, ClassVar
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage
+from langchain_core.messages import (
+    AIMessage,
+    ToolMessage,
+    messages_from_dicts,
+    messages_to_dict,
+)
 
 from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.agents.input import TextInput
 from aiwen.services.agent.agent_registry import register_agent
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.base import AgentEvent, BaseAgentTemplate, WaitingForTool
 from aiwen.services.agent.tools import BROWSER_TOOLS
+
 from .context import get_messages_from_context
 
 logger = logging.getLogger(__name__)
 
+# Characters needed to rule out a ``<think>`` opening tag.
+_THINK_TAG = "<think>"
+_THINK_TAG_LEN = len(_THINK_TAG)  # 7
+_THINK_CLOSE = "</think>"
+
 
 @register_agent
 class DefaultAgentTemplate(BaseAgentTemplate):
-    """
-    Default agent with conversation context support.
+    """Default agent with conversation context and structured event streaming.
 
-    This agent loads conversation history from the database and includes it
-    in the context when processing new messages.
-
-    默认Agent，支持从数据库加载对话历史作为上下文。
+    默认Agent，支持对话历史和结构化事件流。
     """
 
-    TEMPLATE = {
+    TEMPLATE: ClassVar[dict[str, Any]] = {
         "template_code": "DEFAULT001",
         "template_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,
-        "config": AppConfig(model=Model(provider="tongyi", name="qwen-plus"), context=None)
+        "config": AppConfig(
+            model=Model(provider="tongyi", name="qwen-plus"), context=None
+        ),
     }
 
     def __init__(self, config: dict):
-        """
-        Initialize the agent with configuration.
-
-        Args:
-            config: Configuration dictionary for the agent
-                - model_provider: LLM provider (default: "ollama")
-                - model_name: Model name (default: "qwen3:30b")
-                - max_history_messages: Max messages to load from history (default: 20)
-        """
         super().__init__(config)
         self.model_provider = config.get("model_provider", "tongyi")
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
         self.enable_browser_tools = config.get("enable_browser_tools", True)
+        # Tools in this list pause the run and ask the user before executing.
+        self.approval_tools: list[str] = config.get("approval_tools", [])
 
-        # Initialize LLM
         from aiwen.extensions.llm.llm import get_llm
 
         self.llm = get_llm(self.model_name, self.model_provider)
 
-        # Initialize agent with optional browser tools
         tools = BROWSER_TOOLS if self.enable_browser_tools else []
         system_prompt = (
             "You can use browser tools to interact with websites when needed. "
@@ -75,67 +82,58 @@ class DefaultAgentTemplate(BaseAgentTemplate):
             model=self.llm, tools=tools, system_prompt=system_prompt
         )
 
-    async def _prepare_messages(self, input_data: TextInput) -> list:
-        """
-        Prepare messages including conversation history.
+    # ── context ──────────────────────────────────────────────────
 
-        Loads historical messages from database if conversation_id is provided,
-        then appends the current user input.
-
-        Args:
-            input_data: Input input with optional conversation_id
-
-        Returns:
-            List of input dictionaries including history and current input
-
-        准备消息列表，包含对话历史。
-        """
-        messages = []
-
-        # Load conversation history if conversation_id is provided
+    async def _prepare_messages(self, input_data: TextInput) -> list[dict[str, str]]:
+        """Load conversation history and append the current user message."""
+        messages: list[dict[str, str]] = []
         if input_data.conversation_id:
-            logger.info(
-                f"Loading history for conversation {input_data.conversation_id}"
+            messages.extend(
+                await get_messages_from_context(
+                    conversation_id=input_data.conversation_id,
+                    max_messages=self.max_history_messages,
+                )
             )
-            history = await get_messages_from_context(
-                conversation_id=input_data.conversation_id,
-                max_messages=self.max_history_messages,
-            )
-            logger.info(f"Loaded {len(history)} historical messages")
-        else:
-            logger.info("No conversation_id provided, starting fresh conversation")
-
         messages.append({"role": "user", "content": input_data.query})
+        return messages
+
+    async def _build_resumed_messages(self, raw_input: dict) -> list:
+        """Reconstruct the message list at the interruption point.
+
+        Appends the AI message (with ``tool_calls``) and a ``ToolMessage``
+        carrying the user's approval result so the LLM continues from
+        where it left off – no re-decision required.
+        """
+        waiting_info = raw_input["_waiting_info"]
+        approval = raw_input["_approval"]
+
+        # Base conversation (history + user message)
+        clean = {k: v for k, v in raw_input.items() if not k.startswith("_")}
+        base_input = TextInput(**clean)
+        messages: list = await self._prepare_messages(base_input)
+
+        # Re-hydrate the AI message that contained the tool_call
+        ai_msg = messages_from_dicts([waiting_info["ai_message"]])[0]
+        messages.append(ai_msg)
+
+        # Inject the tool result (approved content or denial)
+        tool_call_id = ai_msg.tool_calls[0]["id"]
+        if approval["approved"]:
+            content = str(approval.get("tool_result") or "Tool approved by user.")
+        else:
+            content = "Tool call was denied by the user."
+        messages.append(ToolMessage(content=content, tool_call_id=tool_call_id))
 
         return messages
 
+    # ── run (non-streaming) ──────────────────────────────────────
+
     async def run(self, input_data: TextInput | dict) -> dict[str, Any]:
-        """
-        Execute the agent with conversation context.
-
-        Loads conversation history from a database, appends the new input,
-        and generates a response using the LLM.
-
-        Args:
-            input_data: Contains 'query' and optional 'conversation_id'
-                - query: User's input input
-                - conversation_id: UUID of existing conversation (optional)
-
-        Returns:
-            Dictionary with 'answer' key containing the agent's response
-
-        执行Agent，支持对话上下文。
-        从数据库加载对话历史，添加新消息，并生成响应。
-        """
-        # Convert to TextInput if needed
+        """Execute the agent and return the final answer."""
         if isinstance(input_data, dict):
             input_data = TextInput(**input_data)
 
-        # Prepare messages with history
         messages = await self._prepare_messages(input_data)
-
-        logger.info(f"Processing input with {len(messages)} total messages in context")
-
         response = await self.agent.ainvoke({"messages": messages})
         final_messages = response.get("messages", [])
         final_text = ""
@@ -143,58 +141,162 @@ class DefaultAgentTemplate(BaseAgentTemplate):
             final_text = final_messages[-1].content or ""
         return {"answer": final_text}
 
-    async def stream(self, input_data: TextInput | dict):
+    # ── stream ───────────────────────────────────────────────────
+
+    async def stream(
+        self, input_data: TextInput | dict
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Stream typed events from the agentic loop.
+
+        Thinking-block detection
+        ────────────────────────
+        Reasoning models (e.g. Qwen3 with thinking enabled) wrap their
+        chain-of-thought in ``<think>...</think>``.  The tag may arrive
+        split across multiple tokens, so the first few tokens are buffered
+        until we can decide whether the stream starts with the tag.
+
+        * If it does  → buffer until ``</think>``, emit one
+          ``AGENT_THINKING`` event, then stream the rest as normal tokens.
+        * If it doesn't → flush the buffer as ``AGENT_TOKEN`` events with
+          essentially zero additional latency (decision made as soon as the
+          accumulated prefix can no longer match ``<think>``).
+
+        The state resets on every ``on_chat_model_end`` so that each
+        iteration of the agentic loop is handled independently.
         """
-        Stream the agent's output with conversation context.
-
-        Loads conversation history, appends the new input, and streams
-        the agent's response as it is generated.
-
-        Args:
-            input_data: Contains 'query' and optional 'conversation_id'
-
-        Yields:
-            Chunks of the agent's thinking process and response
-
-        流式输出Agent响应，支持对话上下文。
-        """
-        # 验证输入数据类型
-        logger.info(f"Agent.stream called with input_data type: {type(input_data)}")
-
-        if not isinstance(input_data, (dict, TextInput)):
-            error_msg = (
-                f"Invalid input_data type: expected dict or TextMessage, "
-                f"got {type(input_data).__name__}. "
-                f"Content: {input_data}"
-            )
-            logger.error(error_msg)
-            raise TypeError(error_msg)
-
-        # Convert to TextInput if needed
-        if isinstance(input_data, dict):
-            logger.info(f"Converting dict to TextMessage: {input_data}")
-            try:
+        # ── resume path: reconstruct messages at the interruption point ──
+        if isinstance(input_data, dict) and input_data.get("_resumed"):
+            messages = await self._build_resumed_messages(input_data)
+        else:
+            if isinstance(input_data, dict):
                 input_data = TextInput(**input_data)
-            except Exception as e:
-                logger.error(f"Failed to convert dict to TextMessage: {e}")
-                logger.error(f"Dict content: {input_data}")
-                raise ValueError(f"Invalid input_data: {input_data}")
+            messages = await self._prepare_messages(input_data)
+        self._reset_token_index()
 
-        # Prepare messages with history
-        messages = await self._prepare_messages(input_data)
+        # ── per-LLM-call state (reset on on_chat_model_end) ──────
+        response_buf = ""  # accumulates response text for AGENT_MESSAGE
+        think_buf = ""  # accumulates content inside <think>
+        # None = haven't seen enough tokens to decide yet
+        # True  = currently inside a <think> block
+        # False = past any possible <think> block
+        in_thinking: bool | None = None
 
-        logger.info(f"Streaming input with {len(messages)} total messages in context")
+        # tool_id → wall-clock start; used to compute execution_time_ms
+        tool_start_times: dict[str, float] = {}
+        # Snapshot of the latest AIMessage – needed so the HITL gate in
+        # on_tool_start can serialise it for the resume path.
+        last_ai_output: AIMessage | None = None
 
-        # Use PostgresSaver for checkpointing
-        # Stream events from agent
-        full_response = ""
         async for event in self.agent.astream_events({"messages": messages}):
-            if event["event"] == "on_chat_model_start":
-                yield f"Input: {event['data']['input']}"
-            elif event["event"] == "on_chat_model_stream":
-                yield f"Token: {event['data']['chunk'].content}"
-                full_response += event["data"]["chunk"].content
-            elif event["event"] == "on_chat_model_end":
-                yield f"Full input: {event['data']['output'].content}"
-            else:
-                pass
+            event_name: str = event["event"]
+
+            # ── streaming token ──────────────────────────────────
+            if event_name == "on_chat_model_stream":
+                token: str = event["data"]["chunk"].content
+                if not token:
+                    continue
+
+                # --- thinking-block detection ---------------------
+                if in_thinking is None:
+                    think_buf += token
+                    # Can the buffer still be the start of <think>?
+                    if not _THINK_TAG.startswith(think_buf[:_THINK_TAG_LEN]):
+                        # Definitely not a thinking stream – flush
+                        in_thinking = False
+                        response_buf = think_buf
+                        yield self._emit_token(think_buf)
+                        think_buf = ""
+                    elif _THINK_TAG in think_buf:
+                        # Opening tag complete – enter thinking mode
+                        in_thinking = True
+                        think_buf = think_buf.split(_THINK_TAG, 1)[1]
+                        # Closing tag may already be present
+                        if _THINK_CLOSE in think_buf:
+                            content, rest = think_buf.split(_THINK_CLOSE, 1)
+                            yield self._emit_thinking(content)
+                            in_thinking = False
+                            think_buf = ""
+                            if rest:
+                                response_buf += rest
+                                yield self._emit_token(rest)
+                    # else: still accumulating a possible prefix
+                    continue
+
+                if in_thinking is True:
+                    think_buf += token
+                    if _THINK_CLOSE in think_buf:
+                        content, rest = think_buf.split(_THINK_CLOSE, 1)
+                        yield self._emit_thinking(content)
+                        in_thinking = False
+                        think_buf = ""
+                        if rest:
+                            response_buf += rest
+                            yield self._emit_token(rest)
+                    continue  # still accumulating thinking content
+
+                # --- normal response token ----------------------
+                response_buf += token
+                yield self._emit_token(token)
+
+            # ── model finished one response ─────────────────────
+            elif event_name == "on_chat_model_end":
+                output = event["data"]["output"]
+                last_ai_output = output
+                # Emit AGENT_MESSAGE only for the final text response;
+                # skip intermediate steps that end with tool calls.
+                if not getattr(output, "tool_calls", None):
+                    yield self._emit_token("", is_final=True)
+                    yield self._emit_message(output.content or response_buf)
+                # Reset state for the next iteration of the agentic loop
+                response_buf = ""
+                in_thinking = None
+                think_buf = ""
+
+            # ── tool lifecycle ──────────────────────────────────
+            elif event_name == "on_tool_start":
+                tool_id: str = event["run_id"]
+                tool_name: str = event["name"]
+                arguments: dict = event["data"].get("input", {})
+
+                # ── HITL approval gate ──────────────────────────────
+                if tool_name in self.approval_tools:
+                    yield self._emit_tool_pending(
+                        tool_name=tool_name,
+                        tool_id=tool_id,
+                        arguments=arguments,
+                    )
+                    raise WaitingForTool({
+                        "type": "tool_approval",
+                        "tool_name": tool_name,
+                        "tool_id": tool_id,
+                        "arguments": arguments,
+                        "ai_message": messages_to_dict([last_ai_output])[0],
+                        "executor_code": self.TEMPLATE["template_code"],
+                    })
+
+                tool_start_times[tool_id] = time.time()
+                yield self._emit_tool_call(
+                    tool_name=tool_name,
+                    tool_id=tool_id,
+                    arguments=arguments,
+                )
+
+            elif event_name == "on_tool_end":
+                tool_id = event["run_id"]
+                start = tool_start_times.pop(tool_id, None)
+                elapsed_ms = int((time.time() - start) * 1000) if start else None
+                yield self._emit_tool_result(
+                    tool_name=event["name"],
+                    tool_id=tool_id,
+                    result=event["data"].get("output", ""),
+                    execution_time_ms=elapsed_ms,
+                )
+
+            elif event_name == "on_tool_error":
+                tool_id = event["run_id"]
+                tool_start_times.pop(tool_id, None)
+                yield self._emit_tool_error(
+                    tool_name=event["name"],
+                    tool_id=tool_id,
+                    error_message=str(event["data"].get("output", "")),
+                )

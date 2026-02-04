@@ -1,17 +1,16 @@
 # aiwen/services/agent/concrete.py
-import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, ClassVar
 
 from aiwen.services.agent.agent_registry import register_agent
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.agent.base import AgentEvent, BaseAgentTemplate
 
 
 @register_agent
 class NL2SQLAgentTemplate(BaseAgentTemplate):
     """Natural Language to SQL conversion agent."""
 
-    TEMPLATE = {
+    TEMPLATE: ClassVar[dict[str, Any]] = {
         "template_code": "NL2SQL001",
         "template_name": "Natural Language to SQL Agent",
         "enabled": True,
@@ -20,15 +19,7 @@ class NL2SQLAgentTemplate(BaseAgentTemplate):
     }
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Execute the NL2SQL workflow.
-
-        Args:
-            input_data: Contains 'query' key with natural language query
-
-        Returns:
-            Dictionary with intent, generated SQL, and executed data
-        """
+        """Execute the NL2SQL workflow."""
         query = input_data["query"]
 
         intent = await self.parse_intent(query)
@@ -37,85 +28,53 @@ class NL2SQLAgentTemplate(BaseAgentTemplate):
 
         return {"intent": intent, "sql": sql, "data": data}
 
-    async def stream(self, input_data: dict[str, Any]) -> AsyncGenerator[str, None]:
-        """
-        Stream the NL2SQL agent's output as it is generated.
+    async def stream(
+        self, input_data: dict[str, Any]
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Stream NL2SQL progress as typed plan-step events.
 
-        Args:
-            input_data: Contains 'query' key with natural language query
-
-        Yields:
-            Chunks of the agent's thinking process and final result
+        Each logical phase emits an ``AGENT_PLAN_STEP`` with status
+        transitions ``pending → in_progress → completed``.  The final
+        result is emitted as a single ``AGENT_MESSAGE``.
         """
         query = input_data["query"]
 
-        # Simulate thinking process
-        yield "Analyzing your query...\n"
-        await asyncio.sleep(0.1)
-
-        yield "Parsing intent...\n"
+        # ── step 1: parse intent ─────────────────────────────────
+        yield self._emit_plan_step(1, "Parse intent", status="in_progress")
         intent = await self.parse_intent(query)
-        await asyncio.sleep(0.1)
+        yield self._emit_plan_step(
+            1,
+            "Parse intent",
+            status="completed",
+            output=str(intent),
+        )
 
-        yield f"Identified intent: {intent.get('original_query', query)}\n"
-        await asyncio.sleep(0.1)
-
-        yield "Generating SQL...\n"
+        # ── step 2: generate SQL ─────────────────────────────────
+        yield self._emit_plan_step(2, "Generate SQL", status="in_progress")
         sql = await self.generate_sql(intent)
-        await asyncio.sleep(0.1)
+        yield self._emit_plan_step(2, "Generate SQL", status="completed", output=sql)
 
-        yield f"Generated SQL: {sql}\n"
-        await asyncio.sleep(0.1)
-
-        yield "Executing query...\n"
+        # ── step 3: execute SQL ──────────────────────────────────
+        yield self._emit_plan_step(3, "Execute SQL", status="in_progress")
         data = await self.execute_sql(sql)
-        await asyncio.sleep(0.1)
+        yield self._emit_plan_step(
+            3,
+            "Execute SQL",
+            status="completed",
+            output=f"{len(data)} rows",
+        )
 
-        yield f"Query executed successfully. Found {len(data)} rows.\n"
-        await asyncio.sleep(0.1)
-
-        # Final result
+        # ── final result ─────────────────────────────────────────
         result = {"intent": intent, "sql": sql, "data": data}
-        yield f"Final result: {result}\n"
+        yield self._emit_message(str(result))
+
+    # ── placeholder implementations ────────────────────────────
 
     async def parse_intent(self, query: str) -> dict[str, Any]:
-        """
-        Parse the natural language query to extract intent.
-
-        Args:
-            query: Natural language query string
-
-        Returns:
-            Dictionary containing parsed intent
-        """
-        # Implementation would go here
-        # This is a placeholder implementation
         return {"original_query": query, "parsed_elements": {}}
 
-    async def generate_sql(self, intent: dict[str, Any]) -> str:
-        """
-        Generate SQL based on the parsed intent.
-
-        Args:
-            intent: Parsed intent from parse_intent method
-
-        Returns:
-            Generated SQL string
-        """
-        # Implementation would go here
-        # This is a placeholder implementation
+    async def generate_sql(self, _intent: dict[str, Any]) -> str:
         return "SELECT * FROM table LIMIT 10;"
 
-    async def execute_sql(self, sql: str) -> list[dict[str, Any]]:
-        """
-        Execute the generated SQL and return results.
-
-        Args:
-            sql: SQL string to execute
-
-        Returns:
-            List of dictionaries representing query results
-        """
-        # Implementation would go here
-        # This is a placeholder implementation
+    async def execute_sql(self, _sql: str) -> list[dict[str, Any]]:
         return [{"placeholder": "result"}]

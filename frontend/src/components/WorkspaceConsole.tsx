@@ -6,6 +6,7 @@ import { useRuns } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
+import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard } from '@/components/AgentEvents';
 
 import KnowledgePage from '@/pages/context/KnowledgePage';
 import ToolPage from '@/pages/context/ToolPage';
@@ -28,6 +29,10 @@ export default function WorkspaceConsole() {
     streamingMessage,
     isStreaming,
     isLoadingConversation,
+    thinkingContent,
+    activeToolCalls,
+    planSteps,
+    pendingApprovals,
     startNewRun,
     loadRun,
   } = useChatStore();
@@ -37,14 +42,14 @@ export default function WorkspaceConsole() {
     page_size: 50,
   });
 
-  const { sendMessage, stopStreaming } = useStreamingChat(
+  const { sendMessage, stopStreaming, approveToolCall } = useStreamingChat(
     currentWorkspaceId || '',
     currentWorkspaceAppId
   );
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage]);
+  }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, pendingApprovals]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,26 +109,39 @@ export default function WorkspaceConsole() {
               }`}
             >
               {message.role === MessageRole.ASSISTANT && (
-                <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0">
+                <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0 mt-0.5">
                   AI
                 </div>
               )}
 
-              <div
-                className={`max-w-2xl rounded-lg px-4 py-3 ${
-                  message.role === MessageRole.USER
-                    ? 'bg-primary-500 text-white'
-                    : 'bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700'
-                }`}
-              >
-                {message.role === MessageRole.ASSISTANT ? (
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <ReactMarkdown>{message.content}</ReactMarkdown>
-                  </div>
-                ) : (
+              {message.role === MessageRole.USER ? (
+                <div className="max-w-2xl rounded-lg px-4 py-3 bg-primary-500 text-white">
                   <p className="text-sm">{message.content}</p>
-                )}
-              </div>
+                </div>
+              ) : (
+                <div className="max-w-2xl w-full space-y-2">
+                  {message.thinkingContent && (
+                    <ThinkingBlock content={message.thinkingContent} defaultCollapsed />
+                  )}
+                  {message.toolCalls && message.toolCalls.length > 0 && (
+                    <div className="space-y-1">
+                      {message.toolCalls.map((tc) => (
+                        <ToolCallCard key={tc.tool_id} toolCall={tc} />
+                      ))}
+                    </div>
+                  )}
+                  {message.planSteps && message.planSteps.length > 0 && (
+                    <PlanStepList steps={message.planSteps} />
+                  )}
+                  {message.content && (
+                    <div className="rounded-lg px-4 py-3 bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700">
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown>{message.content}</ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {message.role === MessageRole.USER && (
                 <div className="w-8 h-8 rounded-full bg-secondary-500 flex items-center justify-center text-white text-sm shrink-0">
@@ -133,18 +151,53 @@ export default function WorkspaceConsole() {
             </div>
           ))}
 
-          {isStreaming && streamingMessage && (
+          {isStreaming && (
             <div className="flex gap-3 justify-start">
-              <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0">
+              <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white text-sm shrink-0 mt-0.5">
                 AI
               </div>
-              <div className="max-w-2xl rounded-lg px-4 py-3 bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700">
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{streamingMessage}</ReactMarkdown>
-                </div>
-                <div className="flex items-center gap-1 mt-2 text-secondary-400 dark:text-secondary-500">
-                  <span className="w-2 h-2 bg-primary-500 rounded-full animate-pulse"></span>
-                  <span className="text-xs">Assistant is typing...</span>
+              <div className="max-w-2xl w-full space-y-2">
+                {thinkingContent && (
+                  <ThinkingBlock content={thinkingContent} />
+                )}
+                {activeToolCalls.length > 0 && (
+                  <div className="space-y-1">
+                    {activeToolCalls.map((tc) => (
+                      <ToolCallCard key={tc.tool_id} toolCall={tc} />
+                    ))}
+                  </div>
+                )}
+                {planSteps.length > 0 && (
+                  <PlanStepList steps={planSteps} />
+                )}
+                {/* HITL approval cards – rendered above the text bubble */}
+                {pendingApprovals.map((pending) => (
+                  <ApprovalCard
+                    key={pending.tool_id}
+                    pending={pending}
+                    onApprove={approveToolCall}
+                  />
+                ))}
+                {streamingMessage && (
+                  <div className="rounded-lg px-4 py-3 bg-white dark:bg-navy-800 border border-secondary-200 dark:border-navy-700">
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-1 text-secondary-400 dark:text-secondary-500">
+                  <span className={`w-2 h-2 rounded-full animate-pulse ${
+                    pendingApprovals.length > 0 ? 'bg-amber-500' : 'bg-primary-500'
+                  }`}></span>
+                  <span className="text-xs">
+                    {pendingApprovals.length > 0
+                      ? 'Waiting for your approval...'
+                      : activeToolCalls.some((tc) => tc.status === 'pending')
+                        ? 'Executing tools...'
+                        : streamingMessage
+                          ? 'Assistant is typing...'
+                          : 'Preparing response...'}
+                  </span>
                 </div>
               </div>
             </div>

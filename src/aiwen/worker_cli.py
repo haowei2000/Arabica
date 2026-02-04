@@ -28,9 +28,15 @@ import sys
 # 不需要在这里调用 load_dotenv()
 from aiwen.core.bootstrap import bootstrap_worker
 from aiwen.extensions.database import get_session
-from aiwen.workers.event_worker import Worker
+from aiwen.workers.event_worker import AGENT_WORKER_STREAM, Worker
 
 logger = logging.getLogger(__name__)
+
+
+async def start_worker(redis_client, db_session):
+    """Instantiate the Worker and start polling the Redis stream."""
+    worker = Worker(redis_client, db_session)
+    await worker.start(AGENT_WORKER_STREAM)
 
 
 async def run():

@@ -66,4 +66,10 @@ export interface SimpleMessage {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
+  /** Reasoning trace captured from AGENT_THINKING (assistant only). */
+  thinkingContent?: string;
+  /** Tool calls captured from TOOL_CALL / TOOL_RESULT (assistant only). */
+  toolCalls?: import('@/types/events').ToolCallState[];
+  /** Plan steps captured from AGENT_PLAN_STEP (assistant only). */
+  planSteps?: import('@/types/events').AgentPlanStepPayload[];
 }

@@ -3,98 +3,21 @@
 import asyncio
 import json
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-from aiwen.dependencies.agents import (
-    get_conversation_crud,
-    get_task_consumer,
-    get_task_crud,
-    get_task_producer,
-)
-from aiwen.dependencies.auth import get_current_user, get_token_data
+from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
     EventConsumerDep,
     EventReplayerDep,
     RunCRUDDep,
     WorkspaceCRUDDep,
 )
-from aiwen.schemas.agents.input import TextInput
-from aiwen.schemas.auth.auth import TokenData
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventListResponse
-from aiwen.services.agent.chat.chat_service import (
-    StartTaskResult,
-    get_messages_by_task,
-    start_task,
-)
-from aiwen.services.crud.conversation_crud import ConversationCRUD
-from aiwen.services.crud.task_crud import AgentTaskCRUD
-from aiwen.workers.task_consumer import AgentTaskConsumer
-from aiwen.workers.task_producer import AgentTaskProducer
 
 router = APIRouter()
-
-
-@router.post("/chat/app/{app_id}/stream", response_model=StartTaskResult, tags=["chat"])
-@router.post("/agent/chat/app/{app_id}/stream", response_model=StartTaskResult, tags=["chat"])
-async def start_chat_task(
-    app_id: UUID,
-    text_input: TextInput,
-    token_data: Annotated[TokenData, Depends(get_token_data)],
-    task_crud: AgentTaskCRUD = Depends(get_task_crud),
-    conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
-    task_producer: AgentTaskProducer = Depends(get_task_producer),
-) -> StartTaskResult:
-    """Start a chat task and return task/conversation/message identifiers."""
-    user_id = UUID(token_data.user_id)
-    text_input.from_account_id = user_id
-    return await start_task(
-        app_id=app_id,
-        user_id=user_id,
-        text_input=text_input,
-        task_crud=task_crud,
-        conversation_crud=conversation_crud,
-        task_producer=task_producer,
-    )
-
-
-@router.get("/chat/task/{task_id}/stream", tags=["chat"])
-@router.get("/agent/chat/task/{task_id}/stream", tags=["chat"])
-async def stream_task_messages(
-    task_id: UUID,
-    token_data: Annotated[TokenData, Depends(get_token_data)],
-    task_crud: AgentTaskCRUD = Depends(get_task_crud),
-    task_consumer: AgentTaskConsumer = Depends(get_task_consumer),
-):
-    """Stream task messages from Redis as Server-Sent Events."""
-    task = await task_crud.get_agent_task_by_task_id(task_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task {task_id} not found",
-        )
-    if task.user_id and str(task.user_id) != token_data.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to access this task",
-        )
-
-    return StreamingResponse(
-        get_messages_by_task(
-            task_id=task_id,
-            task_consumer=task_consumer,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-        },
-    )
-
 
 async def _event_stream_generator(
     consumer: Any,

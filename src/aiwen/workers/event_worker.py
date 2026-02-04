@@ -1,5 +1,6 @@
 # aiwen/workers/executor_worker.py
 import asyncio
+import json
 import logging
 from uuid import UUID
 
@@ -7,6 +8,7 @@ import redis.asyncio as redis_async
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.models.agents.app import App
 from aiwen.models.agents.run import Run
 from aiwen.services.agent.agent_registry import AgentRegistry
 from aiwen.services.agent.base import Executor
@@ -14,6 +16,10 @@ from aiwen.services.agent.runtime import AgentRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
 logger = logging.getLogger(__name__)
+
+# Redis stream the worker polls for new / resumed runs.
+# The resume endpoint must push to this same stream name.
+AGENT_WORKER_STREAM = "agent:runs"
 
 
 class Worker:
@@ -55,14 +61,15 @@ class Worker:
             triggered_by = message_data.get("triggered_by", "user")
 
             executor_cls = AgentRegistry.get(executor_code)
-            if not executor_cls:
-                raise ValueError(f"Executor '{executor_code}' not registered")
 
-            # 创建 agent 实例
-            executor: Executor = executor_cls(run_id, self.db, self.redis, None)  # 传入 None 替代未实现的 workspace
-
-            # 附加到 runtime
-            self.runtime.attach(run_id, executor)
+            # ── parse & normalise input ────────────────────────
+            # Redis stream values arrive as strings; the WAITING branch
+            # does **input_data so it must be a dict at this point.
+            if isinstance(input_data, (str, bytes)):
+                input_data = json.loads(input_data)
+            # Map API field name → TextInput schema field
+            if "message" in input_data and "query" not in input_data:
+                input_data["query"] = input_data.pop("message")
 
             # 根据 Run 状态决定行为
             async with self.db.begin():
@@ -77,11 +84,51 @@ class Worker:
                     logger.warning(f"Run {run_id} is terminal, skipping execution")
                     return
 
+                # ── build executor config ──────────────────────
+                # Template defaults first; app-specific overrides on top.
+                config: dict = {}
+                template_config = executor_cls.TEMPLATE.get("config")
+                if template_config is not None:
+                    if hasattr(template_config, "model_dump"):
+                        config = template_config.model_dump()
+                    elif isinstance(template_config, dict):
+                        config = dict(template_config)
+                if run.app_id:
+                    app_result = await self.db.execute(
+                        select(App).where(App.id == run.app_id)
+                    )
+                    app = app_result.scalar_one_or_none()
+                    if app and app.config:
+                        config.update(app.config)
+
+                executor: Executor = executor_cls(config)
+                self.runtime.attach(run_id, executor)
+
                 # 启动或恢复
                 if run.status == RunStatus.PENDING.value:
                     await self.state_machine.start(run_id, triggered_by=triggered_by)
                     await self._execute_run(executor, input_data, run_id)
                 elif run.status == RunStatus.WAITING.value:
+                    # ── HITL resume ──────────────────────────────
+                    # Load the approval decision the resume endpoint stored
+                    resume_key = f"run:{run_id}:resume_approval"
+                    raw_approval = await self.redis.get(resume_key)
+                    approval_data = json.loads(raw_approval) if raw_approval else {}
+                    if raw_approval:
+                        await self.redis.delete(resume_key)
+
+                    # Merge resume metadata into input so the executor
+                    # can reconstruct messages at the interruption point.
+                    input_data = {
+                        **input_data,
+                        "_resumed": True,
+                        "_waiting_info": run.waiting_for or {},
+                        "_approval": {
+                            "approved": approval_data.get("approval", True),
+                            "tool_result": approval_data.get("tool_result"),
+                            "user_input": approval_data.get("user_input"),
+                        },
+                    }
                     await self.state_machine.resume_from_tool(run_id)
                     await self._execute_run(executor, input_data, run_id)
                 elif run.status == RunStatus.RUNNING.value:

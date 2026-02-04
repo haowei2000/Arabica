@@ -32,6 +32,8 @@ export const API_ENDPOINTS = {
           `/workspaces/${workspaceId}/runs/${runId}`,
       RUN_CANCEL: (workspaceId: string, runId: string) =>
           `/workspaces/${workspaceId}/runs/${runId}/cancel`,
+      RUN_RESUME: (workspaceId: string, runId: string) =>
+          `/workspaces/${workspaceId}/runs/${runId}/resume`,
   },
   EVENTS: {
       RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,

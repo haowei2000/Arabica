@@ -94,6 +94,7 @@ class ToolPendingPayload(BaseEventPayload):
     tool_id: str = Field(..., description="工具调用ID")
     reason: str = Field(..., description="等待原因")
     requires_approval: bool = Field(False, description="是否需要审批")
+    arguments: dict[str, Any] = Field(default_factory=dict, description="工具参数")
 
 
 class ToolResultPayload(BaseEventPayload):

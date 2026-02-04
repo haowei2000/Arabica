@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
+import type { AgentPlanStepPayload, ToolCallPayload, ToolPendingPayload, ToolResultPayload } from '@/types/events';
 
 export interface StreamOptions {
   workspaceId: string;
@@ -9,6 +10,16 @@ export interface StreamOptions {
   onComplete: () => void;
   onError: (error: Error) => void;
   onStatus?: (status: string) => void;
+  /** Reasoning trace emitted by a thinking model. */
+  onThinking?: (content: string) => void;
+  /** A tool is about to be executed. */
+  onToolCall?: (event: ToolCallPayload) => void;
+  /** A tool finished – success or error distinguished by `success` flag. */
+  onToolResult?: (event: ToolResultPayload) => void;
+  /** A plan-step status update. */
+  onPlanStep?: (event: AgentPlanStepPayload) => void;
+  /** A tool requires human approval before it can execute. */
+  onToolPending?: (event: ToolPendingPayload) => void;
 }
 
 interface StreamEventPayload {
@@ -26,6 +37,7 @@ class StreamService {
     const token = localStorage.getItem('access_token');
 
     try {
+      // 1. Create the run
       const startResponse = await fetch(
         `${API_BASE_URL}${API_ENDPOINTS.WORKSPACES.RUNS(workspaceId)}`,
         {
@@ -34,10 +46,7 @@ class StreamService {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            message,
-            app_id: appId,
-          }),
+          body: JSON.stringify({ message, app_id: appId }),
         }
       );
 
@@ -49,14 +58,13 @@ class StreamService {
       this.currentRunId = runInfo.id;
       options.onRunStart(runInfo.id);
 
+      // 2. Open SSE stream
       this.controller = new AbortController();
       const streamResponse = await fetch(
         `${API_BASE_URL}${API_ENDPOINTS.EVENTS.RUN_STREAM(runInfo.id)}`,
         {
           method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
           signal: this.controller.signal,
         }
       );
@@ -65,6 +73,7 @@ class StreamService {
         throw new Error(`Failed to stream events: ${streamResponse.status}`);
       }
 
+      // 3. Read & dispatch
       const reader = streamResponse.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -74,9 +83,7 @@ class StreamService {
       let finished = false;
 
       const handleEvent = () => {
-        if (!dataLines.length) {
-          return;
-        }
+        if (!dataLines.length) return;
 
         const rawData = dataLines.join('\n');
         dataLines = [];
@@ -84,7 +91,7 @@ class StreamService {
         let payload: StreamEventPayload | null = null;
         try {
           payload = JSON.parse(rawData);
-        } catch (error) {
+        } catch {
           console.warn('Failed to parse SSE data:', rawData);
           return;
         }
@@ -93,16 +100,15 @@ class StreamService {
         const eventPayload = payload?.payload || {};
         const internalType = (payload as any)?.type as string | undefined;
 
+        // ── internal / error ──────────────────────────────
         if (eventType === 'error' || internalType === 'error') {
           finished = true;
           onError(new Error((payload as any)?.message || 'Stream error'));
           return;
         }
+        if (internalType === 'keepalive') return;
 
-        if (internalType === 'keepalive') {
-          return;
-        }
-
+        // ── agent text events ─────────────────────────────
         if (eventType === 'agent.token') {
           const tokenValue = eventPayload?.token as string | undefined;
           if (tokenValue) {
@@ -120,6 +126,61 @@ class StreamService {
           return;
         }
 
+        // ── thinking ──────────────────────────────────────
+        if (eventType === 'agent.thinking') {
+          const content = eventPayload?.content as string | undefined;
+          if (content) {
+            options.onThinking?.(content);
+          }
+          return;
+        }
+
+        // ── tool lifecycle ────────────────────────────────
+        if (eventType === 'tool.call') {
+          options.onToolCall?.({
+            tool_name: eventPayload?.tool_name as string,
+            tool_id: eventPayload?.tool_id as string,
+            arguments: (eventPayload?.arguments ?? {}) as Record<string, unknown>,
+          });
+          return;
+        }
+
+        if (eventType === 'tool.result' || eventType === 'tool.error') {
+          options.onToolResult?.({
+            tool_name: eventPayload?.tool_name as string,
+            tool_id: eventPayload?.tool_id as string,
+            result: eventPayload?.result,
+            success: eventType === 'tool.result',
+            error_message: (eventPayload?.error_message ?? null) as string | null,
+            execution_time_ms: (eventPayload?.execution_time_ms ?? null) as number | null,
+          });
+          return;
+        }
+
+        // ── tool pending (HITL approval gate) ───────────────
+        if (eventType === 'tool.pending') {
+          options.onToolPending?.({
+            tool_name: eventPayload?.tool_name as string,
+            tool_id: eventPayload?.tool_id as string,
+            reason: (eventPayload?.reason ?? 'requires_approval') as string,
+            requires_approval: (eventPayload?.requires_approval ?? true) as boolean,
+            arguments: (eventPayload?.arguments ?? {}) as Record<string, unknown>,
+          });
+          return;
+        }
+
+        // ── plan steps ────────────────────────────────────
+        if (eventType === 'agent.plan.step') {
+          options.onPlanStep?.({
+            step_number: eventPayload?.step_number as number,
+            step_description: eventPayload?.step_description as string,
+            status: eventPayload?.status as AgentPlanStepPayload['status'],
+            output: (eventPayload?.output ?? null) as string | null,
+          });
+          return;
+        }
+
+        // ── run lifecycle ─────────────────────────────────
         if (eventType === 'run.state.change') {
           const nextState = eventPayload?.new_state as string | undefined;
           if (nextState && options.onStatus) {
@@ -149,14 +210,13 @@ class StreamService {
         }
       };
 
+      // 4. SSE line parser loop
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
           this.currentRunId = null;
-          if (!finished) {
-            onComplete();
-          }
+          if (!finished) onComplete();
           break;
         }
 
@@ -165,9 +225,7 @@ class StreamService {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith(':')) {
-            continue;
-          }
+          if (line.startsWith(':')) continue; // SSE comment
 
           if (!line.trim()) {
             handleEvent();
@@ -199,10 +257,7 @@ class StreamService {
       try {
         const token = localStorage.getItem('access_token');
         await fetch(
-          `${API_BASE_URL}${API_ENDPOINTS.WORKSPACES.RUN_CANCEL(
-            workspaceId,
-            this.currentRunId
-          )}`,
+          `${API_BASE_URL}${API_ENDPOINTS.WORKSPACES.RUN_CANCEL(workspaceId, this.currentRunId)}`,
           {
             method: 'POST',
             headers: {
@@ -221,6 +276,29 @@ class StreamService {
     if (this.controller) {
       this.controller.abort();
       this.controller = null;
+    }
+  }
+
+  /** POST the user's approve / deny decision back to the backend. */
+  async resumeRun(
+    workspaceId: string,
+    runId: string,
+    decision: { approval: boolean; tool_result?: string; user_input?: string }
+  ): Promise<void> {
+    const token = localStorage.getItem('access_token');
+    const res = await fetch(
+      `${API_BASE_URL}${API_ENDPOINTS.WORKSPACES.RUN_RESUME(workspaceId, runId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(decision),
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`Resume failed: ${res.status}`);
     }
   }
 }
