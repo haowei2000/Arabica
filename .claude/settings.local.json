@@ -10,7 +10,8 @@
       "Bash(python3 -c \"import sys; sys.path.insert\\(0, ''C:\\\\Users\\\\whw\\\\PycharmProjects\\\\agent_chat\\\\src''\\); from aiwen.services.agent.base import BaseAgentTemplate\")",
       "Bash(uv run ruff check:*)",
       "Bash(uv run ruff format:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(dir:*)"
     ]
   },
   "outputStyle": "Explanatory"

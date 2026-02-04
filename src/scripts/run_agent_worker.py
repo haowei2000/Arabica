@@ -28,7 +28,7 @@ else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
     print("   Worker may fail if environment variables are not set!")
 
-from aiwen.workers.task_worker import start_worker
+from aiwen.celery_worker.task_worker import start_worker
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
 from aiwen.services.agent.agent_registry import init_agent_registry

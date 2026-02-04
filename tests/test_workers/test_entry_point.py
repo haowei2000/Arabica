@@ -2,7 +2,7 @@
 import sys
 from unittest.mock import AsyncMock, patch
 
-from aiwen.workers.cli import WorkerCLI, main
+from aiwen.celery_worker.cli import WorkerCLI, main
 import pytest
 
 

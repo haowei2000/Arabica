@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from aiwen.workers.task_worker import AgentWorker
+from aiwen.celery_worker.task_worker import AgentWorker
 
 
 def test_agent_worker_initialization():

@@ -33,7 +33,7 @@ def worker(concurrency: int, queues: str, loglevel: str, hostname: str | None, p
 
     cmd = [
         sys.executable, "-m", "celery",
-        "-A", "aiwen.workers.celery_app",
+        "-A", "aiwen.celery_worker.celery_app",
         "worker",
         f"--concurrency={concurrency}",
         f"--queues={queues}",
@@ -53,7 +53,7 @@ def beat(loglevel: str):
     """启动 Celery Beat（定时任务调度器）"""
     cmd = [
         sys.executable, "-m", "celery",
-        "-A", "aiwen.workers.celery_app",
+        "-A", "aiwen.celery_worker.celery_app",
         "beat",
         f"--loglevel={loglevel}",
     ]
@@ -67,14 +67,14 @@ def beat(loglevel: str):
 def flower(port: int, address: str):
     """启动 Flower（Celery 监控面板）"""
     try:
-        import flower  # noqa: F401
+        import flower  # ty:ignore[unresolved-import]
     except ImportError:
         click.echo("Error: Flower is not installed. Install it with: uv add flower")
-        raise SystemExit(1)
+        raise SystemExit(1)  # noqa: B904
 
     cmd = [
         sys.executable, "-m", "celery",
-        "-A", "aiwen.workers.celery_app",
+        "-A", "aiwen.celery_worker.celery_app",
         "flower",
         f"--port={port}",
         f"--address={address}",

@@ -17,33 +17,75 @@ from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
 logger = logging.getLogger(__name__)
 
-# Redis stream the worker polls for new / resumed runs.
-# The resume endpoint must push to this same stream name.
-AGENT_WORKER_STREAM = "agent:runs"
+# Redis stream the worker polls for user.message events.
+# EventPublisher publishes USER_MESSAGE events to this stream.
+RUN_STREAM = "run_tasks"
+
+# Consumer group name for reliable message processing
+CONSUMER_GROUP = "run_workers"
 
 
 class Worker:
     """
     Worker: 消费 Redis Stream 的 Run 任务，调度对应 Executor。
+
+    Uses Redis Consumer Groups for reliable at-least-once delivery.
     """
 
-    def __init__(self, redis_client: redis_async.Redis, db: AsyncSession):
+    def __init__(self, redis_client: redis_async.Redis, db: AsyncSession, consumer_name: str = "worker-1"):
         self.redis = redis_client
         self.db = db
+        self.consumer_name = consumer_name
         self.runtime = AgentRuntime()  # 管理活跃 Executor 实例
         # self.workspace = WorkspaceManager()  # 管理 workspace 上下文 - 当前未实现
         self.state_machine = RunStateMachine(db, redis_client)
 
+    async def _ensure_consumer_group(self, stream_name: str) -> None:
+        """Ensure consumer group exists, create if not."""
+        try:
+            await self.redis.xgroup_create(
+                stream_name,
+                CONSUMER_GROUP,
+                id="0",  # Start from the beginning of the stream
+                mkstream=True,  # Create stream if it doesn't exist
+            )
+            logger.info(f"Created consumer group '{CONSUMER_GROUP}' for stream '{stream_name}'")
+        except Exception as e:
+            # BUSYGROUP means group already exists, which is fine
+            if "BUSYGROUP" not in str(e):
+                raise
+            logger.debug(f"Consumer group '{CONSUMER_GROUP}' already exists")
+
     async def start(self, stream_name: str):
-        logger.info(f"Worker listening on stream: {stream_name}")
+        """Start consuming messages from the stream using consumer groups."""
+        await self._ensure_consumer_group(stream_name)
+        logger.info(f"Worker '{self.consumer_name}' listening on stream: {stream_name}")
+
         while True:
             try:
-                messages = await self.redis.xread({stream_name: "$"}, count=1, block=1000)
+                # Use XREADGROUP for reliable message processing
+                # ">" means only undelivered messages
+                messages = await self.redis.xreadgroup(
+                    groupname=CONSUMER_GROUP,
+                    consumername=self.consumer_name,
+                    streams={stream_name: ">"},
+                    count=1,
+                    block=1000,
+                )
+
                 if not messages:
                     continue
+
                 _, msg_list = messages[0]
                 for message_id, data in msg_list:
-                    asyncio.create_task(self.handle_message(data))
+                    try:
+                        await self.handle_message(data)
+                        # Acknowledge successful processing
+                        await self.redis.xack(stream_name, CONSUMER_GROUP, message_id)
+                    except Exception as e:
+                        logger.error(f"Failed to process message {message_id}: {e}", exc_info=True)
+                        # Don't ACK - message will be redelivered to another consumer
+
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -52,19 +94,56 @@ class Worker:
 
     async def handle_message(self, message_data: dict):
         """
-        消息结构: {"run_id": str, "executor_code": str, "input": dict, "triggered_by": str}
+        处理来自 run_tasks stream 的消息。
+
+        支持两种消息格式:
+
+        1. EventPublisher user.message 事件:
+        {
+            "id": event_id,
+            "event_type": "user.message",
+            "run_id": str,
+            "payload": json (包含 executor_code, input_data),
+            ...
+        }
+
+        2. Resume 消息 (直接发布):
+        {
+            "run_id": str,
+            "executor_code": str,
+            "input": json,
+            "triggered_by": "resume",
+        }
         """
         try:
-            run_id = UUID(message_data["run_id"])
-            executor_code = message_data["executor_code"]
-            input_data = message_data.get("input", {})
-            triggered_by = message_data.get("triggered_by", "user")
+            # 解析 run_id
+            run_id_str = message_data.get("run_id")
+            if not run_id_str:
+                logger.warning("Received message without run_id, skipping")
+                return
+
+            run_id = UUID(run_id_str)
+
+            # 判断消息格式并解析
+            if "event_type" in message_data:
+                # 格式1: EventPublisher 事件
+                payload_str = message_data.get("payload", "{}")
+                if isinstance(payload_str, bytes):
+                    payload_str = payload_str.decode()
+                payload = json.loads(payload_str) if isinstance(payload_str, str) else payload_str
+
+                executor_code = payload.get("executor_code", "DEFAULT001")
+                input_data = payload.get("input_data", {})
+                triggered_by = "user"
+            else:
+                # 格式2: 直接发布的 resume 消息
+                executor_code = message_data.get("executor_code", "DEFAULT001")
+                input_data = message_data.get("input", {})
+                triggered_by = message_data.get("triggered_by", "user")
 
             executor_cls = AgentRegistry.get(executor_code)
 
             # ── parse & normalise input ────────────────────────
-            # Redis stream values arrive as strings; the WAITING branch
-            # does **input_data so it must be a dict at this point.
             if isinstance(input_data, (str, bytes)):
                 input_data = json.loads(input_data)
             # Map API field name → TextInput schema field

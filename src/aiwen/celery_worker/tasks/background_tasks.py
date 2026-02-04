@@ -6,7 +6,7 @@ Background Tasks - 后台任务定义
 流式任务（如 Agent 聊天）继续使用 Redis Streams Worker。
 
 使用示例:
-    from aiwen.workers.tasks.background_tasks import send_email
+    from aiwen.celery_worker.tasks.background_tasks import send_email
 
     # 异步调用
     result = send_email.delay(
@@ -22,7 +22,7 @@ Background Tasks - 后台任务定义
 import logging
 from typing import Any
 
-from aiwen.workers.celery_app import celery_app
+from aiwen.celery_worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 

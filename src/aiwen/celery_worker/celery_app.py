@@ -24,7 +24,7 @@ celery_app.conf.update(
     timezone='Asia/Shanghai',
     enable_utc=False,
     # Task discovery
-    imports=['aiwen.workers.tasks.document_tasks'],
+    imports=['aiwen.celery_worker.tasks.document_tasks'],
 )
 
 

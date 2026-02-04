@@ -12,20 +12,20 @@ from aiwen.dependencies.auth import (
     oauth2_scheme,
 )
 from aiwen.dependencies.workspace import (
-    get_workspace_crud,
-    get_workspace_member_crud,
-    get_run_crud,
-    get_event_publisher,
-    get_event_consumer,
-    get_event_replayer,
-    get_run_state_machine,
+    EventConsumerDep,
+    EventPublisherDep,
+    EventReplayerDep,
+    RunCRUDDep,
+    RunStateMachineDep,
     WorkspaceCRUDDep,
     WorkspaceMemberCRUDDep,
-    RunCRUDDep,
-    EventPublisherDep,
-    EventConsumerDep,
-    EventReplayerDep,
-    RunStateMachineDep,
+    get_event_consumer,
+    get_event_publisher,
+    get_event_replayer,
+    get_run_crud,
+    get_run_state_machine,
+    get_workspace_crud,
+    get_workspace_member_crud,
 )
 
 __all__ = [

@@ -14,7 +14,7 @@ from uuid import UUID
 from celery import chain
 from celery.signals import worker_process_init, worker_process_shutdown
 
-from aiwen.workers.celery_app import celery_app
+from aiwen.celery_worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 

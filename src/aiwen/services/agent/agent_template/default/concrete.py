@@ -22,7 +22,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import (
     AIMessage,
     ToolMessage,
-    messages_from_dicts,
+    convert_to_messages,
     messages_to_dict,
 )
 
@@ -113,7 +113,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         messages: list = await self._prepare_messages(base_input)
 
         # Re-hydrate the AI message that contained the tool_call
-        ai_msg = messages_from_dicts([waiting_info["ai_message"]])[0]
+        ai_msg = convert_to_messages([waiting_info["ai_message"]])[0]
         messages.append(ai_msg)
 
         # Inject the tool result (approved content or denial)

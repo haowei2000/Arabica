@@ -20,8 +20,8 @@ from aiwen.schemas.agents.document import (
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.services.crud.document_crud import DocumentCRUD
 from aiwen.services.crud.knowledge_crud import KnowledgeCRUD
-from aiwen.workers.celery_app import celery_app, example_task
-from aiwen.workers.tasks.document_tasks import process_document_to_context
+from aiwen.celery_worker.celery_app import celery_app, example_task
+from aiwen.celery_worker.tasks.document_tasks import process_document_to_context
 
 
 class TaskStatusResponse(BaseModel):

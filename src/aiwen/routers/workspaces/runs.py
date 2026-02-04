@@ -85,7 +85,23 @@ async def create_run(
         auto_commit=False,
     )
 
-    # Publish user message event
+    # Resolve executor_code from the app's linked agent template
+    executor_code = "DEFAULT001"  # safe fallback
+    app_result = await state_machine.db.execute(
+        select(App).where(App.id == app_id)
+    )
+    app_row = app_result.scalar_one_or_none()
+    if app_row and app_row.agent_template_id:
+        tmpl_result = await state_machine.db.execute(
+            select(AgentTemplate).where(
+                AgentTemplate.id == app_row.agent_template_id
+            )
+        )
+        tmpl = tmpl_result.scalar_one_or_none()
+        if tmpl:
+            executor_code = tmpl.template_code
+
+    # Publish user message event (also triggers Worker via run_tasks stream)
     await event_publisher.publish(
         event_type=EventType.USER_MESSAGE,
         workspace_id=workspace_id,
@@ -94,40 +110,11 @@ async def create_run(
         payload={
             "content": data.message,
             "attachments": data.attachments,
+            "executor_code": executor_code,
+            "input_data": run.input_data,
         },
         auto_commit=True,
     )
-
-    # ── trigger the worker ──────────────────────────────────
-    # Resolve executor_code from the app's linked agent template so the
-    # worker knows which Executor class to instantiate.
-    if state_machine.redis:
-        executor_code = "DEFAULT001"  # safe fallback
-        app_result = await state_machine.db.execute(
-            select(App).where(App.id == app_id)
-        )
-        app_row = app_result.scalar_one_or_none()
-        if app_row and app_row.agent_template_id:
-            tmpl_result = await state_machine.db.execute(
-                select(AgentTemplate).where(
-                    AgentTemplate.id == app_row.agent_template_id
-                )
-            )
-            tmpl = tmpl_result.scalar_one_or_none()
-            if tmpl:
-                executor_code = tmpl.template_code
-
-        from aiwen.workers.event_worker import AGENT_WORKER_STREAM
-
-        await state_machine.redis.xadd(
-            AGENT_WORKER_STREAM,
-            fields={
-                "run_id": str(run.id),
-                "executor_code": executor_code,
-                "input": json.dumps(run.input_data or {}),
-                "triggered_by": "user",
-            },
-        )
 
     return run
 
@@ -411,10 +398,10 @@ async def resume_run(
     # Push onto the same Redis stream the worker polls so it picks
     # up the resumed run and calls stream() with the approval data.
     if state_machine.redis:
-        from aiwen.workers.event_worker import AGENT_WORKER_STREAM
+        from aiwen.services.events.event_worker import RUN_STREAM
 
         await state_machine.redis.xadd(
-            AGENT_WORKER_STREAM,
+            RUN_STREAM,
             fields={
                 "run_id": run_id,
                 "executor_code": executor_code,

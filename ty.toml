@@ -1,194 +1,21 @@
-# pyproject.toml - src/aiwen 项目配置
-
-[project]
-name = "aiwen"
-version = "0.1.0"
-description = "Aiwen FastAPI application"
-requires-python = ">=3.11"
-dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "sqlalchemy>=2.0.0",
-    # 根据需要添加其他依赖
-]
-
-[project.optional-dependencies]
-dev = [
-    "ty>=0.1.0",
-    "ruff>=0.8.0",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
-    "httpx>=0.27.0",
-]
-
+# ty.toml - ty type checker configuration for src/aiwen
 # ============================================================================
-# ty 配置 - 适配 src/aiwen 结构
-# ============================================================================
-[tool.ty]
-python-version = "3.11"
 
-include = [
-    "src/aiwen/**/*.py",
-    "tests/**/*.py",
-]
+[environment]
+python-version = "3.12"
 
-exclude = [
-    ".venv",
-    "venv",
-    "__pycache__",
-    "*.egg-info",
-    "build",
-    "dist",
-    ".pytest_cache",
-    ".ty_cache",
-    ".ruff_cache",
-    "alembic/versions/*.py",
-]
+[src]
+root = "src"
 
-follow-imports = "normal"
-show-error-codes = true
-show-column-numbers = true
-incremental = true
-cache-dir = ".ty_cache"
-
-[tool.ty.rules]
+[rules]
 # 核心检查
-undefined-name = "error"
-type-mismatch = "error"
-incompatible-return = "error"
-missing-return = "error"
-incompatible-override = "error"
-attribute-error = "error"
-import-error = "error"
+undefined-reveal = "error"
+possibly-unresolved-reference = "error"
+invalid-type-form = "error"
+invalid-return-type = "error"
+invalid-assignment = "error"
+invalid-attribute-access = "error"
+unresolved-import = "error"
 
 # 警告级别
-unused-import = "warn"
-unused-variable = "warn"
-no-untyped-def = "warn"
-warn-return-any = "warn"
-warn-unreachable = "warn"
-
-# FastAPI 友好设置
-disallow-any-explicit = "off"
-disallow-any-generics = "off"
-no-untyped-call = "off"
-disallow-untyped-decorators = "off"
-
-# 测试文件
-[[tool.ty.overrides]]
-files = ["tests/**/*.py"]
-rules = { unused-import = "off", no-untyped-def = "off" }
-
-# API 路由
-[[tool.ty.overrides]]
-files = ["src/aiwen/api/**/*.py", "src/aiwen/routers/**/*.py", "src/aiwen/routes/**/*.py"]
-rules = { disallow-untyped-decorators = "off" }
-
-# Pydantic 模型
-[[tool.ty.overrides]]
-files = ["src/aiwen/models/**/*.py", "src/aiwen/schemas/**/*.py"]
-rules = { disallow-any-explicit = "off", no-untyped-def = "error" }
-
-# 数据库
-[[tool.ty.overrides]]
-files = ["src/aiwen/db/**/*.py", "src/aiwen/database/**/*.py"]
-rules = { type-mismatch = "warn", attribute-error = "warn" }
-
-# 配置文件
-[[tool.ty.overrides]]
-files = ["src/aiwen/config.py", "src/aiwen/settings.py", "src/aiwen/core/config.py"]
-rules = { disallow-any-explicit = "off" }
-
-# 依赖注入
-[[tool.ty.overrides]]
-files = ["src/aiwen/dependencies.py", "src/aiwen/deps.py", "src/aiwen/core/deps.py"]
-rules = { no-untyped-def = "error" }
-
-# 服务层
-[[tool.ty.overrides]]
-files = ["src/aiwen/services/**/*.py"]
-rules = { no-untyped-def = "error" }
-
-# ============================================================================
-# Ruff 配置
-# ============================================================================
-[tool.ruff]
-src = ["src"]  # 重要：指定 src 目录
-target-version = "py311"
-line-length = 100
-
-[tool.ruff.lint]
-select = [
-    "E", # pycodestyle errors
-    "W", # pycodestyle warnings
-    "F", # pyflakes
-    "I", # isort
-    "B", # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-    "ARG", # flake8-unused-arguments
-    "SIM", # flake8-simplify
-]
-ignore = [
-    "E501", # line too long
-    "B008", # function calls in argument defaults (FastAPI)
-]
-
-[tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]
-"tests/**/*.py" = ["ARG"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["aiwen"]
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-
-# ============================================================================
-# Pytest 配置
-# ============================================================================
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]  # 重要：将 src 添加到 Python 路径
-asyncio_mode = "auto"
-addopts = [
-    "-v",
-    "--strict-markers",
-    "--tb=short",
-    "--cov=src/aiwen",
-    "--cov-report=term-missing",
-]
-
-# ============================================================================
-# Coverage 配置
-# ============================================================================
-[tool.coverage.run]
-source = ["src/aiwen"]
-omit = [
-    "*/tests/*",
-    "*/test_*.py",
-    "*/__init__.py",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-]
-
-# ============================================================================
-# Build system
-# ============================================================================
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/aiwen"]
+unused-ignore-comment = "warn"

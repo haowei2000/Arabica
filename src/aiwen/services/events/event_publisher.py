@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
 import logging
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -251,6 +251,16 @@ class EventPublisher:
                 maxlen=10000,
                 approximate=True,
             )
+
+            # Publish USER_MESSAGE events to global task queue for Worker consumption
+            if event.event_type == "user.message" and event.run_id:
+                await self.redis.xadd(
+                    name="run_tasks",
+                    fields=event_data,
+                    maxlen=10000,
+                    approximate=True,
+                )
+                logger.debug(f"Published user.message event to run_tasks queue for run {event.run_id}")
 
         except Exception as e:
             logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")
