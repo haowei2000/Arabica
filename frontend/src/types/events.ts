@@ -1,13 +1,61 @@
 /**
- * Typed event payloads – mirrors the backend *Payload Pydantic schemas.
- * These are the shapes that arrive inside every AgentEvent.payload
- * delivered over the SSE stream.
+ * Event types and payloads - mirrors backend EventPublisher format.
+ *
+ * All events from the backend have the same structure:
+ * {
+ *   id: string,
+ *   event_type: EventType,
+ *   workspace_id: string,
+ *   run_id: string | null,
+ *   user_id: string | null,
+ *   payload: EventPayload,
+ *   sequence: number,
+ *   created_at: string (ISO timestamp)
+ * }
  */
+
+// ============================================================================
+// Event Types (matches backend EventType enum)
+// ============================================================================
+
+export const EventType = {
+  // User events
+  USER_MESSAGE: 'user.message',
+  USER_FEEDBACK: 'user.feedback',
+
+  // Agent events
+  AGENT_TOKEN: 'agent.token',
+  AGENT_MESSAGE: 'agent.message',
+  AGENT_THINKING: 'agent.thinking',
+  AGENT_PLAN_STEP: 'agent.plan.step',
+
+  // Tool events
+  TOOL_CALL: 'tool.call',
+  TOOL_RESULT: 'tool.result',
+  TOOL_ERROR: 'tool.error',
+  TOOL_PENDING: 'tool.pending',
+
+  // Run lifecycle events
+  RUN_STATE_CHANGE: 'run.state.change',
+  RUN_FAILED: 'run.failed',
+  RUN_CANCELLED: 'run.cancelled',
+  RUN_COMPLETED: 'run.completed',
+} as const;
+
+export type EventType = (typeof EventType)[keyof typeof EventType];
+
+// ============================================================================
+// Event Payloads (what's inside event.payload)
+// ============================================================================
 
 export interface AgentTokenPayload {
   token: string;
   token_index: number;
   is_final: boolean;
+}
+
+export interface AgentMessagePayload {
+  content: string;
 }
 
 export interface AgentThinkingPayload {
@@ -36,9 +84,82 @@ export interface ToolResultPayload {
   execution_time_ms: number | null;
 }
 
+export interface ToolPendingPayload {
+  tool_name: string;
+  tool_id: string;
+  reason: string;
+  requires_approval: boolean;
+  arguments: Record<string, unknown>;
+}
+
+export interface RunStateChangePayload {
+  previous_state: string;
+  new_state: string;
+  reason: string;
+  triggered_by: string;
+}
+
+export interface UserMessagePayload {
+  content: string;
+  attachments?: unknown[];
+}
+
+// ============================================================================
+// Unified Event Structure (from EventPublisher)
+// ============================================================================
+
+export interface StreamEvent<T = Record<string, unknown>> {
+  id: string;
+  event_type: EventType;
+  workspace_id: string;
+  run_id: string | null;
+  user_id: string | null;
+  payload: T;
+  sequence: number;
+  created_at: string;
+}
+
+// Type guards for payload types
+export function isAgentTokenPayload(payload: unknown): payload is AgentTokenPayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'token' in payload &&
+    'token_index' in payload
+  );
+}
+
+export function isAgentMessagePayload(payload: unknown): payload is AgentMessagePayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'content' in payload
+  );
+}
+
+export function isToolCallPayload(payload: unknown): payload is ToolCallPayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'tool_name' in payload &&
+    'tool_id' in payload
+  );
+}
+
+export function isRunStateChangePayload(payload: unknown): payload is RunStateChangePayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'new_state' in payload
+  );
+}
+
+// ============================================================================
+// Runtime State (for UI components)
+// ============================================================================
+
 /**
- * Runtime state for a single tool invocation, tracked from
- * TOOL_CALL  →  TOOL_RESULT / TOOL_ERROR.
+ * Runtime state for a single tool invocation.
  */
 export interface ToolCallState {
   tool_id: string;
@@ -50,17 +171,8 @@ export interface ToolCallState {
   execution_time_ms?: number | null;
 }
 
-export interface ToolPendingPayload {
-  tool_name: string;
-  tool_id: string;
-  reason: string;
-  requires_approval: boolean;
-  arguments: Record<string, unknown>;
-}
-
 /**
- * Runtime state for a single pending-approval tool, tracked from
- * TOOL_PENDING  →  user approve / deny  →  cleared on resume.
+ * Runtime state for a pending-approval tool.
  */
 export interface ToolPendingState {
   tool_id: string;

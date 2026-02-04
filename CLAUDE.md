@@ -73,6 +73,79 @@ make db-history       # Show migration history
 make db-status        # Show migration status
 ```
 
+## Database Usage (SQLAlchemy 2.0 Async)
+
+### Session 获取方式
+
+```python
+# API 路由中 - 使用依赖注入
+from aiwen.dependencies.database import get_db
+
+@router.get("/items")
+async def get_items(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Item))
+    return result.scalars().all()
+
+# Worker/Service 中 - 使用 context manager
+from aiwen.extensions.database import get_session
+
+async with get_session("aiwen") as session:
+    result = await session.execute(select(Run))
+```
+
+### 事务管理模式
+
+#### ✅ 推荐：Auto-begin + auto_commit
+
+```python
+# 对于需要立即提交的操作，使用 auto_commit=True
+await crud.create(data, auto_commit=True)
+await state_machine.start(run_id, auto_commit=True)
+
+# 对于批量操作，最后统一提交
+await crud.create(item1, auto_commit=False)
+await crud.create(item2, auto_commit=False)
+await db.commit()
+```
+
+#### ❌ 避免：长事务中包含长时间操作
+
+```python
+# 错误示例 - Agent 执行不应在事务中
+async with db.begin():
+    run = await db.execute(select(Run))
+    await agent.execute()  # ❌ 长时间操作会锁定事务
+    await state_machine.complete(run_id)
+
+# 正确示例 - 分离数据获取和执行
+run = await db.execute(select(Run))  # Auto-begin
+workspace_id = run.workspace_id
+
+await agent.execute()  # 事务外执行
+await state_machine.complete(run_id, auto_commit=True)  # 独立提交
+```
+
+#### ❌ 避免：重复使用的 Session 上调用 begin()
+
+```python
+# 错误 - Session 可能已有活跃事务
+async with session.begin():  # InvalidRequestError!
+    ...
+
+# 正确 - 直接使用 session，依赖 auto-begin
+result = await session.execute(select(Model))
+await session.commit()
+```
+
+### 常见模式
+
+| 场景 | 推荐做法 |
+|------|----------|
+| API 单次读取 | 直接 `execute()`，无需 commit |
+| API 单次写入 | `auto_commit=True` 或手动 `commit()` |
+| Worker 长时间任务 | 短事务获取数据，执行逻辑在事务外 |
+| 批量操作 | 多次 `flush()`，最后一次 `commit()` |
+
 ### Docker
 ```bash
 make docker-up        # Start containers
