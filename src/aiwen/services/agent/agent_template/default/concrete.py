@@ -28,9 +28,15 @@ from langchain_core.messages import (
 
 from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.agents.input import TextInput
+from aiwen.schemas.tools.execution import ExecutionContext
 from aiwen.services.agent.agent_registry import register_agent
 from aiwen.services.agent.base import AgentEvent, BaseAgentTemplate, WaitingForTool
 from aiwen.services.agent.tools import BROWSER_TOOLS
+from aiwen.services.agent.tools.execution_mode import (
+    ToolExecutionMode,
+    get_tool_metadata,
+)
+from aiwen.services.agent.tools.execution_router import ExecutionRouter
 
 from .context import get_messages_from_context
 
@@ -81,6 +87,48 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         self.agent = create_agent(
             model=self.llm, tools=tools, system_prompt=system_prompt
         )
+
+        # Initialize execution router for sandbox/client tool execution
+        self._execution_router = ExecutionRouter()
+        self._execution_router.register_tools_from_list(tools)
+
+    # ── tool execution routing ───────────────────────────────────
+
+    def _get_tool_execution_mode(self, tool_name: str) -> ToolExecutionMode:
+        """Get the execution mode for a tool."""
+        metadata = get_tool_metadata(tool_name)
+        return metadata.execution_mode
+
+    def _requires_special_execution(self, tool_name: str) -> bool:
+        """Check if a tool requires sandbox or client execution."""
+        mode = self._get_tool_execution_mode(tool_name)
+        return mode in (ToolExecutionMode.SANDBOX, ToolExecutionMode.CLIENT)
+
+    async def _execute_via_router(
+        self,
+        tool_name: str,
+        tool_id: str,
+        arguments: dict[str, Any],
+        context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Execute a tool through the ExecutionRouter.
+
+        This method is used for tools that require sandbox or client execution.
+        Returns the tool result as a dict.
+        """
+        result = await self._execution_router.execute(
+            tool_name=tool_name,
+            tool_id=tool_id,
+            arguments=arguments,
+            context=context,
+        )
+        return {
+            "success": result.success,
+            "result": result.result,
+            "error_message": result.error_message,
+            "execution_time_ms": result.execution_time_ms,
+            "execution_mode": result.execution_mode,
+        }
 
     # ── context ──────────────────────────────────────────────────
 
@@ -267,6 +315,28 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                     )
                     raise WaitingForTool({
                         "type": "tool_approval",
+                        "tool_name": tool_name,
+                        "tool_id": tool_id,
+                        "arguments": arguments,
+                        "ai_message": messages_to_dict([last_ai_output])[0],
+                        "executor_code": self.TEMPLATE["template_code"],
+                    })
+
+                # ── Client tool execution gate ─────────────────────
+                tool_mode = self._get_tool_execution_mode(tool_name)
+                if tool_mode == ToolExecutionMode.CLIENT:
+                    metadata = get_tool_metadata(tool_name)
+                    yield self._emit_tool_client_request(
+                        tool_name=tool_name,
+                        tool_id=tool_id,
+                        handler=metadata.client_handler or tool_name,
+                        arguments=arguments,
+                        timeout_seconds=metadata.timeout_seconds,
+                        config=metadata.client_config,
+                    )
+                    # Pause execution waiting for client response
+                    raise WaitingForTool({
+                        "type": "client_tool",
                         "tool_name": tool_name,
                         "tool_id": tool_id,
                         "arguments": arguments,

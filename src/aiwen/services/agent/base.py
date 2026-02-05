@@ -14,6 +14,7 @@ from aiwen.schemas.events.event_payloads import (
     ToolPendingPayload,
     ToolResultPayload,
 )
+from aiwen.schemas.tools.execution import ToolClientRequestPayload
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,33 @@ class Executor(ABC):
                 reason=reason,
                 requires_approval=True,
                 arguments=arguments,
+            ).model_dump(),
+        )
+
+    def _emit_tool_client_request(
+        self,
+        tool_name: str,
+        tool_id: str,
+        handler: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: int = 120,
+        config: dict[str, Any] | None = None,
+    ) -> AgentEvent:
+        """``TOOL_CLIENT_REQUEST`` – request client-side tool execution.
+
+        This event is sent to the browser to trigger local execution
+        (e.g., file picker, camera capture, clipboard access).
+        """
+        return AgentEvent(
+            event_type=EventType.TOOL_CLIENT_REQUEST.value,
+            payload=ToolClientRequestPayload(
+                tool_name=tool_name,
+                tool_id=tool_id,
+                handler=handler,
+                arguments=arguments,
+                timeout_seconds=timeout_seconds,
+                config=config or {},
             ).model_dump(),
         )
 

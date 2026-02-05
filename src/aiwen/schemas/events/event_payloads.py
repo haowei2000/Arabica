@@ -27,6 +27,7 @@ class EventType(str, Enum):
     TOOL_PENDING = "tool.pending"
     TOOL_RESULT = "tool.result"
     TOOL_ERROR = "tool.error"
+    TOOL_CLIENT_REQUEST = "tool.client.request"  # Request client-side execution
 
     # Run lifecycle events
     RUN_CREATED = "run.created"

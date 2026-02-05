@@ -11,8 +11,11 @@
       "Bash(uv run ruff check:*)",
       "Bash(uv run ruff format:*)",
       "Bash(npx tsc:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(uv add:*)",
+      "Bash(python -m pytest:*)"
     ]
   },
-  "outputStyle": "Explanatory"
+  "outputStyle": "Learning"
 }
