@@ -56,7 +56,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
     """
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
-        "template_code": "DEFAULT001",
+        "template_code": "SimpleAgent",
         "template_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,

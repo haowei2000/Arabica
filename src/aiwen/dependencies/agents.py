@@ -9,6 +9,7 @@ from aiwen.services.agent.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.agent.app_crud import AppCRUD
 from aiwen.services.agent.runtime import AgentRuntime
 from aiwen.services.agent.task_crud import AgentTaskCRUD
+from aiwen.services.agent.tool_crud import ToolCRUD
 from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.conversations.conversation_crud import ConversationCRUD
 from aiwen.services.conversations.message_crud import MessageCRUD
@@ -115,6 +116,20 @@ async def get_document_crud(
         DocumentCRUD instance
     """
     return DocumentCRUD(db)
+
+
+async def get_tool_crud(
+    db: AsyncSession = Depends(get_aiwen_db),
+) -> ToolCRUD:
+    """Dependency to get ToolCRUD instance.
+
+    Args:
+        db: Database session from dependency injection
+
+    Returns:
+        ToolCRUD instance
+    """
+    return ToolCRUD(db)
 
 
 async def get_redis_client_dep():

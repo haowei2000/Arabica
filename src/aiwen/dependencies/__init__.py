@@ -13,6 +13,7 @@ from aiwen.dependencies.auth import (
 )
 from aiwen.dependencies.workspace import (
     EventConsumerDep,
+    EventCRUDDep,
     EventPublisherDep,
     EventReplayerDep,
     RunCRUDDep,
@@ -20,6 +21,7 @@ from aiwen.dependencies.workspace import (
     WorkspaceCRUDDep,
     WorkspaceMemberCRUDDep,
     get_event_consumer,
+    get_event_crud,
     get_event_publisher,
     get_event_replayer,
     get_run_crud,
@@ -29,25 +31,24 @@ from aiwen.dependencies.workspace import (
 )
 
 __all__ = [
-    # Auth dependencies
-    "get_current_active_user",
-    "get_current_user",
-    "get_token_data",
-    "oauth2_scheme",
-    # Workspace dependencies
-    "get_workspace_crud",
-    "get_workspace_member_crud",
-    "get_run_crud",
-    "get_event_publisher",
-    "get_event_consumer",
-    "get_event_replayer",
-    "get_run_state_machine",
-    # Type aliases
+    "EventCRUDDep",
+    "EventConsumerDep",
+    "EventPublisherDep",
+    "EventReplayerDep",
+    "RunCRUDDep",
+    "RunStateMachineDep",
     "WorkspaceCRUDDep",
     "WorkspaceMemberCRUDDep",
-    "RunCRUDDep",
-    "EventPublisherDep",
-    "EventConsumerDep",
-    "EventReplayerDep",
-    "RunStateMachineDep",
+    "get_current_active_user",
+    "get_current_user",
+    "get_event_consumer",
+    "get_event_crud",
+    "get_event_publisher",
+    "get_event_replayer",
+    "get_run_crud",
+    "get_run_state_machine",
+    "get_token_data",
+    "get_workspace_crud",
+    "get_workspace_member_crud",
+    "oauth2_scheme",
 ]

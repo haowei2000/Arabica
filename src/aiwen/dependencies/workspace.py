@@ -3,13 +3,14 @@
 
 from typing import Annotated
 
-import redis.asyncio as redis_async
 from fastapi import Depends
+import redis.asyncio as redis_async
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
 from aiwen.services.events.event_consumer import EventConsumer, EventReplayer
+from aiwen.services.events.event_crud import EventCRUD
 from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.services.runs.run_crud import RunCRUD
 from aiwen.services.runs.run_state_machine import RunStateMachine
@@ -108,6 +109,20 @@ async def get_event_replayer(
     return EventReplayer(db)
 
 
+async def get_event_crud(
+        db: AsyncSession = Depends(get_aiwen_db),
+) -> EventCRUD:
+    """Dependency to get EventCRUD instance.
+
+    Args:
+        db: Database session from dependency injection
+
+    Returns:
+        EventCRUD instance
+    """
+    return EventCRUD(db)
+
+
 async def get_run_state_machine(
         db: AsyncSession = Depends(get_aiwen_db),
         redis_client: redis_async.Redis = Depends(_get_redis_client),
@@ -128,6 +143,7 @@ async def get_run_state_machine(
 WorkspaceCRUDDep = Annotated[WorkspaceCRUD, Depends(get_workspace_crud)]
 WorkspaceMemberCRUDDep = Annotated[WorkspaceMemberCRUD, Depends(get_workspace_member_crud)]
 RunCRUDDep = Annotated[RunCRUD, Depends(get_run_crud)]
+EventCRUDDep = Annotated[EventCRUD, Depends(get_event_crud)]
 EventPublisherDep = Annotated[EventPublisher, Depends(get_event_publisher)]
 EventConsumerDep = Annotated[EventConsumer, Depends(get_event_consumer)]
 EventReplayerDep = Annotated[EventReplayer, Depends(get_event_replayer)]

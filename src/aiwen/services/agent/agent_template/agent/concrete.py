@@ -7,12 +7,12 @@ from aiwen.services.agent.base import AgentEvent, BaseAgentTemplate
 
 
 @register_agent
-class NL2SQLAgentTemplate(BaseAgentTemplate):
+class AgentTemplate(BaseAgentTemplate):
     """Natural Language to SQL conversion agent."""
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
-        "template_code": "NL2SQL001",
-        "template_name": "Natural Language to SQL Agent",
+        "template_code": "Agent",
+        "template_name": "Agent for complict task",
         "enabled": True,
         "version": 1,
         "config": {},

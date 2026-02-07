@@ -7,6 +7,7 @@ from aiwen.routers.context.knowledge import router as knowledge_router
 from .app import router as app_router
 from .conversations import router as conversation_router
 from .messages import router as message_router
+from .tools import router as tool_router
 
 # Create main agent router
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -16,5 +17,6 @@ router.include_router(app_router)
 router.include_router(conversation_router)
 router.include_router(knowledge_router)
 router.include_router(message_router)
+router.include_router(tool_router)
 
 __all__ = ["router"]

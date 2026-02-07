@@ -2,9 +2,11 @@
 """Event services package."""
 
 from aiwen.services.events.event_consumer import EventConsumer, EventReplayer
+from aiwen.services.events.event_crud import EventCRUD
 from aiwen.services.events.event_publisher import EventPublisher
 
 __all__ = [
+    "EventCRUD",
     "EventConsumer",
     "EventPublisher",
     "EventReplayer",

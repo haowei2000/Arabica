@@ -94,10 +94,10 @@ async def search_knowledge_base(
         }
 
 
-@tool("get_conversation_context")
+@tool("get_run_memory")
 @server_tool(timeout=15)
-async def get_conversation_context(
-    conversation_id: str,
+async def get_run_memory(
+    run_id: str,
     max_messages: int = 20,
     include_system: bool = False,
 ) -> dict:
@@ -105,7 +105,7 @@ async def get_conversation_context(
     Retrieve conversation history for context.
 
     Args:
-        conversation_id: The conversation UUID
+        run_id: The conversation UUID
         max_messages: Maximum number of messages to retrieve
         include_system: Whether to include system messages
 
@@ -119,7 +119,7 @@ async def get_conversation_context(
     )
 
     messages = await get_messages_from_context(
-        conversation_id=UUID(conversation_id),
+        conversation_id=UUID(run_id),
         max_messages=max_messages,
     )
 
@@ -129,7 +129,7 @@ async def get_conversation_context(
     return {
         "messages": messages,
         "total": len(messages),
-        "conversation_id": conversation_id,
+        "conversation_id": run_id,
     }
 
 
@@ -638,7 +638,7 @@ async def cache_set(
 
 CONTEXT_TOOLS = [
     search_knowledge_base,
-    get_conversation_context,
+    get_run_memory,
     query_structured_data,
 ]
 

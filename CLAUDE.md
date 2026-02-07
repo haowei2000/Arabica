@@ -171,30 +171,6 @@ frontend/src/         # React frontend
 tests/                # Test suite
 docs/                 # Documentation
 ```
-
-## Code Style
-
-### Linting & Formatting
-- **Tool**: Ruff (v0.14.7+)
-- **Line length**: 88
-- **Python version**: 3.12
-
-```bash
-# Format code
-ruff format .
-
-# Check linting
-ruff check .
-
-# Fix auto-fixable issues
-ruff check --fix .
-```
-
-### Key Style Rules
-- Double quotes for strings
-- Space indentation
-- isort for import sorting (first-party package: `app`)
-
 ## Testing
 
 ```bash

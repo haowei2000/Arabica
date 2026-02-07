@@ -1,4 +1,4 @@
-"""Tool execution schemas."""
+"""Tool execution and registry schemas."""
 
 from .execution import (
     ExecutionContext,
@@ -8,12 +8,22 @@ from .execution import (
     ToolResult,
     ToolResultSubmission,
 )
+from .tool import (
+    ToolCreate,
+    ToolListResponse,
+    ToolResponse,
+    ToolUpdate,
+)
 
 __all__ = [
     "ExecutionContext",
     "SandboxConfig",
     "ToolClientRequestPayload",
+    "ToolCreate",
     "ToolExecutionRequest",
+    "ToolListResponse",
+    "ToolResponse",
     "ToolResult",
     "ToolResultSubmission",
+    "ToolUpdate",
 ]
