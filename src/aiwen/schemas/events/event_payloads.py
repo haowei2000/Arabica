@@ -13,6 +13,12 @@ from aiwen.models.events.event import EventType
 class BaseEventPayload(BaseModel):
     """Base class for all event payloads."""
 
+    event_type: EventType = Field(..., description="事件类型")
+    app_id: UUID | None = Field(None, description="应用ID")
+    workspace_id: UUID | str | None = Field(None, description="工作空间ID")
+    run_id: UUID | str | None = Field(None, description="运行ID")
+    executor_code: str | None = Field(None, description="执行器代码")
+
     class Config:
         extra = "allow"
 
@@ -22,7 +28,13 @@ class UserMessagePayload(BaseEventPayload):
 
     content: str = Field(..., description="用户消息内容")
     attachments: list[dict[str, Any]] | None = Field(None, description="附件列表")
+    user_id: UUID | None = Field(None, description="用户ID")
     metadata: dict[str, Any] | None = Field(None, description="元数据")
+
+    # Override base fields to make them required or set defaults
+    event_type: EventType = EventType.USER_MESSAGE
+    app_id: UUID = Field(..., description="应用ID")
+    workspace_id: UUID | str = Field(..., description="工作空间ID")
 
 
 class AgentTokenPayload(BaseEventPayload):
@@ -31,6 +43,9 @@ class AgentTokenPayload(BaseEventPayload):
     token: str = Field(..., description="生成的token")
     token_index: int = Field(0, description="token索引")
     is_final: bool = Field(False, description="是否是最后一个token")
+
+    # Override base field to set default
+    event_type: EventType = EventType.AGENT_TOKEN
 
 
 class AgentPlanStepPayload(BaseEventPayload):
@@ -43,6 +58,9 @@ class AgentPlanStepPayload(BaseEventPayload):
     )
     output: str | None = Field(None, description="步骤输出")
 
+    # Override base field to set default
+    event_type: EventType = EventType.AGENT_PLAN_STEP
+
 
 class ToolCallPayload(BaseEventPayload):
     """Payload for tool.call events."""
@@ -50,6 +68,9 @@ class ToolCallPayload(BaseEventPayload):
     tool_name: str = Field(..., description="工具名称")
     tool_id: str = Field(..., description="工具调用ID")
     arguments: dict[str, Any] = Field(default_factory=dict, description="工具参数")
+
+    # Override base field to set default
+    event_type: EventType = EventType.TOOL_CALL
 
 
 class ToolPendingPayload(BaseEventPayload):
@@ -60,6 +81,9 @@ class ToolPendingPayload(BaseEventPayload):
     reason: str = Field(..., description="等待原因")
     requires_approval: bool = Field(False, description="是否需要审批")
     arguments: dict[str, Any] = Field(default_factory=dict, description="工具参数")
+
+    # Override base field to set default
+    event_type: EventType = EventType.TOOL_PENDING
 
 
 class ToolResultPayload(BaseEventPayload):
@@ -72,6 +96,9 @@ class ToolResultPayload(BaseEventPayload):
     error_message: str | None = Field(None, description="错误消息")
     execution_time_ms: int | None = Field(None, description="执行时间(毫秒)")
 
+    # Override base field to set default
+    event_type: EventType = EventType.TOOL_RESULT
+
 
 class RunStateChangePayload(BaseEventPayload):
     """Payload for run.state.change events."""
@@ -81,6 +108,9 @@ class RunStateChangePayload(BaseEventPayload):
     reason: str | None = Field(None, description="状态变更原因")
     triggered_by: str | None = Field(None, description="触发者")
 
+    # Override base field to set default
+    event_type: EventType = EventType.RUN_STATE_CHANGE
+
 
 class WorkspaceMemberJoinPayload(BaseEventPayload):
     """Payload for workspace.member.join events."""
@@ -88,6 +118,9 @@ class WorkspaceMemberJoinPayload(BaseEventPayload):
     member_id: str = Field(..., description="成员用户ID")
     role: str = Field(..., description="成员角色")
     invited_by: str | None = Field(None, description="邀请人ID")
+
+    # Override base field to set default
+    event_type: EventType = EventType.WORKSPACE_MEMBER_JOIN
 
 
 class EventCreate(BaseModel):

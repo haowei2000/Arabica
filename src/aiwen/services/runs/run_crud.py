@@ -45,7 +45,6 @@ class RunCRUD:
         user_id: str | UUID,
         parent_run_id: str | UUID | None = None,
         trigger_type: str = "user",
-        input_data: dict[str, Any] | None = None,
         auto_commit: bool = False,
     ) -> Run:
         """Create a new run.
@@ -70,7 +69,6 @@ class RunCRUD:
             if parent_run_id
             else None,
             trigger_type=trigger_type,
-            input_data=input_data,
             status="pending",
         )
         self.db.add(run)

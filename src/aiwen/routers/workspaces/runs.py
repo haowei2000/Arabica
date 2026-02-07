@@ -1,5 +1,6 @@
 # aiwen/routers/workspaces/runs.py
 """REST API endpoints for run management."""
+from aiwen.schemas.events import UserMessagePayload
 
 import json
 from typing import Annotated
@@ -31,8 +32,7 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 
 @router.post("", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
 async def create_run(
-    workspace_id: str,
-    data: RunStartRequest,
+    payload: UserMessagePayload,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     workspace_crud: WorkspaceCRUDDep,
     run_crud: RunCRUDDep,
@@ -43,6 +43,7 @@ async def create_run(
     Create and start a new run with a user message.
 
     Args:
+        state_machine:
         workspace_id: The workspace ID
         data: Run start request with message
         current_user: Current authenticated user
@@ -54,6 +55,7 @@ async def create_run(
         Created run
     """
     # Verify workspace access
+    workspace_id = payload.workspace_id
     workspace = await workspace_crud.get_by_id_and_user(workspace_id, current_user.id)
     if not workspace:
         raise HTTPException(
@@ -62,7 +64,7 @@ async def create_run(
         )
 
     # Determine app_id (from request or workspace default)
-    app_id = data.app_id or workspace.app_id
+    app_id = payload.app_id
     if not app_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -75,16 +77,10 @@ async def create_run(
         app_id=app_id,
         user_id=current_user.id,
         trigger_type="user",
-        input_data={
-            "message": data.message,
-            "attachments": data.attachments,
-            "metadata": data.metadata,
-        },
         auto_commit=False,
     )
 
     # Resolve executor_code from the app's linked agent template
-    executor_code = "DEFAULT001"  # safe fallback
     app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
     app_row = app_result.scalar_one_or_none()
     if app_row and app_row.agent_template_id:
@@ -101,11 +97,9 @@ async def create_run(
         workspace_id=workspace_id,
         run_id=str(run.id),
         user_id=str(current_user.id),
+        executor_code=executor_code,
         payload={
-            "content": data.message,
-            "attachments": data.attachments,
-            "executor_code": executor_code,
-            "input_data": run.input_data,
+            "message": payload.content
         },
         auto_commit=True,
     )

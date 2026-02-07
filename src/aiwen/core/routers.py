@@ -14,12 +14,12 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     Returns:
         List of tuples (router, prefix)
     """
-    from aiwen.routers.agents.app import router as agents_router
+    from aiwen.routers.app.app import router as agents_router
     from aiwen.routers.agents.conversations import router as conversations_router
     from aiwen.routers.agents.messages import router as messages_router
 
     # Tool registry router
-    from aiwen.routers.agents.tools import router as tools_router
+    from aiwen.routers.tool.tools import router as tools_router
     from aiwen.routers.auth import router as auth_router
     from aiwen.routers.context.context import router as context_router
     from aiwen.routers.context.document import router as document_router

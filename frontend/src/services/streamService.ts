@@ -46,7 +46,11 @@ class StreamService {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ message, app_id: appId }),
+          body: JSON.stringify({
+            content: message,
+            workspace_id: workspaceId,
+            app_id: appId,
+          }),
         }
       );
 

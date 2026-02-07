@@ -27,10 +27,13 @@ export interface RunListResponse {
 }
 
 export interface RunStartRequest {
-  message: string;
-  app_id?: string;
-  attachments?: Record<string, any>[];
-  metadata?: Record<string, any>;
+  content: string;
+  workspace_id: string;
+  app_id: string;
+  user_id?: string | null;
+  run_id?: string | null;
+  attachments?: Record<string, any>[] | null;
+  metadata?: Record<string, any> | null;
 }
 
 export interface RunStateMessage {

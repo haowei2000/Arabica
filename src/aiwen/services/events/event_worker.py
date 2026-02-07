@@ -17,12 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.app import App
 from aiwen.models.runs.run import Run
+from aiwen.schemas.events import UserMessagePayload
 from aiwen.services.agent.agent_registry import AgentRegistry
 from aiwen.services.agent.base import AgentEvent, Executor
 from aiwen.services.agent.runtime import AgentRuntime
 from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
-
 logger = logging.getLogger(__name__)
 
 # Redis stream the worker polls for user.message events.
@@ -105,7 +105,7 @@ class Worker:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
-    async def handle_message(self, message_data: dict):
+    async def handle_message(self, message_data: UserMessagePayload):
         """
         处理来自 run_tasks stream 的消息。
         """
@@ -114,33 +114,14 @@ class Worker:
         workspace_id: str | None = None
 
         try:
-            run_id_str = message_data.get("run_id")
+            run_id_str = message_data.run_id
             if not run_id_str:
                 logger.warning("Received message without run_id, skipping")
                 return
 
             run_id = UUID(run_id_str)
+            event_type = message_data.event_type
 
-            # 解析消息格式
-            if "event_type" in message_data:
-                # EventPublisher 事件格式
-                payload_str = message_data.get("payload", "{}")
-                if isinstance(payload_str, bytes):
-                    payload_str = payload_str.decode()
-                payload = (
-                    json.loads(payload_str)
-                    if isinstance(payload_str, str)
-                    else payload_str
-                )
-
-                executor_code = payload.get("executor_code", "DEFAULT001")
-                input_data = payload.get("input_data", {})
-                triggered_by = "user"
-            else:
-                # Resume 消息格式
-                executor_code = message_data.get("executor_code", "DEFAULT001")
-                input_data = message_data.get("input", {})
-                triggered_by = message_data.get("triggered_by", "user")
 
             executor_cls = AgentRegistry.get(executor_code)
 

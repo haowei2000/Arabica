@@ -366,7 +366,7 @@ load_dotenv('.env')
 from aiwen.models.agents.app import App
 from aiwen.schemas.agents.app import AppCreate, AppUpdate, AppResponse, AppListResponse
 from aiwen.services.crud import AppCRUD
-from aiwen.routers.agents.app import router
+from aiwen.routers.app.app import router
 from aiwen.dependencies.agents import get_app_crud
 
 print('✓ All imports successful!')
@@ -375,10 +375,10 @@ print('✓ All imports successful!')
 ### 路由验证
 
 ```python
-from aiwen.routers.agents.app import router
+from aiwen.routers.app.app import router
 
 print(f'Router prefix: {router.prefix}')  # /apps
-print(f'Router tags: {router.tags}')      # ['apps']
+print(f'Router tags: {router.tags}')  # ['apps']
 print(f'Number of routes: {len(router.routes)}')  # 7
 ```
 
