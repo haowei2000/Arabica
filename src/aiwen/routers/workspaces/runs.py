@@ -97,9 +97,8 @@ async def create_run(
         workspace_id=workspace_id,
         run_id=str(run.id),
         user_id=str(current_user.id),
-        executor_code=executor_code,
         payload={
-            "message": payload.content
+            "message": payload.content,
         },
         auto_commit=True,
     )

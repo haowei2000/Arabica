@@ -1,44 +1,50 @@
 @import "tailwindcss";
 
 @theme {
-    /* Primary - Orange #FF6500 */
-    --color-primary-50: oklch(0.97 0.02 50);
-    --color-primary-100: oklch(0.92 0.05 50);
-    --color-primary-200: oklch(0.85 0.10 50);
-    --color-primary-300: oklch(0.78 0.15 50);
-    --color-primary-400: oklch(0.70 0.18 50);
-    --color-primary-500: oklch(0.65 0.20 50);
-    --color-primary-600: oklch(0.55 0.18 50);
-    --color-primary-700: oklch(0.45 0.15 50);
-    --color-primary-800: oklch(0.35 0.12 50);
-    --color-primary-900: oklch(0.25 0.08 50);
-    --color-primary-950: oklch(0.18 0.05 50);
+    /* Primary - Orange #FF6500 with enhanced vibrancy */
+    --color-primary-50: oklch(0.98 0.03 45);
+    --color-primary-100: oklch(0.94 0.08 45);
+    --color-primary-200: oklch(0.88 0.14 45);
+    --color-primary-300: oklch(0.82 0.18 45);
+    --color-primary-400: oklch(0.74 0.21 45);
+    --color-primary-500: oklch(0.67 0.23 45);
+    --color-primary-600: oklch(0.58 0.21 45);
+    --color-primary-700: oklch(0.48 0.18 45);
+    --color-primary-800: oklch(0.38 0.14 45);
+    --color-primary-900: oklch(0.28 0.10 45);
+    --color-primary-950: oklch(0.20 0.06 45);
 
-    /* Secondary - Dark Blue #1E3E62 */
-    --color-secondary-50: oklch(0.95 0.02 250);
-    --color-secondary-100: oklch(0.88 0.04 250);
-    --color-secondary-200: oklch(0.78 0.06 250);
-    --color-secondary-300: oklch(0.65 0.08 250);
-    --color-secondary-400: oklch(0.52 0.10 250);
-    --color-secondary-500: oklch(0.40 0.10 250);
-    --color-secondary-600: oklch(0.32 0.08 250);
-    --color-secondary-700: oklch(0.26 0.06 250);
-    --color-secondary-800: oklch(0.20 0.05 250);
-    --color-secondary-900: oklch(0.15 0.03 250);
-    --color-secondary-950: oklch(0.10 0.02 250);
+    /* Secondary - Enhanced Blue */
+    --color-secondary-50: oklch(0.97 0.02 250);
+    --color-secondary-100: oklch(0.92 0.05 250);
+    --color-secondary-200: oklch(0.84 0.08 250);
+    --color-secondary-300: oklch(0.72 0.11 250);
+    --color-secondary-400: oklch(0.58 0.13 250);
+    --color-secondary-500: oklch(0.46 0.13 250);
+    --color-secondary-600: oklch(0.36 0.11 250);
+    --color-secondary-700: oklch(0.28 0.09 250);
+    --color-secondary-800: oklch(0.22 0.07 250);
+    --color-secondary-900: oklch(0.17 0.05 250);
+    --color-secondary-950: oklch(0.12 0.03 250);
 
-    /* Dark - Navy #0B192C */
-    --color-navy-50: oklch(0.95 0.01 250);
-    --color-navy-100: oklch(0.88 0.02 250);
-    --color-navy-200: oklch(0.75 0.03 250);
-    --color-navy-300: oklch(0.60 0.04 250);
-    --color-navy-400: oklch(0.45 0.05 250);
-    --color-navy-500: oklch(0.30 0.05 250);
-    --color-navy-600: oklch(0.22 0.04 250);
-    --color-navy-700: oklch(0.18 0.04 250);
-    --color-navy-800: oklch(0.14 0.03 250);
-    --color-navy-900: oklch(0.10 0.02 250);
-    --color-navy-950: oklch(0.06 0.02 250);
+    /* Dark - Navy with better contrast */
+    --color-navy-50: oklch(0.98 0.01 250);
+    --color-navy-100: oklch(0.94 0.02 250);
+    --color-navy-200: oklch(0.85 0.03 250);
+    --color-navy-300: oklch(0.70 0.04 250);
+    --color-navy-400: oklch(0.54 0.05 250);
+    --color-navy-500: oklch(0.38 0.05 250);
+    --color-navy-600: oklch(0.28 0.05 250);
+    --color-navy-700: oklch(0.20 0.05 250);
+    --color-navy-800: oklch(0.15 0.04 250);
+    --color-navy-900: oklch(0.11 0.03 250);
+    --color-navy-950: oklch(0.07 0.02 250);
+
+    /* Glass effect variables */
+    --glass-bg: oklch(0.98 0 0 / 0.7);
+    --glass-bg-dark: oklch(0.12 0.02 250 / 0.6);
+    --glass-border: oklch(0.95 0 0 / 0.2);
+    --glass-border-dark: oklch(0.2 0.03 250 / 0.2);
 }
 
 /* Light mode base styles */
@@ -47,7 +53,10 @@ html {
 }
 
 body {
-    @apply bg-navy-50 text-navy-900 antialiased;
+    @apply bg-gradient-to-br from-navy-50 via-secondary-50/30 to-primary-50/20
+           text-navy-900 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    min-height: 100vh;
 }
 
 /* Dark mode */
@@ -56,45 +65,167 @@ html.dark {
 }
 
 html.dark body {
-    @apply bg-navy-950 text-navy-100;
+    @apply bg-gradient-to-br from-navy-950 via-navy-900 to-secondary-950/50
+           text-navy-50;
 }
 
-/* Scrollbar */
+/* Modern Scrollbar */
 ::-webkit-scrollbar {
-    @apply w-2 h-2;
+    @apply w-2.5 h-2.5;
 }
 
 ::-webkit-scrollbar-track {
-    @apply bg-navy-100;
-}
-
-html.dark ::-webkit-scrollbar-track {
-    @apply bg-navy-900;
+    @apply bg-transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    @apply bg-secondary-400 rounded-full;
+    @apply bg-secondary-300/50 rounded-full transition-colors;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    @apply bg-primary-500;
+    @apply bg-primary-400/70;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+    @apply bg-navy-700/70;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary-500/60;
 }
 
 /* Selection */
 ::selection {
-    @apply bg-primary-500 text-white;
+    @apply bg-primary-500/20 text-primary-900;
+}
+
+html.dark ::selection {
+    @apply bg-primary-400/30 text-primary-100;
 }
 
 /* Focus */
 :focus-visible {
-    @apply outline-2 outline-offset-2 outline-primary-500;
+    @apply outline-2 outline-offset-2 outline-primary-500 outline-dashed;
 }
 
 /* Links */
 a {
-    @apply text-primary-500 hover:text-primary-600 transition-colors;
+    @apply text-primary-600 hover:text-primary-700
+           underline decoration-primary-300 underline-offset-2
+           transition-all duration-200 hover:decoration-primary-500;
 }
 
 html.dark a {
-    @apply text-primary-400 hover:text-primary-300;
+    @apply text-primary-400 hover:text-primary-300
+           decoration-primary-600 hover:decoration-primary-400;
+}
+
+/* Glass morphism utility */
+.glass {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+
+html.dark .glass {
+    background: var(--glass-bg-dark);
+    border-color: var(--glass-border-dark);
+}
+
+/* Smooth animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+.animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+}
+
+.animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+}
+
+/* Improved card styles */
+.card {
+    @apply bg-white dark:bg-navy-800/80
+           rounded-xl border border-secondary-100 dark:border-navy-700/50
+           shadow-sm hover:shadow-lg dark:shadow-navy-900/30
+           transition-all duration-300 ease-out
+           backdrop-blur-sm;
+}
+
+.card-hover {
+    @apply hover:scale-[1.02] hover:border-primary-200 dark:hover:border-primary-700/50;
+}
+
+/* Button improvements */
+.btn-primary {
+    @apply bg-gradient-to-r from-primary-500 to-primary-600
+           hover:from-primary-600 hover:to-primary-700
+           text-white font-medium rounded-lg
+           shadow-md hover:shadow-xl shadow-primary-500/20
+           transition-all duration-200
+           active:scale-95;
+}
+
+.btn-secondary {
+    @apply bg-white dark:bg-navy-800
+           border border-secondary-200 dark:border-navy-700
+           text-secondary-700 dark:text-secondary-300
+           hover:bg-secondary-50 dark:hover:bg-navy-700
+           font-medium rounded-lg
+           transition-all duration-200
+           active:scale-95;
+}
+
+.btn-ghost {
+    @apply text-secondary-600 dark:text-secondary-400
+           hover:bg-secondary-100 dark:hover:bg-navy-800
+           rounded-lg transition-all duration-200
+           active:scale-95;
+}
+
+/* Input improvements */
+.input-modern {
+    @apply bg-white dark:bg-navy-800/50
+           border border-secondary-200 dark:border-navy-700
+           rounded-lg px-4 py-2.5
+           text-navy-900 dark:text-navy-100
+           placeholder-secondary-400 dark:placeholder-secondary-500
+           focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500
+           transition-all duration-200;
 }
