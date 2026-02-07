@@ -62,6 +62,7 @@ class EventPublisher:
         run_id: UUID | str | None = None,
         user_id: UUID | str | None = None,
         payload: dict[str, Any] | None = None,
+        executor_code: str | None = None,
         parent_event_id: UUID | str | None = None,
         auto_commit: bool = False,
     ) -> Event:

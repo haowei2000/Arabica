@@ -70,7 +70,6 @@ async def create_run(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No app_id provided and workspace has no default app",
         )
-
     # Create run
     run = await run_crud.create(
         workspace_id=workspace_id,
@@ -83,6 +82,7 @@ async def create_run(
     # Resolve executor_code from the app's linked agent template
     app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
     app_row = app_result.scalar_one_or_none()
+    executor_code = "DEFAULT001"
     if app_row and app_row.agent_template_id:
         tmpl_result = await state_machine.db.execute(
             select(AgentTemplate).where(AgentTemplate.id == app_row.agent_template_id)
@@ -97,6 +97,7 @@ async def create_run(
         workspace_id=workspace_id,
         run_id=str(run.id),
         user_id=str(current_user.id),
+        executor_code=executor_code,
         payload={
             "message": payload.content,
         },

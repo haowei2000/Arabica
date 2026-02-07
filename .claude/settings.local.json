@@ -17,7 +17,8 @@
       "Bash(python -m pytest:*)",
       "Bash(git mv:*)",
       "Bash(git rm:*)",
-      "Bash(python -m ruff check:*)"
+      "Bash(python -m ruff check:*)",
+      "Bash(psql:*)"
     ]
   },
   "outputStyle": "Explanatory"

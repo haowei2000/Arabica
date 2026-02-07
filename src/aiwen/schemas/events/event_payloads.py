@@ -130,6 +130,7 @@ class EventCreate(BaseModel):
     workspace_id: str | UUID = Field(..., description="工作空间ID")
     run_id: str | UUID | None = Field(None, description="运行ID")
     user_id: str | UUID | None = Field(None, description="用户ID")
+    executor_code: str | None = Field(None, description="执行器模板代码")
     payload: dict[str, Any] | None = Field(None, description="事件数据")
     parent_event_id: str | UUID | None = Field(None, description="父事件ID")
 
@@ -142,6 +143,7 @@ class EventResponse(BaseModel):
     workspace_id: str
     run_id: str | None = None
     user_id: str | None = None
+    executor_code: str | None = None
     payload: dict[str, Any] | None = None
     sequence: int
     parent_event_id: str | None = None

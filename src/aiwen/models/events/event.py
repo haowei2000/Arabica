@@ -108,6 +108,13 @@ class Event(Base):
         comment="触发事件的用户ID",
     )
 
+    # Executor template code (agent template that processed this event)
+    executor_code: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="执行器模板代码（处理此事件的 Agent 模板）",
+    )
+
     # Event payload (flexible JSON structure)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, comment="事件数据")
 
@@ -149,6 +156,8 @@ class Event(Base):
         Index("ix_event_type_created", "event_type", "created_at"),
         # Index for parent event lookups
         Index("ix_event_parent", "parent_event_id"),
+        # Index for executor code queries
+        Index("ix_event_executor_code", "executor_code"),
     )
 
     def __repr__(self) -> str:
