@@ -417,13 +417,13 @@ class WorkspaceMigration:
 
         # Find workspace for this conversation
         ws_stmt = select(Workspace).where(
-            Workspace.legacy_conversation_id == str(msg.conversation_id)
+            Workspace.legacy_conversation_id == str(msg.workspace_id)
         )
         ws_result = await session.execute(ws_stmt)
         workspace = ws_result.scalar_one_or_none()
 
         if not workspace:
-            logger.warning(f"No workspace found for conversation {msg.conversation_id}")
+            logger.warning(f"No workspace found for conversation {msg.workspace_id}")
             return
 
         user_id = str(msg.from_account_id) if msg.from_account_id else str(workspace.owner_id)

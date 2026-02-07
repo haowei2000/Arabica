@@ -14,8 +14,8 @@ async def create_conversation(
     conversation_crud,
 ):
     """Get or create conversation"""
-    if text_message.conversation_id:
-        conversation = await conversation_crud.get_by_id(text_message.conversation_id)
+    if text_message.workspace_id:
+        conversation = await conversation_crud.get_by_id(text_message.workspace_id)
         if conversation:
             return conversation
     name = text_message.conversation_name or (

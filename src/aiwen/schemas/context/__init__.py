@@ -1,6 +1,7 @@
 """Context domain schemas."""
 
 from aiwen.schemas.context.context import (
+    ContextFromSource,
     ContextCreate,
     ContextListResponse,
     ContextResponse,
@@ -8,16 +9,25 @@ from aiwen.schemas.context.context import (
     ContextUpdate,
     ContextWithScore,
     GrepSearchRequest,
+    KnowledgeContextInput,
+    SkillContextInput,
+    ToolContextInput,
+    UserMemoryContextInput,
     VectorSearchRequest,
 )
 
 __all__ = [
     "ContextCreate",
+    "ContextFromSource",
     "ContextListResponse",
     "ContextResponse",
     "ContextSearchResponse",
     "ContextUpdate",
     "ContextWithScore",
     "GrepSearchRequest",
+    "KnowledgeContextInput",
+    "SkillContextInput",
+    "ToolContextInput",
+    "UserMemoryContextInput",
     "VectorSearchRequest",
 ]

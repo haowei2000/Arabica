@@ -16,7 +16,8 @@
       "Bash(uv add:*)",
       "Bash(python -m pytest:*)",
       "Bash(git mv:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(python -m ruff check:*)"
     ]
   },
   "outputStyle": "Explanatory"

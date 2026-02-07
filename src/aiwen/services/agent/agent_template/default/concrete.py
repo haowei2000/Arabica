@@ -135,10 +135,10 @@ class DefaultAgentTemplate(BaseAgentTemplate):
     async def _prepare_messages(self, input_data: TextInput) -> list[dict[str, str]]:
         """Load conversation history and append the current user message."""
         messages: list[dict[str, str]] = []
-        if input_data.conversation_id:
+        if input_data.workspace_id:
             messages.extend(
                 await get_messages_from_context(
-                    conversation_id=input_data.conversation_id,
+                    conversation_id=input_data.workspace_id,
                     max_messages=self.max_history_messages,
                 )
             )
