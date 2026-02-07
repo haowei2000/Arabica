@@ -15,7 +15,7 @@ import redis.asyncio as redis_async
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.event import Event
+from aiwen.models.events.event import Event
 from aiwen.schemas.events.event_payloads import EventResponse
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,10 @@ class EventConsumer:
         self.redis = redis_client
 
     async def subscribe_run(
-            self,
-            run_id: UUID | str,
-            last_id: str = "$",
-            timeout_ms: int = 300000,
+        self,
+        run_id: UUID | str,
+        last_id: str = "$",
+        timeout_ms: int = 300000,
     ) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events for a specific run.
 
@@ -84,10 +84,10 @@ class EventConsumer:
                 await asyncio.sleep(1)  # Brief pause before retry
 
     async def subscribe_workspace(
-            self,
-            workspace_id: UUID | str,
-            last_id: str = "$",
-            timeout_ms: int = 300000,
+        self,
+        workspace_id: UUID | str,
+        last_id: str = "$",
+        timeout_ms: int = 300000,
     ) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to events for a specific workspace.
 
@@ -139,8 +139,9 @@ class EventConsumer:
         """
         # Decode bytes to strings
         decoded = {
-            k.decode() if isinstance(k, bytes) else k:
-                v.decode() if isinstance(v, bytes) else v
+            k.decode() if isinstance(k, bytes) else k: v.decode()
+            if isinstance(v, bytes)
+            else v
             for k, v in data.items()
         }
 
@@ -174,11 +175,11 @@ class EventReplayer:
         self.db = db
 
     async def replay_run(
-            self,
-            run_id: UUID | str,
-            from_sequence: int = 0,
-            to_sequence: int | None = None,
-            limit: int = 1000,
+        self,
+        run_id: UUID | str,
+        from_sequence: int = 0,
+        to_sequence: int | None = None,
+        limit: int = 1000,
     ) -> list[EventResponse]:
         """Replay events for a run from PostgreSQL.
 
@@ -209,11 +210,11 @@ class EventReplayer:
         return [EventResponse.model_validate(e) for e in events]
 
     async def replay_workspace(
-            self,
-            workspace_id: UUID | str,
-            from_sequence: int = 0,
-            limit: int = 1000,
-            event_types: list[str] | None = None,
+        self,
+        workspace_id: UUID | str,
+        from_sequence: int = 0,
+        limit: int = 1000,
+        event_types: list[str] | None = None,
     ) -> list[EventResponse]:
         """Replay events for a workspace from PostgreSQL.
 
@@ -226,7 +227,9 @@ class EventReplayer:
         Returns:
             List of EventResponse objects
         """
-        workspace_id_str = str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        workspace_id_str = (
+            str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        )
 
         stmt = select(Event).where(
             Event.workspace_id == workspace_id_str,
@@ -244,8 +247,8 @@ class EventReplayer:
         return [EventResponse.model_validate(e) for e in events]
 
     async def get_latest_state(
-            self,
-            run_id: UUID | str,
+        self,
+        run_id: UUID | str,
     ) -> dict[str, Any]:
         """Reconstruct the latest state by replaying all events.
 
@@ -274,18 +277,26 @@ class EventReplayer:
             state["last_sequence"] = event.sequence
 
             if event.event_type == "user.message":
-                state["messages"].append({
-                    "role": "user",
-                    "content": event.payload.get("content", "") if event.payload else "",
-                    "timestamp": event.created_at.isoformat(),
-                })
+                state["messages"].append(
+                    {
+                        "role": "user",
+                        "content": event.payload.get("content", "")
+                        if event.payload
+                        else "",
+                        "timestamp": event.created_at.isoformat(),
+                    }
+                )
 
             elif event.event_type == "agent.message":
-                state["messages"].append({
-                    "role": "assistant",
-                    "content": event.payload.get("content", "") if event.payload else "",
-                    "timestamp": event.created_at.isoformat(),
-                })
+                state["messages"].append(
+                    {
+                        "role": "assistant",
+                        "content": event.payload.get("content", "")
+                        if event.payload
+                        else "",
+                        "timestamp": event.created_at.isoformat(),
+                    }
+                )
 
             elif event.event_type == "tool.call":
                 if event.payload:
@@ -301,7 +312,9 @@ class EventReplayer:
                 if event.payload:
                     tool_id = event.payload.get("tool_id")
                     if tool_id and tool_id in state["tool_calls"]:
-                        state["tool_calls"][tool_id]["result"] = event.payload.get("result")
+                        state["tool_calls"][tool_id]["result"] = event.payload.get(
+                            "result"
+                        )
                         state["tool_calls"][tool_id]["status"] = (
                             "success" if event.payload.get("success") else "error"
                         )
@@ -313,10 +326,10 @@ class EventReplayer:
         return state
 
     async def get_events_after(
-            self,
-            run_id: UUID | str,
-            after_sequence: int,
-            limit: int = 100,
+        self,
+        run_id: UUID | str,
+        after_sequence: int,
+        limit: int = 100,
     ) -> list[EventResponse]:
         """Get events after a specific sequence (for catch-up).
 

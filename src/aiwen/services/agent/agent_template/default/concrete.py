@@ -313,14 +313,16 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                         tool_id=tool_id,
                         arguments=arguments,
                     )
-                    raise WaitingForTool({
-                        "type": "tool_approval",
-                        "tool_name": tool_name,
-                        "tool_id": tool_id,
-                        "arguments": arguments,
-                        "ai_message": messages_to_dict([last_ai_output])[0],
-                        "executor_code": self.TEMPLATE["template_code"],
-                    })
+                    raise WaitingForTool(
+                        {
+                            "type": "tool_approval",
+                            "tool_name": tool_name,
+                            "tool_id": tool_id,
+                            "arguments": arguments,
+                            "ai_message": messages_to_dict([last_ai_output])[0],
+                            "executor_code": self.TEMPLATE["template_code"],
+                        }
+                    )
 
                 # ── Client tool execution gate ─────────────────────
                 tool_mode = self._get_tool_execution_mode(tool_name)
@@ -335,14 +337,16 @@ class DefaultAgentTemplate(BaseAgentTemplate):
                         config=metadata.client_config,
                     )
                     # Pause execution waiting for client response
-                    raise WaitingForTool({
-                        "type": "client_tool",
-                        "tool_name": tool_name,
-                        "tool_id": tool_id,
-                        "arguments": arguments,
-                        "ai_message": messages_to_dict([last_ai_output])[0],
-                        "executor_code": self.TEMPLATE["template_code"],
-                    })
+                    raise WaitingForTool(
+                        {
+                            "type": "client_tool",
+                            "tool_name": tool_name,
+                            "tool_id": tool_id,
+                            "arguments": arguments,
+                            "ai_message": messages_to_dict([last_ai_output])[0],
+                            "executor_code": self.TEMPLATE["template_code"],
+                        }
+                    )
 
                 tool_start_times[tool_id] = time.time()
                 yield self._emit_tool_call(

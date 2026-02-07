@@ -20,7 +20,7 @@ from aiwen.services.agent.tools.execution_mode import (
 logger = logging.getLogger(__name__)
 
 # Template for the wrapper script that runs inside the container
-SANDBOX_WRAPPER_SCRIPT = '''
+SANDBOX_WRAPPER_SCRIPT = """
 import json
 import sys
 
@@ -52,7 +52,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-'''
+"""
 
 
 class SandboxExecutor:
@@ -140,7 +140,7 @@ class SandboxExecutor:
                     timeout=metadata.timeout_seconds,
                 )
                 exit_code = exit_info.get("StatusCode", -1)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"Sandbox execution timed out after {metadata.timeout_seconds}s "
                     f"for tool '{tool_name}'"
@@ -224,17 +224,19 @@ class SandboxExecutor:
         limits = metadata.resource_limits
 
         # Prepare input data
-        input_data = json.dumps({
-            "tool_name": tool_name,
-            "arguments": arguments,
-        })
+        input_data = json.dumps(
+            {
+                "tool_name": tool_name,
+                "arguments": arguments,
+            }
+        )
 
         config: dict[str, Any] = {
             "Image": metadata.sandbox_image or "python:3.12-slim",
             "Cmd": [
                 "python",
                 "-c",
-                f"import sys; exec({repr(SANDBOX_WRAPPER_SCRIPT)})",
+                f"import sys; exec({SANDBOX_WRAPPER_SCRIPT!r})",
             ],
             "AttachStdin": True,
             "AttachStdout": True,
@@ -263,16 +265,13 @@ class SandboxExecutor:
 
         if memory.endswith("g"):
             return int(float(memory[:-1]) * 1024 * 1024 * 1024)
-        elif memory.endswith("m"):
+        if memory.endswith("m"):
             return int(float(memory[:-1]) * 1024 * 1024)
-        elif memory.endswith("k"):
+        if memory.endswith("k"):
             return int(float(memory[:-1]) * 1024)
-        else:
-            return int(memory)
+        return int(memory)
 
-    def _parse_output(
-        self, stdout: str, exit_code: int
-    ) -> tuple[Any, str | None]:
+    def _parse_output(self, stdout: str, exit_code: int) -> tuple[Any, str | None]:
         """Parse container output to extract result or error."""
         if exit_code != 0:
             return None, f"Container exited with code {exit_code}"
@@ -290,8 +289,7 @@ class SandboxExecutor:
                     output = json.loads(line)
                     if output.get("success"):
                         return output.get("result"), None
-                    else:
-                        return None, output.get("error", "Unknown error")
+                    return None, output.get("error", "Unknown error")
 
             return None, "No valid JSON output found"
 

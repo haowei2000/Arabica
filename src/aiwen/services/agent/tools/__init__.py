@@ -7,9 +7,9 @@ This module provides:
 - Decorators for marking tools with execution modes
 """
 
+from .async_executor import AsyncExecutor, get_async_executor
 from .browser_tools import BROWSER_TOOLS
 from .client_executor import ClientExecutor, get_client_executor
-from .async_executor import AsyncExecutor, get_async_executor
 from .execution_mode import (
     ResourceLimits,
     ToolExecutionMode,

@@ -2,50 +2,12 @@
 """Event type definitions and payload schemas."""
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-
-class EventType(str, Enum):
-    """Enumeration of all event types in the system."""
-
-    # User events
-    USER_MESSAGE = "user.message"
-    USER_FEEDBACK = "user.feedback"
-
-    # Agent events
-    AGENT_TOKEN = "agent.token"
-    AGENT_MESSAGE = "agent.message"
-    AGENT_PLAN_STEP = "agent.plan.step"
-    AGENT_THINKING = "agent.thinking"
-
-    # Tool events
-    TOOL_CALL = "tool.call"
-    TOOL_PENDING = "tool.pending"
-    TOOL_RESULT = "tool.result"
-    TOOL_ERROR = "tool.error"
-    TOOL_CLIENT_REQUEST = "tool.client.request"  # Request client-side execution
-
-    # Run lifecycle events
-    RUN_CREATED = "run.created"
-    RUN_STATE_CHANGE = "run.state.change"
-    RUN_COMPLETED = "run.completed"
-    RUN_FAILED = "run.failed"
-    RUN_CANCELLED = "run.cancelled"
-
-    # Workspace events
-    WORKSPACE_CREATED = "workspace.created"
-    WORKSPACE_UPDATED = "workspace.updated"
-    WORKSPACE_MEMBER_JOIN = "workspace.member.join"
-    WORKSPACE_MEMBER_LEAVE = "workspace.member.leave"
-    WORKSPACE_MEMBER_ROLE_CHANGE = "workspace.member.role.change"
-
-    # System events
-    SYSTEM_ERROR = "system.error"
-    SYSTEM_NOTIFICATION = "system.notification"
+from aiwen.models.events.event import EventType
 
 
 class BaseEventPayload(BaseModel):
@@ -76,7 +38,9 @@ class AgentPlanStepPayload(BaseEventPayload):
 
     step_number: int = Field(..., description="步骤编号")
     step_description: str = Field(..., description="步骤描述")
-    status: str = Field("pending", description="步骤状态: pending/in_progress/completed/failed")
+    status: str = Field(
+        "pending", description="步骤状态: pending/in_progress/completed/failed"
+    )
     output: str | None = Field(None, description="步骤输出")
 
 

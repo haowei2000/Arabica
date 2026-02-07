@@ -5,6 +5,7 @@ Event Worker - 事件驱动的 Agent 执行器
 监听 run_tasks stream，执行 Agent 并通过 EventPublisher 发布所有事件。
 所有事件使用统一的 EventPublisher 格式，前端只需处理一种结构。
 """
+
 import asyncio
 import json
 import logging
@@ -15,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.app import App
-from aiwen.models.agents.run import Run
+from aiwen.models.runs.run import Run
 from aiwen.services.agent.agent_registry import AgentRegistry
 from aiwen.services.agent.base import AgentEvent, Executor
 from aiwen.services.agent.runtime import AgentRuntime
@@ -61,7 +62,9 @@ class Worker:
                 id="0",
                 mkstream=True,
             )
-            logger.info(f"Created consumer group '{CONSUMER_GROUP}' for stream '{stream_name}'")
+            logger.info(
+                f"Created consumer group '{CONSUMER_GROUP}' for stream '{stream_name}'"
+            )
         except Exception as e:
             if "BUSYGROUP" not in str(e):
                 raise
@@ -91,7 +94,10 @@ class Worker:
                         await self.handle_message(data)
                         await self.redis.xack(stream_name, CONSUMER_GROUP, message_id)
                     except Exception as e:
-                        logger.error(f"Failed to process message {message_id}: {e}", exc_info=True)
+                        logger.error(
+                            f"Failed to process message {message_id}: {e}",
+                            exc_info=True,
+                        )
 
             except asyncio.CancelledError:
                 raise
@@ -121,7 +127,11 @@ class Worker:
                 payload_str = message_data.get("payload", "{}")
                 if isinstance(payload_str, bytes):
                     payload_str = payload_str.decode()
-                payload = json.loads(payload_str) if isinstance(payload_str, str) else payload_str
+                payload = (
+                    json.loads(payload_str)
+                    if isinstance(payload_str, str)
+                    else payload_str
+                )
 
                 executor_code = payload.get("executor_code", "DEFAULT001")
                 input_data = payload.get("input_data", {})
@@ -181,7 +191,9 @@ class Worker:
             self.runtime.attach(run_id, executor)
 
             if run_status == RunStatus.PENDING.value:
-                await self.state_machine.start(run_id, triggered_by=triggered_by, auto_commit=True)
+                await self.state_machine.start(
+                    run_id, triggered_by=triggered_by, auto_commit=True
+                )
                 await self._execute_run(executor, input_data, run_id, workspace_id)
             elif run_status == RunStatus.WAITING.value:
                 resume_key = f"run:{run_id}:resume_approval"
@@ -209,7 +221,9 @@ class Worker:
             logger.error(f"handle_message error: {e}", exc_info=True)
             if run_id:
                 try:
-                    await self.state_machine.fail(run_id, error=str(e), auto_commit=True)
+                    await self.state_machine.fail(
+                        run_id, error=str(e), auto_commit=True
+                    )
                 except Exception as fail_err:
                     logger.error(f"Failed to mark run {run_id} as failed: {fail_err}")
 
@@ -230,7 +244,9 @@ class Worker:
 
                 # 检查是否被取消
                 try:
-                    result = await self.db.execute(select(Run).where(Run.id == str(run_id)))
+                    result = await self.db.execute(
+                        select(Run).where(Run.id == str(run_id))
+                    )
                     run = result.scalar_one_or_none()
                     if run and run.status == RunStatus.CANCELLED.value:
                         logger.info(f"Run {run_id} cancelled, stopping agent")
@@ -240,11 +256,15 @@ class Worker:
                     logger.warning(f"Failed to check run status: {check_err}")
 
             # 执行完成
-            await self.state_machine.complete(run_id, output_data={"output": "Run completed"}, auto_commit=True)
+            await self.state_machine.complete(
+                run_id, output_data={"output": "Run completed"}, auto_commit=True
+            )
             logger.info(f"Run {run_id} completed")
 
         except executor.WaitingForTool as e:
-            await self.state_machine.pause_for_tool(run_id, waiting_for=e.info, auto_commit=True)
+            await self.state_machine.pause_for_tool(
+                run_id, waiting_for=e.info, auto_commit=True
+            )
             logger.info(f"Run {run_id} paused for tool {e.info}")
         except Exception as e:
             logger.error(f"Executor failed for run {run_id}: {e}", exc_info=True)

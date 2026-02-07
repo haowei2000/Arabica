@@ -36,7 +36,9 @@ class SandboxConfig(BaseModel):
     volumes: dict[str, str] = Field(default_factory=dict, description="Volume mounts")
 
     # Environment variables
-    env: dict[str, str] = Field(default_factory=dict, description="Environment variables")
+    env: dict[str, str] = Field(
+        default_factory=dict, description="Environment variables"
+    )
 
 
 class ToolExecutionRequest(BaseModel):
@@ -44,11 +46,15 @@ class ToolExecutionRequest(BaseModel):
 
     tool_name: str = Field(..., description="Name of the tool to execute")
     tool_id: str = Field(..., description="Unique ID for this tool invocation")
-    arguments: dict[str, Any] = Field(default_factory=dict, description="Tool arguments")
+    arguments: dict[str, Any] = Field(
+        default_factory=dict, description="Tool arguments"
+    )
     context: ExecutionContext = Field(..., description="Execution context")
 
     # Optional overrides
-    sandbox_config: SandboxConfig | None = Field(None, description="Sandbox config override")
+    sandbox_config: SandboxConfig | None = Field(
+        None, description="Sandbox config override"
+    )
     timeout_seconds: int | None = Field(None, description="Timeout override")
 
 
@@ -64,7 +70,9 @@ class ToolResult(BaseModel):
 
     # Execution metadata
     execution_mode: str = Field(..., description="How the tool was executed")
-    sandbox_container_id: str | None = Field(None, description="Container ID for sandbox")
+    sandbox_container_id: str | None = Field(
+        None, description="Container ID for sandbox"
+    )
     stdout: str | None = Field(None, description="Standard output (sandbox only)")
     stderr: str | None = Field(None, description="Standard error (sandbox only)")
 
@@ -78,8 +86,12 @@ class ToolResultSubmission(BaseModel):
     error_message: str | None = Field(None, description="Error message if failed")
 
     # Client metadata
-    client_execution_time_ms: int | None = Field(None, description="Client-side execution time")
-    client_metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    client_execution_time_ms: int | None = Field(
+        None, description="Client-side execution time"
+    )
+    client_metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
 
 class ToolClientRequestPayload(BaseEventPayload):
@@ -92,9 +104,13 @@ class ToolClientRequestPayload(BaseEventPayload):
     tool_name: str = Field(..., description="Tool name")
     tool_id: str = Field(..., description="Unique tool invocation ID")
     handler: str = Field(..., description="Frontend handler to invoke")
-    arguments: dict[str, Any] = Field(default_factory=dict, description="Tool arguments")
+    arguments: dict[str, Any] = Field(
+        default_factory=dict, description="Tool arguments"
+    )
     timeout_seconds: int = Field(120, description="Time client has to respond")
-    config: dict[str, Any] = Field(default_factory=dict, description="Handler configuration")
+    config: dict[str, Any] = Field(
+        default_factory=dict, description="Handler configuration"
+    )
 
 
 class PendingToolExecution(BaseModel):

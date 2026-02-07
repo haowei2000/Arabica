@@ -99,11 +99,11 @@ class MinioClient:
         return io.BytesIO(data)
 
     def upload_file(
-            self,
-            bucket: str,
-            object_key: str,
-            data: bytes | BinaryIO,
-            content_type: str = "application/octet-stream",
+        self,
+        bucket: str,
+        object_key: str,
+        data: bytes | BinaryIO,
+        content_type: str = "application/octet-stream",
     ) -> str:
         """Upload file to MinIO.
 

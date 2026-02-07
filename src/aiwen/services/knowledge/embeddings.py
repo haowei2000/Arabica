@@ -39,10 +39,10 @@ class EmbeddingService:
     """Service for generating text embeddings using various providers."""
 
     def __init__(
-            self,
-            provider: EmbeddingProvider = "tongyi",
-            model: str = "text-embedding-v3",
-            dimension: int = 1536,
+        self,
+        provider: EmbeddingProvider = "tongyi",
+        model: str = "text-embedding-v3",
+        dimension: int = 1536,
     ) -> None:
         """Initialize embedding service.
 
@@ -134,10 +134,14 @@ class EmbeddingService:
         if not isinstance(text, str):
             text = str(text)
         # Remove null bytes and control characters (except newlines and tabs)
-        text = text.replace('\x00', '')
-        text = ''.join(char for char in text if char == '\n' or char == '\t' or not (0 <= ord(char) < 32))
+        text = text.replace("\x00", "")
+        text = "".join(
+            char
+            for char in text
+            if char == "\n" or char == "\t" or not (0 <= ord(char) < 32)
+        )
         # Normalize whitespace
-        text = ' '.join(text.split())
+        text = " ".join(text.split())
         return text
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -158,7 +162,9 @@ class EmbeddingService:
             if text is None:
                 raise ValueError(f"Text at index {i} is None")
             if not isinstance(text, str):
-                logger.warning(f"Text at index {i} is not a string (type={type(text)}), converting")
+                logger.warning(
+                    f"Text at index {i} is not a string (type={type(text)}), converting"
+                )
                 text = str(text)
             # Sanitize text to remove problematic characters
             text = self._sanitize_text(text)
@@ -173,7 +179,9 @@ class EmbeddingService:
         # Log debug info for troubleshooting
         logger.info(f"Embedding {len(valid_texts)} texts")
         for i, text in enumerate(valid_texts[:3]):  # Log first 3 for debugging
-            logger.debug(f"Text {i}: type={type(text).__name__}, len={len(text)}, preview={text[:50]!r}...")
+            logger.debug(
+                f"Text {i}: type={type(text).__name__}, len={len(text)}, preview={text[:50]!r}..."
+            )
 
         try:
             # For Tongyi/DashScope, use direct API call to avoid langchain issues
@@ -186,7 +194,9 @@ class EmbeddingService:
         except Exception as e:
             # Log the problematic texts on error
             logger.error(f"Embedding error: {e}")
-            logger.error(f"Texts info: count={len(valid_texts)}, types={[type(t).__name__ for t in valid_texts[:5]]}")
+            logger.error(
+                f"Texts info: count={len(valid_texts)}, types={[type(t).__name__ for t in valid_texts[:5]]}"
+            )
             for i, text in enumerate(valid_texts[:3]):
                 logger.error(f"Text {i}: {text[:100]!r}")
             raise
@@ -203,10 +213,14 @@ class EmbeddingService:
             list[list[float]]: List of embedding vectors.
         """
         from openai import OpenAI
+
         settings = get_settings()
         if settings.openai:
             api_key = settings.openai.api_key or settings.dashscope_api_key
-            base_url = settings.openai.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base_url = (
+                settings.openai.base_url
+                or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
         else:
             api_key = settings.dashscope_api_key
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -216,7 +230,7 @@ class EmbeddingService:
         batch_size = 10
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
 
             # url = f"{base_url.rstrip('/')}/embeddings"
             url = base_url
@@ -232,10 +246,7 @@ class EmbeddingService:
             }
 
             logger.debug(f"DashScope API request: url={url}, texts_count={len(batch)}")
-            client = OpenAI(
-                base_url=url,
-                api_key=api_key
-            )
+            client = OpenAI(base_url=url, api_key=api_key)
             completion = client.embeddings.create(**payload)
             completion = completion.model_dump()
             batch_embeddings = [item["embedding"] for item in completion["data"]]
@@ -244,7 +255,7 @@ class EmbeddingService:
         return all_embeddings
 
     def embed_texts_batch(
-            self, texts: list[str], batch_size: int = 100
+        self, texts: list[str], batch_size: int = 100
     ) -> list[list[float]]:
         """Generate embeddings in batches to avoid API limits.
 
@@ -258,7 +269,7 @@ class EmbeddingService:
         all_embeddings = []
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i: i + batch_size]
+            batch = texts[i : i + batch_size]
             batch_embeddings = self.embed_texts(batch)
             all_embeddings.extend(batch_embeddings)
             logger.info(
@@ -310,9 +321,9 @@ class EmbeddingService:
 
 
 def get_embedding_service(
-        provider: EmbeddingProvider = "tongyi",
-        model: str = "text-embedding-v3",
-        dimension: int | None = None,
+    provider: EmbeddingProvider = "tongyi",
+    model: str = "text-embedding-v3",
+    dimension: int | None = None,
 ) -> EmbeddingService:
     """Factory function to create embedding service.
 

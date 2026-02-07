@@ -15,7 +15,6 @@ from aiwen.services.agent.tools.execution_mode import (
     server_tool,
 )
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # SANDBOX TOOLS - Execute in isolated Docker containers
 # ═══════════════════════════════════════════════════════════════════════════════

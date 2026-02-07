@@ -6,10 +6,10 @@ for the client to submit results via HTTP callback.
 """
 
 import asyncio
+from datetime import datetime, timedelta
 import json
 import logging
 import time
-from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -208,7 +208,9 @@ class ClientExecutor:
             approximate=True,
         )
 
-        logger.debug(f"Published TOOL_CLIENT_REQUEST for tool {tool_id} to {run_stream}")
+        logger.debug(
+            f"Published TOOL_CLIENT_REQUEST for tool {tool_id} to {run_stream}"
+        )
 
     async def _wait_for_result(
         self,
@@ -247,7 +249,7 @@ class ClientExecutor:
                         if result_data:
                             return ToolResultSubmission.model_validate_json(result_data)
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Continue polling
                     pass
 
@@ -292,7 +294,9 @@ class ClientExecutor:
         channel_name = TOOL_RESULT_CHANNEL.format(tool_id=tool_id)
         await redis.publish(channel_name, "result_ready")
 
-        logger.info(f"Client submitted result for tool {tool_id}: success={result.success}")
+        logger.info(
+            f"Client submitted result for tool {tool_id}: success={result.success}"
+        )
         return True
 
     async def get_pending_execution(

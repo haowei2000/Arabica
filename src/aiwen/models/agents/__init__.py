@@ -1,44 +1,15 @@
-# aiwen/models/agent/__init__.py
-"""Agent models package - exports all agent-related models."""
+"""Agent domain models - apps, templates, and model configurations."""
 
 from aiwen.models.agents.agent_task import AgentTask
 from aiwen.models.agents.agent_template import AgentTemplate
 from aiwen.models.agents.app import App
-# Model configuration
 from aiwen.models.agents.chat_model import ChatModel
-from aiwen.models.agents.chunk import Chunk
-from aiwen.models.agents.context import Context
-# Import models in correct order to resolve relationships
-# Conversation must be imported before Message due to the relationship
-from aiwen.models.agents.conversation import Conversation
-from aiwen.models.agents.docments import Document
 from aiwen.models.agents.embedding_model import EmbeddingModel
-from aiwen.models.agents.event import Event
-# Knowledge base related models
-from aiwen.models.agents.knowledge import Knowledge
-from aiwen.models.agents.message import Message
-from aiwen.models.agents.preprocess import Preprocess
-from aiwen.models.agents.run import Run
-# Event-sourced architecture models
-from aiwen.models.agents.workspace import Workspace
-from aiwen.models.agents.workspace_member import WorkspaceMember
 
 __all__ = [
-    "Conversation",
-    "Message",
+    "AgentTask",
     "AgentTemplate",
     "App",
-    "AgentTask",
-    "Context",
-    "Knowledge",
-    "Document",
-    "Chunk",
-    "Preprocess",
     "ChatModel",
     "EmbeddingModel",
-    # Event-sourced architecture
-    "Workspace",
-    "WorkspaceMember",
-    "Run",
-    "Event",
 ]

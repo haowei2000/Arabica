@@ -9,26 +9,28 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from aiwen.dependencies.agents import get_message_crud, get_conversation_crud
+from aiwen.dependencies.agents import get_conversation_crud, get_message_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.agents.message import (
+from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.conversations.message import (
+    MessageCreate,
     MessageListResponse,
     MessageResponse,
-    MessageCreate,
     MessageUpdate,
 )
-from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.crud.conversation_crud import ConversationCRUD
-from aiwen.services.crud.message_crud import MessageCRUD
+from aiwen.services.conversations.conversation_crud import ConversationCRUD
+from aiwen.services.conversations.message_crud import MessageCRUD
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
 
-@router.post("/create", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/create", response_model=MessageResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_message(
-        data: MessageCreate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: MessageCRUD = Depends(get_message_crud),
+    data: MessageCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: MessageCRUD = Depends(get_message_crud),
 ):
     """
     Create a new input.
@@ -50,9 +52,9 @@ async def create_message(
 
 @router.get("/{message_id}/get", response_model=MessageResponse)
 async def get_message(
-        message_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: MessageCRUD = Depends(get_message_crud),
+    message_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: MessageCRUD = Depends(get_message_crud),
 ):
     """
     Get input by ID.
@@ -85,10 +87,10 @@ async def get_message(
 
 @router.post("/{message_id}/update", response_model=MessageResponse)
 async def update_message(
-        message_id: str,
-        data: MessageUpdate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: MessageCRUD = Depends(get_message_crud),
+    message_id: str,
+    data: MessageUpdate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: MessageCRUD = Depends(get_message_crud),
 ):
     """
     Update an existing input.
@@ -112,7 +114,9 @@ async def update_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Message {message_id} not found",
         )
-    if existing.from_account_id and str(existing.from_account_id) != str(current_user.id):
+    if existing.from_account_id and str(existing.from_account_id) != str(
+        current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to update this message",
@@ -124,16 +128,18 @@ async def update_message(
 
 @router.get("/query", response_model=MessageListResponse)
 async def query_messages(
-        conversation_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        app_id: str | None = Query(
-            None, description="Filter by agent ID (app_id = agent_id)"
-        ),
-        msg_status: str | None = Query(None, alias="status", description="Filter by status"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: MessageCRUD = Depends(get_message_crud),
-        conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
+    conversation_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    app_id: str | None = Query(
+        None, description="Filter by agent ID (app_id = agent_id)"
+    ),
+    msg_status: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: MessageCRUD = Depends(get_message_crud),
+    conversation_crud: ConversationCRUD = Depends(get_conversation_crud),
 ):
     """
     Query messages by conversation_id and other optional parameters.

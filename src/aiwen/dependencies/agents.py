@@ -5,15 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
+from aiwen.services.agent.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.agent.app_crud import AppCRUD
 from aiwen.services.agent.runtime import AgentRuntime
-from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.crud.app_crud import AppCRUD
-from aiwen.services.crud.context_crud import ContextCRUD
-from aiwen.services.crud.conversation_crud import ConversationCRUD
-from aiwen.services.crud.document_crud import DocumentCRUD
-from aiwen.services.crud.knowledge_crud import KnowledgeCRUD
-from aiwen.services.crud.message_crud import MessageCRUD
-from aiwen.services.crud.task_crud import AgentTaskCRUD
+from aiwen.services.agent.task_crud import AgentTaskCRUD
+from aiwen.services.context.context_crud import ContextCRUD
+from aiwen.services.conversations.conversation_crud import ConversationCRUD
+from aiwen.services.conversations.message_crud import MessageCRUD
+from aiwen.services.knowledge.document_crud import DocumentCRUD
+from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
 
 
 async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
@@ -30,7 +30,7 @@ async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
 
 
 async def get_conversation_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> ConversationCRUD:
     """
     Dependency to get ConversationCRUD instance.
@@ -58,7 +58,7 @@ async def get_message_crud(db: AsyncSession = Depends(get_aiwen_db)) -> MessageC
 
 
 async def get_template_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTemplateCRUD:
     """
     Dependency to get AgentTemplateCRUD instance.
@@ -67,13 +67,13 @@ async def get_template_crud(
 
 
 async def get_task_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> AgentTaskCRUD:
     return AgentTaskCRUD(db)
 
 
 async def get_knowledge_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> KnowledgeCRUD:
     """
     Dependency to get KnowledgeCRUD instance.
@@ -88,7 +88,7 @@ async def get_knowledge_crud(
 
 
 async def get_context_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> ContextCRUD:
     """
     Dependency to get ContextCRUD instance.
@@ -103,7 +103,7 @@ async def get_context_crud(
 
 
 async def get_document_crud(
-        db: AsyncSession = Depends(get_aiwen_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ) -> DocumentCRUD:
     """
     Dependency to get DocumentCRUD instance.

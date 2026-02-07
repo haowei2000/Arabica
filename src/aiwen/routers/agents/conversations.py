@@ -11,15 +11,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_conversation_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.agents.conversation import (
+from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.conversations.conversation import (
     ConversationCreate,
     ConversationDetailResponse,
     ConversationListResponse,
     ConversationResponse,
     ConversationUpdate,
 )
-from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.crud.conversation_crud import ConversationCRUD
+from aiwen.services.conversations.conversation_crud import ConversationCRUD
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -28,9 +28,9 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
     "/create", response_model=ConversationResponse, status_code=status.HTTP_201_CREATED
 )
 async def create_conversation(
-        data: ConversationCreate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ConversationCRUD = Depends(get_conversation_crud),
+    data: ConversationCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ConversationCRUD = Depends(get_conversation_crud),
 ):
     """
     Create a new conversation.
@@ -52,9 +52,9 @@ async def create_conversation(
 
 @router.get("/{conversation_id}/get", response_model=ConversationDetailResponse)
 async def get_conversation(
-        conversation_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ConversationCRUD = Depends(get_conversation_crud),
+    conversation_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ConversationCRUD = Depends(get_conversation_crud),
 ):
     """
     Get conversation by ID with messages.
@@ -87,10 +87,10 @@ async def get_conversation(
 
 @router.post("/{conversation_id}/update", response_model=ConversationResponse)
 async def update_conversation(
-        conversation_id: str,
-        data: ConversationUpdate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ConversationCRUD = Depends(get_conversation_crud),
+    conversation_id: str,
+    data: ConversationUpdate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ConversationCRUD = Depends(get_conversation_crud),
 ):
     """
     Update an existing conversation.
@@ -126,9 +126,9 @@ async def update_conversation(
 
 @router.post("/{conversation_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
-        conversation_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ConversationCRUD = Depends(get_conversation_crud),
+    conversation_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ConversationCRUD = Depends(get_conversation_crud),
 ):
     """
     Soft delete a conversation.
@@ -160,14 +160,16 @@ async def delete_conversation(
 
 @router.get("/query", response_model=ConversationListResponse)
 async def query_conversations(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        app_id: str | None = Query(
-            None, description="Filter by agent ID (app_id = agent_id)"
-        ),
-        conv_status: str | None = Query(None, alias="status", description="Filter by status"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: ConversationCRUD = Depends(get_conversation_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    app_id: str | None = Query(
+        None, description="Filter by agent ID (app_id = agent_id)"
+    ),
+    conv_status: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: ConversationCRUD = Depends(get_conversation_crud),
 ):
     """
     List conversations with filtering and pagination.
@@ -196,5 +198,8 @@ async def query_conversations(
         limit=page_size,
     )
     return ConversationListResponse(
-        total=total, items=items, page=page, page_size=page_size  # ty:ignore[invalid-argument-type]
+        total=total,
+        items=items,
+        page=page,
+        page_size=page_size,  # ty:ignore[invalid-argument-type]
     )

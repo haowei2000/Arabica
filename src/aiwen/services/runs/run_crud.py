@@ -10,8 +10,8 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.run import Run
-from aiwen.models.agents.workspace import Workspace
+from aiwen.models.runs.run import Run
+from aiwen.models.workspaces.workspace import Workspace
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -39,14 +39,14 @@ class RunCRUD:
         self.db = db_session
 
     async def create(
-            self,
-            workspace_id: str | UUID,
-            app_id: str | UUID,
-            user_id: str | UUID,
-            parent_run_id: str | UUID | None = None,
-            trigger_type: str = "user",
-            input_data: dict[str, Any] | None = None,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        app_id: str | UUID,
+        user_id: str | UUID,
+        parent_run_id: str | UUID | None = None,
+        trigger_type: str = "user",
+        input_data: dict[str, Any] | None = None,
+        auto_commit: bool = False,
     ) -> Run:
         """Create a new run.
 
@@ -66,7 +66,9 @@ class RunCRUD:
             workspace_id=normalize_uuid_to_str(workspace_id),
             app_id=normalize_uuid_to_str(app_id),
             user_id=normalize_uuid_to_str(user_id),
-            parent_run_id=normalize_uuid_to_str(parent_run_id) if parent_run_id else None,
+            parent_run_id=normalize_uuid_to_str(parent_run_id)
+            if parent_run_id
+            else None,
             trigger_type=trigger_type,
             input_data=input_data,
             status="pending",
@@ -85,8 +87,8 @@ class RunCRUD:
         return run
 
     async def get_by_id(
-            self,
-            run_id: str | UUID,
+        self,
+        run_id: str | UUID,
     ) -> Run | None:
         """Get run by ID.
 
@@ -102,9 +104,9 @@ class RunCRUD:
         return result.scalar_one_or_none()
 
     async def get_by_id_and_user(
-            self,
-            run_id: str | UUID,
-            user_id: str | UUID,
+        self,
+        run_id: str | UUID,
+        user_id: str | UUID,
     ) -> Run | None:
         """Get run by ID with user validation.
 
@@ -128,11 +130,11 @@ class RunCRUD:
         return result.scalar_one_or_none()
 
     async def list_by_workspace(
-            self,
-            workspace_id: str | UUID,
-            skip: int = 0,
-            limit: int = 100,
-            status: str | None = None,
+        self,
+        workspace_id: str | UUID,
+        skip: int = 0,
+        limit: int = 100,
+        status: str | None = None,
     ) -> tuple[list[Run], int]:
         """List runs for a workspace.
 
@@ -170,11 +172,11 @@ class RunCRUD:
         return items, total
 
     async def list_by_user(
-            self,
-            user_id: str | UUID,
-            skip: int = 0,
-            limit: int = 100,
-            status: str | None = None,
+        self,
+        user_id: str | UUID,
+        skip: int = 0,
+        limit: int = 100,
+        status: str | None = None,
     ) -> tuple[list[Run], int]:
         """List runs for a user.
 
@@ -212,8 +214,8 @@ class RunCRUD:
         return items, total
 
     async def list_active_by_workspace(
-            self,
-            workspace_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
     ) -> list[Run]:
         """List active (non-terminal) runs for a workspace.
 
@@ -225,25 +227,29 @@ class RunCRUD:
         """
         normalized_workspace_id = normalize_uuid_to_str(workspace_id)
 
-        stmt = select(Run).where(
-            and_(
-                Run.workspace_id == normalized_workspace_id,
-                Run.status.in_(["pending", "running", "waiting"]),
+        stmt = (
+            select(Run)
+            .where(
+                and_(
+                    Run.workspace_id == normalized_workspace_id,
+                    Run.status.in_(["pending", "running", "waiting"]),
+                )
             )
-        ).order_by(Run.created_at.desc())
+            .order_by(Run.created_at.desc())
+        )
 
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def update(
-            self,
-            run_id: str | UUID,
-            status: str | None = None,
-            output_data: dict[str, Any] | None = None,
-            error: str | None = None,
-            error_code: str | None = None,
-            waiting_for: dict[str, Any] | None = None,
-            auto_commit: bool = False,
+        self,
+        run_id: str | UUID,
+        status: str | None = None,
+        output_data: dict[str, Any] | None = None,
+        error: str | None = None,
+        error_code: str | None = None,
+        waiting_for: dict[str, Any] | None = None,
+        auto_commit: bool = False,
     ) -> Run | None:
         """Update a run.
 
@@ -291,8 +297,8 @@ class RunCRUD:
         return run
 
     async def get_child_runs(
-            self,
-            parent_run_id: str | UUID,
+        self,
+        parent_run_id: str | UUID,
     ) -> list[Run]:
         """Get child runs of a parent run.
 
@@ -303,13 +309,17 @@ class RunCRUD:
             List of child runs
         """
         normalized_id = normalize_uuid_to_str(parent_run_id)
-        stmt = select(Run).where(Run.parent_run_id == normalized_id).order_by(Run.created_at)
+        stmt = (
+            select(Run)
+            .where(Run.parent_run_id == normalized_id)
+            .order_by(Run.created_at)
+        )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_legacy_task_id(
-            self,
-            task_id: str | UUID,
+        self,
+        task_id: str | UUID,
     ) -> Run | None:
         """Get run by legacy task ID (for migration).
 
@@ -325,8 +335,8 @@ class RunCRUD:
         return result.scalar_one_or_none()
 
     async def _increment_workspace_run_count(
-            self,
-            workspace_id: str,
+        self,
+        workspace_id: str,
     ) -> None:
         """Increment the workspace's run count.
 

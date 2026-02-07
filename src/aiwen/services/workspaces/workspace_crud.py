@@ -10,8 +10,8 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.workspace import Workspace
-from aiwen.models.agents.workspace_member import WorkspaceMember
+from aiwen.models.workspaces.workspace import Workspace
+from aiwen.models.workspaces.workspace_member import WorkspaceMember
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -46,14 +46,14 @@ class WorkspaceCRUD:
         self.db = db_session
 
     async def create(
-            self,
-            owner_id: str | UUID,
-            name: str,
-            description: str | None = None,
-            app_id: str | UUID | None = None,
-            visibility: str = "private",
-            settings: dict[str, Any] | None = None,
-            auto_commit: bool = False,
+        self,
+        owner_id: str | UUID,
+        name: str,
+        description: str | None = None,
+        app_id: str | UUID | None = None,
+        visibility: str = "private",
+        settings: dict[str, Any] | None = None,
+        auto_commit: bool = False,
     ) -> Workspace:
         """Create a new workspace.
 
@@ -104,8 +104,8 @@ class WorkspaceCRUD:
         return workspace
 
     async def get_by_id(
-            self,
-            workspace_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
     ) -> Workspace | None:
         """Get workspace by ID.
 
@@ -126,9 +126,9 @@ class WorkspaceCRUD:
         return result.scalar_one_or_none()
 
     async def get_by_id_and_user(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
     ) -> Workspace | None:
         """Get workspace by ID with user access validation.
 
@@ -167,11 +167,11 @@ class WorkspaceCRUD:
         return result.scalar_one_or_none()
 
     async def list_by_user(
-            self,
-            user_id: str | UUID,
-            skip: int = 0,
-            limit: int = 100,
-            status: str | None = None,
+        self,
+        user_id: str | UUID,
+        skip: int = 0,
+        limit: int = 100,
+        status: str | None = None,
     ) -> tuple[list[Workspace], int]:
         """List workspaces accessible to a user.
 
@@ -224,17 +224,17 @@ class WorkspaceCRUD:
         return items, total
 
     async def update(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            name: str | None = None,
-            description: str | None = None,
-            app_id: str | UUID | None = None,
-            visibility: str | None = None,
-            is_shared: bool | None = None,
-            settings: dict[str, Any] | None = None,
-            status: str | None = None,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        name: str | None = None,
+        description: str | None = None,
+        app_id: str | UUID | None = None,
+        visibility: str | None = None,
+        is_shared: bool | None = None,
+        settings: dict[str, Any] | None = None,
+        status: str | None = None,
+        auto_commit: bool = False,
     ) -> Workspace | None:
         """Update a workspace.
 
@@ -288,10 +288,10 @@ class WorkspaceCRUD:
         return workspace
 
     async def delete(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        auto_commit: bool = False,
     ) -> bool:
         """Soft delete a workspace (owner only).
 
@@ -324,9 +324,9 @@ class WorkspaceCRUD:
         return True
 
     async def increment_run_count(
-            self,
-            workspace_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        auto_commit: bool = False,
     ) -> None:
         """Increment the run count for a workspace.
 
@@ -345,9 +345,9 @@ class WorkspaceCRUD:
                 await self.db.flush()
 
     async def _can_edit(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
     ) -> bool:
         """Check if user can edit the workspace.
 
@@ -385,8 +385,8 @@ class WorkspaceCRUD:
         return result.scalar_one_or_none() is not None
 
     async def get_by_legacy_conversation_id(
-            self,
-            conversation_id: str | UUID,
+        self,
+        conversation_id: str | UUID,
     ) -> Workspace | None:
         """Get workspace by legacy conversation ID (for migration).
 

@@ -9,8 +9,8 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.workspace import Workspace
-from aiwen.models.agents.workspace_member import WorkspaceMember
+from aiwen.models.workspaces.workspace import Workspace
+from aiwen.models.workspaces.workspace_member import WorkspaceMember
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -38,13 +38,13 @@ class WorkspaceMemberCRUD:
         self.db = db_session
 
     async def add_member(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            role: str = "viewer",
-            invited_by: str | UUID | None = None,
-            invitation_status: str = "pending",
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        role: str = "viewer",
+        invited_by: str | UUID | None = None,
+        invitation_status: str = "pending",
+        auto_commit: bool = False,
     ) -> WorkspaceMember | None:
         """Add a member to a workspace.
 
@@ -61,7 +61,9 @@ class WorkspaceMemberCRUD:
         """
         normalized_workspace_id = normalize_uuid_to_str(workspace_id)
         normalized_user_id = normalize_uuid_to_str(user_id)
-        normalized_invited_by = normalize_uuid_to_str(invited_by) if invited_by else None
+        normalized_invited_by = (
+            normalize_uuid_to_str(invited_by) if invited_by else None
+        )
 
         # Check if member already exists
         existing = await self.get_member(workspace_id, user_id)
@@ -90,9 +92,9 @@ class WorkspaceMemberCRUD:
         return member
 
     async def get_member(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
     ) -> WorkspaceMember | None:
         """Get a workspace member.
 
@@ -116,11 +118,11 @@ class WorkspaceMemberCRUD:
         return result.scalar_one_or_none()
 
     async def list_members(
-            self,
-            workspace_id: str | UUID,
-            skip: int = 0,
-            limit: int = 100,
-            status: str | None = None,
+        self,
+        workspace_id: str | UUID,
+        skip: int = 0,
+        limit: int = 100,
+        status: str | None = None,
     ) -> tuple[list[WorkspaceMember], int]:
         """List members of a workspace.
 
@@ -158,11 +160,11 @@ class WorkspaceMemberCRUD:
         return items, total
 
     async def update_role(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            new_role: str,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        new_role: str,
+        auto_commit: bool = False,
     ) -> WorkspaceMember | None:
         """Update a member's role.
 
@@ -195,10 +197,10 @@ class WorkspaceMemberCRUD:
         return member
 
     async def accept_invitation(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        auto_commit: bool = False,
     ) -> WorkspaceMember | None:
         """Accept a workspace invitation.
 
@@ -233,10 +235,10 @@ class WorkspaceMemberCRUD:
         return member
 
     async def decline_invitation(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        auto_commit: bool = False,
     ) -> WorkspaceMember | None:
         """Decline a workspace invitation.
 
@@ -264,10 +266,10 @@ class WorkspaceMemberCRUD:
         return member
 
     async def remove_member(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
+        auto_commit: bool = False,
     ) -> bool:
         """Remove a member from a workspace.
 
@@ -300,9 +302,9 @@ class WorkspaceMemberCRUD:
         return True
 
     async def get_user_role(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
     ) -> str | None:
         """Get a user's role in a workspace.
 
@@ -319,9 +321,9 @@ class WorkspaceMemberCRUD:
         return None
 
     async def is_member(
-            self,
-            workspace_id: str | UUID,
-            user_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
+        user_id: str | UUID,
     ) -> bool:
         """Check if a user is a member of a workspace.
 
@@ -336,8 +338,8 @@ class WorkspaceMemberCRUD:
         return member is not None and member.invitation_status == "accepted"
 
     async def _update_member_count(
-            self,
-            workspace_id: str,
+        self,
+        workspace_id: str,
     ) -> None:
         """Update the workspace's member count.
 

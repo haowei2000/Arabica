@@ -11,8 +11,8 @@ These tools execute directly in the API server process, suitable for:
 Server tools are the default execution mode - fast with no isolation overhead.
 """
 
+from datetime import UTC, datetime
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -20,7 +20,6 @@ from uuid import UUID
 from langchain_core.tools import tool
 
 from aiwen.services.agent.tools.execution_mode import server_tool
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT & KNOWLEDGE TOOLS
@@ -178,8 +177,9 @@ async def query_structured_data(
                 "row_count": 0,
             }
 
-    from aiwen.extensions.database import get_session
     from sqlalchemy import text
+
+    from aiwen.extensions.database import get_session
 
     async with get_session(database) as db:
         # Add LIMIT if not present
@@ -225,8 +225,9 @@ async def list_workspace_files(
         - directories: List of subdirectory names
         - total_files: Total file count
     """
-    from aiwen.extensions.database import get_session
     from sqlalchemy import select
+
+    from aiwen.extensions.database import get_session
 
     async with get_session("aiwen") as db:
         # Query from document storage
@@ -252,7 +253,9 @@ async def list_workspace_files(
 
         for doc in documents:
             doc_path = doc.path or "/"
-            relative_path = doc_path[len(path) :] if doc_path.startswith(path) else doc_path
+            relative_path = (
+                doc_path[len(path) :] if doc_path.startswith(path) else doc_path
+            )
 
             # Check if it's in a subdirectory
             if "/" in relative_path.strip("/"):
@@ -262,13 +265,15 @@ async def list_workspace_files(
                     directories.add(subdir)
                     continue
 
-            files.append({
-                "name": doc.name,
-                "path": doc.path,
-                "size": doc.size,
-                "type": doc.content_type,
-                "modified": doc.updated_at.isoformat() if doc.updated_at else None,
-            })
+            files.append(
+                {
+                    "name": doc.name,
+                    "path": doc.path,
+                    "size": doc.size,
+                    "type": doc.content_type,
+                    "modified": doc.updated_at.isoformat() if doc.updated_at else None,
+                }
+            )
 
         return {
             "files": files,
@@ -300,8 +305,9 @@ async def read_file_content(
         - total_length: Original content length
         - metadata: File metadata
     """
-    from aiwen.extensions.database import get_session
     from sqlalchemy import select
+
+    from aiwen.extensions.database import get_session
 
     async with get_session("aiwen") as db:
         from aiwen.models.context.document import Document
@@ -357,8 +363,9 @@ async def search_files(
         - results: List of matching files with relevance info
         - total: Total matches found
     """
-    from aiwen.extensions.database import get_session
     from sqlalchemy import or_, select
+
+    from aiwen.extensions.database import get_session
 
     async with get_session("aiwen") as db:
         from aiwen.models.context.document import Document
@@ -432,7 +439,7 @@ async def get_current_time(
     try:
         zone = ZoneInfo(timezone)
     except Exception:
-        zone = tz.utc
+        zone = UTC
         timezone = "UTC"
 
     now = datetime.now(zone)
@@ -457,22 +464,21 @@ async def get_workspace_info(workspace_id: str) -> dict:
     Returns:
         dict with workspace details including name, owner, settings
     """
-    from aiwen.extensions.database import get_session
     from sqlalchemy import func, select
 
-    async with get_session("aiwen") as db:
-        from aiwen.models.agents.workspace import Workspace
+    from aiwen.extensions.database import get_session
 
-        result = await db.execute(
-            select(Workspace).where(Workspace.id == workspace_id)
-        )
+    async with get_session("aiwen") as db:
+        from aiwen.models.workspaces.workspace import Workspace
+
+        result = await db.execute(select(Workspace).where(Workspace.id == workspace_id))
         workspace = result.scalar_one_or_none()
 
         if not workspace:
             return {"error": f"Workspace not found: {workspace_id}"}
 
         # Get run count
-        from aiwen.models.agents.run import Run
+        from aiwen.models.runs.run import Run
 
         run_count_result = await db.execute(
             select(func.count(Run.id)).where(Run.workspace_id == workspace_id)
@@ -487,7 +493,9 @@ async def get_workspace_info(workspace_id: str) -> dict:
             "app_id": str(workspace.app_id) if workspace.app_id else None,
             "settings": workspace.settings or {},
             "run_count": run_count,
-            "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
+            "created_at": workspace.created_at.isoformat()
+            if workspace.created_at
+            else None,
         }
 
 
@@ -511,11 +519,12 @@ async def get_run_history(
         - runs: List of run summaries
         - total: Total count
     """
-    from aiwen.extensions.database import get_session
     from sqlalchemy import select
 
+    from aiwen.extensions.database import get_session
+
     async with get_session("aiwen") as db:
-        from aiwen.models.agents.run import Run
+        from aiwen.models.runs.run import Run
 
         query = (
             select(Run)
@@ -536,9 +545,15 @@ async def get_run_history(
                     "id": str(run.id),
                     "status": run.status,
                     "trigger_type": run.trigger_type,
-                    "created_at": run.created_at.isoformat() if run.created_at else None,
-                    "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-                    "input_preview": str(run.input_data)[:100] if run.input_data else None,
+                    "created_at": run.created_at.isoformat()
+                    if run.created_at
+                    else None,
+                    "completed_at": run.completed_at.isoformat()
+                    if run.completed_at
+                    else None,
+                    "input_preview": str(run.input_data)[:100]
+                    if run.input_data
+                    else None,
                 }
                 for run in runs
             ],

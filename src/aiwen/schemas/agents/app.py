@@ -1,4 +1,5 @@
 """Pydantic schemas for App (Agent) API endpoints."""
+
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict
@@ -69,13 +70,15 @@ class AppListResponse(BaseModel):
 
 class Model(BaseModel):
     """Schema for model configuration."""
+
     name: str = Field(..., description="Model name")
     provider: str = Field(..., description="Model provider")
 
 
 class ContextType(StrEnum):
     """Schema for context type."""
-    CHUNK = ("CHUNK")
+
+    CHUNK = "CHUNK"
     CONVERSATION = "conversation"
     MESSAGE = "message"
     SKILL = "SKILL"
@@ -84,27 +87,34 @@ class ContextType(StrEnum):
 
 class Context(BaseModel):
     """Schema for context configuration."""
+
     type: ContextType
     enabled: bool = Field(default=True, description="Whether the context is enabled")
-    config: Dict[str, Any] | None = Field(None, description="Context configuration")
+    config: dict[str, Any] | None = Field(None, description="Context configuration")
 
 
 class KnowledgeConfig(BaseModel):
     """Schema for knowledge configuration."""
+
     source: list[UUID] | None = Field(..., description="List of knowledge source IDs")
 
 
 class SkillConfig(BaseModel):
     """Schema for SKILL configuration."""
+
     source: list[UUID] | None = Field(..., description="List of SKILL source IDs")
 
 
 class ToolConfig(BaseModel):
     """Schema for tool configuration."""
+
     source: list[UUID] | None = Field(..., description="List of tool source IDs")
 
 
 class AppConfig(BaseModel):
     """Schema for app configuration."""
+
     model: Model = Field(..., description="Model configuration")
-    context: list[Context] | None = Field(None, description="List of context configurations")
+    context: list[Context] | None = Field(
+        None, description="List of context configurations"
+    )

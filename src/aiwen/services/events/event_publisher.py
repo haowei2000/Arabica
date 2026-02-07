@@ -13,8 +13,8 @@ import redis.asyncio as redis_async
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.event import Event
-from aiwen.models.agents.run import Run
+from aiwen.models.events.event import Event
+from aiwen.models.runs.run import Run
 from aiwen.schemas.events.event_payloads import EventType
 
 logger = logging.getLogger(__name__)
@@ -56,14 +56,14 @@ class EventPublisher:
         self.redis = redis_client
 
     async def publish(
-            self,
-            event_type: EventType | str,
-            workspace_id: UUID | str,
-            run_id: UUID | str | None = None,
-            user_id: UUID | str | None = None,
-            payload: dict[str, Any] | None = None,
-            parent_event_id: UUID | str | None = None,
-            auto_commit: bool = False,
+        self,
+        event_type: EventType | str,
+        workspace_id: UUID | str,
+        run_id: UUID | str | None = None,
+        user_id: UUID | str | None = None,
+        payload: dict[str, Any] | None = None,
+        parent_event_id: UUID | str | None = None,
+        auto_commit: bool = False,
     ) -> Event:
         """Publish an event to PostgreSQL and Redis.
 
@@ -80,11 +80,19 @@ class EventPublisher:
             Created Event instance
         """
         # Normalize IDs to strings for storage
-        workspace_id_str = str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        workspace_id_str = (
+            str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        )
         run_id_str = str(run_id) if isinstance(run_id, UUID) else run_id
         user_id_str = str(user_id) if isinstance(user_id, UUID) else user_id
-        parent_event_id_str = str(parent_event_id) if isinstance(parent_event_id, UUID) else parent_event_id
-        event_type_str = event_type.value if isinstance(event_type, EventType) else event_type
+        parent_event_id_str = (
+            str(parent_event_id)
+            if isinstance(parent_event_id, UUID)
+            else parent_event_id
+        )
+        event_type_str = (
+            event_type.value if isinstance(event_type, EventType) else event_type
+        )
 
         # Get next sequence number for this run (or workspace if no run)
         sequence = await self._get_next_sequence(workspace_id_str, run_id_str)
@@ -125,9 +133,9 @@ class EventPublisher:
         return event
 
     async def publish_batch(
-            self,
-            events: list[dict[str, Any]],
-            auto_commit: bool = False,
+        self,
+        events: list[dict[str, Any]],
+        auto_commit: bool = False,
     ) -> list[Event]:
         """Publish multiple events in a batch.
 
@@ -160,9 +168,7 @@ class EventPublisher:
 
         return created_events
 
-    async def _get_next_sequence(
-            self, workspace_id: str, run_id: str | None
-    ) -> int:
+    async def _get_next_sequence(self, workspace_id: str, run_id: str | None) -> int:
         """Get the next sequence number for a run or workspace.
 
         Args:
@@ -189,7 +195,7 @@ class EventPublisher:
         return max_seq + 1
 
     async def _update_run_sequence(
-            self, run_id: str, sequence: int, auto_commit: bool
+        self, run_id: str, sequence: int, auto_commit: bool
     ) -> None:
         """Update the run's last_event_sequence.
 
@@ -260,7 +266,9 @@ class EventPublisher:
                     maxlen=10000,
                     approximate=True,
                 )
-                logger.debug(f"Published user.message event to run_tasks queue for run {event.run_id}")
+                logger.debug(
+                    f"Published user.message event to run_tasks queue for run {event.run_id}"
+                )
 
         except Exception as e:
             logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")

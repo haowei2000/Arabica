@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +12,7 @@ import redis.asyncio as redis_async
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.run import Run
+from aiwen.models.runs.run import Run
 from aiwen.schemas.events.event_payloads import EventType
 from aiwen.schemas.runs.run import RunStatus
 from aiwen.services.events.event_publisher import EventPublisher
@@ -67,9 +67,9 @@ class RunStateMachine:
     }
 
     def __init__(
-            self,
-            db: AsyncSession,
-            redis_client: redis_async.Redis | None = None,
+        self,
+        db: AsyncSession,
+        redis_client: redis_async.Redis | None = None,
     ):
         """Initialize RunStateMachine.
 
@@ -82,12 +82,12 @@ class RunStateMachine:
         self.event_publisher = EventPublisher(db, redis_client)
 
     async def transition(
-            self,
-            run_id: UUID | str,
-            target_state: RunStatus | str,
-            reason: str | None = None,
-            triggered_by: str | None = None,
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        target_state: RunStatus | str,
+        reason: str | None = None,
+        triggered_by: str | None = None,
+        auto_commit: bool = False,
     ) -> Run:
         """Transition a run to a new state.
 
@@ -106,7 +106,9 @@ class RunStateMachine:
             InvalidTransitionError: If transition is not valid
         """
         run_id_str = str(run_id) if isinstance(run_id, UUID) else run_id
-        target_state_str = target_state.value if isinstance(target_state, RunStatus) else target_state
+        target_state_str = (
+            target_state.value if isinstance(target_state, RunStatus) else target_state
+        )
 
         # Get the run
         stmt = select(Run).where(Run.id == run_id_str)
@@ -131,12 +133,15 @@ class RunStateMachine:
         run.updated_at = datetime.now(UTC)
 
         # Update timestamps based on transition
-        if target_state_str == RunStatus.RUNNING.value and previous_state == RunStatus.PENDING.value:
+        if (
+            target_state_str == RunStatus.RUNNING.value
+            and previous_state == RunStatus.PENDING.value
+        ):
             run.started_at = datetime.now(UTC)
         elif target_state_str in (
-                RunStatus.FINISHED.value,
-                RunStatus.FAILED.value,
-                RunStatus.CANCELLED.value,
+            RunStatus.FINISHED.value,
+            RunStatus.FAILED.value,
+            RunStatus.CANCELLED.value,
         ):
             run.completed_at = datetime.now(UTC)
 
@@ -182,10 +187,10 @@ class RunStateMachine:
         return target_state in allowed
 
     async def start(
-            self,
-            run_id: UUID | str,
-            triggered_by: str | None = None,
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        triggered_by: str | None = None,
+        auto_commit: bool = False,
     ) -> Run:
         """Start a pending run.
 
@@ -208,10 +213,10 @@ class RunStateMachine:
         )
 
     async def pause_for_tool(
-            self,
-            run_id: UUID | str,
-            waiting_for: dict[str, Any],
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        waiting_for: dict[str, Any],
+        auto_commit: bool = False,
     ) -> Run:
         """Pause a running run while waiting for tool approval or result.
 
@@ -244,9 +249,9 @@ class RunStateMachine:
         )
 
     async def resume_from_tool(
-            self,
-            run_id: UUID | str,
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        auto_commit: bool = False,
     ) -> Run:
         """Resume a waiting run after tool completion.
 
@@ -278,10 +283,10 @@ class RunStateMachine:
         )
 
     async def complete(
-            self,
-            run_id: UUID | str,
-            output_data: dict[str, Any] | None = None,
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        output_data: dict[str, Any] | None = None,
+        auto_commit: bool = False,
     ) -> Run:
         """Complete a running run successfully.
 
@@ -314,11 +319,11 @@ class RunStateMachine:
         )
 
     async def fail(
-            self,
-            run_id: UUID | str,
-            error: str,
-            error_code: str | None = None,
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        error: str,
+        error_code: str | None = None,
+        auto_commit: bool = False,
     ) -> Run:
         """Mark a running run as failed.
 
@@ -353,11 +358,11 @@ class RunStateMachine:
         )
 
     async def cancel(
-            self,
-            run_id: UUID | str,
-            reason: str = "Cancelled by user",
-            triggered_by: str = "user",
-            auto_commit: bool = False,
+        self,
+        run_id: UUID | str,
+        reason: str = "Cancelled by user",
+        triggered_by: str = "user",
+        auto_commit: bool = False,
     ) -> Run:
         """Cancel a running or waiting run.
 

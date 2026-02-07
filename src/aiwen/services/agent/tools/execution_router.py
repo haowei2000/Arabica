@@ -5,9 +5,10 @@ The ExecutionRouter determines how each tool should be executed based on
 its metadata and delegates to the appropriate executor.
 """
 
+from collections.abc import Callable, Coroutine
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
 from aiwen.schemas.tools.execution import (
     ExecutionContext,

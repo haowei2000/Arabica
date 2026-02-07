@@ -37,10 +37,10 @@ class AppAgentFactory:
     """
 
     def __init__(
-            self,
-            appid: str,
-            template_code: str,
-            app_config: dict[str, Any],
+        self,
+        appid: str,
+        template_code: str,
+        app_config: dict[str, Any],
     ):
         """
         初始化应用代理工厂

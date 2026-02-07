@@ -6,14 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_knowledge_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.agents.knowledge import (
+from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.knowledge.knowledge import (
     KnowledgeCreate,
     KnowledgeListResponse,
     KnowledgeResponse,
     KnowledgeUpdate,
 )
-from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.crud.knowledge_crud import KnowledgeCRUD
+from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -22,9 +22,9 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
     "/create", response_model=KnowledgeResponse, status_code=status.HTTP_201_CREATED
 )
 async def create_knowledge(
-        data: KnowledgeCreate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
+    data: KnowledgeCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
 ):
     """
     Create a new knowledge base.
@@ -43,9 +43,9 @@ async def create_knowledge(
 
 @router.get("/{knowledge_id}/get", response_model=KnowledgeResponse)
 async def get_knowledge(
-        knowledge_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    knowledge_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Get knowledge base by ID.
@@ -77,10 +77,10 @@ async def get_knowledge(
 
 @router.post("/{knowledge_id}/update", response_model=KnowledgeResponse)
 async def update_knowledge(
-        knowledge_id: str,
-        data: KnowledgeUpdate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    knowledge_id: str,
+    data: KnowledgeUpdate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Update an existing knowledge base.
@@ -115,9 +115,9 @@ async def update_knowledge(
 
 @router.post("/{knowledge_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge(
-        knowledge_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    knowledge_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Delete a knowledge base.
@@ -148,12 +148,14 @@ async def delete_knowledge(
 
 @router.get("/query", response_model=KnowledgeListResponse)
 async def query_knowledge(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        knowledge_status: str | None = Query(None, alias="status", description="Filter by status"),
-        permission: str | None = Query(None, description="Filter by permission"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    knowledge_status: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    permission: str | None = Query(None, description="Filter by permission"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     List knowledge bases with filtering and pagination.
@@ -186,11 +188,11 @@ async def query_knowledge(
 
 @router.get("/search", response_model=KnowledgeListResponse)
 async def search_knowledge(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        q: str = Query(..., min_length=1, description="Search term"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    q: str = Query(..., min_length=1, description="Search term"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Search knowledge bases by name or description.

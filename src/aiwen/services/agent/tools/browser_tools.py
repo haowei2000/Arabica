@@ -113,9 +113,7 @@ async def browser_scroll(session_id: str, delta_y: int, delta_x: int = 0) -> dic
 
 
 @tool("browser_move_mouse")
-async def browser_move_mouse(
-    session_id: str, x: int, y: int, steps: int = 10
-) -> dict:
+async def browser_move_mouse(session_id: str, x: int, y: int, steps: int = 10) -> dict:
     """Move mouse cursor."""
     return await browser_module._browser_move_mouse(
         session_id=session_id, x=x, y=y, steps=steps

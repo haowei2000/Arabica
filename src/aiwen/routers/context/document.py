@@ -5,23 +5,32 @@ from typing import Annotated
 from uuid import uuid4
 
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from aiwen.celery_worker.celery_app import celery_app, example_task
+from aiwen.celery_worker.tasks.document_tasks import process_document_to_context
 from aiwen.dependencies.agents import get_document_crud, get_knowledge_crud
 from aiwen.dependencies.auth import get_current_user
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
-from aiwen.schemas.agents.document import (
+from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.knowledge.document import (
     DocumentListResponse,
     DocumentResponse,
     DocumentUploadResponse,
 )
-from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.crud.document_crud import DocumentCRUD
-from aiwen.services.crud.knowledge_crud import KnowledgeCRUD
-from aiwen.celery_worker.celery_app import celery_app, example_task
-from aiwen.celery_worker.tasks.document_tasks import process_document_to_context
+from aiwen.services.knowledge.document_crud import DocumentCRUD
+from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
 
 
 class TaskStatusResponse(BaseModel):
@@ -72,16 +81,22 @@ def compute_file_hash(content: bytes) -> str:
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        file: UploadFile = File(..., description="File to upload"),
-        knowledge_id: str = Form(..., description="Knowledge base ID"),
-        chunk_size: int = Form(default=500, ge=100, le=2000, description="Chunk size for splitting"),
-        chunk_overlap: int = Form(default=50, ge=0, le=500, description="Overlap between chunks"),
-        embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
-        embedding_model: str = Form(default="text-embedding-v3", description="Embedding model"),
-        embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
-        document_crud: DocumentCRUD = Depends(get_document_crud),
-        knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    file: UploadFile = File(..., description="File to upload"),
+    knowledge_id: str = Form(..., description="Knowledge base ID"),
+    chunk_size: int = Form(
+        default=500, ge=100, le=2000, description="Chunk size for splitting"
+    ),
+    chunk_overlap: int = Form(
+        default=50, ge=0, le=500, description="Overlap between chunks"
+    ),
+    embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
+    embedding_model: str = Form(
+        default="text-embedding-v3", description="Embedding model"
+    ),
+    embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
+    document_crud: DocumentCRUD = Depends(get_document_crud),
+    knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Upload a document to a knowledge base.
@@ -151,7 +166,7 @@ async def upload_document(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload file to storage: {str(e)}",
+            detail=f"Failed to upload file to storage: {e!s}",
         )
     # Create document record
     document = await document_crud.create(
@@ -171,6 +186,7 @@ async def upload_document(
 
     # Trigger Celery task chain
     import logging
+
     logger = logging.getLogger(__name__)
     logger.info(f"Triggering document processing for document_id={document.id}")
 
@@ -196,8 +212,8 @@ async def upload_document(
 
 @router.get("/task/{task_id}/status", response_model=TaskStatusResponse)
 async def get_task_status(
-        task_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+    task_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Get the status of a document processing task.
@@ -230,7 +246,11 @@ async def get_task_status(
             response.progress = result.info.get("progress", 0) if result.info else 0
         elif task_status == "SUCCESS":
             response.progress = 100
-            response.result = result.result if isinstance(result.result, dict) else {"result": str(result.result)}
+            response.result = (
+                result.result
+                if isinstance(result.result, dict)
+                else {"result": str(result.result)}
+            )
         elif task_status == "FAILURE":
             response.error = str(result.result) if result.result else "Unknown error"
 
@@ -240,18 +260,18 @@ async def get_task_status(
         return TaskStatusResponse(
             task_id=task_id,
             status="PENDING",
-            error=f"Unable to fetch task status: {str(e)}",
+            error=f"Unable to fetch task status: {e!s}",
         )
 
 
 @router.get("/knowledge/{knowledge_id}", response_model=DocumentListResponse)
 async def list_documents_by_knowledge(
-        knowledge_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        document_crud: DocumentCRUD = Depends(get_document_crud),
-        knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    knowledge_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    document_crud: DocumentCRUD = Depends(get_document_crud),
+    knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     List documents in a knowledge base.
@@ -301,9 +321,9 @@ async def list_documents_by_knowledge(
 
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
-        document_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        document_crud: DocumentCRUD = Depends(get_document_crud),
+    document_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: DocumentCRUD = Depends(get_document_crud),
 ):
     """
     Get document by ID.
@@ -330,10 +350,10 @@ async def get_document(
 
 @router.post("/{document_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
-        document_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        document_crud: DocumentCRUD = Depends(get_document_crud),
-        knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    document_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: DocumentCRUD = Depends(get_document_crud),
+    knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Delete a document and its chunks.
@@ -359,16 +379,18 @@ async def delete_document(
     await document_crud.delete(document_id, current_user.id)
 
     # Decrement knowledge document count
-    await knowledge_crud.increment_document_count(str(document.knowledge_id), increment=-1)
+    await knowledge_crud.increment_document_count(
+        str(document.knowledge_id), increment=-1
+    )
 
     return
 
 
 @router.get("/{document_id}/download")
 async def download_document(
-        document_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        document_crud: DocumentCRUD = Depends(get_document_crud),
+    document_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: DocumentCRUD = Depends(get_document_crud),
 ):
     """
     Download the original document file.
@@ -400,6 +422,7 @@ async def download_document(
 
         # URL encode the filename for Content-Disposition header
         from urllib.parse import quote
+
         encoded_filename = quote(document.original_name)
 
         return Response(
@@ -413,7 +436,7 @@ async def download_document(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download file: {str(e)}",
+            detail=f"Failed to download file: {e!s}",
         )
 
 
@@ -429,9 +452,9 @@ class DocumentPreviewResponse(BaseModel):
 
 @router.get("/{document_id}/preview", response_model=DocumentPreviewResponse)
 async def preview_document(
-        document_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        document_crud: DocumentCRUD = Depends(get_document_crud),
+    document_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: DocumentCRUD = Depends(get_document_crud),
 ):
     """
     Get a preview of the document content (parsed text).

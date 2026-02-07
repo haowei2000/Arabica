@@ -19,6 +19,7 @@ from aiwen.schemas.events.event_payloads import EventListResponse
 
 router = APIRouter()
 
+
 async def _event_stream_generator(
     consumer: Any,
     subscribe_method: str,
@@ -48,7 +49,9 @@ async def stream_run_events(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     run_crud: RunCRUDDep,
     consumer: EventConsumerDep,
-    last_event_id: str = Query("$", description="Last event ID ($ for new events only)"),
+    last_event_id: str = Query(
+        "$", description="Last event ID ($ for new events only)"
+    ),
 ):
     """Stream events for a run via Server-Sent Events (SSE)."""
     run = await run_crud.get_by_id_and_user(run_id, current_user.id)
@@ -86,7 +89,9 @@ async def stream_workspace_events(
         )
 
     return StreamingResponse(
-        _event_stream_generator(consumer, "subscribe_workspace", workspace_id, last_event_id),
+        _event_stream_generator(
+            consumer, "subscribe_workspace", workspace_id, last_event_id
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -127,7 +132,11 @@ async def get_run_events(
     )
 
 
-@router.get("/workspaces/{workspace_id}/events", response_model=EventListResponse, tags=["events"])
+@router.get(
+    "/workspaces/{workspace_id}/events",
+    response_model=EventListResponse,
+    tags=["events"],
+)
 async def get_workspace_events(
     workspace_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],

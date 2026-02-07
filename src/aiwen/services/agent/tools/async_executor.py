@@ -8,10 +8,10 @@ This executor handles tools that may take minutes to complete:
 - Supports retry and timeout policies
 """
 
+from datetime import datetime
 import json
 import logging
 import time
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -440,7 +440,9 @@ def set_task_result(
     task_data = redis.get(task_key)
     if task_data:
         task_info = json.loads(task_data)
-        task_info["status"] = AsyncTaskStatus.COMPLETED if success else AsyncTaskStatus.FAILED
+        task_info["status"] = (
+            AsyncTaskStatus.COMPLETED if success else AsyncTaskStatus.FAILED
+        )
         task_info["completed_at"] = datetime.utcnow().isoformat()
         if error_message:
             task_info["error"] = error_message

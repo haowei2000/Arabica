@@ -10,16 +10,16 @@ from aiwen.dependencies.auth import get_current_user
 from aiwen.schemas.agents.agent_template import AgentTemplateResponse
 from aiwen.schemas.agents.app import AppCreate, AppListResponse, AppResponse, AppUpdate
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.crud.app_crud import AppCRUD
+from aiwen.services.agent.agent_template_crud import AgentTemplateCRUD
+from aiwen.services.agent.app_crud import AppCRUD
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 
 
 @router.get("/templates/list", response_model=list[AgentTemplateResponse])
 async def list_agent_templates(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        curd: Annotated[AgentTemplateCRUD, Depends(get_template_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    curd: Annotated[AgentTemplateCRUD, Depends(get_template_crud)],
 ):
     """
     List all available agent templates.
@@ -32,10 +32,10 @@ async def list_agent_templates(
 
 @router.post("/create", response_model=AppResponse, status_code=status.HTTP_201_CREATED)
 async def create_app(
-        data: AppCreate,
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-        template_crud: Annotated[AgentTemplateCRUD, Depends(get_template_crud)],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+    data: AppCreate,
+    app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
+    template_crud: Annotated[AgentTemplateCRUD, Depends(get_template_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Create a new app (agent instance).
@@ -87,9 +87,9 @@ async def create_app(
 
 @router.get("/{app_id}/get", response_model=AppResponse)
 async def get_app(
-        app_id: UUID,
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+    app_id: UUID,
+    app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Get app by app_id.
@@ -121,11 +121,11 @@ async def get_app(
 
 @router.get("/list", response_model=AppListResponse)
 async def list_apps(
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        enabled_only: bool = Query(False, description="Only return enabled apps"),
+    app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    enabled_only: bool = Query(False, description="Only return enabled apps"),
 ):
     """
     List all apps with pagination.
@@ -151,10 +151,10 @@ async def list_apps(
 
 @router.post("/{app_id}/update", response_model=AppResponse)
 async def update_app(
-        app_id: UUID,
-        data: AppUpdate,
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+    app_id: UUID,
+    data: AppUpdate,
+    app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Update an existing app.
@@ -196,9 +196,9 @@ async def update_app(
 
 @router.post("/{app_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_app(
-        app_id: UUID,
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
+    app_id: UUID,
+    app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Delete an app by app_id.
@@ -215,7 +215,8 @@ async def delete_app(
     app = await app_crud.get_app(app_id)
     if not app:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"App with id '{app_id}' not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"App with id '{app_id}' not found",
         )
 
     # Check if the app belongs to the current user
@@ -228,7 +229,8 @@ async def delete_app(
     deleted = await app_crud.delete_app(app_id)
     if not deleted:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"App with id '{app_id}' not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"App with id '{app_id}' not found",
         )
 
     return
@@ -236,12 +238,12 @@ async def delete_app(
 
 @router.get("/query", response_model=AppListResponse)
 async def query_apps(
-        app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        template_id: UUID | None = Query(None, description="Filter by agent template UUID"),
-        enabled: bool | None = Query(None, description="Filter by enabled status"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    template_id: UUID | None = Query(None, description="Filter by agent template UUID"),
+    enabled: bool | None = Query(None, description="Filter by enabled status"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
 ):
     """
     Query apps with optional filters.
@@ -275,5 +277,8 @@ async def query_apps(
         )
 
     return AppListResponse(
-        total=user_total, items=user_apps, page=page, page_size=page_size  # ty:ignore[invalid-argument-type]
+        total=user_total,
+        items=user_apps,
+        page=page,
+        page_size=page_size,  # ty:ignore[invalid-argument-type]
     )

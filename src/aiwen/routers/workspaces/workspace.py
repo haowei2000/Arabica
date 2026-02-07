@@ -11,7 +11,7 @@ from aiwen.dependencies.workspace import (
     WorkspaceMemberCRUDDep,
 )
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.schemas.workspace.workspace import (
+from aiwen.schemas.workspaces.workspace import (
     MemberRole,
     WorkspaceCreate,
     WorkspaceListResponse,
@@ -24,13 +24,11 @@ from aiwen.schemas.workspace.workspace import (
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
-@router.post(
-    "", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
 async def create_workspace(
-        data: WorkspaceCreate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: WorkspaceCRUDDep,
+    data: WorkspaceCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
 ):
     """
     Create a new workspace.
@@ -57,9 +55,9 @@ async def create_workspace(
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
 async def get_workspace(
-        workspace_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: WorkspaceCRUDDep,
+    workspace_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
 ):
     """
     Get workspace by ID.
@@ -86,10 +84,10 @@ async def get_workspace(
 
 @router.patch("/{workspace_id}", response_model=WorkspaceResponse)
 async def update_workspace(
-        workspace_id: str,
-        data: WorkspaceUpdate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: WorkspaceCRUDDep,
+    workspace_id: str,
+    data: WorkspaceUpdate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
 ):
     """
     Update a workspace.
@@ -128,9 +126,9 @@ async def update_workspace(
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workspace(
-        workspace_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: WorkspaceCRUDDep,
+    workspace_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
 ):
     """
     Delete a workspace (soft delete).
@@ -157,11 +155,13 @@ async def delete_workspace(
 
 @router.get("", response_model=WorkspaceListResponse)
 async def list_workspaces(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: WorkspaceCRUDDep,
-        status_filter: str | None = Query(None, alias="status", description="Filter by status"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
+    status_filter: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
 ):
     """
     List workspaces accessible to current user.
@@ -200,11 +200,11 @@ async def list_workspaces(
     status_code=status.HTTP_201_CREATED,
 )
 async def add_member(
-        workspace_id: str,
-        data: WorkspaceMemberCreate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        member_crud: WorkspaceMemberCRUDDep,
+    workspace_id: str,
+    data: WorkspaceMemberCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    member_crud: WorkspaceMemberCRUDDep,
 ):
     """
     Add a member to workspace.
@@ -256,12 +256,12 @@ async def add_member(
 
 @router.get("/{workspace_id}/members", response_model=list[WorkspaceMemberResponse])
 async def list_members(
-        workspace_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        member_crud: WorkspaceMemberCRUDDep,
-        page: int = Query(1, ge=1),
-        page_size: int = Query(50, ge=1, le=100),
+    workspace_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    member_crud: WorkspaceMemberCRUDDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
 ):
     """
     List workspace members.
@@ -293,14 +293,16 @@ async def list_members(
     return members
 
 
-@router.patch("/{workspace_id}/members/{user_id}", response_model=WorkspaceMemberResponse)
+@router.patch(
+    "/{workspace_id}/members/{user_id}", response_model=WorkspaceMemberResponse
+)
 async def update_member_role(
-        workspace_id: str,
-        user_id: str,
-        role: MemberRole,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        member_crud: WorkspaceMemberCRUDDep,
+    workspace_id: str,
+    user_id: str,
+    role: MemberRole,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    member_crud: WorkspaceMemberCRUDDep,
 ):
     """
     Update a member's role.
@@ -344,13 +346,15 @@ async def update_member_role(
     return member
 
 
-@router.delete("/{workspace_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{workspace_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def remove_member(
-        workspace_id: str,
-        user_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        member_crud: WorkspaceMemberCRUDDep,
+    workspace_id: str,
+    user_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    member_crud: WorkspaceMemberCRUDDep,
 ):
     """
     Remove a member from workspace.

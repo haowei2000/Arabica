@@ -12,19 +12,19 @@ Usage:
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
+import logging
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.conversation import Conversation
-from aiwen.models.agents.message import Message
-from aiwen.models.agents.run import Run
-from aiwen.models.agents.workspace import Workspace
-from aiwen.models.agents.workspace_member import WorkspaceMember
+from aiwen.models.conversations.conversation import Conversation
+from aiwen.models.conversations.message import Message
+from aiwen.models.runs.run import Run
+from aiwen.models.workspaces.workspace import Workspace
+from aiwen.models.workspaces.workspace_member import WorkspaceMember
 from aiwen.schemas.events.event_payloads import EventType
 from aiwen.services.events.event_publisher import EventPublisher
 
@@ -62,10 +62,10 @@ class ConversationCompat:
         self.event_publisher = event_publisher
 
     async def get_or_create_workspace_for_conversation(
-            self,
-            conversation_id: str | UUID,
-            user_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        conversation_id: str | UUID,
+        user_id: str | UUID,
+        auto_commit: bool = False,
     ) -> Workspace:
         """Get or create a workspace for an existing conversation.
 
@@ -141,13 +141,13 @@ class ConversationCompat:
         return workspace
 
     async def create_conversation_as_workspace(
-            self,
-            app_id: str | UUID,
-            user_id: str | UUID,
-            name: str,
-            from_source: str = "api",
-            mode: str = "chat",
-            auto_commit: bool = False,
+        self,
+        app_id: str | UUID,
+        user_id: str | UUID,
+        name: str,
+        from_source: str = "api",
+        mode: str = "chat",
+        auto_commit: bool = False,
     ) -> tuple[Conversation, Workspace]:
         """Create a new conversation and its associated workspace.
 
@@ -213,13 +213,13 @@ class ConversationCompat:
         return conversation, workspace
 
     async def create_run_for_message(
-            self,
-            workspace_id: str | UUID,
-            app_id: str | UUID,
-            user_id: str | UUID,
-            message_content: str,
-            attachments: list[dict[str, Any]] | None = None,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        app_id: str | UUID,
+        user_id: str | UUID,
+        message_content: str,
+        attachments: list[dict[str, Any]] | None = None,
+        auto_commit: bool = False,
     ) -> Run:
         """Create a run for a new user message.
 
@@ -286,8 +286,8 @@ class ConversationCompat:
         return run
 
     async def get_conversation_from_workspace(
-            self,
-            workspace_id: str | UUID,
+        self,
+        workspace_id: str | UUID,
     ) -> Conversation | None:
         """Get the legacy conversation associated with a workspace.
 
@@ -313,13 +313,13 @@ class ConversationCompat:
         return conv_result.scalar_one_or_none()
 
     async def sync_message_to_conversation(
-            self,
-            workspace_id: str | UUID,
-            run_id: str | UUID,
-            query: str,
-            answer: str,
-            user_id: str | UUID,
-            auto_commit: bool = False,
+        self,
+        workspace_id: str | UUID,
+        run_id: str | UUID,
+        query: str,
+        answer: str,
+        user_id: str | UUID,
+        auto_commit: bool = False,
     ) -> Message | None:
         """Sync a run's messages to the legacy conversation.
 
@@ -377,10 +377,10 @@ class ConversationCompat:
         return message
 
     async def list_conversations_as_workspaces(
-            self,
-            user_id: str | UUID,
-            skip: int = 0,
-            limit: int = 100,
+        self,
+        user_id: str | UUID,
+        skip: int = 0,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
         """List conversations with their workspace info.
 
@@ -419,16 +419,18 @@ class ConversationCompat:
             ws_result = await self.db.execute(ws_stmt)
             workspace = ws_result.scalar_one_or_none()
 
-            results.append({
-                "conversation_id": str(conv.id),
-                "workspace_id": str(workspace.id) if workspace else None,
-                "name": conv.name,
-                "summary": conv.summary,
-                "status": conv.status,
-                "dialogue_count": conv.dialogue_count,
-                "created_at": conv.created_at,
-                "updated_at": conv.updated_at,
-                "migrated": workspace is not None,
-            })
+            results.append(
+                {
+                    "conversation_id": str(conv.id),
+                    "workspace_id": str(workspace.id) if workspace else None,
+                    "name": conv.name,
+                    "summary": conv.summary,
+                    "status": conv.status,
+                    "dialogue_count": conv.dialogue_count,
+                    "created_at": conv.created_at,
+                    "updated_at": conv.updated_at,
+                    "migrated": workspace is not None,
+                }
+            )
 
         return results

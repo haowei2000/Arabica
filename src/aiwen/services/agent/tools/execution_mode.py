@@ -7,10 +7,11 @@ This module provides the foundation for executing tools in different environment
 - CLIENT: Browser-side execution via WebSocket/SSE
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 

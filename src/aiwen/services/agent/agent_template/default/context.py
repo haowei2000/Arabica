@@ -16,15 +16,15 @@ from uuid import UUID
 from sqlalchemy import select
 
 from aiwen.extensions.database import get_session
-from aiwen.models.agents.message import Message
-from aiwen.schemas.agents.message import MessageCreate
-from aiwen.services.crud.message_crud import MessageCRUD
+from aiwen.models.conversations.message import Message
+from aiwen.schemas.conversations.message import MessageCreate
+from aiwen.services.conversations.message_crud import MessageCRUD
 
 logger = logging.getLogger(__name__)
 
 
 async def add_message_to_context(
-        message: dict, conversation_id: UUID, app_id: Optional[UUID] = None
+    message: dict, conversation_id: UUID, app_id: UUID | None = None
 ):
     """
     Add a input to the context.
@@ -37,8 +37,8 @@ async def add_message_to_context(
         conversation_id: UUID of the conversation
         app_id: Optional UUID of the app/agent (used when creating conversation)
     """
-    from aiwen.services.crud import ConversationCRUD
-    from aiwen.schemas.agents.conversation import ConversationCreate
+    from aiwen.schemas.conversations.conversation import ConversationCreate
+    from aiwen.services.conversations import ConversationCRUD
     from aiwen.utils.time import utc_now
 
     async with get_session("aiwen") as db:
@@ -79,14 +79,14 @@ async def add_message_to_context(
                 conversation_id=conversation_id,
                 message=message,
                 app_id=app_id
-                       or conversation.app_id,  # Use app_id from conversation if not provided
+                or conversation.app_id,  # Use app_id from conversation if not provided
             )
         )
         logger.debug(f"Added input to context: {message}")
 
 
 async def get_messages_from_context(
-        conversation_id: Optional[UUID], max_messages: int = 20
+    conversation_id: UUID | None, max_messages: int = 20
 ) -> list[dict]:
     """
     Load conversation history from database by conversation ID.

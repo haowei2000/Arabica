@@ -1,8 +1,8 @@
 """Text chunking service for document processing."""
 
+from dataclasses import dataclass
 import logging
 import re
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,9 @@ class TextChunker:
 
         return [seg.strip() for seg in segments if seg.strip()]
 
-    def _process_segments(self, segments: list[str], original_text: str) -> list[TextChunk]:
+    def _process_segments(
+        self, segments: list[str], original_text: str
+    ) -> list[TextChunk]:
         """Process segments into properly sized chunks.
 
         Args:
@@ -137,7 +139,9 @@ class TextChunker:
                         )
                     )
                     position += 1
-                    search_start = chunk_start + len(current_chunk) - self.config.chunk_overlap
+                    search_start = (
+                        chunk_start + len(current_chunk) - self.config.chunk_overlap
+                    )
                     current_chunk = ""
 
                 # Split large segment
@@ -182,7 +186,9 @@ class TextChunker:
                         )
                     )
                     position += 1
-                    search_start = chunk_start + len(current_chunk) - self.config.chunk_overlap
+                    search_start = (
+                        chunk_start + len(current_chunk) - self.config.chunk_overlap
+                    )
 
                 # Add overlap from previous chunk if configured
                 if self.config.chunk_overlap > 0 and chunks:
@@ -250,7 +256,7 @@ class TextChunker:
                 # Try to find a good break point
                 break_point = self.config.chunk_size
                 for char in [" ", ",", ".", ";"]:
-                    last_pos = remaining[:self.config.chunk_size].rfind(char)
+                    last_pos = remaining[: self.config.chunk_size].rfind(char)
                     if last_pos > self.config.chunk_size * 0.5:
                         break_point = last_pos + 1
                         break
@@ -276,11 +282,11 @@ class TextChunker:
         if len(text) <= self.config.chunk_overlap:
             return text
 
-        overlap = text[-self.config.chunk_overlap:]
+        overlap = text[-self.config.chunk_overlap :]
 
         # Try to start at a word boundary
         space_pos = overlap.find(" ")
         if space_pos > 0:
-            return overlap[space_pos + 1:]
+            return overlap[space_pos + 1 :]
 
         return overlap

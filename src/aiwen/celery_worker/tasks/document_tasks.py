@@ -127,8 +127,8 @@ def download_chunk_and_store(
         from aiwen.services.knowledge import DocumentParser, TextChunker
         from aiwen.services.knowledge.chunker import ChunkConfig
         from aiwen.extensions.database import get_session
-        from aiwen.models.agents.docments import Document
-        from aiwen.models.agents.chunk import Chunk
+        from aiwen.models.knowledge.documents import Document
+        from aiwen.models.knowledge.chunk import Chunk
         from sqlalchemy import update
 
         chunk_ids = []
@@ -243,7 +243,7 @@ def download_chunk_and_store(
 
         async def _mark_failed():
             from aiwen.extensions.database import get_session
-            from aiwen.models.agents.docments import Document
+            from aiwen.models.knowledge.documents import Document
             from sqlalchemy import update
             if self.request.retries >= self.max_retries - 1:
                 async with get_session("aiwen") as session:
@@ -306,8 +306,8 @@ def embed_chunks(
     async def _execute():
         from aiwen.services.knowledge import EmbeddingService
         from aiwen.extensions.database import get_session
-        from aiwen.models.agents.chunk import Chunk
-        from aiwen.models.agents.docments import Document
+        from aiwen.models.knowledge.chunk import Chunk
+        from aiwen.models.knowledge.documents import Document
         from sqlalchemy import select, update
 
         # Update document status
@@ -443,7 +443,7 @@ def embed_chunks(
 
         async def _mark_failed():
             from aiwen.extensions.database import get_session
-            from aiwen.models.agents.docments import Document
+            from aiwen.models.knowledge.documents import Document
             from sqlalchemy import update
             if self.request.retries >= self.max_retries - 1:
                 async with get_session("aiwen") as session:
@@ -503,9 +503,9 @@ def link_chunks_to_context(
 
     async def _execute():
         from aiwen.extensions.database import get_session
-        from aiwen.models.agents.chunk import Chunk
-        from aiwen.models.agents.context import Context
-        from aiwen.models.agents.docments import Document
+        from aiwen.models.knowledge.chunk import Chunk
+        from aiwen.models.context.context import Context
+        from aiwen.models.knowledge.documents import Document
         from aiwen.schemas.agents.app import ContextType
         from sqlalchemy import select, update
 
@@ -585,7 +585,7 @@ def link_chunks_to_context(
 
         async def _mark_failed():
             from aiwen.extensions.database import get_session
-            from aiwen.models.agents.docments import Document
+            from aiwen.models.knowledge.documents import Document
             from sqlalchemy import update
             if self.request.retries >= self.max_retries - 1:
                 async with get_session("aiwen") as session:

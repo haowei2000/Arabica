@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from aiwen.dependencies.agents import get_context_crud
 from aiwen.dependencies.auth import get_current_user
 from aiwen.schemas.agents.app import ContextType
-from aiwen.schemas.agents.context import (
+from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.context.context import (
     ContextCreate,
     ContextListResponse,
     ContextResponse,
@@ -17,8 +18,7 @@ from aiwen.schemas.agents.context import (
     GrepSearchRequest,
     VectorSearchRequest,
 )
-from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.crud.context_crud import ContextCRUD
+from aiwen.services.context.context_crud import ContextCRUD
 
 router = APIRouter(prefix="/context", tags=["context"])
 
@@ -32,9 +32,9 @@ router = APIRouter(prefix="/context", tags=["context"])
     status_code=status.HTTP_201_CREATED,
 )
 async def create_context(
-        data: ContextCreate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    data: ContextCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Create a new context entry.
@@ -53,9 +53,9 @@ async def create_context(
 
 @router.get("/{context_id}", response_model=ContextResponse)
 async def get_context(
-        context_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    context_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Get context by ID.
@@ -82,9 +82,9 @@ async def get_context(
 
 @router.get("/batch/ids", response_model=list[ContextResponse])
 async def get_contexts_by_ids(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        ids: list[str] = Query(..., description="List of context IDs"),
-        crud: ContextCRUD = Depends(get_context_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    ids: list[str] = Query(..., description="List of context IDs"),
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Get multiple contexts by IDs.
@@ -103,10 +103,10 @@ async def get_contexts_by_ids(
 
 @router.post("/{context_id}/update", response_model=ContextResponse)
 async def update_context(
-        context_id: str,
-        data: ContextUpdate,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    context_id: str,
+    data: ContextUpdate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Update an existing context.
@@ -134,9 +134,9 @@ async def update_context(
 
 @router.post("/{context_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_context(
-        context_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    context_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Delete a context entry.
@@ -163,12 +163,12 @@ async def delete_context(
 
 @router.get("/query", response_model=ContextListResponse)
 async def list_contexts(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        context_type: str | None = Query(None, description="Filter by context type"),
-        source_id: str | None = Query(None, description="Filter by source ID"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: ContextCRUD = Depends(get_context_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    context_type: str | None = Query(None, description="Filter by context type"),
+    source_id: str | None = Query(None, description="Filter by source ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     List contexts with filtering and pagination.
@@ -194,9 +194,7 @@ async def list_contexts(
         skip=skip,
         limit=page_size,
     )
-    return ContextListResponse(
-        total=total, items=items, page=page, page_size=page_size
-    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 # ==================== Grep (Text Search) Endpoints ====================
@@ -204,18 +202,18 @@ async def list_contexts(
 
 @router.get("/grep", response_model=ContextListResponse)
 async def grep_contexts(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        q: str = Query(..., min_length=1, description="Search query string"),
-        context_type: str | None = Query(None, description="Filter by context type"),
-        source_id: str | None = Query(None, description="Filter by source ID"),
-        search_in: list[str] = Query(
-            default=["content", "summary"],
-            description="Fields to search in (content, summary, keywords)",
-        ),
-        case_sensitive: bool = Query(default=False, description="Case sensitive search"),
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: ContextCRUD = Depends(get_context_crud),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    q: str = Query(..., min_length=1, description="Search query string"),
+    context_type: str | None = Query(None, description="Filter by context type"),
+    source_id: str | None = Query(None, description="Filter by source ID"),
+    search_in: list[str] = Query(
+        default=["content", "summary"],
+        description="Fields to search in (content, summary, keywords)",
+    ),
+    case_sensitive: bool = Query(default=False, description="Case sensitive search"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Text search (grep) in contexts.
@@ -248,16 +246,14 @@ async def grep_contexts(
         skip=skip,
         limit=page_size,
     )
-    return ContextListResponse(
-        total=total, items=items, page=page, page_size=page_size
-    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 @router.post("/grep", response_model=ContextListResponse)
 async def grep_contexts_post(
-        request: GrepSearchRequest,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    request: GrepSearchRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Text search (grep) in contexts via POST.
@@ -294,9 +290,9 @@ async def grep_contexts_post(
 
 @router.post("/vector-search", response_model=ContextSearchResponse)
 async def vector_search(
-        request: VectorSearchRequest,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    request: VectorSearchRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Vector similarity search using cosine distance.
@@ -351,22 +347,22 @@ async def vector_search(
 
 @router.post("/hybrid-search", response_model=ContextSearchResponse)
 async def hybrid_search(
-        query: str = Query(..., min_length=1, description="Text search query"),
-        embedding: list[float] = Query(..., description="Query embedding vector"),
-        dimension: Literal[384, 768, 1024, 1536] = Query(
-            default=1536, description="Embedding dimension"
-        ),
-        context_type: str | None = Query(None, description="Filter by context type"),
-        source_id: str | None = Query(None, description="Filter by source ID"),
-        top_k: int = Query(default=10, ge=1, le=100, description="Number of results"),
-        vector_weight: float = Query(
-            default=0.7, ge=0.0, le=1.0, description="Weight for vector similarity"
-        ),
-        text_weight: float = Query(
-            default=0.3, ge=0.0, le=1.0, description="Weight for text matching"
-        ),
-        current_user: Annotated[UserResponse, Depends(get_current_user)] = None,
-        crud: ContextCRUD = Depends(get_context_crud),
+    query: str = Query(..., min_length=1, description="Text search query"),
+    embedding: list[float] = Query(..., description="Query embedding vector"),
+    dimension: Literal[384, 768, 1024, 1536] = Query(
+        default=1536, description="Embedding dimension"
+    ),
+    context_type: str | None = Query(None, description="Filter by context type"),
+    source_id: str | None = Query(None, description="Filter by source ID"),
+    top_k: int = Query(default=10, ge=1, le=100, description="Number of results"),
+    vector_weight: float = Query(
+        default=0.7, ge=0.0, le=1.0, description="Weight for vector similarity"
+    ),
+    text_weight: float = Query(
+        default=0.3, ge=0.0, le=1.0, description="Weight for text matching"
+    ),
+    current_user: Annotated[UserResponse, Depends(get_current_user)] = None,
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Hybrid search combining vector similarity and text matching.
@@ -438,9 +434,9 @@ async def hybrid_search(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_contexts_batch(
-        items: list[ContextCreate],
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    items: list[ContextCreate],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Create multiple context entries in batch.
@@ -459,9 +455,9 @@ async def create_contexts_batch(
 
 @router.post("/batch/delete-by-source/{source_id}", status_code=status.HTTP_200_OK)
 async def delete_contexts_by_source(
-        source_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        crud: ContextCRUD = Depends(get_context_crud),
+    source_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     Delete all contexts by source ID.
@@ -483,11 +479,11 @@ async def delete_contexts_by_source(
 
 @router.get("/knowledge/{knowledge_id}/chunks", response_model=ContextListResponse)
 async def list_chunks_by_knowledge(
-        knowledge_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: ContextCRUD = Depends(get_context_crud),
+    knowledge_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     List all chunks in a knowledge base.
@@ -510,18 +506,16 @@ async def list_chunks_by_knowledge(
         skip=skip,
         limit=page_size,
     )
-    return ContextListResponse(
-        total=total, items=items, page=page, page_size=page_size
-    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 @router.get("/document/{document_id}/chunks", response_model=ContextListResponse)
 async def list_chunks_by_document(
-        document_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        page: int = Query(1, ge=1, description="Page number"),
-        page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-        crud: ContextCRUD = Depends(get_context_crud),
+    document_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    crud: ContextCRUD = Depends(get_context_crud),
 ):
     """
     List all chunks for a specific document.
@@ -543,6 +537,4 @@ async def list_chunks_by_document(
         skip=skip,
         limit=page_size,
     )
-    return ContextListResponse(
-        total=total, items=items, page=page, page_size=page_size
-    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)

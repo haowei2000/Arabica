@@ -9,8 +9,8 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.agent_template import AgentTemplate
+from aiwen.services.agent.agent_template_crud import AgentTemplateCRUD
 from aiwen.services.agent.base import Executor
-from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +114,9 @@ class AgentRegistry:
         template_name: str,
         agent_cls: type[Executor],
         db_session: AsyncSession,
-            config: dict | None = None,
+        config: dict | None = None,
         enabled: bool = True,
-            version: int = 1,
+        version: int = 1,
     ) -> AgentTemplate:
         """
         Register an agent template in both memory and database.
@@ -284,7 +284,8 @@ def _import_all_agents() -> None:
     ensuring their decorators execute and register the classes.
     """
     # Import all agent template modules
-    import aiwen.services.agent.agent_template  # noqa: F401
+    import aiwen.services.agent.agent_template
+
     logger.info("All agent modules imported")
 
 

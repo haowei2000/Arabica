@@ -29,17 +29,15 @@ from aiwen.schemas.runs.run import (
 router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 
 
-@router.post(
-    "", response_model=RunResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
 async def create_run(
-        workspace_id: str,
-        data: RunStartRequest,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        run_crud: RunCRUDDep,
-        event_publisher: EventPublisherDep,
-        state_machine: RunStateMachineDep,
+    workspace_id: str,
+    data: RunStartRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
+    event_publisher: EventPublisherDep,
+    state_machine: RunStateMachineDep,
 ):
     """
     Create and start a new run with a user message.
@@ -87,15 +85,11 @@ async def create_run(
 
     # Resolve executor_code from the app's linked agent template
     executor_code = "DEFAULT001"  # safe fallback
-    app_result = await state_machine.db.execute(
-        select(App).where(App.id == app_id)
-    )
+    app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
     app_row = app_result.scalar_one_or_none()
     if app_row and app_row.agent_template_id:
         tmpl_result = await state_machine.db.execute(
-            select(AgentTemplate).where(
-                AgentTemplate.id == app_row.agent_template_id
-            )
+            select(AgentTemplate).where(AgentTemplate.id == app_row.agent_template_id)
         )
         tmpl = tmpl_result.scalar_one_or_none()
         if tmpl:
@@ -121,11 +115,11 @@ async def create_run(
 
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_run(
-        workspace_id: str,
-        run_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        run_crud: RunCRUDDep,
+    workspace_id: str,
+    run_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
 ):
     """
     Get run by ID.
@@ -158,13 +152,15 @@ async def get_run(
 
 @router.get("", response_model=RunListResponse)
 async def list_runs(
-        workspace_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        run_crud: RunCRUDDep,
-        status_filter: str | None = Query(None, alias="status", description="Filter by status"),
-        page: int = Query(1, ge=1),
-        page_size: int = Query(20, ge=1, le=100),
+    workspace_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
+    status_filter: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ):
     """
     List runs in a workspace.
@@ -205,12 +201,12 @@ async def list_runs(
 
 @router.post("/{run_id}/start", response_model=RunResponse)
 async def start_run(
-        workspace_id: str,
-        run_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        run_crud: RunCRUDDep,
-        state_machine: RunStateMachineDep,
+    workspace_id: str,
+    run_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
+    state_machine: RunStateMachineDep,
 ):
     """
     Start a pending run.
@@ -255,13 +251,13 @@ async def start_run(
 
 @router.post("/{run_id}/cancel", response_model=RunResponse)
 async def cancel_run(
-        workspace_id: str,
-        run_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        run_crud: RunCRUDDep,
-        state_machine: RunStateMachineDep,
-        reason: str = Query("Cancelled by user", description="Cancellation reason"),
+    workspace_id: str,
+    run_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
+    state_machine: RunStateMachineDep,
+    reason: str = Query("Cancelled by user", description="Cancellation reason"),
 ):
     """
     Cancel a running or waiting run.
@@ -308,14 +304,14 @@ async def cancel_run(
 
 @router.post("/{run_id}/resume", response_model=RunResponse)
 async def resume_run(
-        workspace_id: str,
-        run_id: str,
-        data: RunResumeRequest,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        workspace_crud: WorkspaceCRUDDep,
-        run_crud: RunCRUDDep,
-        state_machine: RunStateMachineDep,
-        event_publisher: EventPublisherDep,
+    workspace_id: str,
+    run_id: str,
+    data: RunResumeRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
+    state_machine: RunStateMachineDep,
+    event_publisher: EventPublisherDep,
 ):
     """
     Resume a waiting run (after tool approval or result).
@@ -359,11 +355,13 @@ async def resume_run(
     if state_machine.redis:
         await state_machine.redis.set(
             f"run:{run_id}:resume_approval",
-            json.dumps({
-                "approval": data.approval,
-                "tool_result": data.tool_result,
-                "user_input": data.user_input,
-            }),
+            json.dumps(
+                {
+                    "approval": data.approval,
+                    "tool_result": data.tool_result,
+                    "user_input": data.user_input,
+                }
+            ),
             ex=300,  # 5-minute TTL – worker consumes almost instantly
         )
 
@@ -419,9 +417,9 @@ runs_standalone_router = APIRouter(prefix="/runs", tags=["runs"])
 
 @runs_standalone_router.get("/{run_id}", response_model=RunResponse)
 async def get_run_by_id(
-        run_id: str,
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        run_crud: RunCRUDDep,
+    run_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    run_crud: RunCRUDDep,
 ):
     """
     Get run by ID (standalone endpoint).
@@ -444,11 +442,11 @@ async def get_run_by_id(
 
 @runs_standalone_router.get("", response_model=RunListResponse)
 async def list_user_runs(
-        current_user: Annotated[UserResponse, Depends(get_current_user)],
-        run_crud: RunCRUDDep,
-        status_filter: str | None = Query(None, alias="status"),
-        page: int = Query(1, ge=1),
-        page_size: int = Query(20, ge=1, le=100),
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    run_crud: RunCRUDDep,
+    status_filter: str | None = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ):
     """
     List all runs for current user.

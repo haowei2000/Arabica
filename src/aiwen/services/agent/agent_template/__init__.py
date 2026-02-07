@@ -1,6 +1,6 @@
 # __init__.py
-import pkgutil
 import importlib
+import pkgutil
 import sys
 
 for loader, name, is_pkg in pkgutil.iter_modules(__path__):
