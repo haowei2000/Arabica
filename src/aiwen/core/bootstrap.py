@@ -120,19 +120,19 @@ async def _initialize_agent_registry() -> None:
     """初始化Agent Registry"""
     logger.info("🤖 初始化Agent Registry...")
     try:
-        from aiwen.services.agent.agent_registry import (
-            init_agent_registry,
-            AgentRegistry,
+        from aiwen.services.executor.executor_registry import (
+            init_executor_registry,
+            ExecutorRegistry,
         )
 
-        await init_agent_registry()
+        await init_executor_registry()
 
-        templates = AgentRegistry.list()
+        templates = ExecutorRegistry.list()
         logger.info(f"✅ Agent Registry初始化完成")
         logger.info(f"   已注册模板: {templates}")
 
         # 验证关键模板
-        if AgentRegistry.is_registered("DEFAULT001"):
+        if ExecutorRegistry.is_registered("DEFAULT001"):
             logger.info("   ✅ DEFAULT001模板验证通过")
         else:
             logger.warning("   ⚠️  DEFAULT001模板未注册")

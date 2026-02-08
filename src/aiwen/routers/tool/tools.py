@@ -14,7 +14,7 @@ from aiwen.schemas.tools.tool import (
     ToolResponse,
     ToolUpdate,
 )
-from aiwen.services.agent.tool_crud import ToolCRUD
+from aiwen.services.executor.tool_crud import ToolCRUD
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 

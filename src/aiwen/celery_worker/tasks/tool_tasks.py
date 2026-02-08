@@ -13,7 +13,7 @@ from typing import Any
 
 from celery import shared_task
 
-from aiwen.services.agent.tools.async_executor import (
+from aiwen.services.executor.tools.async_executor import (
     AsyncTaskStatus,
     set_task_result,
     update_task_progress,
@@ -166,7 +166,7 @@ async def _execute_with_progress(
 
 def _get_tool_function(tool_name: str) -> Any:
     """Get the actual tool function by name."""
-    from aiwen.services.agent.tools.execution_router import get_execution_router
+    from aiwen.services.executor.tools.execution_router import get_execution_router
 
     router = get_execution_router()
     return router._tool_functions.get(tool_name)

@@ -27,7 +27,7 @@ if env_file.exists():
 else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
 
-from aiwen.services.agent.agent_registry import AgentRegistry, init_agent_registry
+from aiwen.services.executor.executor_registry import ExecutorRegistry, init_executor_registry
 
 # 配置日志
 logging.basicConfig(
@@ -45,14 +45,14 @@ async def test_registry():
 
     # 1. 初始化前检查
     logger.info("\n1. Before initialization:")
-    templates = AgentRegistry.list()
+    templates = ExecutorRegistry.list()
     logger.info(f"   Registered templates: {templates}")
     logger.info(f"   Count: {len(templates)}")
 
     # 2. 初始化 AgentRegistry
     logger.info("\n2. Initializing Agent Registry...")
     try:
-        await init_agent_registry()
+        await init_executor_registry()
         logger.info("   ✓ Initialization complete")
     except Exception as e:
         logger.error(f"   ✗ Initialization failed: {e}", exc_info=True)
@@ -60,16 +60,16 @@ async def test_registry():
 
     # 3. 初始化后检查
     logger.info("\n3. After initialization:")
-    templates = AgentRegistry.list()
+    templates = ExecutorRegistry.list()
     logger.info(f"   Registered templates: {templates}")
     logger.info(f"   Count: {len(templates)}")
 
     # 4. 检查 DEFAULT001
     logger.info("\n4. Checking DEFAULT001:")
-    if AgentRegistry.is_registered("DEFAULT001"):
+    if ExecutorRegistry.is_registered("DEFAULT001"):
         logger.info("   ✓ DEFAULT001 is registered")
         try:
-            agent_cls = AgentRegistry.get("DEFAULT001")
+            agent_cls = ExecutorRegistry.get("DEFAULT001")
             logger.info(f"   ✓ Agent class: {agent_cls}")
             logger.info(f"   ✓ Class name: {agent_cls.__name__}")
         except Exception as e:
@@ -82,7 +82,7 @@ async def test_registry():
     # 5. 测试创建实例
     logger.info("\n5. Testing instance creation:")
     try:
-        agent_cls = AgentRegistry.get("DEFAULT001")
+        agent_cls = ExecutorRegistry.get("DEFAULT001")
         config = {"model_provider": "ollama", "model_name": "qwen3:30b"}
         agent = agent_cls(config)
         logger.info(f"   ✓ Instance created: {agent}")

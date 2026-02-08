@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from aiwen.schemas.events.event_payloads import (
-    AgentPlanStepPayload,
-    AgentTokenPayload,
+    AgentPlanEvent,
+    AgentTokenEvent,
     EventType,
-    ToolCallPayload,
-    ToolPendingPayload,
-    ToolResultPayload,
+    ToolCallEvent,
+    ToolPendingEvent,
+    ToolResultEvent,
+    UserMessage,
 )
 from aiwen.schemas.tools.execution import ToolClientRequestPayload
 
@@ -83,21 +84,24 @@ class Executor(ABC):
         self._token_index: int = 0
 
     # ── core contract ────────────────────────────────────────────
-
     @abstractmethod
-    async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
+    async def setup(self) -> None:
+        """Setup any resources needed by the agent."""
+        ...
+    @abstractmethod
+    async def run(self, user_message: UserMessage) -> dict[str, Any]:
         """Run to completion and return the final result."""
         ...
 
     async def stream(
-        self, input_data: dict[str, Any]
+        self, user_message: UserMessage
     ) -> AsyncGenerator[AgentEvent, None]:
         """Yield typed events while processing input.
 
         Default implementation runs the agent to completion and emits
         a single ``AGENT_MESSAGE``.  Override for true streaming.
         """
-        result = await self.run(input_data)
+        result = await self.run(user_message)
         yield self._emit_message(result.get("answer", str(result)))
 
     # ── token counter ────────────────────────────────────────────
@@ -114,7 +118,7 @@ class Executor(ABC):
         """``AGENT_TOKEN`` – one streaming chunk."""
         event = AgentEvent(
             event_type=EventType.AGENT_TOKEN.value,
-            payload=AgentTokenPayload(
+            payload=AgentTokenEvent(
                 token=token,
                 token_index=self._token_index,
                 is_final=is_final,
@@ -147,7 +151,7 @@ class Executor(ABC):
         """``AGENT_PLAN_STEP`` – one step in a multi-step plan."""
         return AgentEvent(
             event_type=EventType.AGENT_PLAN_STEP.value,
-            payload=AgentPlanStepPayload(
+            payload=AgentPlanEvent(
                 step_number=step_number,
                 step_description=description,
                 status=status,
@@ -164,7 +168,7 @@ class Executor(ABC):
         """``TOOL_CALL`` – the LLM has decided to invoke a tool."""
         return AgentEvent(
             event_type=EventType.TOOL_CALL.value,
-            payload=ToolCallPayload(
+            payload=ToolCallEvent(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 arguments=arguments,
@@ -182,7 +186,7 @@ class Executor(ABC):
         """``TOOL_RESULT`` – a tool completed successfully."""
         return AgentEvent(
             event_type=EventType.TOOL_RESULT.value,
-            payload=ToolResultPayload(
+            payload=ToolResultEvent(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 result=result,
@@ -200,7 +204,7 @@ class Executor(ABC):
         """``TOOL_ERROR`` – a tool raised an exception."""
         return AgentEvent(
             event_type=EventType.TOOL_ERROR.value,
-            payload=ToolResultPayload(
+            payload=ToolResultEvent(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 result=None,
@@ -219,7 +223,7 @@ class Executor(ABC):
         """``TOOL_PENDING`` – tool is blocked; waiting for human action."""
         return AgentEvent(
             event_type=EventType.TOOL_PENDING.value,
-            payload=ToolPendingPayload(
+            payload=ToolPendingEvent(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 reason=reason,
@@ -254,7 +258,3 @@ class Executor(ABC):
                 config=config or {},
             ).model_dump(),
         )
-
-
-# Backward-compat alias – concrete agents import this name.
-BaseAgentTemplate = Executor

@@ -49,7 +49,8 @@ Tools execute directly in the API server process. Best for trusted, lightweight 
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.agent.tools import server_tool
+from aiwen.services.executor.tools import server_tool
+
 
 @tool("database_query")
 @server_tool(timeout=60)
@@ -81,7 +82,8 @@ Tools execute in isolated Docker containers with configurable resource limits. B
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.agent.tools import sandbox_tool
+from aiwen.services.executor.tools import sandbox_tool
+
 
 @tool("execute_python")
 @sandbox_tool(
@@ -151,7 +153,8 @@ Tools execute in the user's browser via SSE events and HTTP callbacks. Best for 
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.agent.tools import client_tool
+from aiwen.services.executor.tools import client_tool
+
 
 @tool("select_file")
 @client_tool(
@@ -160,7 +163,7 @@ from aiwen.services.agent.tools import client_tool
     config={"multiple": False},
 )
 async def select_file(
-    allowed_extensions: list[str] = [".pdf", ".txt"],
+        allowed_extensions: list[str] = [".pdf", ".txt"],
 ) -> dict:
     """Open file picker in user's browser."""
     # Execution happens in browser
@@ -202,7 +205,7 @@ async def select_file(
 The central hub that routes tool execution to the appropriate executor.
 
 ```python
-from aiwen.services.agent.tools import ExecutionRouter, get_execution_router
+from aiwen.services.executor.tools import ExecutionRouter, get_execution_router
 
 # Get singleton router
 router = get_execution_router()
@@ -227,7 +230,7 @@ result = await router.execute(
 Defines how a tool should be executed.
 
 ```python
-from aiwen.services.agent.tools import ToolMetadata, ToolExecutionMode
+from aiwen.services.executor.tools import ToolMetadata, ToolExecutionMode
 
 metadata = ToolMetadata(
     execution_mode=ToolExecutionMode.SANDBOX,
@@ -511,7 +514,7 @@ Complete example showing all three execution modes.
 """
 
 from langchain_core.tools import tool
-from aiwen.services.agent.tools import (
+from aiwen.services.executor.tools import (
     sandbox_tool,
     client_tool,
     server_tool,
@@ -553,8 +556,8 @@ async def run_analysis(code: str, data: dict) -> dict:
 @tool("upload_document")
 @client_tool(handler="documentUpload", timeout=180)
 async def upload_document(
-    accepted_types: list[str] = ["application/pdf", "text/plain"],
-    max_size_mb: int = 10,
+        accepted_types: list[str] = ["application/pdf", "text/plain"],
+        max_size_mb: int = 10,
 ) -> dict:
     """Allow user to upload a document from their device."""
     # Browser handles file selection

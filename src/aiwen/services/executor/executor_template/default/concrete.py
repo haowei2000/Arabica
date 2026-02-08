@@ -21,24 +21,20 @@ from typing import Any, ClassVar
 from langchain.agents import create_agent
 from langchain_core.messages import (
     AIMessage,
-    ToolMessage,
-    convert_to_messages,
     messages_to_dict,
 )
 
 from aiwen.schemas.agents.app import AppConfig, Model
-from aiwen.schemas.agents.input import TextInput
+from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.schemas.tools.execution import ExecutionContext
-from aiwen.services.agent.agent_registry import register_agent
-from aiwen.services.agent.base import AgentEvent, BaseAgentTemplate, WaitingForTool
-from aiwen.services.agent.tools import BROWSER_TOOLS
-from aiwen.services.agent.tools.execution_mode import (
+from aiwen.services.executor.base import AgentEvent, Executor, WaitingForTool
+from aiwen.services.executor.executor_registry import register_executor
+from aiwen.services.executor.tools import BROWSER_TOOLS
+from aiwen.services.executor.tools.execution_mode import (
     ToolExecutionMode,
     get_tool_metadata,
 )
-from aiwen.services.agent.tools.execution_router import ExecutionRouter
-
-from .context import get_messages_from_context
+from aiwen.services.executor.tools.execution_router import ExecutionRouter
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +44,8 @@ _THINK_TAG_LEN = len(_THINK_TAG)  # 7
 _THINK_CLOSE = "</think>"
 
 
-@register_agent
-class DefaultAgentTemplate(BaseAgentTemplate):
+@register_executor
+class DefaultAgentTemplate(Executor):
     """Default agent with conversation context and structured event streaming.
 
     默认Agent，支持对话历史和结构化事件流。
@@ -80,9 +76,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
         tools = BROWSER_TOOLS if self.enable_browser_tools else []
         system_prompt = (
-            "You can use browser tools to interact with websites when needed. "
-            "Launch a session first, reuse the session_id for subsequent actions, "
-            "and close the session when finished."
+            "You are a helpful Assistant "
         )
         self.agent = create_agent(
             model=self.llm, tools=tools, system_prompt=system_prompt
@@ -132,57 +126,12 @@ class DefaultAgentTemplate(BaseAgentTemplate):
 
     # ── context ──────────────────────────────────────────────────
 
-    async def _prepare_messages(self, input_data: TextInput) -> list[dict[str, str]]:
-        """Load conversation history and append the current user message."""
-        messages: list[dict[str, str]] = []
-        if input_data.workspace_id:
-            messages.extend(
-                await get_messages_from_context(
-                    conversation_id=input_data.workspace_id,
-                    max_messages=self.max_history_messages,
-                )
-            )
-        messages.append({"role": "user", "content": input_data.query})
-        return messages
-
-    async def _build_resumed_messages(self, raw_input: dict) -> list:
-        """Reconstruct the message list at the interruption point.
-
-        Appends the AI message (with ``tool_calls``) and a ``ToolMessage``
-        carrying the user's approval result so the LLM continues from
-        where it left off – no re-decision required.
-        """
-        waiting_info = raw_input["_waiting_info"]
-        approval = raw_input["_approval"]
-
-        # Base conversation (history + user message)
-        clean = {k: v for k, v in raw_input.items() if not k.startswith("_")}
-        base_input = TextInput(**clean)
-        messages: list = await self._prepare_messages(base_input)
-
-        # Re-hydrate the AI message that contained the tool_call
-        ai_msg = convert_to_messages([waiting_info["ai_message"]])[0]
-        messages.append(ai_msg)
-
-        # Inject the tool result (approved content or denial)
-        tool_call_id = ai_msg.tool_calls[0]["id"]
-        if approval["approved"]:
-            content = str(approval.get("tool_result") or "Tool approved by user.")
-        else:
-            content = "Tool call was denied by the user."
-        messages.append(ToolMessage(content=content, tool_call_id=tool_call_id))
-
-        return messages
 
     # ── run (non-streaming) ──────────────────────────────────────
-
-    async def run(self, input_data: TextInput | dict) -> dict[str, Any]:
+    async def run(self, user_message: UserMessage) -> dict[str, Any]:
         """Execute the agent and return the final answer."""
-        if isinstance(input_data, dict):
-            input_data = TextInput(**input_data)
 
-        messages = await self._prepare_messages(input_data)
-        response = await self.agent.ainvoke({"messages": messages})
+        response = await self.agent.ainvoke({"messages": user_message.message})
         final_messages = response.get("messages", [])
         final_text = ""
         if final_messages and isinstance(final_messages[-1], AIMessage):
@@ -192,7 +141,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
     # ── stream ───────────────────────────────────────────────────
 
     async def stream(
-        self, input_data: TextInput | dict
+        self,user_message: UserMessage,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Stream typed events from the agentic loop.
 
@@ -212,13 +161,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         The state resets on every ``on_chat_model_end`` so that each
         iteration of the agentic loop is handled independently.
         """
-        # ── resume path: reconstruct messages at the interruption point ──
-        if isinstance(input_data, dict) and input_data.get("_resumed"):
-            messages = await self._build_resumed_messages(input_data)
-        else:
-            if isinstance(input_data, dict):
-                input_data = TextInput(**input_data)
-            messages = await self._prepare_messages(input_data)
+
         self._reset_token_index()
 
         # ── per-LLM-call state (reset on on_chat_model_end) ──────
@@ -235,7 +178,7 @@ class DefaultAgentTemplate(BaseAgentTemplate):
         # on_tool_start can serialise it for the resume path.
         last_ai_output: AIMessage | None = None
 
-        async for event in self.agent.astream_events({"messages": messages}):
+        async for event in self.agent.astream_events({"messages": user_message.message}):
             event_name: str = event["event"]
 
             # ── streaming token ──────────────────────────────────

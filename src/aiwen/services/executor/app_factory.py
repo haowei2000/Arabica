@@ -25,8 +25,8 @@
 # aiwen/services/agent/app_factory.py
 from typing import Any, Dict
 
-from aiwen.services.agent.agent_registry import AgentRegistry
-from aiwen.services.agent.base import Executor
+from aiwen.services.executor.executor_registry import ExecutorRegistry
+from aiwen.services.executor.base import Executor
 
 
 class AppAgentFactory:
@@ -55,7 +55,7 @@ class AppAgentFactory:
         self.app_config = app_config
 
         # 启动时校验一次，失败即是配置错误
-        self._agent_cls = AgentRegistry.get(template_code)
+        self._agent_cls = ExecutorRegistry.get(template_code)
 
     def create(self, payload: dict[str, Any]) -> Executor:
         """

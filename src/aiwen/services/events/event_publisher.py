@@ -107,6 +107,7 @@ class EventPublisher:
             payload=_to_jsonable(payload),
             sequence=sequence,
             parent_event_id=parent_event_id_str,
+            executor_code=executor_code,
         )
 
         self.db.add(event)

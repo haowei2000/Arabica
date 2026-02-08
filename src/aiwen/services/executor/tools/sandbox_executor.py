@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from aiwen.schemas.tools.execution import ExecutionContext, ToolResult
-from aiwen.services.agent.tools.execution_mode import (
+from aiwen.services.executor.tools.execution_mode import (
     ToolExecutionMode,
     ToolMetadata,
 )

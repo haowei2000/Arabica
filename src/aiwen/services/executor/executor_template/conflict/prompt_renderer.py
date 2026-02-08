@@ -487,7 +487,7 @@ class PromptRenderer:
         """Assemble all sections into the final system prompt."""
         # Select prompt templates based on locale
         if locale == "en":
-            from aiwen.services.agent.agent_template.conflict.system_prompt_en import (
+            from aiwen.services.executor.executor_template.conflict.system_prompt_en import (
                 available_context_prompt_en,
                 available_knowledge_prompt_en,
                 available_tools_prompt_en,
@@ -505,7 +505,7 @@ class PromptRenderer:
             tpl_tools = available_tools_prompt_en
             tpl_skills = skill_prompt_en
         else:
-            from aiwen.services.agent.agent_template.conflict.system_prompt_zh import (
+            from aiwen.services.executor.executor_template.conflict.system_prompt_zh import (
                 available_context_prompt,
                 available_knowledge_prompt,
                 available_tools_prompt,

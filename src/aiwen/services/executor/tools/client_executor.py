@@ -23,7 +23,7 @@ from aiwen.schemas.tools.execution import (
     ToolResult,
     ToolResultSubmission,
 )
-from aiwen.services.agent.tools.execution_mode import (
+from aiwen.services.executor.tools.execution_mode import (
     ToolExecutionMode,
     ToolMetadata,
 )

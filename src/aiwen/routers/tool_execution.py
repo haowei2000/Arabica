@@ -12,7 +12,7 @@ from aiwen.schemas.tools.execution import (
     PendingToolExecution,
     ToolResultSubmission,
 )
-from aiwen.services.agent.tools.client_executor import get_client_executor
+from aiwen.services.executor.tools.client_executor import get_client_executor
 
 logger = logging.getLogger(__name__)
 

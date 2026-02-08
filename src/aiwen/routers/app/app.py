@@ -10,8 +10,8 @@ from aiwen.dependencies.auth import get_current_user
 from aiwen.schemas.agents.agent_template import AgentTemplateResponse
 from aiwen.schemas.agents.app import AppCreate, AppListResponse, AppResponse, AppUpdate
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.agent.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.agent.app_crud import AppCRUD
+from aiwen.services.executor.app_crud import AppCRUD
+from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/apps", tags=["apps"])
 @router.get("/templates/list", response_model=list[AgentTemplateResponse])
 async def list_agent_templates(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    curd: Annotated[AgentTemplateCRUD, Depends(get_template_crud)],
+    curd: Annotated[ExecutorCRUD, Depends(get_template_crud)],
 ):
     """
     List all available agent templates.
@@ -34,7 +34,7 @@ async def list_agent_templates(
 async def create_app(
     data: AppCreate,
     app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-    template_crud: Annotated[AgentTemplateCRUD, Depends(get_template_crud)],
+    template_crud: Annotated[ExecutorCRUD, Depends(get_template_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """

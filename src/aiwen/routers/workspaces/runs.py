@@ -1,6 +1,5 @@
 # aiwen/routers/workspaces/runs.py
 """REST API endpoints for run management."""
-from aiwen.schemas.events import UserMessagePayload
 
 import json
 from typing import Annotated
@@ -18,7 +17,7 @@ from aiwen.dependencies.workspace import (
 from aiwen.models.agents.agent_template import AgentTemplate
 from aiwen.models.agents.app import App
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.schemas.events.event_payloads import EventType
+from aiwen.schemas.events.event_payloads import EventType, UserMessage, UserMessageEvent
 from aiwen.schemas.runs.run import (
     RunListResponse,
     RunResponse,
@@ -32,7 +31,7 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 
 @router.post("", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
 async def create_run(
-    payload: UserMessagePayload,
+    user_message_event: UserMessageEvent,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     workspace_crud: WorkspaceCRUDDep,
     run_crud: RunCRUDDep,
@@ -55,7 +54,7 @@ async def create_run(
         Created run
     """
     # Verify workspace access
-    workspace_id = payload.workspace_id
+    workspace_id = user_message_event.workspace_id
     workspace = await workspace_crud.get_by_id_and_user(workspace_id, current_user.id)
     if not workspace:
         raise HTTPException(
@@ -64,7 +63,7 @@ async def create_run(
         )
 
     # Determine app_id (from request or workspace default)
-    app_id = payload.app_id
+    app_id = user_message_event.app_id
     if not app_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -99,7 +98,7 @@ async def create_run(
         user_id=str(current_user.id),
         executor_code=executor_code,
         payload={
-            "message": payload.content,
+            "message": user_message_event.payload.message,
         },
         auto_commit=True,
     )

@@ -2,12 +2,13 @@
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from aiwen.services.agent.agent_registry import register_agent
-from aiwen.services.agent.base import AgentEvent, BaseAgentTemplate
+from aiwen.schemas.events.event_payloads import UserMessage
+from aiwen.services.executor.base import AgentEvent, Executor
+from aiwen.services.executor.executor_registry import register_executor
 
 
-@register_agent
-class AgentTemplate(BaseAgentTemplate):
+@register_executor
+class AgentTemplate(Executor):
     """Natural Language to SQL conversion agent."""
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
@@ -29,7 +30,7 @@ class AgentTemplate(BaseAgentTemplate):
         return {"intent": intent, "sql": sql, "data": data}
 
     async def stream(
-        self, input_data: dict[str, Any]
+        self,user_message:UserMessage
     ) -> AsyncGenerator[AgentEvent, None]:
         """Stream NL2SQL progress as typed plan-step events.
 
@@ -37,8 +38,6 @@ class AgentTemplate(BaseAgentTemplate):
         transitions ``pending → in_progress → completed``.  The final
         result is emitted as a single ``AGENT_MESSAGE``.
         """
-        query = input_data["query"]
-
         # ── step 1: parse intent ─────────────────────────────────
         yield self._emit_plan_step(1, "Parse intent", status="in_progress")
         intent = await self.parse_intent(query)

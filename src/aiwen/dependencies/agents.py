@@ -5,14 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
-from aiwen.services.agent.agent_template_crud import AgentTemplateCRUD
-from aiwen.services.agent.app_crud import AppCRUD
-from aiwen.services.agent.runtime import AgentRuntime
-from aiwen.services.agent.task_crud import AgentTaskCRUD
-from aiwen.services.agent.tool_crud import ToolCRUD
 from aiwen.services.context.context_crud import ContextCRUD
-from aiwen.services.conversations.conversation_crud import ConversationCRUD
-from aiwen.services.conversations.message_crud import MessageCRUD
+from aiwen.services.executor.app_crud import AppCRUD
+from aiwen.services.executor.executor_template_crud import ExecutorCRUD
+from aiwen.services.executor.runtime import AgentRuntime
+from aiwen.services.executor.task_crud import AgentTaskCRUD
+from aiwen.services.executor.tool_crud import ToolCRUD
 from aiwen.services.knowledge.document_crud import DocumentCRUD
 from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
 
@@ -30,41 +28,14 @@ async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
     return AppCRUD(db)
 
 
-async def get_conversation_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
-) -> ConversationCRUD:
-    """
-    Dependency to get ConversationCRUD instance.
-
-    Args:
-        db: Database session from dependency injection
-
-    Returns:
-        ConversationCRUD instance
-    """
-    return ConversationCRUD(db)
-
-
-async def get_message_crud(db: AsyncSession = Depends(get_aiwen_db)) -> MessageCRUD:
-    """
-    Dependency to get MessageCRUD instance.
-
-    Args:
-        db: Database session from dependency injection
-
-    Returns:
-        MessageCRUD instance
-    """
-    return MessageCRUD(db)
-
 
 async def get_template_crud(
     db: AsyncSession = Depends(get_aiwen_db),
-) -> AgentTemplateCRUD:
+) -> ExecutorCRUD:
     """
     Dependency to get AgentTemplateCRUD instance.
     """
-    return AgentTemplateCRUD(db)
+    return ExecutorCRUD(db)
 
 
 async def get_task_crud(

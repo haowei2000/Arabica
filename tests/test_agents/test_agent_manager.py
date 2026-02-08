@@ -2,9 +2,9 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from aiwen.services.agent.manager import AgentManager
+from aiwen.services.executor.manager import AgentManager
 
-from aiwen.services.agent.app_factory import AppFactory
+from aiwen.services.executor.app_factory import AppFactory
 
 
 @pytest.fixture

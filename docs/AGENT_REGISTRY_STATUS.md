@@ -162,10 +162,10 @@ INFO:aiwen.core.lifespan:Agent registry initialized successfully
 ### 在代码中使用
 
 ```python
-from aiwen.services.agent.agent_registry import AgentRegistry
+from aiwen.services.executor.executor_registry import ExecutorRegistry
 
 # 获取 Agent 类
-template_cls = AgentRegistry.get("DEFAULT001")
+template_cls = ExecutorRegistry.get("DEFAULT001")
 
 # 创建实例
 agent = template_cls(config={
@@ -242,7 +242,7 @@ alembic heads
 
 ```python
 # src/aiwen/services/agent/agent_template/my_agent/concrete.py
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.executor.base import BaseAgentTemplate
 
 
 class MyCustomAgent(BaseAgentTemplate):
@@ -277,8 +277,8 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-   from aiwen.services.agent.agent_template.default.concrete import DefaultAgentTemplate
-   from aiwen.services.agent.agent_template.my_agent.concrete import MyCustomAgent  # 新增
+   from aiwen.services.executor.executor_template.default.concrete import DefaultAgentTemplate
+   from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
 
    templates = [
       (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
@@ -343,9 +343,9 @@ conversation_id: Mapped[str] = mapped_column(
 ### 查看注册的模板数量
 
 ```python
-from aiwen.services.agent.agent_registry import AgentRegistry
+from aiwen.services.executor.executor_registry import ExecutorRegistry
 
-template_count = len(AgentRegistry.list())
+template_count = len(ExecutorRegistry.list())
 print(f"Registered templates: {template_count}")
 ```
 

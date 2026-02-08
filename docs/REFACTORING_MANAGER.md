@@ -263,10 +263,10 @@ class MyWorker:
 **用途:** 管理 agent 模板的注册
 
 ```python
-from aiwen.services.agent.agent_registry import AgentRegistry
+from aiwen.services.executor.executor_registry import ExecutorRegistry
 
 # 注册新的 agent 模板
-await AgentRegistry.register(
+await ExecutorRegistry.register(
    template_code="my_agent",
    template_name="My Agent",
    agent_cls=MyAgentClass,
@@ -276,11 +276,11 @@ await AgentRegistry.register(
 )
 
 # 检查是否已注册
-if AgentRegistry.is_registered("my_agent"):
-   agent_cls = AgentRegistry.get("my_agent")
+if ExecutorRegistry.is_registered("my_agent"):
+   agent_cls = ExecutorRegistry.get("my_agent")
 
 # 列出所有模板
-templates = AgentRegistry.list()
+templates = ExecutorRegistry.list()
 ```
 
 ### AppAgentFactory
@@ -288,7 +288,7 @@ templates = AgentRegistry.list()
 **用途:** 为单个应用创建配置好的 agent 实例
 
 ```python
-from aiwen.services.agent.app_factory import AppAgentFactory
+from aiwen.services.executor.app_factory import AppAgentFactory
 
 # 创建工厂
 factory = AppAgentFactory(
@@ -309,7 +309,7 @@ result = await agent.run({"query": "Hello"})
 **用途:** 管理运行中的 agent 实例生命周期
 
 ```python
-from aiwen.services.agent.runtime import AgentRuntime
+from aiwen.services.executor.runtime import AgentRuntime
 
 runtime = AgentRuntime()
 
@@ -331,7 +331,7 @@ all_instances = runtime._instances
 **用途:** 辅助处理对话和消息
 
 ```python
-from aiwen.services.agent.chat.chat_helper import (
+from aiwen.services.executor.chat.chat_helper import (
    create_conversation,
    create_message,
    stream_and_finalize

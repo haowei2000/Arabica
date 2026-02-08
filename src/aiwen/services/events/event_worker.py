@@ -5,7 +5,6 @@ Event Worker - 事件驱动的 Agent 执行器
 监听 run_tasks stream，执行 Agent 并通过 EventPublisher 发布所有事件。
 所有事件使用统一的 EventPublisher 格式，前端只需处理一种结构。
 """
-
 import asyncio
 import json
 import logging
@@ -17,12 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.app import App
 from aiwen.models.runs.run import Run
-from aiwen.schemas.events import UserMessagePayload
-from aiwen.services.agent.agent_registry import AgentRegistry
-from aiwen.services.agent.base import AgentEvent, Executor
-from aiwen.services.agent.runtime import AgentRuntime
+from aiwen.schemas.events.event_payloads import UserMessageEvent, UserMessage
+from aiwen.services.executor.executor_registry import ExecutorRegistry
+from aiwen.services.executor.base import AgentEvent, Executor
+from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
+
 logger = logging.getLogger(__name__)
 
 # Redis stream the worker polls for user.message events.
@@ -77,7 +77,7 @@ class Worker:
 
         while True:
             try:
-                messages = await self.redis.xreadgroup(
+                redis_messages = await self.redis.xreadgroup(
                     groupname=CONSUMER_GROUP,
                     consumername=self.consumer_name,
                     streams={stream_name: ">"},
@@ -85,19 +85,22 @@ class Worker:
                     block=1000,
                 )
 
-                if not messages:
+                if not redis_messages:
                     continue
 
-                _, msg_list = messages[0]
-                for message_id, data in msg_list:
+                _, event_queue = redis_messages[0]
+                for event_id, event_data in event_queue:
                     try:
-                        await self.handle_message(data)
-                        await self.redis.xack(stream_name, CONSUMER_GROUP, message_id)
+                        event = UserMessageEvent.model_validate(event_data)
+                        await self.handle_event(event)
+                        # 成功处理后确认消息
+                        await self.redis.xack(stream_name, CONSUMER_GROUP, event_id)
                     except Exception as e:
                         logger.error(
-                            f"Failed to process message {message_id}: {e}",
+                            f"Failed to process message {event_id}: {e}",
                             exc_info=True,
                         )
+                        # 注意：失败的消息不会被确认，会进入 pending 队列等待重试
 
             except asyncio.CancelledError:
                 raise
@@ -105,40 +108,59 @@ class Worker:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
-    async def handle_message(self, message_data: UserMessagePayload):
+
+    def prepare_executor(self, executor_code: str, app_config: dict | None = None) -> Executor:
+        """
+        根据 executor_code 获取 Executor 类，并准备配置。
+
+        Args:
+            executor_code: Executor 的唯一标识符
+            app_config: 应用级别的配置，会覆盖模板配置
+
+        Returns:
+            配置好的 Executor 实例
+
+        Raises:
+            ValueError: 当 executor_code 未找到时
+        """
+        executor_cls = ExecutorRegistry.get(executor_code)
+        if not executor_cls:
+            raise ValueError(f"Executor with code '{executor_code}' not found")
+
+        # 获取模板配置
+        config: dict = {}
+        template_config = executor_cls.TEMPLATE.get("config")
+        if template_config is not None:
+            if hasattr(template_config, "model_dump"):
+                config = template_config.model_dump()
+            elif isinstance(template_config, dict):
+                config = dict(template_config)
+
+        # 应用级配置覆盖模板配置
+        if app_config:
+            config.update(app_config)
+
+        return executor_cls(config)
+    async def handle_event(self, event: UserMessageEvent):
         """
         处理来自 run_tasks stream 的消息。
         """
-        run_id: UUID | None = None
-        executor: Executor | None = None
-        workspace_id: str | None = None
-
+        run_id = None
         try:
-            run_id_str = message_data.run_id
-            if not run_id_str:
+            # 1. 验证事件数据
+            if not event.run_id:
                 logger.warning("Received message without run_id, skipping")
                 return
 
-            run_id = UUID(run_id_str)
-            event_type = message_data.event_type
+            if not event.executor_code:
+                logger.error("Received message without executor_code, cannot determine executor")
+                return
 
+            run_id = UUID(str(event.run_id))
+            input_data = event.payload or {}
 
-            executor_cls = AgentRegistry.get(executor_code)
-
-            # 解析 input
-            if isinstance(input_data, (str, bytes)):
-                input_data = json.loads(input_data)
-            if "message" in input_data and "query" not in input_data:
-                input_data["query"] = input_data.pop("message")
-
-            # Phase 1: 获取 Run 数据
-            run_status: str | None = None
-            waiting_for: dict | None = None
-            app_id: str | None = None
-
-            # 使用 session 直接查询（auto-begin 模式）
-            stmt_run = await self.db.execute(select(Run).where(Run.id == str(run_id)))
-            run = stmt_run.scalar_one_or_none()
+            # 2. 获取 Run 及相关数据
+            run, app_config = await self._fetch_run_data(run_id)
             if not run:
                 raise ValueError(f"Run {run_id} not found")
 
@@ -146,57 +168,15 @@ class Worker:
                 logger.warning(f"Run {run_id} is terminal, skipping execution")
                 return
 
-            # 提取需要的数据
-            run_status = run.status
-            workspace_id = run.workspace_id
-            waiting_for = run.waiting_for
-            app_id = run.app_id
-
-            # 构建 executor 配置
-            config: dict = {}
-            template_config = executor_cls.TEMPLATE.get("config")
-            if template_config is not None:
-                if hasattr(template_config, "model_dump"):
-                    config = template_config.model_dump()
-                elif isinstance(template_config, dict):
-                    config = dict(template_config)
-
-            if app_id:
-                app_result = await self.db.execute(select(App).where(App.id == app_id))
-                app = app_result.scalar_one_or_none()
-                if app and app.config:
-                    config.update(app.config)
-
-            # Phase 2: 创建 executor 并执行
-            executor = executor_cls(config)
+            # 3. 准备 Executor
+            executor = self.prepare_executor(event.executor_code, app_config)
             self.runtime.attach(run_id, executor)
 
-            if run_status == RunStatus.PENDING.value:
-                await self.state_machine.start(
-                    run_id, triggered_by=triggered_by, auto_commit=True
-                )
-                await self._execute_run(executor, input_data, run_id, workspace_id)
-            elif run_status == RunStatus.WAITING.value:
-                resume_key = f"run:{run_id}:resume_approval"
-                raw_approval = await self.redis.get(resume_key)
-                approval_data = json.loads(raw_approval) if raw_approval else {}
-                if raw_approval:
-                    await self.redis.delete(resume_key)
-
-                input_data = {
-                    **input_data,
-                    "_resumed": True,
-                    "_waiting_info": waiting_for or {},
-                    "_approval": {
-                        "approved": approval_data.get("approval", True),
-                        "tool_result": approval_data.get("tool_result"),
-                        "user_input": approval_data.get("user_input"),
-                    },
-                }
-                await self.state_machine.resume_from_tool(run_id, auto_commit=True)
-                await self._execute_run(executor, input_data, run_id, workspace_id)
-            elif run_status == RunStatus.RUNNING.value:
-                await self._execute_run(executor, input_data, run_id, workspace_id)
+            # 4. 根据 Run 状态执行相应操作
+            workspace_id = str(run.workspace_id)
+            await self._handle_run_by_status(
+                executor, run, input_data, run_id, workspace_id
+            )
 
         except Exception as e:
             logger.error(f"handle_message error: {e}", exc_info=True)
@@ -208,33 +188,122 @@ class Worker:
                 except Exception as fail_err:
                     logger.error(f"Failed to mark run {run_id} as failed: {fail_err}")
 
+    async def _fetch_run_data(self, run_id: UUID) -> tuple[Run | None, dict | None]:
+        """
+        获取 Run 和对应的 App 配置。
+
+        Args:
+            run_id: Run 的 UUID
+
+        Returns:
+            (Run对象, App配置字典) 的元组
+        """
+        stmt_run = await self.db.execute(select(Run).where(Run.id == str(run_id)))
+        run = stmt_run.scalar_one_or_none()
+        if not run:
+            return None, None
+
+        app_config = None
+        if run.app_id:
+            app_result = await self.db.execute(select(App).where(App.id == str(run.app_id)))
+            app = app_result.scalar_one_or_none()
+            if app and app.config:
+                app_config = app.config
+
+        return run, app_config
+
+    async def _handle_run_by_status(
+        self,
+        executor: Executor,
+        run: Run,
+        user_message: UserMessage,
+        run_id: UUID,
+        workspace_id: str,
+    ):
+        """
+        根据 Run 状态分发执行逻辑。
+
+        Args:
+            executor: Executor 实例
+            run: Run 对象
+            user_message: 输入数据
+            run_id: Run UUID
+            workspace_id: 工作区 ID
+        """
+        run_status = run.status
+
+        if run_status == RunStatus.PENDING.value:
+            await self.state_machine.start(
+                run_id, triggered_by="user", auto_commit=True
+            )
+            await self._execute_run(executor, user_message, run_id, workspace_id)
+
+        elif run_status == RunStatus.WAITING.value:
+            # TODO 处理恢复场景：获取审批信息
+            # user_message = await self._prepare_resume_data(run_id, run.waiting_for, user_message)  # noqa: ERA001
+            await self.state_machine.resume_from_tool(run_id, auto_commit=True)
+            await self._execute_run(executor, user_message, run_id, workspace_id)
+
+        elif run_status == RunStatus.RUNNING.value:
+            await self._execute_run(executor, user_message, run_id, workspace_id)
+
+    async def _prepare_resume_data(
+        self, run_id: UUID, waiting_for: dict | None, user_message: UserMessage
+    ) -> dict:
+        """
+        准备恢复执行所需的数据（从 Redis 获取审批信息）。
+
+        Args:
+            run_id: Run UUID
+            waiting_for: 等待的工具信息
+            input_data: 原始输入数据
+
+        Returns:
+            包含恢复信息的输入数据
+        """
+        resume_key = f"run:{run_id}:resume_approval"
+        raw_approval = await self.redis.get(resume_key)
+        approval_data = json.loads(raw_approval) if raw_approval else {}
+
+        if raw_approval:
+            await self.redis.delete(resume_key)
+
+        return {
+            **user_message,
+            "_resumed": True,
+            "_waiting_info": waiting_for or {},
+            "_approval": {
+                "approved": approval_data.get("approval", True),
+                "tool_result": approval_data.get("tool_result"),
+                "user_input": approval_data.get("user_input"),
+            },
+        }
+
     async def _execute_run(
         self,
         executor: Executor,
-        input_data: dict,
+        user_message: UserMessage,
         run_id: UUID,
         workspace_id: str,
     ):
         """
         执行 Agent 并通过 EventPublisher 发布所有事件。
         """
+        event_count = 0
+        check_interval = 10  # 每处理 10 个事件检查一次取消状态
+
         try:
-            async for event in executor.stream(input_data):
+            async for event in executor.stream(user_message):
                 # 通过 EventPublisher 发布事件（统一格式）
                 await self._publish_agent_event(event, run_id, workspace_id)
 
-                # 检查是否被取消
-                try:
-                    result = await self.db.execute(
-                        select(Run).where(Run.id == str(run_id))
-                    )
-                    run = result.scalar_one_or_none()
-                    if run and run.status == RunStatus.CANCELLED.value:
-                        logger.info(f"Run {run_id} cancelled, stopping agent")
-                        await executor.cancel()
-                        return
-                except Exception as check_err:
-                    logger.warning(f"Failed to check run status: {check_err}")
+                # 定期检查是否被取消（减少数据库查询频率）
+                event_count += 1
+                # 合并条件检查，一次性判断是否需要检查取消状态
+                if event_count % check_interval == 0 and await self._is_run_cancelled(run_id):
+                    logger.info(f"Run {run_id} cancelled, stopping agent")
+                    await executor.cancel()
+                    return
 
             # 执行完成
             await self.state_machine.complete(
@@ -252,6 +321,26 @@ class Worker:
             await self.state_machine.fail(run_id, error=str(e), auto_commit=True)
         finally:
             self.runtime.release(run_id)
+
+    async def _is_run_cancelled(self, run_id: UUID) -> bool:
+        """
+        检查 Run 是否被取消。
+
+        Args:
+            run_id: Run UUID
+
+        Returns:
+            如果 Run 被取消返回 True，否则返回 False
+        """
+        try:
+            result = await self.db.execute(
+                select(Run.status).where(Run.id == str(run_id))
+            )
+            status = result.scalar_one_or_none()
+            return status == RunStatus.CANCELLED.value
+        except Exception as e:
+            logger.warning(f"Failed to check run status for {run_id}: {e}")
+            return False
 
     async def _publish_agent_event(
         self,

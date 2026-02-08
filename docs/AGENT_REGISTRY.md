@@ -132,10 +132,10 @@ async def lifespan(app: FastAPI):
 ### 2. 获取已注册的模板
 
 ```python
-from aiwen.services.agent.agent_registry import AgentRegistry
+from aiwen.services.executor.executor_registry import ExecutorRegistry
 
 # 获取模板类
-template_cls = AgentRegistry.get("DEFAULT001")
+template_cls = ExecutorRegistry.get("DEFAULT001")
 
 # 实例化 Agent
 agent = template_cls(config={"model_name": "qwen3:30b"})
@@ -166,7 +166,7 @@ if AgentRegistry.is_registered("DEFAULT001"):
 
 ```python
 # src/aiwen/services/agent/agent_template/my_agent/concrete.py
-from aiwen.services.agent.base import BaseAgentTemplate
+from aiwen.services.executor.base import BaseAgentTemplate
 
 
 class MyCustomAgent(BaseAgentTemplate):
@@ -194,8 +194,8 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-   from aiwen.services.agent.agent_template.default.concrete import DefaultAgentTemplate
-   from aiwen.services.agent.agent_template.my_agent.concrete import MyCustomAgent  # 新增
+   from aiwen.services.executor.executor_template.default.concrete import DefaultAgentTemplate
+   from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
 
    templates = [
       (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
@@ -277,19 +277,19 @@ SELECT COUNT(*) FROM agent_template WHERE enabled = true;
 
 ```python
 import asyncio
-from aiwen.services.agent.agent_registry import AgentRegistry, init_agent_registry
+from aiwen.services.executor.executor_registry import ExecutorRegistry, init_executor_registry
 
 
 async def test_agent_registry():
    # 初始化注册表
-   await init_agent_registry()
+   await init_executor_registry()
 
    # 测试内存注册
-   assert AgentRegistry.is_registered("DEFAULT001")
-   assert "DEFAULT001" in AgentRegistry.list()
+   assert ExecutorRegistry.is_registered("DEFAULT001")
+   assert "DEFAULT001" in ExecutorRegistry.list()
 
    # 测试获取模板
-   template_cls = AgentRegistry.get("DEFAULT001")
+   template_cls = ExecutorRegistry.get("DEFAULT001")
    assert template_cls is not None
 
    # 测试数据库持久化

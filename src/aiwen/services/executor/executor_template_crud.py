@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.models.agents.agent_template import AgentTemplate
 
 
-class AgentTemplateCRUD:
+class ExecutorCRUD:
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
 
@@ -81,6 +81,54 @@ class AgentTemplateCRUD:
         )
         return result.scalars().first()
 
-    async def list_templates(self) -> Sequence[AgentTemplate]:
-        result = await self.db_session.execute(select(AgentTemplate))
+    async def list_templates(self, include_disabled: bool = True) -> Sequence[AgentTemplate]:
+        """
+        List all agent templates.
+
+        Args:
+            include_disabled: If True, include disabled templates. If False, only return enabled ones.
+
+        Returns:
+            Sequence of AgentTemplate instances
+        """
+        query = select(AgentTemplate)
+        if not include_disabled:
+            query = query.where(AgentTemplate.enabled == True)  # noqa: E712
+
+        result = await self.db_session.execute(query)
         return result.scalars().all()
+
+    async def mark_template_as_deleted(
+        self,
+        template_code: str,
+        auto_commit: bool = True
+    ) -> bool:
+        """
+        Mark a template as deleted by setting enabled=False.
+
+        This is a soft delete - the record remains in the database but is marked as disabled.
+
+        Args:
+            template_code: The template code to mark as deleted
+            auto_commit: If True (default), immediately commit the transaction.
+                         If False, only flush changes.
+
+        Returns:
+            True if the template was found and marked as deleted, False otherwise
+        """
+        result = await self.db_session.execute(
+            select(AgentTemplate).where(AgentTemplate.template_code == template_code)
+        )
+        template = result.scalars().first()
+
+        if not template:
+            return False
+
+        template.enabled = False
+
+        if auto_commit:
+            await self.db_session.commit()
+        else:
+            await self.db_session.flush()
+
+        return True

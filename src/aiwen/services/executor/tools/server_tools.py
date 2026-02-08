@@ -19,7 +19,7 @@ from uuid import UUID
 
 from langchain_core.tools import tool
 
-from aiwen.services.agent.tools.execution_mode import server_tool
+from aiwen.services.executor.tools.execution_mode import server_tool
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT & KNOWLEDGE TOOLS
@@ -114,7 +114,7 @@ async def get_run_memory(
         - messages: List of messages with role and content
         - total: Total message count
     """
-    from aiwen.services.agent.agent_template.default.context import (
+    from aiwen.services.executor.executor_template.default.context import (
         get_messages_from_context,
     )
 

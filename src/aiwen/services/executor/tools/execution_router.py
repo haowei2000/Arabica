@@ -15,16 +15,16 @@ from aiwen.schemas.tools.execution import (
     ToolExecutionRequest,
     ToolResult,
 )
-from aiwen.services.agent.tools.execution_mode import (
+from aiwen.services.executor.tools.execution_mode import (
     ToolExecutionMode,
     ToolMetadata,
     get_tool_metadata,
 )
 
 if TYPE_CHECKING:
-    from aiwen.services.agent.tools.async_executor import AsyncExecutor
-    from aiwen.services.agent.tools.client_executor import ClientExecutor
-    from aiwen.services.agent.tools.sandbox_executor import SandboxExecutor
+    from aiwen.services.executor.tools.async_executor import AsyncExecutor
+    from aiwen.services.executor.tools.client_executor import ClientExecutor
+    from aiwen.services.executor.tools.sandbox_executor import SandboxExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class ExecutionRouter:
     def sandbox_executor(self) -> "SandboxExecutor":
         """Get sandbox executor, raising if not configured."""
         if self._sandbox_executor is None:
-            from aiwen.services.agent.tools.sandbox_executor import SandboxExecutor
+            from aiwen.services.executor.tools.sandbox_executor import SandboxExecutor
 
             self._sandbox_executor = SandboxExecutor()
         return self._sandbox_executor
@@ -91,7 +91,7 @@ class ExecutionRouter:
     def client_executor(self) -> "ClientExecutor":
         """Get client executor, raising if not configured."""
         if self._client_executor is None:
-            from aiwen.services.agent.tools.client_executor import ClientExecutor
+            from aiwen.services.executor.tools.client_executor import ClientExecutor
 
             self._client_executor = ClientExecutor()
         return self._client_executor
@@ -100,7 +100,7 @@ class ExecutionRouter:
     def async_executor(self) -> "AsyncExecutor":
         """Get async executor, raising if not configured."""
         if self._async_executor is None:
-            from aiwen.services.agent.tools.async_executor import AsyncExecutor
+            from aiwen.services.executor.tools.async_executor import AsyncExecutor
 
             self._async_executor = AsyncExecutor()
         return self._async_executor

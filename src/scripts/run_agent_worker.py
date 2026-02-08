@@ -31,7 +31,7 @@ else:
 from aiwen.celery_worker.task_worker import start_worker
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
-from aiwen.services.agent.agent_registry import init_agent_registry
+from aiwen.services.executor.executor_registry import init_executor_registry
 
 # 确保日志目录存在
 log_dir = project_root / "logs"
@@ -73,12 +73,12 @@ async def main():
         logger.info("Initializing Agent Registry...")
 
         try:
-            await init_agent_registry()
+            await init_executor_registry()
 
             # 验证注册是否成功
-            from aiwen.services.agent.agent_registry import AgentRegistry
+            from aiwen.services.executor.executor_registry import ExecutorRegistry
 
-            registered_templates = AgentRegistry.list()
+            registered_templates = ExecutorRegistry.list()
 
             print(f"✅ Agent Registry initialized successfully!")
             print(f"📋 Registered templates: {registered_templates}")
@@ -87,7 +87,7 @@ async def main():
             )
 
             # 特别检查 DEFAULT001
-            if AgentRegistry.is_registered("DEFAULT001"):
+            if ExecutorRegistry.is_registered("DEFAULT001"):
                 print("✅ DEFAULT001 is registered and ready")
                 logger.info("DEFAULT001 template verified")
             else:
