@@ -1,167 +1,465 @@
 """
-LangChain tools for browser automation.
+Browser automation tools using BaseTool system.
 
 These wrap the Playwright-backed browser manager used by MCP so
 agents can call tools directly in-process.
 """
 
-from langchain_core.tools import tool
+from pydantic import Field
 
 from aiwen.mcp_router import browser as browser_module
+from aiwen.services.executor.tools.base_tool import (
+    BaseTool,
+    ToolExecutionMode,
+    ToolInputSchema,
+    ToolMetadata,
+    ToolOutputSchema,
+)
 
 
-@tool("browser_launch")
-async def browser_launch(
-    headless: bool = True,
-    viewport_width: int = 1280,
-    viewport_height: int = 720,
-    user_agent: str | None = None,
-    slow_mo_ms: int = 0,
-) -> dict:
-    """Launch a browser session and return a session_id."""
-    return await browser_module._browser_launch(
-        headless=headless,
-        viewport_width=viewport_width,
-        viewport_height=viewport_height,
-        user_agent=user_agent,
-        slow_mo_ms=slow_mo_ms,
+class BrowserLaunchTool(BaseTool):
+    """Launch a browser session and return a session_id"""
+
+    METADATA = ToolMetadata(
+        name="browser_launch",
+        display_name="Browser Launch",
+        description="Launch a browser session with configurable options (headless mode, viewport, user agent)",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "automation", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        headless: bool = Field(default=True, description="Run browser in headless mode")
+        viewport_width: int = Field(default=1280, description="Viewport width in pixels")
+        viewport_height: int = Field(default=720, description="Viewport height in pixels")
+        user_agent: str | None = Field(default=None, description="Custom user agent string")
+        slow_mo_ms: int = Field(default=0, description="Slow down operations by specified milliseconds")
 
-@tool("browser_goto")
-async def browser_goto(
-    session_id: str,
-    url: str,
-    wait_until: str = "load",
-    timeout_ms: int = 30000,
-) -> dict:
-    """Navigate to a URL."""
-    return await browser_module._browser_goto(
-        session_id=session_id,
-        url=url,
-        wait_until=wait_until,
-        timeout_ms=timeout_ms,
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_launch(
+            headless=input_data.headless,
+            viewport_width=input_data.viewport_width,
+            viewport_height=input_data.viewport_height,
+            user_agent=input_data.user_agent,
+            slow_mo_ms=input_data.slow_mo_ms,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message="Browser session launched successfully",
+            data=result,
+        )
+
+
+class BrowserGotoTool(BaseTool):
+    """Navigate to a URL"""
+
+    METADATA = ToolMetadata(
+        name="browser_goto",
+        display_name="Browser Navigate",
+        description="Navigate to a specified URL with optional wait conditions",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "navigation", "playwright"],
+        timeout=60,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        url: str = Field(description="URL to navigate to")
+        wait_until: str = Field(
+            default="load",
+            description="When to consider navigation complete: 'load', 'domcontentloaded', 'networkidle', or 'commit'"
+        )
+        timeout_ms: int = Field(default=30000, description="Navigation timeout in milliseconds")
 
-@tool("browser_click")
-async def browser_click(
-    session_id: str, selector: str, button: str = "left", delay_ms: int = 0
-) -> dict:
-    """Click an element."""
-    return await browser_module._browser_click(
-        session_id=session_id,
-        selector=selector,
-        button=button,
-        delay_ms=delay_ms,
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_goto(
+            session_id=input_data.session_id,
+            url=input_data.url,
+            wait_until=input_data.wait_until,
+            timeout_ms=input_data.timeout_ms,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Navigated to {input_data.url}",
+            data=result,
+        )
+
+
+class BrowserClickTool(BaseTool):
+    """Click an element"""
+
+    METADATA = ToolMetadata(
+        name="browser_click",
+        display_name="Browser Click",
+        description="Click an element identified by CSS selector",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "interaction", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        selector: str = Field(description="CSS selector of the element to click")
+        button: str = Field(default="left", description="Mouse button: 'left', 'right', or 'middle'")
+        delay_ms: int = Field(default=0, description="Delay between mousedown and mouseup in milliseconds")
 
-@tool("browser_type")
-async def browser_type(
-    session_id: str,
-    selector: str,
-    text: str,
-    delay_ms: int = 50,
-    clear: bool = True,
-) -> dict:
-    """Type text into an element."""
-    return await browser_module._browser_type(
-        session_id=session_id,
-        selector=selector,
-        text=text,
-        delay_ms=delay_ms,
-        clear=clear,
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_click(
+            session_id=input_data.session_id,
+            selector=input_data.selector,
+            button=input_data.button,
+            delay_ms=input_data.delay_ms,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Clicked element: {input_data.selector}",
+            data=result,
+        )
+
+
+class BrowserTypeTool(BaseTool):
+    """Type text into an element"""
+
+    METADATA = ToolMetadata(
+        name="browser_type",
+        display_name="Browser Type",
+        description="Type text into an input field or textarea identified by CSS selector",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "input", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        selector: str = Field(description="CSS selector of the input element")
+        text: str = Field(description="Text to type")
+        delay_ms: int = Field(default=50, description="Delay between key presses in milliseconds")
+        clear: bool = Field(default=True, description="Clear existing text before typing")
 
-@tool("browser_press")
-async def browser_press(session_id: str, selector: str, key: str) -> dict:
-    """Press a key on an element."""
-    return await browser_module._browser_press(
-        session_id=session_id, selector=selector, key=key
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_type(
+            session_id=input_data.session_id,
+            selector=input_data.selector,
+            text=input_data.text,
+            delay_ms=input_data.delay_ms,
+            clear=input_data.clear,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Typed text into element: {input_data.selector}",
+            data=result,
+        )
+
+
+class BrowserPressTool(BaseTool):
+    """Press a key on an element"""
+
+    METADATA = ToolMetadata(
+        name="browser_press",
+        display_name="Browser Press Key",
+        description="Press a keyboard key on a focused element (e.g., 'Enter', 'Tab', 'Escape')",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "keyboard", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        selector: str = Field(description="CSS selector of the element")
+        key: str = Field(description="Key to press (e.g., 'Enter', 'Tab', 'ArrowDown')")
 
-@tool("browser_wait_for")
-async def browser_wait_for(
-    session_id: str, selector: str, state: str = "visible", timeout_ms: int = 30000
-) -> dict:
-    """Wait for an element state."""
-    return await browser_module._browser_wait_for(
-        session_id=session_id,
-        selector=selector,
-        state=state,
-        timeout_ms=timeout_ms,
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_press(
+            session_id=input_data.session_id,
+            selector=input_data.selector,
+            key=input_data.key,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Pressed key '{input_data.key}' on element: {input_data.selector}",
+            data=result,
+        )
+
+
+class BrowserWaitForTool(BaseTool):
+    """Wait for an element state"""
+
+    METADATA = ToolMetadata(
+        name="browser_wait_for",
+        display_name="Browser Wait For Element",
+        description="Wait for an element to reach a specific state (visible, hidden, attached, detached)",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "wait", "playwright"],
+        timeout=60,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        selector: str = Field(description="CSS selector of the element")
+        state: str = Field(
+            default="visible",
+            description="State to wait for: 'visible', 'hidden', 'attached', or 'detached'"
+        )
+        timeout_ms: int = Field(default=30000, description="Wait timeout in milliseconds")
 
-@tool("browser_sleep")
-async def browser_sleep(session_id: str, duration_ms: int) -> dict:
-    """Pause for a duration in ms."""
-    return await browser_module._browser_sleep(
-        session_id=session_id, duration_ms=duration_ms
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_wait_for(
+            session_id=input_data.session_id,
+            selector=input_data.selector,
+            state=input_data.state,
+            timeout_ms=input_data.timeout_ms,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Element {input_data.selector} reached state: {input_data.state}",
+            data=result,
+        )
+
+
+class BrowserSleepTool(BaseTool):
+    """Pause for a duration in ms"""
+
+    METADATA = ToolMetadata(
+        name="browser_sleep",
+        display_name="Browser Sleep",
+        description="Pause browser automation for a specified duration",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "wait", "playwright"],
+        timeout=120,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        duration_ms: int = Field(description="Duration to sleep in milliseconds")
 
-@tool("browser_scroll")
-async def browser_scroll(session_id: str, delta_y: int, delta_x: int = 0) -> dict:
-    """Scroll the page."""
-    return await browser_module._browser_scroll(
-        session_id=session_id, delta_y=delta_y, delta_x=delta_x
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_sleep(
+            session_id=input_data.session_id,
+            duration_ms=input_data.duration_ms,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Paused for {input_data.duration_ms}ms",
+            data=result,
+        )
+
+
+class BrowserScrollTool(BaseTool):
+    """Scroll the page"""
+
+    METADATA = ToolMetadata(
+        name="browser_scroll",
+        display_name="Browser Scroll",
+        description="Scroll the page by specified pixel amounts (vertical and horizontal)",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "scroll", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        delta_y: int = Field(description="Vertical scroll amount in pixels (positive = down, negative = up)")
+        delta_x: int = Field(default=0, description="Horizontal scroll amount in pixels (positive = right, negative = left)")
 
-@tool("browser_move_mouse")
-async def browser_move_mouse(session_id: str, x: int, y: int, steps: int = 10) -> dict:
-    """Move mouse cursor."""
-    return await browser_module._browser_move_mouse(
-        session_id=session_id, x=x, y=y, steps=steps
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_scroll(
+            session_id=input_data.session_id,
+            delta_y=input_data.delta_y,
+            delta_x=input_data.delta_x,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Scrolled by ({input_data.delta_x}, {input_data.delta_y})",
+            data=result,
+        )
+
+
+class BrowserMoveMouseTool(BaseTool):
+    """Move mouse cursor"""
+
+    METADATA = ToolMetadata(
+        name="browser_move_mouse",
+        display_name="Browser Move Mouse",
+        description="Move the mouse cursor to specific coordinates with smooth steps",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "mouse", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        x: int = Field(description="X coordinate in pixels")
+        y: int = Field(description="Y coordinate in pixels")
+        steps: int = Field(default=10, description="Number of intermediate steps for smooth movement")
 
-@tool("browser_screenshot")
-async def browser_screenshot(session_id: str, full_page: bool = False) -> dict:
-    """Take a screenshot and return base64 bytes."""
-    return await browser_module._browser_screenshot(
-        session_id=session_id, full_page=full_page
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_move_mouse(
+            session_id=input_data.session_id,
+            x=input_data.x,
+            y=input_data.y,
+            steps=input_data.steps,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Moved mouse to ({input_data.x}, {input_data.y})",
+            data=result,
+        )
+
+
+class BrowserScreenshotTool(BaseTool):
+    """Take a screenshot and return base64 bytes"""
+
+    METADATA = ToolMetadata(
+        name="browser_screenshot",
+        display_name="Browser Screenshot",
+        description="Capture a screenshot of the current page as base64-encoded image data",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "screenshot", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        full_page: bool = Field(default=False, description="Capture full scrollable page instead of just viewport")
 
-@tool("browser_get_text")
-async def browser_get_text(session_id: str, selector: str) -> dict:
-    """Get inner text."""
-    return await browser_module._browser_get_text(
-        session_id=session_id, selector=selector
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_screenshot(
+            session_id=input_data.session_id,
+            full_page=input_data.full_page,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message="Screenshot captured successfully",
+            data=result,
+        )
+
+
+class BrowserGetTextTool(BaseTool):
+    """Get inner text"""
+
+    METADATA = ToolMetadata(
+        name="browser_get_text",
+        display_name="Browser Get Text",
+        description="Extract the inner text content of an element identified by CSS selector",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "extraction", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        selector: str = Field(description="CSS selector of the element")
 
-@tool("browser_get_html")
-async def browser_get_html(session_id: str, selector: str | None = None) -> dict:
-    """Get HTML content."""
-    return await browser_module._browser_get_html(
-        session_id=session_id, selector=selector
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_get_text(
+            session_id=input_data.session_id,
+            selector=input_data.selector,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Retrieved text from element: {input_data.selector}",
+            data=result,
+        )
+
+
+class BrowserGetHtmlTool(BaseTool):
+    """Get HTML content"""
+
+    METADATA = ToolMetadata(
+        name="browser_get_html",
+        display_name="Browser Get HTML",
+        description="Extract HTML content of an element or the entire page",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "extraction", "playwright"],
+        timeout=30,
     )
 
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID")
+        selector: str | None = Field(default=None, description="CSS selector of element (None = entire page)")
 
-@tool("browser_close")
-async def browser_close(session_id: str) -> dict:
-    """Close a browser session."""
-    return await browser_module._browser_close(session_id=session_id)
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_get_html(
+            session_id=input_data.session_id,
+            selector=input_data.selector,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message="Retrieved HTML content",
+            data=result,
+        )
 
 
+class BrowserCloseTool(BaseTool):
+    """Close a browser session"""
+
+    METADATA = ToolMetadata(
+        name="browser_close",
+        display_name="Browser Close",
+        description="Close a browser session and release resources",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="browser",
+        tags=["browser", "cleanup", "playwright"],
+        timeout=30,
+    )
+
+    class InputSchema(ToolInputSchema):
+        session_id: str = Field(description="Browser session ID to close")
+
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        result = await browser_module._browser_close(
+            session_id=input_data.session_id,
+        )
+        return ToolOutputSchema(
+            success=True,
+            message="Browser session closed successfully",
+            data=result,
+        )
+
+
+# Export tool collections
 BROWSER_TOOLS = [
-    browser_launch,
-    browser_goto,
-    browser_click,
-    browser_type,
-    browser_press,
-    browser_wait_for,
-    browser_sleep,
-    browser_scroll,
-    browser_move_mouse,
-    browser_screenshot,
-    browser_get_text,
-    browser_get_html,
-    browser_close,
+    BrowserLaunchTool,
+    BrowserGotoTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserPressTool,
+    BrowserWaitForTool,
+    BrowserSleepTool,
+    BrowserScrollTool,
+    BrowserMoveMouseTool,
+    BrowserScreenshotTool,
+    BrowserGetTextTool,
+    BrowserGetHtmlTool,
+    BrowserCloseTool,
+]
+
+__all__ = [
+    "BrowserLaunchTool",
+    "BrowserGotoTool",
+    "BrowserClickTool",
+    "BrowserTypeTool",
+    "BrowserPressTool",
+    "BrowserWaitForTool",
+    "BrowserSleepTool",
+    "BrowserScrollTool",
+    "BrowserMoveMouseTool",
+    "BrowserScreenshotTool",
+    "BrowserGetTextTool",
+    "BrowserGetHtmlTool",
+    "BrowserCloseTool",
+    "BROWSER_TOOLS",
 ]

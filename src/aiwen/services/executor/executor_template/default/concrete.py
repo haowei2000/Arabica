@@ -26,15 +26,15 @@ from langchain_core.messages import (
 
 from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.events.event_payloads import UserMessage
-from aiwen.schemas.tools.execution import ExecutionContext
 from aiwen.services.executor.base import AgentEvent, Executor, WaitingForTool
 from aiwen.services.executor.executor_registry import register_executor
 from aiwen.services.executor.tools import BROWSER_TOOLS
-from aiwen.services.executor.tools.execution_mode import (
-    ToolExecutionMode,
-    get_tool_metadata,
+from aiwen.services.executor.tools.server_tools import (
+    CONTEXT_TOOLS,
+    FILE_TOOLS,
+    SERVER_TOOLS,
+    UTILITY_TOOLS,
 )
-from aiwen.services.executor.tools.execution_router import ExecutionRouter
 from aiwen.services.executor.tools.tool_registry import ToolRegistry
 from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
 
@@ -69,6 +69,8 @@ class DefaultAgentTemplate(Executor):
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
         self.enable_browser_tools = config.get("enable_browser_tools", True)
+        # Server tools configuration - see _load_server_tools() for details
+        self.server_tools_config = config.get("server_tools", False)
         # Tools in this list pause the run and ask the user before executing.
         self.approval_tools: list[str] = config.get("approval_tools", [])
 
@@ -79,9 +81,19 @@ class DefaultAgentTemplate(Executor):
         # Collect all tools
         tools = []
 
-        # Add browser tools if enabled
+        # Add browser tools if enabled (convert BaseTool classes to LangChain tools)
         if self.enable_browser_tools:
-            tools.extend(BROWSER_TOOLS)
+            for tool_class in BROWSER_TOOLS:
+                lc_tool = self._convert_to_langchain_tool(tool_class)
+                tools.append(lc_tool)
+            logger.info(f"Loaded {len(BROWSER_TOOLS)} browser tools")
+
+        # Add server tools based on configuration
+        server_tool_classes = self._load_server_tools()
+        # Convert BaseTool classes to LangChain tools
+        for tool_class in server_tool_classes:
+            lc_tool = self._convert_to_langchain_tool(tool_class)
+            tools.append(lc_tool)
 
         # Add user-defined tools from ToolRegistry
         user_tools = self._load_registry_tools()
@@ -94,10 +106,6 @@ class DefaultAgentTemplate(Executor):
             model=self.llm, tools=tools, system_prompt=system_prompt
         )
 
-        # Initialize execution router for all tool execution modes
-        self._execution_router = ExecutionRouter()
-        self._execution_router.register_tools_from_list(tools)
-
     # ── setup ────────────────────────────────────────────────────
 
     async def setup(self) -> None:
@@ -108,16 +116,110 @@ class DefaultAgentTemplate(Executor):
         """
         pass
 
+    # ── server tool loading ──────────────────────────────────────
+
+    def _load_server_tools(self) -> list:
+        """Load server-side tools based on configuration.
+
+        Configuration options:
+        1. False (default): No server tools
+        2. True: All server tools (CONTEXT + FILE + UTILITY)
+        3. List of strings: Specific tool groups ["context", "file", "utility"]
+        4. Dict with group keys: {"context": True, "file": False, "utility": True}
+
+        Returns:
+            list: Selected server tools
+        """
+        config = self.server_tools_config
+
+        # Case 1: Disabled
+        if config is False or config is None:
+            return []
+
+        # Case 2: Enable all
+        if config is True:
+            logger.info("Loading all server tools")
+            return list(SERVER_TOOLS)
+
+        # Case 3: List of tool groups
+        if isinstance(config, list):
+            tools = []
+            for group_name in config:
+                group_name = group_name.lower()
+                if group_name == "context":
+                    tools.extend(CONTEXT_TOOLS)
+                    logger.info("Loaded CONTEXT_TOOLS")
+                elif group_name == "file":
+                    tools.extend(FILE_TOOLS)
+                    logger.info("Loaded FILE_TOOLS")
+                elif group_name == "utility":
+                    tools.extend(UTILITY_TOOLS)
+                    logger.info("Loaded UTILITY_TOOLS")
+                elif group_name == "all":
+                    tools.extend(SERVER_TOOLS)
+                    logger.info("Loaded all SERVER_TOOLS")
+                else:
+                    logger.warning(f"Unknown tool group: {group_name}")
+            return tools
+
+        # Case 4: Dict with fine-grained control
+        if isinstance(config, dict):
+            tools = []
+            if config.get("context", False):
+                tools.extend(CONTEXT_TOOLS)
+                logger.info("Loaded CONTEXT_TOOLS")
+            if config.get("file", False):
+                tools.extend(FILE_TOOLS)
+                logger.info("Loaded FILE_TOOLS")
+            if config.get("utility", False):
+                tools.extend(UTILITY_TOOLS)
+                logger.info("Loaded UTILITY_TOOLS")
+            return tools
+
+        logger.warning(f"Invalid server_tools config: {config}, using default (no tools)")
+        return []
+
     # ── user tool loading ────────────────────────────────────────
 
+    def _convert_to_langchain_tool(self, tool_class: type):
+        """Convert BaseTool class to LangChain-compatible tool.
+
+        Args:
+            tool_class: BaseTool subclass (either class or instance)
+
+        Returns:
+            LangChain StructuredTool
+        """
+        from langchain_core.tools import StructuredTool
+
+        # If it's a class, instantiate it
+        if isinstance(tool_class, type):
+            tool_instance = tool_class()
+            metadata = tool_class.METADATA
+            input_schema = tool_class.InputSchema
+        else:
+            # Already an instance
+            tool_instance = tool_class
+            metadata = tool_instance.METADATA
+            input_schema = tool_instance.InputSchema
+
+        # Create LangChain StructuredTool
+        lc_tool = StructuredTool(
+            name=metadata.name,
+            description=metadata.description,
+            func=lambda **kwargs: None,  # Sync placeholder
+            coroutine=tool_instance.__call__,  # Use async call
+            args_schema=input_schema,
+        )
+
+        return lc_tool
+
     def _load_registry_tools(self) -> list:
-        """Convert tools from ToolRegistry to LangChain-compatible tools.
+        """Load tools from ToolRegistry and convert to LangChain format.
 
         Returns:
             list: LangChain-compatible tool instances
         """
-        from langchain_core.tools import StructuredTool
-
         langchain_tools = []
 
         # Get all registered tool names
@@ -133,17 +235,8 @@ class DefaultAgentTemplate(Executor):
                     logger.warning(f"Tool {tool_name} not found in registry")
                     continue
 
-                metadata = tool_class.METADATA
-
-                # Create LangChain StructuredTool
-                lc_tool = StructuredTool(
-                    name=metadata.name,
-                    description=metadata.description,
-                    func=lambda **kwargs: None,  # Sync placeholder
-                    coroutine=tool_instance.__call__,  # Use async call
-                    args_schema=tool_class.InputSchema,
-                )
-
+                # Convert to LangChain tool
+                lc_tool = self._convert_to_langchain_tool(tool_instance)
                 langchain_tools.append(lc_tool)
                 logger.info(f"Loaded tool from registry: {tool_name}")
 
@@ -153,47 +246,6 @@ class DefaultAgentTemplate(Executor):
         return langchain_tools
 
     # ── tool execution routing ───────────────────────────────────
-
-    def _get_tool_execution_mode(self, tool_name: str) -> ToolExecutionMode:
-        """Get the execution mode for a tool."""
-        metadata = get_tool_metadata(tool_name)
-        return metadata.execution_mode
-
-    def _requires_special_execution(self, tool_name: str) -> bool:
-        """Check if a tool requires special execution routing.
-
-        SERVER_RUN tools execute normally through LangChain.
-        All other modes (HTTP, CLIENT, SANDBOX, CONTAINER_RUN, CELERY_RUN)
-        require ExecutionRouter.
-        """
-        mode = self._get_tool_execution_mode(tool_name)
-        return mode != ToolExecutionMode.SERVER_RUN
-
-    async def _execute_via_router(
-        self,
-        tool_name: str,
-        tool_id: str,
-        arguments: dict[str, Any],
-        context: ExecutionContext,
-    ) -> dict[str, Any]:
-        """Execute a tool through the ExecutionRouter.
-
-        This method is used for tools that require sandbox or client execution.
-        Returns the tool result as a dict.
-        """
-        result = await self._execution_router.execute(
-            tool_name=tool_name,
-            tool_id=tool_id,
-            arguments=arguments,
-            context=context,
-        )
-        return {
-            "success": result.success,
-            "result": result.result,
-            "error_message": result.error_message,
-            "execution_time_ms": result.execution_time_ms,
-            "execution_mode": result.execution_mode,
-        }
 
     # ── context ──────────────────────────────────────────────────
 
@@ -364,30 +416,7 @@ class DefaultAgentTemplate(Executor):
                         }
                     )
 
-                # ── Client tool execution gate ─────────────────────
-                tool_mode = self._get_tool_execution_mode(tool_name)
-                if tool_mode == ToolExecutionMode.CLIENT:
-                    metadata = get_tool_metadata(tool_name)
-                    yield self._emit_tool_client_request(
-                        tool_name=tool_name,
-                        tool_id=tool_id,
-                        handler=metadata.client_handler or tool_name,
-                        arguments=arguments,
-                        timeout_seconds=metadata.timeout_seconds,
-                        config=metadata.client_config,
-                    )
-                    # Pause execution waiting for client response
-                    raise WaitingForTool(
-                        {
-                            "type": "client_tool",
-                            "tool_name": tool_name,
-                            "tool_id": tool_id,
-                            "arguments": arguments,
-                            "ai_message": messages_to_dict([last_ai_output])[0],
-                            "executor_code": self.TEMPLATE["template_code"],
-                        }
-                    )
-
+                # All tools execute directly through BaseTool's __call__() method
                 tool_start_times[tool_id] = time.time()
                 yield self._emit_tool_call(
                     tool_name=tool_name,
