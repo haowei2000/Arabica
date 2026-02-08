@@ -6,5 +6,6 @@ from aiwen.models import (
     events,
     knowledge,
     runs,
+    tools,
     workspaces,
 )

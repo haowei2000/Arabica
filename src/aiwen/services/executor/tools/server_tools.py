@@ -26,71 +26,169 @@ from aiwen.services.executor.tools.execution_mode import server_tool
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@tool("search_knowledge_base")
+@tool("search_in_context")
 @server_tool(timeout=30)
-async def search_knowledge_base(
-    query: str,
-    workspace_id: str | None = None,
-    top_k: int = 5,
-    score_threshold: float = 0.7,
+async def search_context(
+    pattern: str,
+    context_id: str | None = None,
+    user_id: str | None = None,
+    context_type: str | None = None,
+    max_results: int = 10,
+    context_chars: int = 100,
+    ignore_case: bool = True,
+    multiline: bool = False,
 ) -> dict:
     """
-    Search the knowledge base using semantic similarity.
+    Search context content using regular expressions (grep-like).
+
+    This tool searches through context content using regex patterns,
+    similar to the grep command. It returns matching text fragments
+    with surrounding context.
 
     Args:
-        query: Search query text
-        workspace_id: Optional workspace to scope the search
-        top_k: Maximum number of results to return
-        score_threshold: Minimum similarity score (0-1)
+        pattern: Regular expression pattern to search for
+        context_id: Optional specific context ID to search in
+        user_id: Optional user ID to scope the search
+        context_type: Optional context type filter (conversation, tool, knowledge)
+        max_results: Maximum number of matching contexts to return (default: 10)
+        context_chars: Number of characters to show before/after match (default: 100)
+        ignore_case: Whether to ignore case in pattern matching (default: True)
+        multiline: Whether to enable multiline mode (default: False)
 
     Returns:
         dict with:
-        - results: List of matching documents with scores
-        - total: Total number of matches
+        - matches: List of matching fragments with metadata
+        - total_matches: Total number of matching contexts found
+        - pattern: The regex pattern used
+        - stats: Search statistics
+
+    Example:
+        # Search for email addresses
+        search_context(pattern=r'\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b')
+
+        # Search for specific keywords (case-insensitive)
+        search_context(pattern='error|warning|fail', ignore_case=True)
+
+        # Find code blocks
+        search_context(pattern=r'```[\\s\\S]*?```', multiline=True)
     """
+    import re
+
+    from sqlalchemy import select
+
     from aiwen.extensions.database import get_session
+    from aiwen.models.context.context import Context
+
+    # Compile regex pattern with flags
+    flags = 0
+    if ignore_case:
+        flags |= re.IGNORECASE
+    if multiline:
+        flags |= re.MULTILINE | re.DOTALL
+
+    try:
+        regex = re.compile(pattern, flags)
+    except re.error as e:
+        return {
+            "error": f"Invalid regex pattern: {e}",
+            "matches": [],
+            "total_matches": 0,
+            "pattern": pattern,
+        }
 
     async with get_session("aiwen") as db:
-        # Use pgvector for semantic search
-        from sqlalchemy import text
+        # Build query
+        query = select(Context)
 
-        sql = text("""
-            SELECT
-                id,
-                title,
-                content,
-                1 - (embedding <=> :query_embedding) as score
-            FROM knowledge_documents
-            WHERE workspace_id = :workspace_id OR :workspace_id IS NULL
-            ORDER BY embedding <=> :query_embedding
-            LIMIT :top_k
-        """)
+        # Apply filters
+        if context_id:
+            query = query.where(Context.id == context_id)
+        if user_id:
+            query = query.where(Context.user_id == user_id)
+        if context_type:
+            query = query.where(Context.context_type == context_type)
 
-        # Note: In real implementation, you'd compute query_embedding first
-        # This is a placeholder showing the pattern
-        result = await db.execute(
-            sql,
-            {
-                "query_embedding": query,  # Should be actual embedding
-                "workspace_id": workspace_id,
-                "top_k": top_k,
-            },
-        )
-        rows = result.fetchall()
+        # Order by creation time (most recent first)
+        query = query.order_by(Context.created_at.desc())
+
+        result = await db.execute(query)
+        contexts = result.scalars().all()
+
+        # Search through contexts and collect matches
+        matches = []
+        total_match_count = 0
+
+        for ctx in contexts:
+            if not ctx.content:
+                continue
+
+            # Find all matches in this context
+            context_matches = []
+            for match in regex.finditer(ctx.content):
+                start, end = match.span()
+                matched_text = match.group(0)
+
+                # Extract context (chars before and after)
+                context_start = max(0, start - context_chars)
+                context_end = min(len(ctx.content), end + context_chars)
+
+                # Get the text with context
+                before = ctx.content[context_start:start]
+                after = ctx.content[end:context_end]
+
+                # Add ellipsis if truncated
+                if context_start > 0:
+                    before = "..." + before
+                if context_end < len(ctx.content):
+                    after = after + "..."
+
+                context_matches.append(
+                    {
+                        "matched_text": matched_text,
+                        "before_context": before,
+                        "after_context": after,
+                        "char_position": start,
+                        "match_length": len(matched_text),
+                        # Calculate approximate line number
+                        "line_number": ctx.content[:start].count("\n") + 1,
+                    }
+                )
+
+            if context_matches:
+                total_match_count += len(context_matches)
+
+                matches.append(
+                    {
+                        "context_id": str(ctx.id),
+                        "context_type": ctx.context_type,
+                        "user_id": str(ctx.user_id),
+                        "source_id": str(ctx.source_id) if ctx.source_id else None,
+                        "created_at": ctx.created_at.isoformat()
+                        if ctx.created_at
+                        else None,
+                        "summary": ctx.summary,
+                        "keywords": ctx.keywords,
+                        "importance": ctx.importance,
+                        "match_count": len(context_matches),
+                        "matches": context_matches,
+                    }
+                )
+
+                # Stop if we've reached max_results
+                if len(matches) >= max_results:
+                    break
 
         return {
-            "results": [
-                {
-                    "id": str(row.id),
-                    "title": row.title,
-                    "content": row.content[:500],  # Truncate for response
-                    "score": float(row.score),
-                }
-                for row in rows
-                if row.score >= score_threshold
-            ],
-            "total": len(rows),
-            "query": query,
+            "matches": matches,
+            "total_contexts_matched": len(matches),
+            "total_pattern_matches": total_match_count,
+            "contexts_searched": len(contexts),
+            "pattern": pattern,
+            "options": {
+                "ignore_case": ignore_case,
+                "multiline": multiline,
+                "context_chars": context_chars,
+            },
         }
 
 
@@ -637,7 +735,7 @@ async def cache_set(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 CONTEXT_TOOLS = [
-    search_knowledge_base,
+    search_context,
     get_run_memory,
     query_structured_data,
 ]

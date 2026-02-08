@@ -35,6 +35,8 @@ from aiwen.services.executor.tools.execution_mode import (
     get_tool_metadata,
 )
 from aiwen.services.executor.tools.execution_router import ExecutionRouter
+from aiwen.services.executor.tools.tool_registry import ToolRegistry
+from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +76,17 @@ class DefaultAgentTemplate(Executor):
 
         self.llm = get_llm(self.model_name, self.model_provider)
 
-        tools = BROWSER_TOOLS if self.enable_browser_tools else []
+        # Collect all tools
+        tools = []
+
+        # Add browser tools if enabled
+        if self.enable_browser_tools:
+            tools.extend(BROWSER_TOOLS)
+
+        # Add user-defined tools from ToolRegistry
+        user_tools = self._load_registry_tools()
+        tools.extend(user_tools)
+
         system_prompt = (
             "You are a helpful Assistant "
         )
@@ -82,9 +94,63 @@ class DefaultAgentTemplate(Executor):
             model=self.llm, tools=tools, system_prompt=system_prompt
         )
 
-        # Initialize execution router for sandbox/client tool execution
+        # Initialize execution router for all tool execution modes
         self._execution_router = ExecutionRouter()
         self._execution_router.register_tools_from_list(tools)
+
+    # ── setup ────────────────────────────────────────────────────
+
+    async def setup(self) -> None:
+        """Setup any resources needed by the agent.
+
+        For this template, all setup is done synchronously in __init__.
+        This method is provided to satisfy the Executor abstract interface.
+        """
+        pass
+
+    # ── user tool loading ────────────────────────────────────────
+
+    def _load_registry_tools(self) -> list:
+        """Convert tools from ToolRegistry to LangChain-compatible tools.
+
+        Returns:
+            list: LangChain-compatible tool instances
+        """
+        from langchain_core.tools import StructuredTool
+
+        langchain_tools = []
+
+        # Get all registered tool names
+        tool_names = ToolRegistry.list_tools()
+
+        for tool_name in tool_names:
+            try:
+                # Get tool class and instance
+                tool_class = ToolRegistry.get_tool_class(tool_name)
+                tool_instance = ToolRegistry.get_tool_instance(tool_name)
+
+                if not tool_class or not tool_instance:
+                    logger.warning(f"Tool {tool_name} not found in registry")
+                    continue
+
+                metadata = tool_class.METADATA
+
+                # Create LangChain StructuredTool
+                lc_tool = StructuredTool(
+                    name=metadata.name,
+                    description=metadata.description,
+                    func=lambda **kwargs: None,  # Sync placeholder
+                    coroutine=tool_instance.__call__,  # Use async call
+                    args_schema=tool_class.InputSchema,
+                )
+
+                langchain_tools.append(lc_tool)
+                logger.info(f"Loaded tool from registry: {tool_name}")
+
+            except Exception as e:
+                logger.error(f"Failed to load tool {tool_name}: {e}", exc_info=True)
+
+        return langchain_tools
 
     # ── tool execution routing ───────────────────────────────────
 
@@ -94,9 +160,14 @@ class DefaultAgentTemplate(Executor):
         return metadata.execution_mode
 
     def _requires_special_execution(self, tool_name: str) -> bool:
-        """Check if a tool requires sandbox or client execution."""
+        """Check if a tool requires special execution routing.
+
+        SERVER_RUN tools execute normally through LangChain.
+        All other modes (HTTP, CLIENT, SANDBOX, CONTAINER_RUN, CELERY_RUN)
+        require ExecutionRouter.
+        """
         mode = self._get_tool_execution_mode(tool_name)
-        return mode in (ToolExecutionMode.SANDBOX, ToolExecutionMode.CLIENT)
+        return mode != ToolExecutionMode.SERVER_RUN
 
     async def _execute_via_router(
         self,
@@ -127,11 +198,36 @@ class DefaultAgentTemplate(Executor):
     # ── context ──────────────────────────────────────────────────
 
 
+    # ── message conversion ───────────────────────────────────────
+
+    def _prepare_messages(self, user_message: UserMessage) -> list:
+        """Convert UserMessage to LangChain message format.
+
+        Args:
+            user_message: Input message (can be string or list)
+
+        Returns:
+            list: LangChain-compatible message list
+        """
+        message = user_message.message
+
+        # If already a list, use as-is
+        if isinstance(message, list):
+            return message
+
+        # If string, convert to LangChain format
+        if isinstance(message, str):
+            return [{"role": "user", "content": message}]
+
+        # Fallback: try to use as-is
+        return [message]
+
     # ── run (non-streaming) ──────────────────────────────────────
     async def run(self, user_message: UserMessage) -> dict[str, Any]:
         """Execute the agent and return the final answer."""
 
-        response = await self.agent.ainvoke({"messages": user_message.message})
+        messages = self._prepare_messages(user_message)
+        response = await self.agent.ainvoke({"messages": messages})
         final_messages = response.get("messages", [])
         final_text = ""
         if final_messages and isinstance(final_messages[-1], AIMessage):
@@ -178,7 +274,8 @@ class DefaultAgentTemplate(Executor):
         # on_tool_start can serialise it for the resume path.
         last_ai_output: AIMessage | None = None
 
-        async for event in self.agent.astream_events({"messages": user_message.message}):
+        messages = self._prepare_messages(user_message)
+        async for event in self.agent.astream_events({"messages": messages}):
             event_name: str = event["event"]
 
             # ── streaming token ──────────────────────────────────

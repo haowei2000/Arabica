@@ -1,5 +1,6 @@
 # CLAUDE.md
 Dont run format check and other unnecessary oprerations.
+Please Write the code in English.
 ## Project Overview
 
 Aiwen Service (aiwen-service v5.5.0) - A Project Management and Collaboration Tool with AI-powered agent capabilities.

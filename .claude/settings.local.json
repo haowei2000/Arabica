@@ -18,7 +18,10 @@
       "Bash(git mv:*)",
       "Bash(git rm:*)",
       "Bash(python -m ruff check:*)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(python:*)",
+      "Bash(make db-revision:*)",
+      "Bash(make db-upgrade:*)"
     ]
   },
   "outputStyle": "Explanatory"
