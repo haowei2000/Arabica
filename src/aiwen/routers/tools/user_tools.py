@@ -1,7 +1,11 @@
 """
 User Tools API Router
 
-API endpoints for managing user-defined custom tools.
+API endpoints for managing user-defined custom tools (ExternalTools).
+
+All user tools are ExternalTools that delegate execution to a registered
+InnerTool backend. Only allowed execution modes (server_run, http) can be
+created — each maps to a specific InnerTool.
 """
 
 import logging
@@ -12,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.dependencies.database import get_db
 from aiwen.schemas.tools.user_tool import (
+    EXECUTION_MODE_TO_INNER_TOOL,
     UserToolCreate,
     UserToolExecutionRequest,
     UserToolExecutionResponse,
@@ -28,6 +33,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tools", tags=["user-tools"])
 
 
+def _build_user_tool_response(tool) -> UserToolResponse:
+    """Build a UserToolResponse with computed inner_tool_name field.
+
+    Args:
+        tool: UserTool model instance
+
+    Returns:
+        UserToolResponse with inner_tool_name populated from execution_mode
+    """
+    response = UserToolResponse.model_validate(tool)
+    response.tool_type = "external"
+    response.inner_tool_name = EXECUTION_MODE_TO_INNER_TOOL.get(tool.execution_mode)
+    return response
+
+
 # Mock authentication dependency (replace with your actual auth)
 async def get_current_user_id() -> UUID:
     """Get current authenticated user ID"""
@@ -39,7 +59,7 @@ async def get_current_user_id() -> UUID:
     "/",
     response_model=UserToolResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new user tool",
+    summary="Create a new external tool",
 )
 async def create_tool(
     tool_data: UserToolCreate,
@@ -47,10 +67,11 @@ async def create_tool(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Create a new user-defined tool.
+    Create a new user-defined external tool.
 
-    The tool will be stored in the database and can be dynamically loaded
-    into the agent's toolset.
+    External tools delegate execution to a built-in InnerTool backend:
+    - **server_run**: Executes Python code (requires `code` field)
+    - **http**: Makes HTTP API calls (requires `http_config` field)
 
     Example request body:
     ```json
@@ -71,15 +92,28 @@ async def create_tool(
         },
         "required": ["operation", "a", "b"]
       },
-      "code": "operations = {'add': lambda a,b: a+b, 'subtract': lambda a,b: a-b, 'multiply': lambda a,b: a*b, 'divide': lambda a,b: a/b if b!=0 else None}\\nresult = {'value': operations[input_data['operation']](input_data['a'], input_data['b'])}"
+      "code": "result = {'value': input_data['a'] + input_data['b']}"
     }
     ```
     """
+    # Validate mode-specific configuration
+    mode = tool_data.execution_mode
+    if mode == "server_run" and not tool_data.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="execution_mode 'server_run' requires a 'code' field",
+        )
+    if mode == "http" and not tool_data.http_config:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="execution_mode 'http' requires an 'http_config' field with at least 'url'",
+        )
+
     crud = UserToolCRUD(db)
 
     try:
         tool = await crud.create_tool(user_id, tool_data)
-        return UserToolResponse.model_validate(tool)
+        return _build_user_tool_response(tool)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -87,7 +121,7 @@ async def create_tool(
 @router.get(
     "/",
     response_model=UserToolListResponse,
-    summary="List user tools",
+    summary="List external tools",
 )
 async def list_tools(
     workspace_id: UUID | None = None,
@@ -97,7 +131,7 @@ async def list_tools(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    List all tools for the current user.
+    List all external tools for the current user.
 
     - Returns user's own tools and optionally public tools from others
     - Can be filtered by workspace
@@ -112,7 +146,7 @@ async def list_tools(
         include_public=include_public,
     )
 
-    tool_responses = [UserToolResponse.model_validate(tool) for tool in tools]
+    tool_responses = [_build_user_tool_response(tool) for tool in tools]
 
     return UserToolListResponse(tools=tool_responses, total=len(tool_responses))
 
@@ -120,27 +154,27 @@ async def list_tools(
 @router.get(
     "/{tool_id}",
     response_model=UserToolResponse,
-    summary="Get tool by ID",
+    summary="Get external tool by ID",
 )
 async def get_tool(
     tool_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a specific tool by ID"""
+    """Get a specific external tool by ID"""
     crud = UserToolCRUD(db)
 
     tool = await crud.get_tool_by_id(tool_id, user_id)
     if not tool:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
 
-    return UserToolResponse.model_validate(tool)
+    return _build_user_tool_response(tool)
 
 
 @router.patch(
     "/{tool_id}",
     response_model=UserToolResponse,
-    summary="Update a tool",
+    summary="Update an external tool",
 )
 async def update_tool(
     tool_id: UUID,
@@ -148,7 +182,7 @@ async def update_tool(
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing tool (must be owner)"""
+    """Update an existing external tool (must be owner)"""
     crud = UserToolCRUD(db)
 
     tool = await crud.update_tool(tool_id, user_id, tool_data)
@@ -158,7 +192,7 @@ async def update_tool(
             detail="Tool not found or you don't have permission",
         )
 
-    return UserToolResponse.model_validate(tool)
+    return _build_user_tool_response(tool)
 
 
 @router.delete(
@@ -185,7 +219,7 @@ async def delete_tool(
 @router.post(
     "/{tool_id}/toggle",
     response_model=UserToolResponse,
-    summary="Enable/disable a tool",
+    summary="Enable/disable an external tool",
 )
 async def toggle_tool(
     tool_id: UUID,
@@ -193,7 +227,7 @@ async def toggle_tool(
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Enable or disable a tool"""
+    """Enable or disable an external tool"""
     crud = UserToolCRUD(db)
 
     tool = await crud.toggle_enabled(tool_id, user_id, enabled)
@@ -203,7 +237,7 @@ async def toggle_tool(
             detail="Tool not found or you don't have permission",
         )
 
-    return UserToolResponse.model_validate(tool)
+    return _build_user_tool_response(tool)
 
 
 @router.post(

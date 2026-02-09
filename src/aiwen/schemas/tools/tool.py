@@ -1,14 +1,33 @@
-"""Pydantic schemas for Tool registry API endpoints."""
+"""Pydantic schemas for Tool registry API endpoints.
+
+Only external tools (user-defined, delegating to InnerTools) can be created
+through the API. Inner tools are code-defined and registered at startup.
+"""
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
+class AllowedToolType(str, Enum):
+    """Allowed tool types for API creation.
+
+    Only 'external' tools can be created via the API.
+    'inner' tools are code-defined and cannot be created through the API.
+    """
+
+    EXTERNAL = "external"
+
+
 class ToolCreate(BaseModel):
-    """Schema for creating a new tool."""
+    """Schema for creating a new tool.
+
+    Only external tools can be created through the API. External tools
+    delegate execution to a registered InnerTool backend.
+    """
 
     name: str = Field(
         ..., description="Tool display name", min_length=1, max_length=100
@@ -17,9 +36,9 @@ class ToolCreate(BaseModel):
         ..., description="Unique tool identifier code", min_length=1, max_length=100
     )
     description: str | None = Field(None, description="Tool description")
-    tool_type: str = Field(
-        "server",
-        description="Execution type: server, sandbox, client, async",
+    tool_type: AllowedToolType = Field(
+        default=AllowedToolType.EXTERNAL,
+        description="Tool type (only 'external' is allowed via API)",
     )
     input_schema: dict[str, Any] | None = Field(
         None, description="JSON Schema for tool input parameters"
@@ -35,11 +54,16 @@ class ToolCreate(BaseModel):
 
 
 class ToolUpdate(BaseModel):
-    """Schema for updating an existing tool."""
+    """Schema for updating an existing tool.
+
+    tool_type cannot be changed to 'inner' — only 'external' is allowed.
+    """
 
     name: str | None = Field(None, description="Tool display name", max_length=100)
     description: str | None = Field(None, description="Tool description")
-    tool_type: str | None = Field(None, description="Execution type")
+    tool_type: AllowedToolType | None = Field(
+        None, description="Tool type (only 'external' is allowed via API)"
+    )
     input_schema: dict[str, Any] | None = Field(
         None, description="JSON Schema for tool input parameters"
     )

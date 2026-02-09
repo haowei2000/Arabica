@@ -1,4 +1,8 @@
-"""REST API endpoints for Tool registry management."""
+"""REST API endpoints for Tool registry management.
+
+Only external tools (user-defined) can be created or modified through these
+endpoints. Inner tools are code-defined and managed by the system at startup.
+"""
 
 from typing import Annotated
 from uuid import UUID
@@ -17,6 +21,9 @@ from aiwen.schemas.tools.tool import (
 from aiwen.services.executor.tool_crud import ToolCRUD
 
 router = APIRouter(prefix="/tools", tags=["tools"])
+
+# Inner tool types that cannot be created or modified via API
+PROTECTED_TOOL_TYPES = {"inner"}
 
 
 @router.post(
@@ -134,7 +141,10 @@ async def update_tool(
     tool_crud: Annotated[ToolCRUD, Depends(get_tool_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
-    """Update an existing tool.
+    """Update an existing external tool.
+
+    Only external tools can be updated via API. Inner tools are code-defined
+    and cannot be modified.
 
     Args:
         tool_id: The tool UUID
@@ -146,6 +156,7 @@ async def update_tool(
         Updated tool information
 
     Raises:
+        HTTPException 400: If trying to update an inner tool
         HTTPException 404: If tool not found
         HTTPException 403: If no permission
     """
@@ -154,6 +165,13 @@ async def update_tool(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Tool '{tool_id}' not found",
+        )
+
+    # Prevent modification of inner (code-defined) tools
+    if tool.tool_type in PROTECTED_TOOL_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inner tools are code-defined and cannot be modified via API",
         )
 
     if tool.user_id != current_user.id:
@@ -178,7 +196,10 @@ async def delete_tool(
     tool_crud: Annotated[ToolCRUD, Depends(get_tool_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
-    """Delete a tool from the registry.
+    """Delete an external tool from the registry.
+
+    Only external tools can be deleted via API. Inner tools are code-defined
+    and cannot be removed.
 
     Args:
         tool_id: The tool UUID
@@ -186,6 +207,7 @@ async def delete_tool(
         current_user: Current authenticated user
 
     Raises:
+        HTTPException 400: If trying to delete an inner tool
         HTTPException 404: If tool not found
         HTTPException 403: If no permission
     """
@@ -194,6 +216,13 @@ async def delete_tool(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Tool with id '{tool_id}' not found",
+        )
+
+    # Prevent deletion of inner (code-defined) tools
+    if tool.tool_type in PROTECTED_TOOL_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inner tools are code-defined and cannot be deleted via API",
         )
 
     if tool.user_id != current_user.id:

@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import Field
 
 from aiwen.services.executor.tools.base_tool import (
-    BaseTool,
+    InnerTool,
     CeleryConfig,
     ClientConfig,
     ContainerConfig,
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 @register_tool
-class DatabaseQueryTool(BaseTool):
+class DatabaseQueryTool(InnerTool):
     """Database Query Tool - Server-side direct execution"""
 
     METADATA = ToolMetadata(
@@ -90,7 +90,7 @@ class DatabaseQueryTool(BaseTool):
 
 
 @register_tool
-class WeatherAPITool(BaseTool):
+class WeatherAPITool(InnerTool):
     """Weather Query Tool - HTTP API call"""
 
     METADATA = ToolMetadata(
@@ -167,7 +167,7 @@ class WeatherAPITool(BaseTool):
 
 
 @register_tool
-class PythonCodeExecutorTool(BaseTool):
+class PythonCodeExecutorTool(InnerTool):
     """Python Code Executor - Container isolated execution"""
 
     METADATA = ToolMetadata(
@@ -223,7 +223,7 @@ class PythonCodeExecutorTool(BaseTool):
 
 
 @register_tool
-class FilePickerTool(BaseTool):
+class FilePickerTool(InnerTool):
     """File Picker - Client-side execution"""
 
     METADATA = ToolMetadata(
@@ -284,7 +284,7 @@ class FilePickerTool(BaseTool):
 
 
 @register_tool
-class ReportGeneratorTool(BaseTool):
+class ReportGeneratorTool(InnerTool):
     """Report Generator - Celery async task"""
 
     METADATA = ToolMetadata(
@@ -343,7 +343,7 @@ class ReportGeneratorTool(BaseTool):
 
 
 @register_tool
-class AdvancedSearchTool(BaseTool):
+class AdvancedSearchTool(InnerTool):
     """Advanced Search Tool - Demonstrates hook method usage"""
 
     METADATA = ToolMetadata(

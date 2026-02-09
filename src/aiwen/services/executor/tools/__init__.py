@@ -3,18 +3,25 @@
 This module provides:
 - Browser automation tools (BROWSER_TOOLS)
 - Server tools for context queries and file operations (SERVER_TOOLS)
-- Unified BaseTool base class for all tool implementations
+- Inner tools for execution backends (INNER_TOOLS)
+- BaseTool, InnerTool, ExternalTool class hierarchy
 """
 
+from .base_tool import BaseTool, ExternalTool, InnerTool
 from .browser_tools import BROWSER_TOOLS
 from .server_tools import (
     CONTEXT_TOOLS,
     FILE_TOOLS,
+    INNER_TOOLS,
     SERVER_TOOLS,
     UTILITY_TOOLS,
 )
 
 __all__ = [
+    # Base classes
+    "BaseTool",
+    "InnerTool",
+    "ExternalTool",
     # Browser tools
     "BROWSER_TOOLS",
     # Server tools
@@ -22,4 +29,6 @@ __all__ = [
     "FILE_TOOLS",
     "SERVER_TOOLS",
     "UTILITY_TOOLS",
+    # Inner tools (execution backends)
+    "INNER_TOOLS",
 ]

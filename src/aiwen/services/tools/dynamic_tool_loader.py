@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.tools.user_tool import UserTool
 from aiwen.services.executor.tools.base_tool import (
-    BaseTool,
     CeleryConfig,
     ClientConfig,
     ContainerConfig,
+    ExternalTool,
     HTTPConfig,
     ToolExecutionMode,
     ToolInputSchema,
@@ -40,7 +40,7 @@ class DynamicToolLoader:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
         self.crud = UserToolCRUD(db_session)
-        self._loaded_tools: dict[UUID, type[BaseTool]] = {}
+        self._loaded_tools: dict[UUID, type[ExternalTool]] = {}
 
     def _create_input_schema(
         self, tool_name: str, schema_dict: dict[str, Any]
@@ -89,15 +89,20 @@ class DynamicToolLoader:
         model_name = f"{tool_name}InputSchema"
         return create_model(model_name, __base__=ToolInputSchema, **fields)  # type: ignore
 
-    def _create_tool_class(self, user_tool: UserTool) -> type[BaseTool]:
+    def _create_tool_class(self, user_tool: UserTool) -> type[ExternalTool]:
         """
-        Create a tool class dynamically from UserTool model
+        Create an ExternalTool subclass dynamically from UserTool model
+
+        The created ExternalTool delegates execution to a registered InnerTool:
+        - SERVER_RUN with code → delegates to "code_execution" InnerTool
+        - HTTP → delegates to "http_request" InnerTool
+        - Other modes → returns unsupported error (to be extended)
 
         Args:
             user_tool: UserTool instance from database
 
         Returns:
-            type[BaseTool]: Dynamically created tool class
+            type[ExternalTool]: Dynamically created ExternalTool subclass
         """
         # Create input schema
         input_schema = self._create_input_schema(user_tool.name, user_tool.input_schema)
@@ -139,81 +144,49 @@ class DynamicToolLoader:
             celery_config=celery_config,
         )
 
-        # Store references for the execute method
+        # Determine inner tool name and extra params based on execution mode
+        inner_tool_name = ""
+        extra_params: dict[str, Any] = {}
+
+        if execution_mode == ToolExecutionMode.SERVER_RUN:
+            inner_tool_name = "code_execution"
+            extra_params = {"code": user_tool.code or ""}
+
+        elif execution_mode == ToolExecutionMode.HTTP:
+            inner_tool_name = "http_request"
+            if http_config:
+                extra_params = {
+                    "url": http_config.url,
+                    "method": http_config.method,
+                    "headers": http_config.headers,
+                    "timeout": http_config.timeout,
+                    "verify_ssl": http_config.verify_ssl,
+                }
+
+        # Store references for the before_execute hook
         tool_id = user_tool.id
-        tool_code = user_tool.code
         db_session = self.db
 
-        # Define execute method
-        async def execute(self: BaseTool, input_data: ToolInputSchema) -> ToolOutputSchema:
-            """Execute the user-defined tool"""
-            # Increment usage count
+        # Override before_execute to track usage
+        async def before_execute(self_tool: ExternalTool, input_data: ToolInputSchema) -> None:
+            """Track tool usage before execution"""
             crud = UserToolCRUD(db_session)
             await crud.increment_usage(tool_id, auto_commit=True)
-
-            # Execute based on execution mode
-            if execution_mode == ToolExecutionMode.SERVER_RUN:
-                # Execute Python code
-                if not tool_code:
-                    return ToolOutputSchema(
-                        success=False,
-                        error="No code provided for server_run mode",
-                    )
-
-                try:
-                    # Create execution context
-                    context = {
-                        "input_data": input_data.model_dump(),
-                        "__builtins__": __builtins__,
-                    }
-
-                    # Execute code
-                    exec(tool_code, context)
-
-                    # Get result
-                    if "result" in context:
-                        result = context["result"]
-                        return ToolOutputSchema(
-                            success=True,
-                            message="Tool executed successfully",
-                            data=result if isinstance(result, dict) else {"result": result},
-                        )
-                    else:
-                        return ToolOutputSchema(
-                            success=False,
-                            error="Code did not produce a 'result' variable",
-                        )
-
-                except Exception as e:
-                    logger.error(f"Tool execution error: {e}", exc_info=True)
-                    return ToolOutputSchema(
-                        success=False, error=f"Execution error: {str(e)}"
-                    )
-
-            elif execution_mode == ToolExecutionMode.HTTP:
-                # HTTP API call (placeholder - should be handled by execution router)
-                return ToolOutputSchema(
-                    success=False,
-                    error="HTTP execution should be handled by ExecutionRouter",
-                )
-
-            else:
-                return ToolOutputSchema(
-                    success=False,
-                    error=f"Execution mode {execution_mode} not implemented yet",
-                )
 
         # Create tool class dynamically
         tool_class_name = f"UserTool_{user_tool.name}_{user_tool.id.hex[:8]}"
 
         tool_class = type(
             tool_class_name,
-            (BaseTool,),
+            (ExternalTool,),
             {
                 "METADATA": metadata,
                 "InputSchema": input_schema,
                 "OutputSchema": ToolOutputSchema,
-                "execute": execute,
+                "inner_tool_name": inner_tool_name,
+                "parameter_mapping": {},  # No explicit mapping — passes all input as input_data dict
+                "extra_params": extra_params,
+                "before_execute": before_execute,
                 "__module__": __name__,
             },
         )

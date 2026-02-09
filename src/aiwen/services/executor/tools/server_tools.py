@@ -5,6 +5,7 @@ Migrated from LangChain @tool decorator to unified BaseTool interface.
 All tools execute directly in the API server process.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -12,19 +13,21 @@ from uuid import UUID
 from pydantic import Field
 
 from aiwen.services.executor.tools.base_tool import (
-    BaseTool,
+    InnerTool,
     ToolExecutionMode,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
 
+logger = logging.getLogger(__name__)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITY TOOLS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class GetCurrentTimeTool(BaseTool):
+class GetCurrentTimeTool(InnerTool):
     """Get the current server time"""
 
     METADATA = ToolMetadata(
@@ -68,7 +71,7 @@ class GetCurrentTimeTool(BaseTool):
         )
 
 
-class CacheGetTool(BaseTool):
+class CacheGetTool(InnerTool):
     """Get a value from the cache"""
 
     METADATA = ToolMetadata(
@@ -109,7 +112,7 @@ class CacheGetTool(BaseTool):
         )
 
 
-class CacheSetTool(BaseTool):
+class CacheSetTool(InnerTool):
     """Set a value in the cache"""
 
     METADATA = ToolMetadata(
@@ -149,7 +152,7 @@ class CacheSetTool(BaseTool):
         )
 
 
-class GetWorkspaceInfoTool(BaseTool):
+class GetWorkspaceInfoTool(InnerTool):
     """Get detailed information about a workspace"""
 
     METADATA = ToolMetadata(
@@ -209,7 +212,7 @@ class GetWorkspaceInfoTool(BaseTool):
             )
 
 
-class GetRunHistoryTool(BaseTool):
+class GetRunHistoryTool(InnerTool):
     """Get recent run history for a workspace"""
 
     METADATA = ToolMetadata(
@@ -281,7 +284,7 @@ class GetRunHistoryTool(BaseTool):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class SearchContextTool(BaseTool):
+class SearchContextTool(InnerTool):
     """Search context content using regular expressions"""
 
     METADATA = ToolMetadata(
@@ -443,7 +446,7 @@ class SearchContextTool(BaseTool):
             )
 
 
-class GetRunMemoryTool(BaseTool):
+class GetRunMemoryTool(InnerTool):
     """Retrieve conversation history for context"""
 
     METADATA = ToolMetadata(
@@ -489,7 +492,7 @@ class GetRunMemoryTool(BaseTool):
         )
 
 
-class QueryStructuredDataTool(BaseTool):
+class QueryStructuredDataTool(InnerTool):
     """Execute a read-only SQL query on structured data"""
 
     METADATA = ToolMetadata(
@@ -565,7 +568,7 @@ class QueryStructuredDataTool(BaseTool):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class ListWorkspaceFilesTool(BaseTool):
+class ListWorkspaceFilesTool(InnerTool):
     """List files in a workspace directory"""
 
     METADATA = ToolMetadata(
@@ -651,7 +654,7 @@ class ListWorkspaceFilesTool(BaseTool):
             )
 
 
-class ReadFileContentTool(BaseTool):
+class ReadFileContentTool(InnerTool):
     """Read the content of a file from storage"""
 
     METADATA = ToolMetadata(
@@ -715,7 +718,7 @@ class ReadFileContentTool(BaseTool):
             )
 
 
-class SearchFilesTool(BaseTool):
+class SearchFilesTool(InnerTool):
     """Search files by name or content"""
 
     METADATA = ToolMetadata(
@@ -818,3 +821,153 @@ FILE_TOOLS = [
 
 # All server tools combined
 SERVER_TOOLS = CONTEXT_TOOLS + FILE_TOOLS + UTILITY_TOOLS
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INNER TOOLS (execution backends for ExternalTool delegation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class CodeExecutionInnerTool(InnerTool):
+    """Execute Python code with input data in a sandboxed context
+
+    This is the built-in execution backend for user-defined SERVER_RUN tools.
+    ExternalTool instances delegate to this tool to run user-provided Python code.
+    """
+
+    METADATA = ToolMetadata(
+        name="code_execution",
+        display_name="Code Execution",
+        description="Execute Python code with input data in a controlled context",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="execution",
+        tags=["code", "python", "execution", "inner"],
+        timeout=30,
+    )
+
+    class InputSchema(ToolInputSchema):
+        code: str = Field(description="Python code to execute")
+        input_data: dict = Field(
+            default_factory=dict,
+            description="Input parameters available to the code as 'input_data' variable",
+        )
+
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        """Execute Python code with input_data in execution context"""
+        if not input_data.code:
+            return ToolOutputSchema(
+                success=False,
+                error="No code provided for execution",
+            )
+
+        try:
+            # Create execution context
+            context: dict[str, Any] = {
+                "input_data": input_data.input_data,
+                "__builtins__": __builtins__,
+            }
+
+            # Execute code
+            exec(input_data.code, context)  # noqa: S102
+
+            # Get result
+            if "result" in context:
+                result = context["result"]
+                return ToolOutputSchema(
+                    success=True,
+                    message="Code executed successfully",
+                    data=result if isinstance(result, dict) else {"result": result},
+                )
+            else:
+                return ToolOutputSchema(
+                    success=False,
+                    error="Code did not produce a 'result' variable",
+                )
+
+        except Exception as e:
+            logger.error(f"Code execution error: {e}", exc_info=True)
+            return ToolOutputSchema(
+                success=False,
+                error=f"Execution error: {str(e)}",
+            )
+
+
+class HttpRequestInnerTool(InnerTool):
+    """Make HTTP API calls
+
+    This is the built-in execution backend for user-defined HTTP tools.
+    ExternalTool instances delegate to this tool to make HTTP requests.
+    """
+
+    METADATA = ToolMetadata(
+        name="http_request",
+        display_name="HTTP Request",
+        description="Make HTTP API calls with configurable method, headers, and body",
+        execution_mode=ToolExecutionMode.SERVER_RUN,
+        category="execution",
+        tags=["http", "api", "request", "inner"],
+        timeout=30,
+    )
+
+    class InputSchema(ToolInputSchema):
+        url: str = Field(description="Target URL")
+        method: str = Field(default="POST", description="HTTP method (GET, POST, PUT, DELETE, PATCH)")
+        headers: dict[str, str] = Field(default_factory=dict, description="Request headers")
+        body: dict = Field(default_factory=dict, description="Request body (JSON)")
+        timeout: int = Field(default=30, ge=1, le=300, description="Request timeout in seconds")
+        verify_ssl: bool = Field(default=True, description="Whether to verify SSL certificates")
+
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        """Execute HTTP request"""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(verify=input_data.verify_ssl) as client:
+                request_kwargs: dict[str, Any] = {
+                    "method": input_data.method.upper(),
+                    "url": input_data.url,
+                    "headers": input_data.headers,
+                    "timeout": input_data.timeout,
+                }
+
+                # Add body for methods that support it
+                if input_data.method.upper() in ("POST", "PUT", "PATCH") and input_data.body:
+                    request_kwargs["json"] = input_data.body
+                elif input_data.body:
+                    request_kwargs["params"] = input_data.body
+
+                response = await client.request(**request_kwargs)
+
+                # Try to parse as JSON, fall back to text
+                try:
+                    response_data = response.json()
+                except Exception:
+                    response_data = {"text": response.text}
+
+                return ToolOutputSchema(
+                    success=response.is_success,
+                    message=f"HTTP {input_data.method.upper()} {input_data.url} -> {response.status_code}",
+                    data={
+                        "status_code": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": response_data,
+                    },
+                )
+
+        except httpx.TimeoutException:
+            return ToolOutputSchema(
+                success=False,
+                error=f"HTTP request timed out after {input_data.timeout}s",
+            )
+        except Exception as e:
+            logger.error(f"HTTP request error: {e}", exc_info=True)
+            return ToolOutputSchema(
+                success=False,
+                error=f"HTTP request failed: {str(e)}",
+            )
+
+
+INNER_TOOLS = [
+    CodeExecutionInnerTool,
+    HttpRequestInnerTool,
+]

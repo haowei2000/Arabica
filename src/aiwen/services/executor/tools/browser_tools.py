@@ -9,7 +9,7 @@ from pydantic import Field
 
 from aiwen.mcp_router import browser as browser_module
 from aiwen.services.executor.tools.base_tool import (
-    BaseTool,
+    InnerTool,
     ToolExecutionMode,
     ToolInputSchema,
     ToolMetadata,
@@ -17,7 +17,7 @@ from aiwen.services.executor.tools.base_tool import (
 )
 
 
-class BrowserLaunchTool(BaseTool):
+class BrowserLaunchTool(InnerTool):
     """Launch a browser session and return a session_id"""
 
     METADATA = ToolMetadata(
@@ -52,7 +52,7 @@ class BrowserLaunchTool(BaseTool):
         )
 
 
-class BrowserGotoTool(BaseTool):
+class BrowserGotoTool(InnerTool):
     """Navigate to a URL"""
 
     METADATA = ToolMetadata(
@@ -88,7 +88,7 @@ class BrowserGotoTool(BaseTool):
         )
 
 
-class BrowserClickTool(BaseTool):
+class BrowserClickTool(InnerTool):
     """Click an element"""
 
     METADATA = ToolMetadata(
@@ -121,7 +121,7 @@ class BrowserClickTool(BaseTool):
         )
 
 
-class BrowserTypeTool(BaseTool):
+class BrowserTypeTool(InnerTool):
     """Type text into an element"""
 
     METADATA = ToolMetadata(
@@ -156,7 +156,7 @@ class BrowserTypeTool(BaseTool):
         )
 
 
-class BrowserPressTool(BaseTool):
+class BrowserPressTool(InnerTool):
     """Press a key on an element"""
 
     METADATA = ToolMetadata(
@@ -187,7 +187,7 @@ class BrowserPressTool(BaseTool):
         )
 
 
-class BrowserWaitForTool(BaseTool):
+class BrowserWaitForTool(InnerTool):
     """Wait for an element state"""
 
     METADATA = ToolMetadata(
@@ -223,7 +223,7 @@ class BrowserWaitForTool(BaseTool):
         )
 
 
-class BrowserSleepTool(BaseTool):
+class BrowserSleepTool(InnerTool):
     """Pause for a duration in ms"""
 
     METADATA = ToolMetadata(
@@ -252,7 +252,7 @@ class BrowserSleepTool(BaseTool):
         )
 
 
-class BrowserScrollTool(BaseTool):
+class BrowserScrollTool(InnerTool):
     """Scroll the page"""
 
     METADATA = ToolMetadata(
@@ -283,7 +283,7 @@ class BrowserScrollTool(BaseTool):
         )
 
 
-class BrowserMoveMouseTool(BaseTool):
+class BrowserMoveMouseTool(InnerTool):
     """Move mouse cursor"""
 
     METADATA = ToolMetadata(
@@ -316,7 +316,7 @@ class BrowserMoveMouseTool(BaseTool):
         )
 
 
-class BrowserScreenshotTool(BaseTool):
+class BrowserScreenshotTool(InnerTool):
     """Take a screenshot and return base64 bytes"""
 
     METADATA = ToolMetadata(
@@ -345,7 +345,7 @@ class BrowserScreenshotTool(BaseTool):
         )
 
 
-class BrowserGetTextTool(BaseTool):
+class BrowserGetTextTool(InnerTool):
     """Get inner text"""
 
     METADATA = ToolMetadata(
@@ -374,7 +374,7 @@ class BrowserGetTextTool(BaseTool):
         )
 
 
-class BrowserGetHtmlTool(BaseTool):
+class BrowserGetHtmlTool(InnerTool):
     """Get HTML content"""
 
     METADATA = ToolMetadata(
@@ -403,7 +403,7 @@ class BrowserGetHtmlTool(BaseTool):
         )
 
 
-class BrowserCloseTool(BaseTool):
+class BrowserCloseTool(InnerTool):
     """Close a browser session"""
 
     METADATA = ToolMetadata(

@@ -10,9 +10,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, TypeVar
 
+import logging
+
 from pydantic import BaseModel, Field
 
 T = TypeVar("T", bound="BaseTool")
+
+logger = logging.getLogger(__name__)
 
 
 class ToolExecutionMode(str, Enum):
@@ -281,7 +285,7 @@ class BaseTool(ABC):
         """Get tool execution mode"""
         return cls.METADATA.execution_mode
 
-    async def before_execute(self, input_data: ToolInputSchema) -> None:
+    async def before_execute(self, input_data: ToolInputSchema) -> None:  # noqa: B027
         """
         Pre-execution hook method (optional)
 
@@ -296,7 +300,7 @@ class BaseTool(ABC):
         """
         pass
 
-    async def after_execute(
+    async def after_execute(  # noqa: B027
         self, input_data: ToolInputSchema, output: ToolOutputSchema
     ) -> None:
         """
@@ -379,3 +383,123 @@ class BaseTool(ABC):
             f"name='{self.METADATA.name}', "
             f"mode={self.METADATA.execution_mode.value})>"
         )
+
+
+class InnerTool(BaseTool, ABC):
+    """
+    Inner Tool - Developer-defined tools implemented in code
+
+    InnerTools are built-in tools that execute logic directly. They serve as
+    the actual execution backends that ExternalTools can delegate to.
+
+    All code-defined tools (server tools, browser tools, etc.) should inherit
+    from this class instead of BaseTool directly.
+
+    Example:
+        ```python
+        class MyServerTool(InnerTool):
+            METADATA = ToolMetadata(
+                name="my_tool",
+                display_name="My Tool",
+                description="A built-in tool",
+                execution_mode=ToolExecutionMode.SERVER_RUN,
+            )
+
+            class InputSchema(ToolInputSchema):
+                query: str = Field(description="Search query")
+
+            async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+                return ToolOutputSchema(success=True, data={"result": "ok"})
+        ```
+    """
+
+    tool_type: ClassVar[str] = "inner"
+
+
+class ExternalTool(BaseTool):
+    """
+    External Tool - User-designed tools that delegate execution to an InnerTool
+
+    ExternalTools are created dynamically from user definitions stored in the
+    database (via DynamicToolLoader). They do not contain execution logic
+    themselves — instead, they delegate to a registered InnerTool.
+
+    Class-level attributes (set by DynamicToolLoader when creating subclasses):
+        inner_tool_name: Name of the InnerTool to delegate to (looked up in ToolRegistry)
+        parameter_mapping: Maps external field names to inner tool field names
+        extra_params: Static parameters always passed to the inner tool (e.g., code string)
+
+    Example:
+        ```python
+        class UserWeatherTool(ExternalTool):
+            METADATA = ToolMetadata(name="user_weather", ...)
+            inner_tool_name = "http_request"
+            parameter_mapping = {"city": "body.city"}
+            extra_params = {"url": "https://api.weather.com", "method": "GET"}
+        ```
+    """
+
+    tool_type: ClassVar[str] = "external"
+
+    # Name of the InnerTool to delegate to (must be registered in ToolRegistry)
+    inner_tool_name: ClassVar[str] = ""
+
+    # Maps {external_param_name: inner_param_name}
+    parameter_mapping: ClassVar[dict[str, str]] = {}
+
+    # Static params always passed to the inner tool (e.g., code, url, headers)
+    extra_params: ClassVar[dict[str, Any]] = {}
+
+    async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:
+        """
+        Execute by delegating to the configured InnerTool
+
+        1. Look up the inner tool from the registry
+        2. Map external parameters to inner tool parameters
+        3. Merge in extra static parameters
+        4. Call the inner tool and return its result
+        """
+        # Lazy import to avoid circular dependency
+        from aiwen.services.executor.tools.tool_registry import ToolRegistry
+
+        inner_tool = ToolRegistry.get_tool_instance(self.inner_tool_name)
+        if not inner_tool:
+            return ToolOutputSchema(
+                success=False,
+                error=f"Inner tool '{self.inner_tool_name}' not found in registry",
+            )
+
+        # Build mapped parameters from input_data
+        input_dict = input_data.model_dump()
+        mapped_params: dict[str, Any] = {}
+
+        if self.parameter_mapping:
+            for ext_key, inner_key in self.parameter_mapping.items():
+                if ext_key in input_dict:
+                    mapped_params[inner_key] = input_dict[ext_key]
+        else:
+            # No explicit mapping — pass all input fields as 'input_data' dict
+            mapped_params["input_data"] = input_dict
+
+        # Merge in static extra params (e.g., code string, url, etc.)
+        mapped_params.update(self.extra_params)
+
+        try:
+            result = await inner_tool(**mapped_params)
+            # inner_tool.__call__ returns a dict (format_output result)
+            return ToolOutputSchema(
+                success=result.get("success", False),
+                message=result.get("message"),
+                data=result.get("data"),
+                error=result.get("error"),
+            )
+        except Exception as e:
+            logger.error(
+                f"ExternalTool '{self.METADATA.name}' delegation to "
+                f"'{self.inner_tool_name}' failed: {e}",
+                exc_info=True,
+            )
+            return ToolOutputSchema(
+                success=False,
+                error=f"Delegation to inner tool failed: {str(e)}",
+            )
