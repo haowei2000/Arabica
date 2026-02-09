@@ -1,32 +1,32 @@
 """
 User Tool CRUD Operations
 
-Manages user-defined custom tools in the database.
+Manages user-defined custom tools (external tools) in the unified tool table.
 """
 
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.tools.user_tool import UserTool
+from aiwen.models.agents.tool import Tool
 from aiwen.schemas.tools.user_tool import UserToolCreate, UserToolUpdate
 
 logger = logging.getLogger(__name__)
 
 
 class UserToolCRUD:
-    """CRUD operations for user tools"""
+    """CRUD operations for user tools (external tools in the unified tool table)"""
 
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
     async def create_tool(
         self, user_id: UUID, tool_data: UserToolCreate, auto_commit: bool = True
-    ) -> UserTool:
+    ) -> Tool:
         """
-        Create a new user tool
+        Create a new external tool
 
         Args:
             user_id: Owner user ID
@@ -34,26 +34,29 @@ class UserToolCRUD:
             auto_commit: Whether to commit immediately
 
         Returns:
-            UserTool: Created tool instance
+            Tool: Created tool instance
 
         Raises:
             ValueError: If tool name already exists for this user
         """
-        # Check if tool name already exists for this user
+        # Check if tool name already exists for this user (external only)
         existing = await self.get_tool_by_name(user_id, tool_data.name)
         if existing:
             raise ValueError(
                 f"Tool with name '{tool_data.name}' already exists for this user"
             )
 
-        # Create tool
-        tool = UserTool(
+        tool = Tool(
             user_id=user_id,
+            tool_type="external",
+            tool_code=f"ext_{tool_data.name}_{uuid4().hex[:8]}",
             workspace_id=tool_data.workspace_id,
             name=tool_data.name,
             display_name=tool_data.display_name,
             description=tool_data.description,
             execution_mode=tool_data.execution_mode,
+            inner_tool_name=tool_data.inner_tool_name,
+            parameter_mapping=tool_data.parameter_mapping,
             input_schema=tool_data.input_schema,
             output_schema=tool_data.output_schema,
             code=tool_data.code,
@@ -63,7 +66,6 @@ class UserToolCRUD:
             celery_config=tool_data.celery_config,
             category=tool_data.category,
             tags=tool_data.tags,
-            version=tool_data.version,
             timeout=tool_data.timeout,
             enabled=tool_data.enabled,
             is_public=tool_data.is_public,
@@ -82,7 +84,7 @@ class UserToolCRUD:
 
     async def get_tool_by_id(
         self, tool_id: UUID, user_id: UUID | None = None
-    ) -> UserTool | None:
+    ) -> Tool | None:
         """
         Get tool by ID
 
@@ -91,14 +93,14 @@ class UserToolCRUD:
             user_id: Optional user ID for ownership check
 
         Returns:
-            UserTool | None: Tool instance or None
+            Tool | None: Tool instance or None
         """
-        query = select(UserTool).where(UserTool.id == tool_id)
+        query = select(Tool).where(Tool.id == tool_id)
 
         if user_id:
             # Only return if owned by user or is public
             query = query.where(
-                (UserTool.user_id == user_id) | (UserTool.is_public == True)  # noqa: E712
+                (Tool.user_id == user_id) | (Tool.is_public == True)  # noqa: E712
             )
 
         result = await self.db.execute(query)
@@ -106,20 +108,22 @@ class UserToolCRUD:
 
     async def get_tool_by_name(
         self, user_id: UUID, tool_name: str
-    ) -> UserTool | None:
+    ) -> Tool | None:
         """
-        Get tool by name for a specific user
+        Get external tool by name for a specific user
 
         Args:
             user_id: User ID
             tool_name: Tool name
 
         Returns:
-            UserTool | None: Tool instance or None
+            Tool | None: Tool instance or None
         """
         result = await self.db.execute(
-            select(UserTool).where(
-                UserTool.user_id == user_id, UserTool.name == tool_name
+            select(Tool).where(
+                Tool.user_id == user_id,
+                Tool.name == tool_name,
+                Tool.tool_type == "external",
             )
         )
         return result.scalar_one_or_none()
@@ -130,7 +134,8 @@ class UserToolCRUD:
         workspace_id: UUID | None = None,
         enabled_only: bool = True,
         include_public: bool = True,
-    ) -> list[UserTool]:
+        tool_type: str | None = None,
+    ) -> list[Tool]:
         """
         List tools for a user
 
@@ -139,30 +144,39 @@ class UserToolCRUD:
             workspace_id: Optional workspace filter
             enabled_only: Whether to return only enabled tools
             include_public: Whether to include public tools from other users
+            tool_type: Optional filter by tool_type ("inner", "external", or None for both)
 
         Returns:
-            list[UserTool]: List of tools
+            list[Tool]: List of tools
         """
-        # Build query
-        query = select(UserTool)
+        query = select(Tool)
 
-        if include_public:
-            # User's own tools OR public tools
+        if tool_type:
+            query = query.where(Tool.tool_type == tool_type)
+
+        if tool_type == "inner":
+            # Inner tools are always visible to all users
+            pass
+        elif include_public:
             query = query.where(
-                (UserTool.user_id == user_id) | (UserTool.is_public == True)  # noqa: E712
+                (Tool.user_id == user_id)
+                | (Tool.is_public == True)  # noqa: E712
+                | (Tool.tool_type == "inner")
             )
         else:
-            # Only user's own tools
-            query = query.where(UserTool.user_id == user_id)
+            query = query.where(
+                (Tool.user_id == user_id) | (Tool.tool_type == "inner")
+            )
 
         if workspace_id:
-            query = query.where(UserTool.workspace_id == workspace_id)
+            query = query.where(
+                (Tool.workspace_id == workspace_id) | (Tool.workspace_id.is_(None))
+            )
 
         if enabled_only:
-            query = query.where(UserTool.enabled == True)  # noqa: E712
+            query = query.where(Tool.enabled == True)  # noqa: E712
 
-        # Order by most recently used first
-        query = query.order_by(UserTool.last_used_at.desc().nulls_last())
+        query = query.order_by(Tool.tool_type.asc(), Tool.last_used_at.desc().nulls_last())
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
@@ -173,9 +187,9 @@ class UserToolCRUD:
         user_id: UUID,
         tool_data: UserToolUpdate,
         auto_commit: bool = True,
-    ) -> UserTool | None:
+    ) -> Tool | None:
         """
-        Update a tool
+        Update an external tool
 
         Args:
             tool_id: Tool ID
@@ -184,14 +198,12 @@ class UserToolCRUD:
             auto_commit: Whether to commit immediately
 
         Returns:
-            UserTool | None: Updated tool or None if not found/not owner
+            Tool | None: Updated tool or None if not found/not owner
         """
-        # Get tool and verify ownership
         tool = await self.get_tool_by_id(tool_id, user_id)
         if not tool or tool.user_id != user_id:
             return None
 
-        # Update fields
         update_data = tool_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(tool, field, value)
@@ -209,7 +221,7 @@ class UserToolCRUD:
         self, tool_id: UUID, user_id: UUID, auto_commit: bool = True
     ) -> bool:
         """
-        Delete a tool
+        Delete an external tool
 
         Args:
             tool_id: Tool ID
@@ -219,7 +231,6 @@ class UserToolCRUD:
         Returns:
             bool: True if deleted, False if not found/not owner
         """
-        # Get tool and verify ownership
         tool = await self.get_tool_by_id(tool_id, user_id)
         if not tool or tool.user_id != user_id:
             return False
@@ -256,7 +267,7 @@ class UserToolCRUD:
 
     async def toggle_enabled(
         self, tool_id: UUID, user_id: UUID, enabled: bool, auto_commit: bool = True
-    ) -> UserTool | None:
+    ) -> Tool | None:
         """
         Enable or disable a tool
 
@@ -267,7 +278,7 @@ class UserToolCRUD:
             auto_commit: Whether to commit immediately
 
         Returns:
-            UserTool | None: Updated tool or None
+            Tool | None: Updated tool or None
         """
         tool = await self.get_tool_by_id(tool_id, user_id)
         if not tool or tool.user_id != user_id:

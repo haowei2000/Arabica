@@ -82,7 +82,10 @@ class ToolResponse(BaseModel):
     name: str = Field(..., description="Tool display name")
     tool_code: str = Field(..., description="Unique tool code")
     description: str | None = Field(None, description="Tool description")
-    tool_type: str = Field(..., description="Execution type")
+    display_name: str | None = Field(None, description="Display name")
+    tool_type: str = Field(..., description="Tool type: inner or external")
+    execution_mode: str | None = Field(None, description="Execution mode")
+    inner_tool_name: str | None = Field(None, description="InnerTool to delegate to")
     input_schema: dict[str, Any] | None = Field(
         None, description="JSON Schema for input parameters"
     )
@@ -90,8 +93,12 @@ class ToolResponse(BaseModel):
         None, description="Tool execution configuration"
     )
     user_id: UUID | None = Field(None, description="Creator user ID")
+    category: str | None = Field(None, description="Tool category")
+    tags: list[str] | None = Field(None, description="Tool tags")
+    timeout: int | None = Field(None, description="Execution timeout in seconds")
     enabled: bool = Field(..., description="Whether the tool is enabled")
     is_public: bool = Field(..., description="Whether publicly available")
+    verified: bool = Field(default=False, description="Whether verified")
     version: int = Field(..., description="Tool version")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime | None = Field(None, description="Last update timestamp")

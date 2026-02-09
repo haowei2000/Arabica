@@ -192,7 +192,7 @@ class BaseTool(ABC):
                 metadata.celery_config = CeleryConfig()
 
     @abstractmethod
-    async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:
+    async def execute(self, input_data:Any) -> Any:
         """
         Core method to execute the tool
 
@@ -414,6 +414,63 @@ class InnerTool(BaseTool, ABC):
     """
 
     tool_type: ClassVar[str] = "inner"
+
+    @classmethod
+    def to_template(cls) -> dict[str, Any]:
+        """
+        Generate a tool creation template from this InnerTool.
+
+        The returned dict describes how to create an ExternalTool that
+        delegates execution to this InnerTool. It contains:
+        - id: Template identifier (same as the InnerTool name)
+        - name/description: Human-readable info
+        - inner_tool_name: The InnerTool to delegate to
+        - template: A pre-filled UserToolCreate body
+
+        The template's ``input_schema`` mirrors the InnerTool's InputSchema
+        so the ExternalTool's parameters map 1:1 to the InnerTool's parameters.
+
+        Subclasses can override this method to provide more specific templates
+        (e.g., with example values, curated descriptions, etc.).
+
+        Returns:
+            dict with template data (can be wrapped in ToolTemplate schema)
+        """
+        metadata = cls.METADATA
+        schema = cls.InputSchema.model_json_schema()
+
+        # Build parameter_mapping: 1:1 from each field to itself
+        properties = schema.get("properties", {})
+        parameter_mapping = {field: field for field in properties}
+
+        return {
+            "id": f"inner_{metadata.name}",
+            "name": metadata.display_name,
+            "description": (
+                f"Create an external tool that delegates to the "
+                f"built-in '{metadata.display_name}' tool"
+            ),
+            "execution_mode": metadata.execution_mode.value,
+            "inner_tool_name": metadata.name,
+            "category": metadata.category,
+            "tags": metadata.tags,
+            "template": {
+                "name": f"my_{metadata.name}",
+                "display_name": f"My {metadata.display_name}",
+                "description": metadata.description,
+                "execution_mode": metadata.execution_mode.value,
+                "inner_tool_name": metadata.name,
+                "parameter_mapping": parameter_mapping,
+                "category": metadata.category,
+                "tags": metadata.tags,
+                "timeout": metadata.timeout,
+                "input_schema": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": schema.get("required", []),
+                },
+            },
+        }
 
 
 class ExternalTool(BaseTool):

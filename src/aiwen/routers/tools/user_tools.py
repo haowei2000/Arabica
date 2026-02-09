@@ -1,11 +1,10 @@
 """
 User Tools API Router
 
-API endpoints for managing user-defined custom tools (ExternalTools).
+API endpoints for managing tools (both inner and external).
 
-All user tools are ExternalTools that delegate execution to a registered
-InnerTool backend. Only allowed execution modes (server_run, http) can be
-created — each maps to a specific InnerTool.
+External tools delegate execution to a registered InnerTool backend.
+Inner tools are code-defined and synced to the database on startup.
 """
 
 import logging
@@ -14,7 +13,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.dependencies.database import get_db
+from aiwen.extensions.database import get_aiwen_db
+from aiwen.schemas.tools.tool_template import (
+    TOOL_TEMPLATES,
+    ToolTemplate,
+    ToolTemplateListResponse,
+    get_all_templates,
+    get_inner_tool_templates,
+)
 from aiwen.schemas.tools.user_tool import (
     EXECUTION_MODE_TO_INNER_TOOL,
     UserToolCreate,
@@ -34,17 +40,18 @@ router = APIRouter(prefix="/tools", tags=["user-tools"])
 
 
 def _build_user_tool_response(tool) -> UserToolResponse:
-    """Build a UserToolResponse with computed inner_tool_name field.
+    """Build a UserToolResponse with computed fields.
 
     Args:
-        tool: UserTool model instance
+        tool: Tool model instance
 
     Returns:
-        UserToolResponse with inner_tool_name populated from execution_mode
+        UserToolResponse with tool_code and inner_tool_name populated
     """
     response = UserToolResponse.model_validate(tool)
-    response.tool_type = "external"
-    response.inner_tool_name = EXECUTION_MODE_TO_INNER_TOOL.get(tool.execution_mode)
+    # For external tools, derive inner_tool_name from execution_mode if not explicit
+    if response.tool_type == "external" and not response.inner_tool_name:
+        response.inner_tool_name = EXECUTION_MODE_TO_INNER_TOOL.get(tool.execution_mode)
     return response
 
 
@@ -53,6 +60,68 @@ async def get_current_user_id() -> UUID:
     """Get current authenticated user ID"""
     # TODO: Replace with actual authentication
     return UUID("00000000-0000-0000-0000-000000000001")
+
+
+@router.get(
+    "/templates",
+    response_model=ToolTemplateListResponse,
+    summary="List available tool templates",
+)
+async def list_templates(
+    execution_mode: str | None = None,
+    source: str | None = None,
+):
+    """
+    List all available tool creation templates.
+
+    Templates provide pre-filled request bodies for creating external tools.
+    Use a template as a starting point, then customize the name, URL,
+    parameters, etc. to fit your use case.
+
+    Two sources of templates are available:
+    - **static**: Hand-crafted examples (HTTP GET/POST, webhook, code, etc.)
+    - **inner_tool**: Auto-generated from every registered InnerTool via ``to_template()``
+
+    Args:
+        execution_mode: Optional filter by execution mode ("http", "server_run", etc.)
+        source: Optional filter by template source ("static" or "inner_tool")
+    """
+    templates = get_all_templates(execution_mode=execution_mode, source=source)
+    return ToolTemplateListResponse(templates=templates, total=len(templates))
+
+
+@router.get(
+    "/templates/{template_id}",
+    response_model=ToolTemplate,
+    summary="Get a specific tool template",
+)
+async def get_template(template_id: str):
+    """
+    Get a specific tool template by ID.
+
+    Returns a pre-filled UserToolCreate body that can be directly
+    POST-ed to ``/tools/`` (after customizing name, URL, etc.).
+
+    Template IDs include:
+    - Static templates: ``http_get_api``, ``http_post_json``, ``http_webhook``,
+      ``http_rest_crud``, ``http_form_submit``, ``code_basic``
+    - Dynamic templates: ``inner_<tool_name>`` for each registered InnerTool
+    """
+    # Check static templates first, then dynamic
+    template = TOOL_TEMPLATES.get(template_id)
+    if not template:
+        dynamic = get_inner_tool_templates()
+        template = dynamic.get(template_id)
+
+    if not template:
+        # Build a list of all available IDs for the error message
+        all_ids = list(TOOL_TEMPLATES.keys()) + list(get_inner_tool_templates().keys())
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Template '{template_id}' not found. "
+            f"Available: {', '.join(sorted(all_ids))}",
+        )
+    return template
 
 
 @router.post(
@@ -64,7 +133,7 @@ async def get_current_user_id() -> UUID:
 async def create_tool(
     tool_data: UserToolCreate,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
     """
     Create a new user-defined external tool.
@@ -72,42 +141,20 @@ async def create_tool(
     External tools delegate execution to a built-in InnerTool backend:
     - **server_run**: Executes Python code (requires `code` field)
     - **http**: Makes HTTP API calls (requires `http_config` field)
-
-    Example request body:
-    ```json
-    {
-      "name": "calculator",
-      "display_name": "Calculator",
-      "description": "Performs basic arithmetic operations",
-      "execution_mode": "server_run",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "operation": {
-            "type": "string",
-            "description": "Operation: add, subtract, multiply, divide"
-          },
-          "a": {"type": "number", "description": "First number"},
-          "b": {"type": "number", "description": "Second number"}
-        },
-        "required": ["operation", "a", "b"]
-      },
-      "code": "result = {'value': input_data['a'] + input_data['b']}"
-    }
-    ```
     """
-    # Validate mode-specific configuration
-    mode = tool_data.execution_mode
-    if mode == "server_run" and not tool_data.code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="execution_mode 'server_run' requires a 'code' field",
-        )
-    if mode == "http" and not tool_data.http_config:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="execution_mode 'http' requires an 'http_config' field with at least 'url'",
-        )
+    # Validate configuration
+    if not tool_data.inner_tool_name:
+        mode = tool_data.execution_mode
+        if mode == "server_run" and not tool_data.code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="execution_mode 'server_run' requires a 'code' field (or set 'inner_tool_name' for direct delegation)",
+            )
+        if mode == "http" and not tool_data.http_config:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="execution_mode 'http' requires an 'http_config' field (or set 'inner_tool_name' for direct delegation)",
+            )
 
     crud = UserToolCRUD(db)
 
@@ -121,21 +168,24 @@ async def create_tool(
 @router.get(
     "/",
     response_model=UserToolListResponse,
-    summary="List external tools",
+    summary="List tools",
 )
 async def list_tools(
     workspace_id: UUID | None = None,
     enabled_only: bool = True,
     include_public: bool = True,
+    tool_type: str | None = None,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
     """
-    List all external tools for the current user.
+    List all tools for the current user.
 
-    - Returns user's own tools and optionally public tools from others
-    - Can be filtered by workspace
-    - Can include only enabled tools
+    - Returns user's own tools, public tools, and inner (built-in) tools
+    - Can be filtered by workspace, tool_type, and enabled status
+
+    Args:
+        tool_type: Optional filter - "inner" for built-in, "external" for user-defined, None for both
     """
     crud = UserToolCRUD(db)
 
@@ -144,6 +194,7 @@ async def list_tools(
         workspace_id=workspace_id,
         enabled_only=enabled_only,
         include_public=include_public,
+        tool_type=tool_type,
     )
 
     tool_responses = [_build_user_tool_response(tool) for tool in tools]
@@ -154,14 +205,14 @@ async def list_tools(
 @router.get(
     "/{tool_id}",
     response_model=UserToolResponse,
-    summary="Get external tool by ID",
+    summary="Get tool by ID",
 )
 async def get_tool(
     tool_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
-    """Get a specific external tool by ID"""
+    """Get a specific tool by ID"""
     crud = UserToolCRUD(db)
 
     tool = await crud.get_tool_by_id(tool_id, user_id)
@@ -180,10 +231,18 @@ async def update_tool(
     tool_id: UUID,
     tool_data: UserToolUpdate,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
-    """Update an existing external tool (must be owner)"""
+    """Update an existing external tool (must be owner). Inner tools cannot be modified."""
     crud = UserToolCRUD(db)
+
+    # Check if it's an inner tool
+    tool = await crud.get_tool_by_id(tool_id)
+    if tool and tool.tool_type == "inner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Built-in (inner) tools cannot be modified",
+        )
 
     tool = await crud.update_tool(tool_id, user_id, tool_data)
     if not tool:
@@ -203,10 +262,18 @@ async def update_tool(
 async def delete_tool(
     tool_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
-    """Delete a tool (must be owner)"""
+    """Delete a tool (must be owner). Inner tools cannot be deleted."""
     crud = UserToolCRUD(db)
+
+    # Check if it's an inner tool
+    tool = await crud.get_tool_by_id(tool_id)
+    if tool and tool.tool_type == "inner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Built-in (inner) tools cannot be deleted",
+        )
 
     success = await crud.delete_tool(tool_id, user_id)
     if not success:
@@ -219,16 +286,24 @@ async def delete_tool(
 @router.post(
     "/{tool_id}/toggle",
     response_model=UserToolResponse,
-    summary="Enable/disable an external tool",
+    summary="Enable/disable a tool",
 )
 async def toggle_tool(
     tool_id: UUID,
     enabled: bool,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
-    """Enable or disable an external tool"""
+    """Enable or disable a tool. Inner tools cannot be toggled."""
     crud = UserToolCRUD(db)
+
+    # Check if it's an inner tool
+    tool = await crud.get_tool_by_id(tool_id)
+    if tool and tool.tool_type == "inner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Built-in (inner) tools cannot be toggled",
+        )
 
     tool = await crud.toggle_enabled(tool_id, user_id, enabled)
     if not tool:
@@ -247,7 +322,7 @@ async def toggle_tool(
 async def load_user_tools(
     workspace_id: UUID | None = None,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
     """
     Load user tools into the agent's toolset.
@@ -273,7 +348,7 @@ async def load_user_tools(
 async def reload_tool(
     tool_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
     """
     Reload a specific tool.
@@ -297,7 +372,7 @@ async def reload_tool(
 async def execute_tool(
     request: UserToolExecutionRequest,
     user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_aiwen_db),
 ):
     """
     Execute a user tool directly.

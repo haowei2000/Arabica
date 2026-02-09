@@ -57,6 +57,9 @@ class BootstrapConfig:
 
     init_storage: bool = True
 
+    # Whether to sync InnerTool definitions to the database
+    sync_inner_tools: bool = True
+
 
 async def _initialize_databases() -> None:
     """初始化数据库连接"""
@@ -190,6 +193,10 @@ class ApplicationBootstrap:
         if self.config.init_agent_registry:
             await _initialize_agent_registry()
 
+        # Step 7: Sync InnerTool definitions to database
+        if self.config.sync_inner_tools:
+            await self._sync_inner_tools()
+
         if self.config.init_storage:
             await self._init_storage_backend()
         logger.info("=" * 60)
@@ -239,6 +246,18 @@ class ApplicationBootstrap:
         except Exception as e:
             logger.error(f"❌ Redis初始化失败: {e}")
             raise
+
+    async def _sync_inner_tools(self) -> None:
+        """Sync InnerTool definitions to the database"""
+        logger.info("Syncing InnerTool definitions to database...")
+        try:
+            from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
+
+            async with get_session("aiwen") as session:
+                count = await sync_inner_tools_to_db(session)
+            logger.info(f"Synced {count} InnerTools to database")
+        except Exception as e:
+            logger.error(f"Failed to sync InnerTools: {e}")
 
     async def _init_storage_backend(self) -> None:
         """获取存储后端（供Worker使用）"""
@@ -343,6 +362,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         create_admin_user=True,  # API负责创建用户
         init_agent_registry=True,
         init_storage=True,
+        sync_inner_tools=True,
     )
 
 
@@ -361,7 +381,8 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
         create_tables=False,  # 表由 Alembic 管理
         create_admin_user=False,  # Worker不创建用户
         init_agent_registry=True,  # Worker需要Agent Registry
-        init_storage=True
+        init_storage=True,
+        sync_inner_tools=True,
     )
 
 
@@ -380,7 +401,8 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
         create_tables=False,  # 表由 Alembic 管理
         create_admin_user=False,  # MCP不创建用户
         init_agent_registry=False,  # MCP不需要Agent Registry
-        init_storage=False
+        init_storage=False,
+        sync_inner_tools=False,
     )
 
 
@@ -399,7 +421,8 @@ def get_alembic_bootstrap_config() -> BootstrapConfig:
         create_tables=False,
         create_admin_user=False,
         init_agent_registry=False,
-        init_storage=False
+        init_storage=False,
+        sync_inner_tools=False,
     )
 
 
@@ -415,7 +438,8 @@ def get_celery_bootstrap_config() -> BootstrapConfig:
         create_tables=False,
         create_admin_user=False,
         init_agent_registry=False,
-        init_storage=True
+        init_storage=True,
+        sync_inner_tools=False,
     )
 
 

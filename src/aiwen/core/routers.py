@@ -25,8 +25,10 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     # Tool registry router
     from aiwen.routers.tool.tools import router as tools_router
 
+    # User-defined tools (ExternalTools with templates)
+    from aiwen.routers.tools.user_tools import router as user_tools_router
+
     # Tool execution router (for client-side tool execution)
-    from aiwen.routers.tool_execution import router as tool_execution_router
     from aiwen.routers.user.user_examples import router as user_examples_router
     from aiwen.routers.user.user_management import router as user_management_router
 
@@ -59,8 +61,8 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (event_crud_router, "/api"),
         # Tool Registry
         (tools_router, "/api/agent"),
-        # Tool Execution (client-side tools)
-        (tool_execution_router, "/api"),
+        # User-defined Tools (ExternalTools)
+        (user_tools_router, "/api"),
     ]
 
 

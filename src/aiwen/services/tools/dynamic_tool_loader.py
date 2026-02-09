@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import Field, create_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.tools.user_tool import UserTool
+from aiwen.models.agents.tool import Tool
 from aiwen.services.executor.tools.base_tool import (
     CeleryConfig,
     ClientConfig,
@@ -89,7 +89,7 @@ class DynamicToolLoader:
         model_name = f"{tool_name}InputSchema"
         return create_model(model_name, __base__=ToolInputSchema, **fields)  # type: ignore
 
-    def _create_tool_class(self, user_tool: UserTool) -> type[ExternalTool]:
+    def _create_tool_class(self, user_tool: Tool) -> type[ExternalTool]:
         """
         Create an ExternalTool subclass dynamically from UserTool model
 
@@ -144,15 +144,24 @@ class DynamicToolLoader:
             celery_config=celery_config,
         )
 
-        # Determine inner tool name and extra params based on execution mode
+        # Determine inner tool name, parameter mapping, and extra params.
+        # Priority: explicit inner_tool_name from DB > derived from execution_mode
         inner_tool_name = ""
+        parameter_mapping: dict[str, str] = {}
         extra_params: dict[str, Any] = {}
 
-        if execution_mode == ToolExecutionMode.SERVER_RUN:
+        if user_tool.inner_tool_name:
+            # Explicit delegation — use the stored InnerTool name and mapping
+            inner_tool_name = user_tool.inner_tool_name
+            parameter_mapping = user_tool.parameter_mapping or {}
+
+        elif execution_mode == ToolExecutionMode.SERVER_RUN:
+            # Default: server_run → code_execution
             inner_tool_name = "code_execution"
             extra_params = {"code": user_tool.code or ""}
 
         elif execution_mode == ToolExecutionMode.HTTP:
+            # Default: http → http_request
             inner_tool_name = "http_request"
             if http_config:
                 extra_params = {
@@ -184,7 +193,7 @@ class DynamicToolLoader:
                 "InputSchema": input_schema,
                 "OutputSchema": ToolOutputSchema,
                 "inner_tool_name": inner_tool_name,
-                "parameter_mapping": {},  # No explicit mapping — passes all input as input_data dict
+                "parameter_mapping": parameter_mapping,
                 "extra_params": extra_params,
                 "before_execute": before_execute,
                 "__module__": __name__,

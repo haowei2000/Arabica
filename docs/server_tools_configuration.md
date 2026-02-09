@@ -364,7 +364,7 @@ result = await search_context(
 Test tools before using in agent:
 
 ```python
-from aiwen.services.executor.tools.server_tools import get_current_time
+from aiwen.services.executor.tools.inner_tool.server_tools import get_current_time
 
 # Test directly
 result = await get_current_time(

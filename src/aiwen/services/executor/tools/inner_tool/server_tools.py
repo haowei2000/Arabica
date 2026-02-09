@@ -5,8 +5,8 @@ Migrated from LangChain @tool decorator to unified BaseTool interface.
 All tools execute directly in the API server process.
 """
 
-import logging
 from datetime import UTC, datetime
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -88,7 +88,7 @@ class CacheGetTool(InnerTool):
         key: str = Field(description="Cache key")
         namespace: str = Field(default="default", description="Cache namespace for isolation")
 
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+    async def execute(self, input_data:InputSchema) -> ToolOutputSchema:
         from aiwen.middleware.cache_middleware import get_redis_client
 
         redis = get_redis_client(is_async=True)
@@ -852,9 +852,12 @@ class CodeExecutionInnerTool(InnerTool):
             description="Input parameters available to the code as 'input_data' variable",
         )
 
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+    async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:
         """Execute Python code with input_data in execution context"""
-        if not input_data.code:
+        # Cast input_data to the specific InputSchema type
+        typed_input = self.InputSchema.model_validate(input_data.model_dump())
+        
+        if not typed_input.code:
             return ToolOutputSchema(
                 success=False,
                 error="No code provided for execution",
@@ -863,12 +866,12 @@ class CodeExecutionInnerTool(InnerTool):
         try:
             # Create execution context
             context: dict[str, Any] = {
-                "input_data": input_data.input_data,
+                "input_data": typed_input.input_data,
                 "__builtins__": __builtins__,
             }
 
             # Execute code
-            exec(input_data.code, context)  # noqa: S102
+            exec(typed_input.code, context)  # noqa: S102
 
             # Get result
             if "result" in context:

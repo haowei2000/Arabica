@@ -89,6 +89,18 @@ export const API_ENDPOINTS = {
         PREVIEW: (id: string) => `/agent/document/${id}/preview`,
     },
 
+    // User Tools
+    TOOLS: {
+        TEMPLATES: '/tools/templates',
+        TEMPLATE: (id: string) => `/tools/templates/${id}`,
+        LIST: '/tools/',
+        CREATE: '/tools/',
+        GET: (id: string) => `/tools/${id}`,
+        UPDATE: (id: string) => `/tools/${id}`,
+        DELETE: (id: string) => `/tools/${id}`,
+        TOGGLE: (id: string) => `/tools/${id}/toggle`,
+    },
+
     // Context/Chunk 管理
     CONTEXT: {
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/context/knowledge/${knowledgeId}/chunks`,
