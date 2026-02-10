@@ -9,12 +9,13 @@ Architecture:
         ├── ToolRegistry (Concrete) → Manages tool classes
         └── ExecutorRegistry (Concrete) → Manages executor templates
 """
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +65,7 @@ class RegistryConfig:
 # ============================================================================
 
 
-class BaseRegistry(ABC, Generic[K, T]):
+class BaseRegistry[K, T](ABC):
     """
     Abstract base class for all registries.
 
@@ -78,7 +79,7 @@ class BaseRegistry(ABC, Generic[K, T]):
         - _sync_to_database(): Sync to database (optional)
 
     Example:
-        class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
+        class ToolRegistry[str, type[BaseTool]](BaseRegistry):
             def _validate_component(self, tool_class):
                 tool_class._validate_metadata()
 
