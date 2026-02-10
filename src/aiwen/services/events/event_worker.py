@@ -5,6 +5,7 @@ Event Worker - 事件驱动的 Agent 执行器
 监听 run_tasks stream，执行 Agent 并通过 EventPublisher 发布所有事件。
 所有事件使用统一的 EventPublisher 格式，前端只需处理一种结构。
 """
+
 import asyncio
 import json
 import logging
@@ -16,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.app import App
 from aiwen.models.runs.run import Run
-from aiwen.schemas.events.event_payloads import UserMessageEvent, UserMessage
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from aiwen.registries import ExecutorRegistry
+from aiwen.schemas.events.event_payloads import UserMessage, UserMessageEvent
+from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.services.executor.base import AgentEvent, Executor
 from aiwen.services.executor.runtime import AgentRuntime
-from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
 logger = logging.getLogger(__name__)
@@ -108,8 +109,9 @@ class Worker:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
-
-    def prepare_executor(self, executor_code: str, app_config: dict | None = None) -> Executor:
+    def prepare_executor(
+        self, executor_code: str, app_config: dict | None = None
+    ) -> Executor:
         """
         根据 executor_code 获取 Executor 类，并准备配置。
 
@@ -141,6 +143,7 @@ class Worker:
             config.update(app_config)
 
         return executor_cls(config)
+
     async def handle_event(self, event: UserMessageEvent):
         """
         处理来自 run_tasks stream 的消息。
@@ -153,7 +156,9 @@ class Worker:
                 return
 
             if not event.executor_code:
-                logger.error("Received message without executor_code, cannot determine executor")
+                logger.error(
+                    "Received message without executor_code, cannot determine executor"
+                )
                 return
 
             run_id = UUID(str(event.run_id))
@@ -205,7 +210,9 @@ class Worker:
 
         app_config = None
         if run.app_id:
-            app_result = await self.db.execute(select(App).where(App.id == str(run.app_id)))
+            app_result = await self.db.execute(
+                select(App).where(App.id == str(run.app_id))
+            )
             app = app_result.scalar_one_or_none()
             if app and app.config:
                 app_config = app.config
@@ -300,7 +307,9 @@ class Worker:
                 # 定期检查是否被取消（减少数据库查询频率）
                 event_count += 1
                 # 合并条件检查，一次性判断是否需要检查取消状态
-                if event_count % check_interval == 0 and await self._is_run_cancelled(run_id):
+                if event_count % check_interval == 0 and await self._is_run_cancelled(
+                    run_id
+                ):
                     logger.info(f"Run {run_id} cancelled, stopping agent")
                     await executor.cancel()
                     return

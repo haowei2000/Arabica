@@ -31,7 +31,8 @@ class ToolTemplate(BaseModel):
     category: str = Field(default="custom", description="Template category")
     tags: list[str] = Field(default_factory=list, description="Template tags")
     source: str = Field(
-        default="static", description="Template source: 'static' (curated) or 'inner_tool' (auto-generated)"
+        default="static",
+        description="Template source: 'static' (curated) or 'inner_tool' (auto-generated)",
     )
     template: dict[str, Any] = Field(
         ..., description="Pre-filled UserToolCreate body (ready to POST)"
@@ -481,8 +482,8 @@ def get_inner_tool_templates() -> dict[str, ToolTemplate]:
     Returns:
         dict[str, ToolTemplate]: Dynamic templates keyed by template ID
     """
+    from aiwen.registries import ToolRegistry
     from aiwen.services.tools.base_tool import InnerTool
-    from aiwen.services.tools.tool_registry import ToolRegistry
 
     templates: dict[str, ToolTemplate] = {}
 

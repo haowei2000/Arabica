@@ -6,20 +6,21 @@ Create Date: 2026-01-11 00:00:00.000000
 
 """
 
+from collections.abc import Sequence
 import logging
-from typing import Sequence, Union
+from typing import Union
 
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision: str = "b2c3d4e5f6a7"
-down_revision: Union[str, Sequence[str], None] = "a1b2c3d4e5f6"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "a1b2c3d4e5f6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _check_pgvector_available(connection) -> bool:

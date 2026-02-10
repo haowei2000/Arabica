@@ -106,9 +106,7 @@ class UserToolCRUD:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_tool_by_name(
-        self, user_id: UUID, tool_name: str
-    ) -> Tool | None:
+    async def get_tool_by_name(self, user_id: UUID, tool_name: str) -> Tool | None:
         """
         Get external tool by name for a specific user
 
@@ -164,9 +162,7 @@ class UserToolCRUD:
                 | (Tool.tool_type == "inner")
             )
         else:
-            query = query.where(
-                (Tool.user_id == user_id) | (Tool.tool_type == "inner")
-            )
+            query = query.where((Tool.user_id == user_id) | (Tool.tool_type == "inner"))
 
         if workspace_id:
             query = query.where(
@@ -176,7 +172,9 @@ class UserToolCRUD:
         if enabled_only:
             query = query.where(Tool.enabled == True)  # noqa: E712
 
-        query = query.order_by(Tool.tool_type.asc(), Tool.last_used_at.desc().nulls_last())
+        query = query.order_by(
+            Tool.tool_type.asc(), Tool.last_used_at.desc().nulls_last()
+        )
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
@@ -243,9 +241,7 @@ class UserToolCRUD:
         logger.info(f"Deleted user tool: {tool.name} (id={tool_id})")
         return True
 
-    async def increment_usage(
-        self, tool_id: UUID, auto_commit: bool = True
-    ) -> None:
+    async def increment_usage(self, tool_id: UUID, auto_commit: bool = True) -> None:
         """
         Increment tool usage count and update last_used_at
 

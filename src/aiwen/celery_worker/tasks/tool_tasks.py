@@ -11,13 +11,12 @@ These tasks run long-running tools in the background with:
 import logging
 from typing import Any
 
-from celery import shared_task
-
 from aiwen.services.tools.async_executor import (
     AsyncTaskStatus,
     set_task_result,
     update_task_progress,
 )
+from celery import shared_task
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +99,9 @@ def execute_async_tool(
             result=result,
         )
 
-        logger.info(f"Async tool completed successfully: {tool_name} (task_id={task_id})")
+        logger.info(
+            f"Async tool completed successfully: {tool_name} (task_id={task_id})"
+        )
 
         return {
             "success": True,
@@ -121,7 +122,7 @@ def execute_async_tool(
 
         # Optionally retry
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=e, countdown=2 ** self.request.retries)
+            raise self.retry(exc=e, countdown=2**self.request.retries)
 
         return {
             "success": False,
@@ -148,6 +149,7 @@ async def _execute_with_progress(
 
     # Check if tool supports progress callback
     if "progress_callback" in arguments or _supports_progress(tool_func):
+
         async def progress_callback(progress: int, message: str):
             if progress_enabled:
                 # Scale progress to 10-90 range (10% start, 90% end)

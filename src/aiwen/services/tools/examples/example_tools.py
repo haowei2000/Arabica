@@ -10,19 +10,19 @@ from typing import Any
 
 from pydantic import Field
 
+from aiwen.registries import register_tool
 from aiwen.services.tools.base_tool import (
-    InnerTool,
     CeleryConfig,
     ClientConfig,
     ContainerConfig,
     HTTPConfig,
+    InnerTool,
     ResourceLimits,
     ToolExecutionMode,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.services.tools.tool_registry import register_tool
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,9 @@ class DatabaseQueryTool(InnerTool):
     class InputSchema(ToolInputSchema):
         sql: str = Field(description="SQL query statement (only supports SELECT)")
         database: str = Field(default="aiwen", description="Database name")
-        max_rows: int = Field(default=100, description="Maximum number of rows to return")
+        max_rows: int = Field(
+            default=100, description="Maximum number of rows to return"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         """Execute database query"""
@@ -62,7 +64,9 @@ class DatabaseQueryTool(InnerTool):
         sql_upper = input_data.sql.strip().upper()
         if not sql_upper.startswith("SELECT"):
             return ToolOutputSchema(
-                success=False, message="Only SELECT queries are allowed", error="Invalid SQL"
+                success=False,
+                message="Only SELECT queries are allowed",
+                error="Invalid SQL",
             )
 
         # Execute query
@@ -114,7 +118,9 @@ class WeatherAPITool(InnerTool):
     class InputSchema(ToolInputSchema):
         city: str = Field(description="City name (English)")
         api_key: str = Field(description="OpenWeather API key")
-        units: str = Field(default="metric", description="Unit system (metric/imperial)")
+        units: str = Field(
+            default="metric", description="Unit system (metric/imperial)"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         """Call weather API"""
@@ -122,9 +128,7 @@ class WeatherAPITool(InnerTool):
 
         http_config = self.METADATA.http_config
         if not http_config:
-            return ToolOutputSchema(
-                success=False, error="HTTP config not found"
-            )
+            return ToolOutputSchema(success=False, error="HTTP config not found")
 
         params = {
             "q": input_data.city,
@@ -153,12 +157,11 @@ class WeatherAPITool(InnerTool):
                         "description": data["weather"][0]["description"],
                     },
                 )
-            else:
-                return ToolOutputSchema(
-                    success=False,
-                    message="API call failed",
-                    error=f"HTTP {response.status_code}: {response.text}",
-                )
+            return ToolOutputSchema(
+                success=False,
+                message="API call failed",
+                error=f"HTTP {response.status_code}: {response.text}",
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -250,14 +253,18 @@ class FilePickerTool(InnerTool):
             default=[".pdf", ".txt", ".doc", ".docx"],
             description="List of allowed file extensions",
         )
-        multiple: bool = Field(default=False, description="Whether multiple file selection is allowed")
+        multiple: bool = Field(
+            default=False, description="Whether multiple file selection is allowed"
+        )
         max_size_mb: int = Field(default=10, description="Maximum file size (MB)")
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         """Trigger client file picker"""
         # Note: Actual client execution logic should be handled by ClientExecutor
         # This just returns a placeholder result
-        logger.info(f"Opening file picker with extensions: {input_data.allowed_extensions}")
+        logger.info(
+            f"Opening file picker with extensions: {input_data.allowed_extensions}"
+        )
 
         # Simulate waiting for user selection
         await asyncio.sleep(1)
@@ -360,14 +367,14 @@ class AdvancedSearchTool(InnerTool):
     class InputSchema(ToolInputSchema):
         query: str = Field(description="Search query")
         user_id: str = Field(description="User ID")
-        filters: dict[str, Any] = Field(default_factory=dict, description="Search filters")
+        filters: dict[str, Any] = Field(
+            default_factory=dict, description="Search filters"
+        )
         limit: int = Field(default=10, description="Maximum number of results")
 
     async def before_execute(self, input_data: InputSchema) -> None:
         """Before execution: Permission check and logging"""
-        logger.info(
-            f"User {input_data.user_id} searching for: {input_data.query}"
-        )
+        logger.info(f"User {input_data.user_id} searching for: {input_data.query}")
 
         # Simulate permission check
         # if not await check_user_permission(input_data.user_id, "search"):

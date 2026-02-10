@@ -22,8 +22,10 @@ class BaseEvent(BaseModel):
     class Config:
         extra = "allow"
 
+
 class UserMessage(BaseModel):
     """Payload for user.message events."""
+
     message: str = Field(..., description="用户消息")
 
 

@@ -2,9 +2,9 @@
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
+from aiwen.registries import register_executor
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.executor.base import AgentEvent, Executor
-from aiwen.services.executor.executor_registry import register_executor
 
 
 @register_executor
@@ -30,7 +30,7 @@ class AgentTemplate(Executor):
         return {"intent": intent, "sql": sql, "data": data}
 
     async def stream(
-        self,user_message:UserMessage
+        self, user_message: UserMessage
     ) -> AsyncGenerator[AgentEvent, None]:
         """Stream NL2SQL progress as typed plan-step events.
 

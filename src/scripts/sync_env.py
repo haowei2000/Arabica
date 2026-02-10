@@ -1,8 +1,8 @@
+import argparse
 import os
-import shutil
 from pathlib import Path
 import re
-import argparse
+import shutil
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -163,7 +163,7 @@ def main():
         if action == "skipall":
             skip_all = True
             break
-        elif action == "continue":
+        if action == "continue":
             new_entries.append(f"{key}={value}\n")
 
     # 如果用户选择跳过全部，则直接拷贝.env.example为.env

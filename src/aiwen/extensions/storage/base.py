@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import BinaryIO, Iterable, Optional
+from typing import BinaryIO, Optional
 
 
 @dataclass(frozen=True)
 class ObjectInfo:
     key: str
     size: int
-    etag: Optional[str] = None
-    content_type: Optional[str] = None
-    last_modified: Optional[datetime] = None
-    metadata: Optional[dict] = None
+    etag: str | None = None
+    content_type: str | None = None
+    last_modified: datetime | None = None
+    metadata: dict | None = None
 
 
 class StorageBackend(ABC):
@@ -24,25 +25,25 @@ class StorageBackend(ABC):
 
     @abstractmethod
     def put_bytes(
-            self,
-            key: str,
-            data: bytes,
-            *,
-            content_type: Optional[str] = None,
-            metadata: Optional[dict] = None,
-            overwrite: bool = True,
+        self,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = True,
     ) -> ObjectInfo:
         """上传 bytes"""
 
     @abstractmethod
     def put_file(
-            self,
-            key: str,
-            file: BinaryIO,
-            *,
-            content_type: Optional[str] = None,
-            metadata: Optional[dict] = None,
-            overwrite: bool = True,
+        self,
+        key: str,
+        file: BinaryIO,
+        *,
+        content_type: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = True,
     ) -> ObjectInfo:
         """上传文件流（适合大文件）"""
 

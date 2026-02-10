@@ -27,9 +27,9 @@
     print(settings.postgres.aiwen_dbname)
 """
 
+from functools import lru_cache
 import logging
 import os
-from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv

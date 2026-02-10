@@ -8,17 +8,18 @@ Create Date: 2026-01-27 10:00:00.000000
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "e5f6a7b8c9d0"
-down_revision: Union[str, Sequence[str], None] = "d44c36b57007"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "d44c36b57007"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -40,7 +41,9 @@ def upgrade() -> None:
         sa.Column("status", sa.String(50), server_default="active", nullable=False),
         sa.Column("run_count", sa.Integer, server_default="0", nullable=False),
         sa.Column("member_count", sa.Integer, server_default="1", nullable=False),
-        sa.Column("legacy_conversation_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column(
+            "legacy_conversation_id", postgresql.UUID(as_uuid=True), nullable=True
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("is_deleted", sa.Boolean, server_default="false", nullable=False),
@@ -67,7 +70,10 @@ def upgrade() -> None:
         sa.Column("role", sa.String(50), server_default="viewer", nullable=False),
         sa.Column("invited_by", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column(
-            "invitation_status", sa.String(50), server_default="accepted", nullable=False
+            "invitation_status",
+            sa.String(50),
+            server_default="accepted",
+            nullable=False,
         ),
         sa.Column("joined_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -106,7 +112,9 @@ def upgrade() -> None:
         sa.Column("error", sa.Text, nullable=True),
         sa.Column("error_code", sa.String(100), nullable=True),
         sa.Column("waiting_for", postgresql.JSONB, nullable=True),
-        sa.Column("last_event_sequence", sa.Integer, server_default="0", nullable=False),
+        sa.Column(
+            "last_event_sequence", sa.Integer, server_default="0", nullable=False
+        ),
         sa.Column("legacy_task_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
@@ -166,7 +174,9 @@ def upgrade() -> None:
     )
 
     # Create event indexes
-    op.create_index("ix_event_workspace_sequence", "event", ["workspace_id", "sequence"])
+    op.create_index(
+        "ix_event_workspace_sequence", "event", ["workspace_id", "sequence"]
+    )
     op.create_index("ix_event_run_sequence", "event", ["run_id", "sequence"])
     op.create_index("ix_event_type_created", "event", ["event_type", "created_at"])
     op.create_index("ix_event_parent", "event", ["parent_event_id"])

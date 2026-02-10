@@ -14,7 +14,13 @@ from typing import Optional
 from uuid import uuid4
 
 from fastmcp import FastMCP
-from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 browser_mcp = FastMCP("Aiwen Browser MCP")
 
@@ -28,7 +34,7 @@ class BrowserSession:
 
 class BrowserManager:
     def __init__(self) -> None:
-        self._playwright: Optional[Playwright] = None
+        self._playwright: Playwright | None = None
         self._sessions: dict[str, BrowserSession] = {}
 
     async def _ensure_playwright(self) -> None:
@@ -175,9 +181,7 @@ async def _browser_sleep(*, session_id: str, duration_ms: int) -> dict:
     return {"status": "ok"}
 
 
-async def _browser_scroll(
-    *, session_id: str, delta_y: int, delta_x: int = 0
-) -> dict:
+async def _browser_scroll(*, session_id: str, delta_y: int, delta_x: int = 0) -> dict:
     page = _get_page(session_id)
     await page.mouse.wheel(delta_x, delta_y)
     return {"status": "ok"}
@@ -191,9 +195,7 @@ async def _browser_move_mouse(
     return {"status": "ok"}
 
 
-async def _browser_screenshot(
-    *, session_id: str, full_page: bool = False
-) -> dict:
+async def _browser_screenshot(*, session_id: str, full_page: bool = False) -> dict:
     page = _get_page(session_id)
     image_bytes = await page.screenshot(full_page=full_page)
     encoded = base64.b64encode(image_bytes).decode("ascii")
@@ -206,9 +208,7 @@ async def _browser_get_text(*, session_id: str, selector: str) -> dict:
     return {"text": text}
 
 
-async def _browser_get_html(
-    *, session_id: str, selector: str | None = None
-) -> dict:
+async def _browser_get_html(*, session_id: str, selector: str | None = None) -> dict:
     page = _get_page(session_id)
     if selector:
         html = await page.inner_html(selector)

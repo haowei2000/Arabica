@@ -3,11 +3,11 @@
 测试登录流程的脚本
 """
 
-import os
-import sys
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 
 # 添加src目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -51,9 +51,8 @@ def check_user_exists():
         if result.returncode == 0 and result.stdout.strip():
             print("✓ 管理员用户已存在")
             return True
-        else:
-            print("✗ 管理员用户不存在")
-            return False
+        print("✗ 管理员用户不存在")
+        return False
     except Exception as e:
         print(f"检查用户时出错: {e}")
         return False
@@ -69,9 +68,8 @@ def run_migrations():
         if result.returncode == 0:
             print("✓ 迁移成功完成")
             return True
-        else:
-            print(f"✗ 迁移失败: {result.stderr}")
-            return False
+        print(f"✗ 迁移失败: {result.stderr}")
+        return False
     except Exception as e:
         print(f"运行迁移时出错: {e}")
         return False
@@ -106,9 +104,8 @@ def main():
         print('  -H "Content-Type: application/json" \\')
         print('  -d \'{"username": "admin", "password": "admin123"}\'')
         return 0
-    else:
-        print("无法创建或找到管理员用户")
-        return 1
+    print("无法创建或找到管理员用户")
+    return 1
 
 
 if __name__ == "__main__":

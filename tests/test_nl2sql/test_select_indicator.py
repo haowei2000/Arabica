@@ -1,11 +1,11 @@
 from unittest.mock import AsyncMock, patch
 import uuid
 
+from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
 from fastapi.testclient import TestClient
 import pytest
 
 from aiwen.app import app
-from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
 
 
 @pytest.fixture

@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-统一的应用初始化模块
+Unified Application Bootstrap Module (v2 - with Centralized Registry System)
 
-提供标准化的初始化流程，确保所有服务（API、Worker、MCP）使用一致的配置和初始化逻辑。
+Provides standardized initialization flow with the new centralized registry system.
+This version simplifies registry initialization by using the unified registry manager.
 
-作者: haowei
-创建日期: 2025/12/31
-版本: v1.0.0
+Changes from v1:
+- Replaced separate _initialize_agent_registry() and _sync_inner_tools()
+- with single _initialize_registries() using RegistryManager
+- Cleaner imports from aiwen.registries
+- Reduced code duplication
+
+Author: haowei
+Created: 2025/12/31
+Version: v2.0.0
 """
 
-import logging
 from dataclasses import dataclass
+import logging
 from typing import Optional
 
 from sqlalchemy import select
@@ -29,130 +36,167 @@ logger = logging.getLogger(__name__)
 @dataclass
 class BootstrapConfig:
     """
-    初始化配置
+    Initialization Configuration
 
-    控制哪些组件需要初始化，不同服务可以有不同的需求：
-    - API: 需要全部初始化
-    - Worker: 需要 Redis + Agent Registry，不需要创建表（API已创建）
-    - MCP: 需要数据库，其他可选
+    Controls which components need initialization:
+    - API: Needs everything
+    - Worker: Needs Redis + Registry, no table creation
+    - MCP: Needs database only
     """
 
-    # 是否初始化日志
+    # Whether to initialize logging
     init_logging: bool = True
 
-    # 是否初始化Redis
+    # Whether to initialize Redis
     init_redis: bool = True
 
-    # 是否初始化数据库连接
+    # Whether to initialize database connection
     init_database: bool = True
 
-    # 是否创建数据库表（只有API服务需要）
+    # Whether to create database tables (only API service needs this)
     create_tables: bool = False
 
-    # 是否创建管理员用户（只有API服务需要）
+    # Whether to create admin user (only API service needs this)
     create_admin_user: bool = False
 
-    # 是否初始化 Agent Registry
-    init_agent_registry: bool = True
+    # Whether to initialize registries (unified: tools, executors, etc.)
+    init_registries: bool = True
 
+    # Whether to initialize storage
     init_storage: bool = True
-
-    # Whether to sync InnerTool definitions to the database
-    sync_inner_tools: bool = True
 
 
 async def _initialize_databases() -> None:
-    """初始化数据库连接"""
-    logger.info("🗄️  初始化数据库连接...")
+    """Initialize database connections"""
+    logger.info("🗄️  Initializing database connections...")
     _ensure_registered()
-    logger.info(f"✅ 已注册 {len(_engines)} 个数据库")
+    logger.info(f"✅ Registered {len(_engines)} databases")
 
 
 async def _create_tables() -> None:
     """
-    创建数据库表（已禁用）
+    Create database tables (disabled)
 
-    ⚠️  表的创建应该统一由 Alembic 管理，不应该在代码中自动创建。
+    ⚠️  Tables should be managed by Alembic, not auto-created in code.
 
-    使用 Alembic 创建表的步骤：
-    1. 运行: alembic upgrade head
-    2. 如果需要新表，先创建模型，然后: alembic revision --autogenerate -m "add new table"
-    3. 再运行: alembic upgrade head
-
-    如果确实需要在代码中创建表（仅用于测试环境），请手动调用 Base.metadata.create_all()
+    To create tables:
+    1. Run: alembic upgrade head
+    2. For new tables, create model first: alembic revision --autogenerate -m "add new table"
+    3. Then run: alembic upgrade head
     """
-    logger.warning("⚠️  跳过数据库表创建 - 表应该由 Alembic 管理")
-    logger.warning("   请确保已运行: alembic upgrade head")
-    # 不再自动创建表
-    # 如果需要创建表，请使用 Alembic:
-    # $ alembic upgrade head
+    logger.warning("⚠️  Skipping database table creation - tables managed by Alembic")
+    logger.warning("   Please ensure you've run: alembic upgrade head")
 
 
 def _setup_logging() -> None:
-    """设置日志系统"""
-    logger.info("📝 设置日志系统...")
+    """Setup logging system"""
+    logger.info("📝 Setting up logging system...")
     setup_logging()
-    logger.info("✅ 日志系统已配置")
+    logger.info("✅ Logging system configured")
 
 
 async def _shutdown_redis() -> None:
-    """关闭Redis连接"""
-    logger.info("🔴 关闭Redis连接...")
+    """Shutdown Redis connection"""
+    logger.info("🔴 Shutting down Redis connection...")
     try:
         from aiwen.middleware.cache_middleware import close_redis_client
 
         await close_redis_client()
-        logger.info("✅ Redis连接已关闭")
+        logger.info("✅ Redis connection closed")
     except Exception as e:
-        logger.error(f"⚠️  关闭Redis连接时出错: {e}")
+        logger.error(f"⚠️  Error closing Redis connection: {e}")
 
 
 async def _shutdown_databases() -> None:
-    """关闭所有数据库连接"""
-    logger.info("🗄️  关闭数据库连接...")
+    """Shutdown all database connections"""
+    logger.info("🗄️  Shutting down database connections...")
     for bind_name, engine in _engines.items():
         try:
             await engine.dispose()
-            logger.info(f"   ✅ 数据库 {bind_name} 已关闭")
+            logger.info(f"   ✅ Database {bind_name} closed")
         except Exception as e:
-            logger.error(f"   ⚠️  关闭数据库 {bind_name} 时出错: {e}")
-    logger.info("✅ 所有数据库连接已关闭")
+            logger.error(f"   ⚠️  Error closing database {bind_name}: {e}")
+    logger.info("✅ All database connections closed")
 
 
-async def _initialize_agent_registry() -> None:
-    """初始化Agent Registry"""
-    logger.info("🤖 初始化Agent Registry...")
+async def _initialize_registries() -> None:
+    """
+    Initialize all registries using centralized system.
+
+    This replaces the old separate initialization:
+    - _initialize_agent_registry() (executor registry)
+    - _sync_inner_tools() (tool registry)
+
+    New approach syncs all registries in one call.
+    """
+    logger.info("📦 Initializing centralized registry system...")
     try:
-        from aiwen.services.executor.executor_registry import (
-            init_executor_registry,
+        # Import from new centralized location
+        from aiwen.registries import (
             ExecutorRegistry,
+            RegistryManager,
+            ToolRegistry,
+            sync_all_registries,
         )
 
-        await init_executor_registry()
+        # Step 1: Import all executor modules (triggers @register_executor decorators)
+        logger.info("   🔍 Auto-discovering executor modules...")
+        ExecutorRegistry.discover_and_import_executors()
 
-        templates = ExecutorRegistry.list()
-        logger.info(f"✅ Agent Registry初始化完成")
-        logger.info(f"   已注册模板: {templates}")
+        # Step 2: Get registry manager instance
+        manager = RegistryManager.get_instance()
 
-        # 验证关键模板
-        if ExecutorRegistry.is_registered("DEFAULT001"):
-            logger.info("   ✅ DEFAULT001模板验证通过")
+        # Step 3: Register registries if not already registered
+        if not manager.is_registered(ToolRegistry):
+            manager.register_registry(ToolRegistry)
+        if not manager.is_registered(ExecutorRegistry):
+            manager.register_registry(ExecutorRegistry)
+
+        # Step 4: Get registry instances
+        tool_registry = manager.get_registry(ToolRegistry)
+        executor_registry = manager.get_registry(ExecutorRegistry)
+
+        # Log current state
+        tool_count = len(tool_registry.list_tools())
+        executor_count = len(executor_registry.list_templates())
+        logger.info(
+            f"   📊 In-memory state: {tool_count} tools, {executor_count} executors"
+        )
+
+        # Step 5: Sync all registries to database in one call
+        logger.info("   💾 Syncing all registries to database...")
+        async with get_session("aiwen") as session:
+            await sync_all_registries(session)
+
+        # Step 6: Verify and report
+        logger.info("✅ Registry system initialized successfully")
+        logger.info(f"   ✓ ToolRegistry: {tool_count} tools registered")
+        logger.info(f"   ✓ ExecutorRegistry: {executor_count} executors registered")
+
+        # Verify key templates
+        if executor_registry.is_registered("DEFAULT001"):
+            logger.info("   ✓ DEFAULT001 template verified")
         else:
-            logger.warning("   ⚠️  DEFAULT001模板未注册")
+            logger.warning("   ⚠️  DEFAULT001 template not registered")
+
+        # Get statistics
+        stats = manager.get_statistics()
+        logger.info(f"   📈 Registry statistics: {stats}")
+
     except Exception as e:
-        logger.error(f"❌ Agent Registry初始化失败: {e}")
-        # 不抛出异常，允许应用继续运行
+        logger.error(f"❌ Registry initialization failed: {e}", exc_info=True)
+        # Don't raise exception, allow app to continue
 
 
 class ApplicationBootstrap:
-    """应用初始化管理器"""
+    """Application Initialization Manager (v2)"""
 
-    def __init__(self, config: Optional[BootstrapConfig] = None):
+    def __init__(self, config: BootstrapConfig | None = None):
         """
-        初始化 Bootstrap
+        Initialize Bootstrap
 
         Args:
-            config: 初始化配置，如果为None则使用默认配置
+            config: Initialization configuration, uses default if None
         """
         self.config = config or BootstrapConfig()
         self.settings = get_settings()
@@ -161,77 +205,75 @@ class ApplicationBootstrap:
 
     async def initialize(self) -> None:
         """
-        执行完整的初始化流程
+        Execute complete initialization flow
 
-        按照正确的顺序初始化各个组件
+        Initialize components in correct order
         """
         logger.info("=" * 60)
-        logger.info("🚀 应用初始化开始")
+        logger.info("🚀 Application initialization started (v2)")
         logger.info("=" * 60)
 
-        # Step 1: 日志系统（如果需要）
+        # Step 1: Logging system (if needed)
         if self.config.init_logging:
             _setup_logging()
 
-        # Step 2: 数据库连接
+        # Step 2: Database connection
         if self.config.init_database:
             await _initialize_databases()
 
-        # Step 3: 数据库表创建（仅API服务）
+        # Step 3: Database table creation (API service only)
         if self.config.create_tables:
             await _create_tables()
 
-        # Step 4: Redis连接
+        # Step 4: Redis connection
         if self.config.init_redis:
             await self._initialize_redis()
 
-        # Step 5: 创建管理员用户（仅API服务）
+        # Step 5: Create admin user (API service only)
         if self.config.create_admin_user:
             await self._create_admin_user()
 
-        # Step 6: Agent Registry初始化
-        if self.config.init_agent_registry:
-            await _initialize_agent_registry()
+        # Step 6: ⭐ NEW: Unified registry initialization
+        if self.config.init_registries:
+            await _initialize_registries()
 
-        # Step 7: Sync InnerTool definitions to database
-        if self.config.sync_inner_tools:
-            await self._sync_inner_tools()
-
+        # Step 7: Storage backend
         if self.config.init_storage:
             await self._init_storage_backend()
+
         logger.info("=" * 60)
-        logger.info("✅ 应用初始化完成")
+        logger.info("✅ Application initialization completed (v2)")
         logger.info("=" * 60)
 
     async def cleanup(self) -> None:
-        """清理所有资源"""
+        """Cleanup all resources"""
         logger.info("=" * 60)
-        logger.info("🧹 清理资源开始")
+        logger.info("🧹 Resource cleanup started")
         logger.info("=" * 60)
 
-        # 关闭Redis连接
+        # Shutdown Redis connection
         if self.config.init_redis:
             await _shutdown_redis()
 
-        # 关闭数据库连接
+        # Shutdown database connections
         if self.config.init_database:
             await _shutdown_databases()
 
         logger.info("=" * 60)
-        logger.info("✅ 资源清理完成")
+        logger.info("✅ Resource cleanup completed")
         logger.info("=" * 60)
 
     # ========================================================================
-    # 私有方法 - 各个初始化步骤
+    # Private methods - individual initialization steps
     # ========================================================================
 
     async def _initialize_redis(self) -> None:
-        """初始化Redis连接"""
-        logger.info("🔴 初始化Redis连接...")
+        """Initialize Redis connection"""
+        logger.info("🔴 Initializing Redis connection...")
         try:
             from aiwen.middleware.cache_middleware import (
-                init_redis_client,
                 get_redis_client,
+                init_redis_client,
             )
 
             await init_redis_client()
@@ -241,59 +283,48 @@ class ApplicationBootstrap:
                 raise RuntimeError("Redis client initialization returned None")
 
             logger.info(
-                f"✅ Redis连接成功: {self.settings.redis.host}:{self.settings.redis.port}"
+                f"✅ Redis connected: {self.settings.redis.host}:{self.settings.redis.port}"
             )
         except Exception as e:
-            logger.error(f"❌ Redis初始化失败: {e}")
+            logger.error(f"❌ Redis initialization failed: {e}")
             raise
 
-    async def _sync_inner_tools(self) -> None:
-        """Sync InnerTool definitions to the database"""
-        logger.info("Syncing InnerTool definitions to database...")
-        try:
-            from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
-
-            async with get_session("aiwen") as session:
-                count = await sync_inner_tools_to_db(session)
-            logger.info(f"Synced {count} InnerTools to database")
-        except Exception as e:
-            logger.error(f"Failed to sync InnerTools: {e}")
-
     async def _init_storage_backend(self) -> None:
-        """获取存储后端（供Worker使用）"""
+        """Initialize storage backend (for Worker)"""
         from aiwen.extensions.storage.global_storage import init_global_s3_storage
+
         init_global_s3_storage(
             endpoint_url=self.settings.rustfs.endpoint,
             bucket=self.settings.rustfs.bucket,
             access_key=self.settings.rustfs.access_key,
             secret_key=self.settings.rustfs.secret_key,
-            use_ssl=self.settings.rustfs.secure
+            use_ssl=self.settings.rustfs.secure,
         )
         self.storage = get_global_s3_storage()
-        logger.info("Storage Init Successfully")
+        logger.info("✅ Storage initialized successfully")
 
     async def _create_admin_user(self) -> None:
-        """创建管理员用户"""
-        logger.info("👤 检查管理员用户...")
+        """Create admin user"""
+        logger.info("👤 Checking admin user...")
         try:
             async with get_session("aiwen") as session:
-                # 检查默认租户
+                # Check default tenant
                 result = await session.execute(
                     select(Tenant).where(Tenant.name == "default")
                 )
                 tenant = result.scalar_one_or_none()
 
                 if not tenant:
-                    logger.info("   创建默认租户...")
+                    logger.info("   Creating default tenant...")
                     tenant = Tenant(name="default", description="Default tenant")
                     session.add(tenant)
                     await session.commit()
                     await session.refresh(tenant)
-                    logger.info("   ✅ 默认租户已创建")
+                    logger.info("   ✅ Default tenant created")
                 else:
-                    logger.info("   ✅ 默认租户已存在")
+                    logger.info("   ✅ Default tenant exists")
 
-                # 检查管理员用户
+                # Check admin user
                 admin_username = self.settings.auth.admin_username
                 result = await session.execute(
                     select(User).where(User.username == admin_username)
@@ -301,11 +332,11 @@ class ApplicationBootstrap:
                 admin_user = result.scalar_one_or_none()
 
                 if admin_user:
-                    logger.info(f"   ✅ 管理员用户已存在: {admin_username}")
+                    logger.info(f"   ✅ Admin user exists: {admin_username}")
                     return
 
-                # 创建管理员用户
-                logger.info(f"   创建管理员用户: {admin_username}")
+                # Create admin user
+                logger.info(f"   Creating admin user: {admin_username}")
                 hashed_password = hash_password(self.settings.auth.admin_password)
 
                 admin_user = User(
@@ -321,98 +352,98 @@ class ApplicationBootstrap:
                 session.add(admin_user)
                 await session.flush()
 
-                # 更新租户的管理员ID
+                # Update tenant admin ID
                 tenant.admin_id = admin_user.id
                 session.add(tenant)
 
                 await session.commit()
                 await session.refresh(admin_user)
 
-                logger.info(f"   ✅ 管理员用户已创建")
-                logger.info(f"      用户名: {admin_username}")
-                logger.info(f"      邮箱: {admin_user.email}")
-                logger.info(f"      角色: {admin_user.role}")
+                logger.info("   ✅ Admin user created")
+                logger.info(f"      Username: {admin_username}")
+                logger.info(f"      Email: {admin_user.email}")
+                logger.info(f"      Role: {admin_user.role}")
         except Exception as e:
-            logger.error(f"❌ 创建管理员用户失败: {e}")
-            # 不抛出异常，允许应用继续运行
+            logger.error(f"❌ Admin user creation failed: {e}")
+            # Don't raise exception, allow app to continue
 
     def get_redis_client(self):
-        """获取Redis客户端（供Worker使用）"""
+        """Get Redis client (for Worker)"""
         return self.redis_client
 
 
 # ============================================================================
-# 预定义的配置模板
+# Predefined configuration templates
 # ============================================================================
 
 
 def get_api_bootstrap_config() -> BootstrapConfig:
     """
-    API服务的初始化配置
+    API service initialization configuration
 
-    注意：
-    - create_tables=False: 表由 Alembic 统一管理，不在代码中创建
-    - create_admin_user=True: API 负责创建管理员用户
+    Note:
+    - create_tables=False: Tables managed by Alembic
+    - create_admin_user=True: API responsible for user creation
+    - init_registries=True: ⭐ NEW unified registry initialization
     """
     return BootstrapConfig(
         init_logging=True,
         init_redis=True,
         init_database=True,
-        create_tables=False,  # ⚠️  表由 Alembic 管理，不在代码中创建
-        create_admin_user=True,  # API负责创建用户
-        init_agent_registry=True,
+        create_tables=False,  # ⚠️  Tables managed by Alembic
+        create_admin_user=True,  # API creates users
+        init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
-        sync_inner_tools=True,
     )
 
 
 def get_worker_bootstrap_config() -> BootstrapConfig:
     """
-    Worker服务的初始化配置
+    Worker service initialization configuration
 
-    注意：
-    - create_tables=False: 表由 Alembic 统一管理
-    - create_admin_user=False: Worker 不需要创建用户
+    Note:
+    - create_tables=False: Tables managed by Alembic
+    - create_admin_user=False: Worker doesn't create users
+    - init_registries=True: ⭐ NEW unified registry initialization
     """
     return BootstrapConfig(
         init_logging=True,
         init_redis=True,
         init_database=True,
-        create_tables=False,  # 表由 Alembic 管理
-        create_admin_user=False,  # Worker不创建用户
-        init_agent_registry=True,  # Worker需要Agent Registry
+        create_tables=False,  # Tables managed by Alembic
+        create_admin_user=False,  # Worker doesn't create users
+        init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
-        sync_inner_tools=True,
     )
 
 
 def get_mcp_bootstrap_config() -> BootstrapConfig:
     """
-    MCP服务的初始化配置 - 最小化初始化
+    MCP service initialization configuration - minimal
 
-    注意：
-    - create_tables=False: 表由 Alembic 统一管理
-    - init_redis=False: MCP 不依赖 Redis
+    Note:
+    - create_tables=False: Tables managed by Alembic
+    - init_redis=False: MCP doesn't depend on Redis
+    - init_registries=False: MCP doesn't need registries
     """
     return BootstrapConfig(
         init_logging=True,
-        init_redis=False,  # MCP不需要Redis
+        init_redis=False,  # MCP doesn't need Redis
         init_database=True,
-        create_tables=False,  # 表由 Alembic 管理
-        create_admin_user=False,  # MCP不创建用户
-        init_agent_registry=False,  # MCP不需要Agent Registry
+        create_tables=False,  # Tables managed by Alembic
+        create_admin_user=False,  # MCP doesn't create users
+        init_registries=False,  # MCP doesn't need registries
         init_storage=False,
-        sync_inner_tools=False,
     )
 
 
 def get_alembic_bootstrap_config() -> BootstrapConfig:
     """
-    Alembic的初始化配置
+    Alembic initialization configuration
 
-    注意：
-    - create_tables=False: 表由 Alembic 统一管理
-    - create_admin_user=False: Alembic 不需要创建用户
+    Note:
+    - create_tables=False: Tables managed by Alembic
+    - init_registries=False: Alembic doesn't need registries
     """
     return BootstrapConfig(
         init_logging=False,
@@ -420,59 +451,54 @@ def get_alembic_bootstrap_config() -> BootstrapConfig:
         init_database=True,
         create_tables=False,
         create_admin_user=False,
-        init_agent_registry=False,
+        init_registries=False,
         init_storage=False,
-        sync_inner_tools=False,
     )
 
 
 def get_celery_bootstrap_config() -> BootstrapConfig:
-    """
-    Celery的初始化配置
-
-    """
+    """Celery initialization configuration"""
     return BootstrapConfig(
         init_logging=False,
         init_redis=False,
         init_database=True,
         create_tables=False,
         create_admin_user=False,
-        init_agent_registry=False,
+        init_registries=False,
         init_storage=True,
-        sync_inner_tools=False,
     )
 
 
 async def bootstrap_alembic() -> ApplicationBootstrap:
-    """初始化Alembic服务"""
+    """Initialize Alembic service"""
     bootstrap = ApplicationBootstrap(get_alembic_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap
 
 
 async def bootstrap_api() -> ApplicationBootstrap:
-    """初始化API服务"""
+    """Initialize API service"""
     bootstrap = ApplicationBootstrap(get_api_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap
 
 
 async def bootstrap_worker() -> ApplicationBootstrap:
-    """初始化Worker服务"""
+    """Initialize Worker service"""
     bootstrap = ApplicationBootstrap(get_worker_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap
 
 
 async def bootstrap_mcp() -> ApplicationBootstrap:
-    """初始化MCP服务"""
+    """Initialize MCP service"""
     bootstrap = ApplicationBootstrap(get_mcp_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap
 
 
 async def bootstrap_celery() -> ApplicationBootstrap:
-    """初始化Celery服务"""
+    """Initialize Celery service"""
     bootstrap = ApplicationBootstrap(get_celery_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap

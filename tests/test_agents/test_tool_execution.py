@@ -13,13 +13,6 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import pytest
-
-from aiwen.schemas.tools.execution import (
-    ExecutionContext,
-    ToolResult,
-    ToolResultSubmission,
-)
 from aiwen.services.tools.execution_mode import (
     ResourceLimits,
     ToolExecutionMode,
@@ -33,6 +26,13 @@ from aiwen.services.tools.execution_mode import (
     server_tool,
 )
 from aiwen.services.tools.execution_router import ExecutionRouter
+import pytest
+
+from aiwen.schemas.tools.execution import (
+    ExecutionContext,
+    ToolResult,
+    ToolResultSubmission,
+)
 
 
 class TestToolExecutionMode:
@@ -347,7 +347,9 @@ class TestSandboxExecutor:
         mock_container.id = "test-container-123"
         mock_container.start = AsyncMock()
         mock_container.wait = AsyncMock(return_value={"StatusCode": 0})
-        mock_container.log = AsyncMock(return_value=['{"success": true, "result": "ok"}'])
+        mock_container.log = AsyncMock(
+            return_value=['{"success": true, "result": "ok"}']
+        )
         mock_container.delete = AsyncMock()
 
         mock_docker = AsyncMock()
@@ -391,7 +393,7 @@ class TestSandboxExecutor:
 
         # Make wait hang forever
         mock_docker.containers.create.return_value.wait = AsyncMock(
-            side_effect=asyncio.TimeoutError()
+            side_effect=TimeoutError()
         )
         mock_docker.containers.create.return_value.kill = AsyncMock()
 

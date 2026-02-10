@@ -38,7 +38,9 @@ def upgrade() -> None:
         )
 
     if "agent_template_id" in ws_columns:
-        op.drop_constraint("fk_workspace_agent_template", "workspace", type_="foreignkey")
+        op.drop_constraint(
+            "fk_workspace_agent_template", "workspace", type_="foreignkey"
+        )
         op.drop_column("workspace", "agent_template_id")
 
     # Update run table - add app_id
@@ -79,7 +81,9 @@ def downgrade() -> None:
     if "agent_template_id" not in ws_columns:
         op.add_column(
             "workspace",
-            sa.Column("agent_template_id", postgresql.UUID(as_uuid=True), nullable=True),
+            sa.Column(
+                "agent_template_id", postgresql.UUID(as_uuid=True), nullable=True
+            ),
         )
         op.create_foreign_key(
             "fk_workspace_agent_template",

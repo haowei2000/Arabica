@@ -22,7 +22,11 @@
       "Bash(python:*)",
       "Bash(make db-revision:*)",
       "Bash(make db-upgrade:*)",
-      "Bash(PGPASSWORD=wang20000520 psql:*)"
+      "Bash(PGPASSWORD=wang20000520 psql:*)",
+      "Bash(ls:*)",
+      "Bash(du:*)",
+      "Bash(findstr:*)",
+      "Bash(test:*)"
     ]
   },
   "outputStyle": "Explanatory"

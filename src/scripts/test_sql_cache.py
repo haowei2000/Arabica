@@ -4,8 +4,8 @@ Test script to verify Redis cache functionality for SQL generation
 """
 
 import asyncio
-import sys
 from pathlib import Path
+import sys
 
 # Add src to path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -17,8 +17,8 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from aiwen.schemas.nl2sql.generate_sql import SqlResponse
 from aiwen.schemas.nl2sql.indicator_info import (
-    IndicatorInfoSchema,
     DimensionInfoSchema,
+    IndicatorInfoSchema,
     TableSchema,
 )
 from aiwen.services.nl2sql.generate_sql import generate_sql

@@ -28,24 +28,24 @@ import argparse
 import asyncio
 import json
 import logging
-import sys
 from pathlib import Path
+import sys
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from aiwen.extensions.database import get_session
-from aiwen.models.agents.agent_task import AgentTask
 from aiwen.models.agents.conversation import Conversation
 from aiwen.models.agents.event import Event
 from aiwen.models.agents.message import Message
 from aiwen.models.agents.run import Run
 from aiwen.models.agents.workspace import Workspace
 from aiwen.models.agents.workspace_member import WorkspaceMember
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from aiwen.extensions.database import get_session
+from aiwen.models.agents.agent_task import AgentTask
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,10 +85,10 @@ class WorkspaceMigration:
     """Handles migration from Conversation to Workspace architecture."""
 
     def __init__(
-            self,
-            dry_run: bool = False,
-            batch_size: int = 100,
-            state_file: Path | None = None,
+        self,
+        dry_run: bool = False,
+        batch_size: int = 100,
+        state_file: Path | None = None,
     ):
         self.dry_run = dry_run
         self.batch_size = batch_size
@@ -191,7 +191,7 @@ class WorkspaceMigration:
                 )
 
     async def _migrate_conversation(
-            self, session: AsyncSession, conv: Conversation
+        self, session: AsyncSession, conv: Conversation
     ) -> Workspace:
         """Migrate a single conversation to workspace."""
         if self.dry_run:
@@ -200,7 +200,9 @@ class WorkspaceMigration:
             return None
 
         # Determine owner
-        owner_id = str(conv.account_id) if conv.account_id else str(conv.from_end_user_id)
+        owner_id = (
+            str(conv.account_id) if conv.account_id else str(conv.from_end_user_id)
+        )
         if not owner_id or owner_id == "None":
             # Fallback: use a system user or skip
             logger.warning(f"Conversation {conv.id} has no owner, skipping")
@@ -249,9 +251,7 @@ class WorkspaceMigration:
         logger.info(f"Total tasks to migrate: {total}")
 
         # Check for already migrated
-        migrated_stmt = select(func.count(Run.id)).where(
-            Run.legacy_task_id.isnot(None)
-        )
+        migrated_stmt = select(func.count(Run.id)).where(Run.legacy_task_id.isnot(None))
         already_migrated = (await session.execute(migrated_stmt)).scalar() or 0
         logger.info(f"Already migrated: {already_migrated}")
 
@@ -266,9 +266,7 @@ class WorkspaceMigration:
                 select(AgentTask)
                 .where(
                     ~AgentTask.id.in_(
-                        select(Run.legacy_task_id).where(
-                            Run.legacy_task_id.isnot(None)
-                        )
+                        select(Run.legacy_task_id).where(Run.legacy_task_id.isnot(None))
                     )
                 )
                 .order_by(AgentTask.created_at)
@@ -308,9 +306,7 @@ class WorkspaceMigration:
             return None
 
         # Find workspace for this app
-        ws_stmt = select(Workspace).where(
-            Workspace.app_id == str(task.app_id)
-        ).limit(1)
+        ws_stmt = select(Workspace).where(Workspace.app_id == str(task.app_id)).limit(1)
         ws_result = await session.execute(ws_stmt)
         workspace = ws_result.scalar_one_or_none()
 
@@ -352,7 +348,9 @@ class WorkspaceMigration:
             user_id=str(task.user_id),
             status=status_map.get(task.status, "finished"),
             trigger_type="user",
-            input_data=task.payload if isinstance(task.payload, dict) else {"data": task.payload},
+            input_data=task.payload
+            if isinstance(task.payload, dict)
+            else {"data": task.payload},
             output_data=task.result,
             error=task.error,
             legacy_task_id=str(task.id),
@@ -426,7 +424,9 @@ class WorkspaceMigration:
             logger.warning(f"No workspace found for conversation {msg.workspace_id}")
             return
 
-        user_id = str(msg.from_account_id) if msg.from_account_id else str(workspace.owner_id)
+        user_id = (
+            str(msg.from_account_id) if msg.from_account_id else str(workspace.owner_id)
+        )
 
         # Create user message event
         user_event = Event(

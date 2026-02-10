@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import BinaryIO, Iterable, Optional
+from typing import BinaryIO, Optional
 
 import boto3
 from botocore.config import Config
@@ -12,33 +13,33 @@ from botocore.exceptions import ClientError
 class ObjectInfo:
     key: str
     size: int
-    etag: Optional[str] = None
-    content_type: Optional[str] = None
-    last_modified: Optional[datetime] = None
-    metadata: Optional[dict] = None
+    etag: str | None = None
+    content_type: str | None = None
+    last_modified: datetime | None = None
+    metadata: dict | None = None
 
 
 class StorageBackend(ABC):
     @abstractmethod
     def put_bytes(
-            self,
-            key: str,
-            data: bytes,
-            *,
-            content_type: Optional[str] = None,
-            metadata: Optional[dict] = None,
-            overwrite: bool = True,
+        self,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = True,
     ) -> ObjectInfo: ...
 
     @abstractmethod
     def put_file(
-            self,
-            key: str,
-            file: BinaryIO,
-            *,
-            content_type: Optional[str] = None,
-            metadata: Optional[dict] = None,
-            overwrite: bool = True,
+        self,
+        key: str,
+        file: BinaryIO,
+        *,
+        content_type: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = True,
     ) -> ObjectInfo: ...
 
     @abstractmethod
@@ -70,14 +71,14 @@ class S3StorageBackend(StorageBackend):
     """
 
     def __init__(
-            self,
-            *,
-            endpoint_url: str,
-            bucket: str,
-            access_key: str,
-            secret_key: str,
-            region_name: str = "us-east-1",
-            use_ssl: bool = False,
+        self,
+        *,
+        endpoint_url: str,
+        bucket: str,
+        access_key: str,
+        secret_key: str,
+        region_name: str = "us-east-1",
+        use_ssl: bool = False,
     ):
         self.bucket = bucket
 
@@ -119,13 +120,13 @@ class S3StorageBackend(StorageBackend):
             raise
 
     def put_bytes(
-            self,
-            key: str,
-            data: bytes,
-            *,
-            content_type: Optional[str] = None,
-            metadata: Optional[dict] = None,
-            overwrite: bool = True,
+        self,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = True,
     ) -> ObjectInfo:
         key = _normalize_key(key)
 
@@ -157,13 +158,13 @@ class S3StorageBackend(StorageBackend):
         )
 
     def put_file(
-            self,
-            key: str,
-            file: BinaryIO,
-            *,
-            content_type: Optional[str] = None,
-            metadata: Optional[dict] = None,
-            overwrite: bool = True,
+        self,
+        key: str,
+        file: BinaryIO,
+        *,
+        content_type: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = True,
     ) -> ObjectInfo:
         key = _normalize_key(key)
 

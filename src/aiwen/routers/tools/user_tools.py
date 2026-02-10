@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
+from aiwen.registries import ToolRegistry
 from aiwen.schemas.tools.tool_template import (
     TOOL_TEMPLATES,
     ToolTemplate,
@@ -30,7 +31,6 @@ from aiwen.schemas.tools.user_tool import (
     UserToolResponse,
     UserToolUpdate,
 )
-from aiwen.services.tools.tool_registry import ToolRegistry
 from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
 from aiwen.services.tools.user_tool_crud import UserToolCRUD
 
@@ -217,7 +217,9 @@ async def get_tool(
 
     tool = await crud.get_tool_by_id(tool_id, user_id)
     if not tool:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
 
     return _build_user_tool_response(tool)
 
@@ -359,7 +361,9 @@ async def reload_tool(
 
     success = await loader.reload_tool(tool_id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
 
     return {"success": True, "message": "Tool reloaded successfully"}
 
@@ -391,7 +395,9 @@ async def execute_tool(
     tool_model = await crud.get_tool_by_id(request.tool_id, user_id)
 
     if not tool_model:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
 
     # Get tool from registry
     tool_instance = ToolRegistry.get_tool_instance(tool_model.name)

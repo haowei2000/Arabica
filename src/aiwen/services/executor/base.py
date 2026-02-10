@@ -88,6 +88,7 @@ class Executor(ABC):
     async def setup(self) -> None:
         """Setup any resources needed by the agent."""
         ...
+
     @abstractmethod
     async def run(self, user_message: UserMessage) -> dict[str, Any]:
         """Run to completion and return the final result."""

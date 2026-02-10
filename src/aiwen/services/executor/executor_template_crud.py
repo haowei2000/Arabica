@@ -81,7 +81,9 @@ class ExecutorCRUD:
         )
         return result.scalars().first()
 
-    async def list_templates(self, include_disabled: bool = True) -> Sequence[AgentTemplate]:
+    async def list_templates(
+        self, include_disabled: bool = True
+    ) -> Sequence[AgentTemplate]:
         """
         List all agent templates.
 
@@ -99,9 +101,7 @@ class ExecutorCRUD:
         return result.scalars().all()
 
     async def mark_template_as_deleted(
-        self,
-        template_code: str,
-        auto_commit: bool = True
+        self, template_code: str, auto_commit: bool = True
     ) -> bool:
         """
         Mark a template as deleted by setting enabled=False.

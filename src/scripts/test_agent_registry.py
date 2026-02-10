@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 测试 Agent Registry 是否正确注册
 
@@ -9,8 +8,8 @@
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
+import sys
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent.parent
@@ -27,7 +26,7 @@ if env_file.exists():
 else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
 
-from aiwen.services.executor.executor_registry import ExecutorRegistry, init_executor_registry
+from aiwen.registries import ExecutorRegistry
 
 # 配置日志
 logging.basicConfig(
@@ -49,10 +48,12 @@ async def test_registry():
     logger.info(f"   Registered templates: {templates}")
     logger.info(f"   Count: {len(templates)}")
 
-    # 2. 初始化 AgentRegistry
+    # 2. 初始化 AgentRegistry (新系统自动发现模块)
     logger.info("\n2. Initializing Agent Registry...")
     try:
-        await init_executor_registry()
+        # In the new unified registry system, discovery happens via bootstrap
+        # For testing purposes, we manually trigger executor discovery
+        ExecutorRegistry.discover_and_import_executors()
         logger.info("   ✓ Initialization complete")
     except Exception as e:
         logger.error(f"   ✗ Initialization failed: {e}", exc_info=True)

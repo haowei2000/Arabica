@@ -3,16 +3,16 @@ from typing import Optional
 from .s3_storage_backend import S3StorageBackend
 
 # 全局存储实例
-_global_s3_storage: Optional[S3StorageBackend] = None
+_global_s3_storage: S3StorageBackend | None = None
 
 
 def init_global_s3_storage(
-        endpoint_url: str,
-        bucket: str,
-        access_key: str,
-        secret_key: str,
-        region_name: str = "us-east-1",
-        use_ssl: bool = False,
+    endpoint_url: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    region_name: str = "us-east-1",
+    use_ssl: bool = False,
 ) -> None:
     """
     初始化全局 S3 存储实例

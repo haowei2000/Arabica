@@ -8,7 +8,8 @@ Revises: fc7024d34fc3
 Create Date: 2026-02-09 18:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -16,9 +17,9 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, Sequence[str], None] = "fc7024d34fc3"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "fc7024d34fc3"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -27,7 +28,9 @@ def upgrade() -> None:
     # ── Step 1: Add columns from user_tools to tool ──────────────────────
     op.add_column(
         "tool",
-        sa.Column("display_name", sa.String(200), nullable=True, comment="Display name"),
+        sa.Column(
+            "display_name", sa.String(200), nullable=True, comment="Display name"
+        ),
     )
     op.add_column(
         "tool",
@@ -67,7 +70,9 @@ def upgrade() -> None:
     )
     op.add_column(
         "tool",
-        sa.Column("code", sa.Text(), nullable=True, comment="Python code for server_run mode"),
+        sa.Column(
+            "code", sa.Text(), nullable=True, comment="Python code for server_run mode"
+        ),
     )
     op.add_column(
         "tool",
@@ -254,16 +259,32 @@ def downgrade() -> None:
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("display_name", sa.String(200), nullable=False),
         sa.Column("description", sa.Text(), nullable=False),
-        sa.Column("execution_mode", sa.String(50), nullable=False, server_default="server_run"),
+        sa.Column(
+            "execution_mode", sa.String(50), nullable=False, server_default="server_run"
+        ),
         sa.Column("inner_tool_name", sa.String(100), nullable=True),
-        sa.Column("parameter_mapping", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("input_schema", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("output_schema", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "parameter_mapping", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "input_schema", postgresql.JSONB(astext_type=sa.Text()), nullable=False
+        ),
+        sa.Column(
+            "output_schema", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("code", sa.Text(), nullable=True),
-        sa.Column("http_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("container_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("client_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("celery_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "http_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "container_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "client_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "celery_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("category", sa.String(50), server_default="custom"),
         sa.Column("tags", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("version", sa.String(20), server_default="1.0.0"),
@@ -322,9 +343,22 @@ def downgrade() -> None:
 
     # Drop new columns from tool
     for col in [
-        "display_name", "execution_mode", "inner_tool_name", "parameter_mapping",
-        "output_schema", "code", "http_config", "container_config", "client_config",
-        "celery_config", "category", "tags", "timeout", "verified",
-        "usage_count", "last_used_at", "workspace_id",
+        "display_name",
+        "execution_mode",
+        "inner_tool_name",
+        "parameter_mapping",
+        "output_schema",
+        "code",
+        "http_config",
+        "container_config",
+        "client_config",
+        "celery_config",
+        "category",
+        "tags",
+        "timeout",
+        "verified",
+        "usage_count",
+        "last_used_at",
+        "workspace_id",
     ]:
         op.drop_column("tool", col)

@@ -6,18 +6,18 @@ This script should be run after the database is initialized.
 
 import asyncio
 import os
-import sys
 from pathlib import Path
+import sys
 
 # Add the src directory to the path so we can import the app modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.extensions.database import get_session, get_base
-from aiwen.models.auth.user import User
+from aiwen.extensions.database import get_base, get_session
 from aiwen.models.auth.tenant import Tenant
+from aiwen.models.auth.user import User
 from aiwen.utils.security import hash_password
 
 
@@ -73,8 +73,8 @@ async def create_admin_user():
             await session.commit()
             await session.refresh(admin_user)
 
-            print(f"✅ Admin user created successfully!")
-            print(f"   Username: admin")
+            print("✅ Admin user created successfully!")
+            print("   Username: admin")
             print(f"   Password: {admin_password}")
             print(f"   Email: {admin_user.email}")
             print(f"   Role: {admin_user.role}")
@@ -96,9 +96,8 @@ def main():
     if result:
         print("\n🎉 Script completed successfully!")
         return 0
-    else:
-        print("\n💥 Script failed!")
-        return 1
+    print("\n💥 Script failed!")
+    return 1
 
 
 if __name__ == "__main__":

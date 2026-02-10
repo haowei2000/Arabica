@@ -4,8 +4,8 @@ Test script to verify cache middleware fix
 """
 
 import asyncio
-import sys
 from pathlib import Path
+import sys
 
 # Add src to path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from aiwen.middleware.cache_middleware import init_redis_client, clear_cache_pattern
+from aiwen.middleware.cache_middleware import clear_cache_pattern, init_redis_client
 
 
 async def test_cache_fix():

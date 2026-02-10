@@ -12,6 +12,7 @@ from pydantic import Field, create_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.tool import Tool
+from aiwen.registries import ToolRegistry
 from aiwen.services.tools.base_tool import (
     CeleryConfig,
     ClientConfig,
@@ -23,7 +24,6 @@ from aiwen.services.tools.base_tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.services.tools.tool_registry import ToolRegistry
 from aiwen.services.tools.user_tool_crud import UserToolCRUD
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,10 @@ class DynamicToolLoader:
                 fields[field_name] = (python_type, Field(..., description=field_desc))
             else:
                 default_value = field_default if field_default is not None else None
-                fields[field_name] = (python_type, Field(default=default_value, description=field_desc))
+                fields[field_name] = (
+                    python_type,
+                    Field(default=default_value, description=field_desc),
+                )
 
         # Create dynamic model
         model_name = f"{tool_name}InputSchema"
@@ -125,7 +128,10 @@ class DynamicToolLoader:
         if execution_mode == ToolExecutionMode.HTTP and user_tool.http_config:
             http_config = HTTPConfig(**user_tool.http_config)
 
-        elif execution_mode == ToolExecutionMode.CONTAINER_RUN and user_tool.container_config:
+        elif (
+            execution_mode == ToolExecutionMode.CONTAINER_RUN
+            and user_tool.container_config
+        ):
             container_config = ContainerConfig(**user_tool.container_config)
 
         elif execution_mode == ToolExecutionMode.CLIENT_RUN and user_tool.client_config:
@@ -184,7 +190,9 @@ class DynamicToolLoader:
         db_session = self.db
 
         # Override before_execute to track usage
-        async def before_execute(self_tool: ExternalTool, input_data: ToolInputSchema) -> None:
+        async def before_execute(
+            self_tool: ExternalTool, input_data: ToolInputSchema
+        ) -> None:
             """Track tool usage before execution"""
             crud = UserToolCRUD(db_session)
             await crud.increment_usage(tool_id, auto_commit=True)

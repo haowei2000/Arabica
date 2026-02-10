@@ -8,8 +8,8 @@ Create Date: 2025-12-23 11:30:00.000000
 
 """
 
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 

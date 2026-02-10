@@ -4,11 +4,12 @@ OAuth2认证演示脚本
 展示如何使用OAuth2PasswordBearer进行API认证
 """
 
-import os
-import sys
 import json
-import requests
+import os
 from pathlib import Path
+import sys
+
+import requests
 
 # 添加src目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -45,8 +46,7 @@ def login_and_get_token(base_url: str, username: str, password: str) -> str:
     if response.status_code == 200:
         data = response.json()
         return data["access_token"]
-    else:
-        raise Exception(f"登录失败: {response.status_code} - {response.text}")
+    raise Exception(f"登录失败: {response.status_code} - {response.text}")
 
 
 def access_protected_endpoint(base_url: str, token: str) -> dict:
@@ -68,8 +68,7 @@ def access_protected_endpoint(base_url: str, token: str) -> dict:
 
     if response.status_code == 200:
         return response.json()
-    else:
-        raise Exception(f"访问受保护端点失败: {response.status_code} - {response.text}")
+    raise Exception(f"访问受保护端点失败: {response.status_code} - {response.text}")
 
 
 def access_me_endpoint(base_url: str, token: str) -> dict:
@@ -90,8 +89,7 @@ def access_me_endpoint(base_url: str, token: str) -> dict:
 
     if response.status_code == 200:
         return response.json()
-    else:
-        raise Exception(f"访问/me端点失败: {response.status_code} - {response.text}")
+    raise Exception(f"访问/me端点失败: {response.status_code} - {response.text}")
 
 
 def main():
@@ -112,28 +110,28 @@ def main():
         # 1. 登录获取访问令牌
         print(f"\n1. 使用凭据登录: {username}/{password}")
         token = login_and_get_token(base_url, username, password)
-        print(f"✓ 成功获取访问令牌")
+        print("✓ 成功获取访问令牌")
         print(f"  令牌长度: {len(token)} 字符")
 
         # 2. 使用令牌访问受保护的端点
-        print(f"\n2. 访问受保护的用户资料端点")
+        print("\n2. 访问受保护的用户资料端点")
         profile_data = access_protected_endpoint(base_url, token)
-        print(f"✓ 成功获取用户资料:")
+        print("✓ 成功获取用户资料:")
         print(f"  用户ID: {profile_data.get('user_id')}")
         print(f"  角色: {profile_data.get('role')}")
         print(f"  租户ID: {profile_data.get('tenant_id')}")
 
         # 3. 使用令牌访问/me端点
-        print(f"\n3. 访问/me端点获取当前用户信息")
+        print("\n3. 访问/me端点获取当前用户信息")
         me_data = access_me_endpoint(base_url, token)
-        print(f"✓ 成功获取当前用户信息:")
+        print("✓ 成功获取当前用户信息:")
         print(f"  用户名: {me_data.get('username')}")
         print(f"  邮箱: {me_data.get('email')}")
         print(f"  角色: {me_data.get('role')}")
         print(f"  是否超级用户: {me_data.get('is_superuser')}")
         print(f"  是否激活: {me_data.get('is_active')}")
 
-        print(f"\n=== 演示完成 ===")
+        print("\n=== 演示完成 ===")
         return 0
 
     except Exception as e:

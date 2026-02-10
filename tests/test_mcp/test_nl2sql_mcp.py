@@ -1,7 +1,5 @@
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from aiwen.mcp_router.nl2sql import (
     check_data,
     execute_sql,
@@ -19,6 +17,7 @@ from aiwen.schemas.nl2sql.indicator_info import (
     TableSchema,
 )
 from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
+import pytest
 
 
 class TestNl2sqlMcpTools:

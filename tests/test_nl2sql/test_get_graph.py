@@ -112,9 +112,8 @@ class TestGetGraphEndpoint:
     ):
         """Test handling of Pydantic validation errors"""
         # Arrange
-        from pydantic import ValidationError
-
         from aiwen.schemas.nl2sql.graph import GraphResponse
+        from pydantic import ValidationError
 
         mock_get_indicator_graph.side_effect = ValidationError([], GraphResponse)
 

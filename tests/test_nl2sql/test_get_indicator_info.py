@@ -1,14 +1,14 @@
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-import pytest
-
-from aiwen.app import app
 from aiwen.schemas.nl2sql.indicator_info import (
     DimensionInfoSchema,
     IndicatorInfoSchema,
     TableSchema,
 )
+from fastapi.testclient import TestClient
+import pytest
+
+from aiwen.app import app
 
 
 @pytest.fixture

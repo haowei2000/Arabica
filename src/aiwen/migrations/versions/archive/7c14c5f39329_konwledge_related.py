@@ -5,16 +5,18 @@ Revises: 8c98386540b4
 Create Date: 2026-01-23 21:51:22.202208
 
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = '7c14c5f39329'
-down_revision: Union[str, Sequence[str], None] = '8c98386540b4'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "7c14c5f39329"
+down_revision: str | Sequence[str] | None = "8c98386540b4"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

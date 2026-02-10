@@ -148,7 +148,8 @@ async def run_workers(num_workers: int, name_prefix: str) -> None:
 
 @click.command()
 @click.option(
-    "-n", "--workers",
+    "-n",
+    "--workers",
     default=1,
     show_default=True,
     type=int,
@@ -162,7 +163,8 @@ async def run_workers(num_workers: int, name_prefix: str) -> None:
     help="Worker name prefix for consumer identification",
 )
 @click.option(
-    "-v", "--verbose",
+    "-v",
+    "--verbose",
     is_flag=True,
     help="Enable verbose logging (DEBUG level)",
 )

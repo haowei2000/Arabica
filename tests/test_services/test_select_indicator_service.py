@@ -6,6 +6,8 @@
 
 from unittest.mock import AsyncMock, patch
 
+from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
+from aiwen.services.nl2sql.select_indicator import select_indicator_service
 import pytest
 
 # 从测试工具导入辅助函数
@@ -20,9 +22,6 @@ from tests.utils.helpers import (
     mock_agent_response,
     mock_llm_response,
 )
-
-from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
-from aiwen.services.nl2sql.select_indicator import select_indicator_service
 
 
 @pytest.mark.unit

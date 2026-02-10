@@ -23,17 +23,34 @@ def cli():
 
 @cli.command()
 @click.option("--concurrency", "-c", default=4, show_default=True, help="Worker 并发数")
-@click.option("--queues", "-Q", default="default,knowledge", show_default=True, help="监听的队列（逗号分隔）")
+@click.option(
+    "--queues",
+    "-Q",
+    default="default,knowledge",
+    show_default=True,
+    help="监听的队列（逗号分隔）",
+)
 @click.option("--loglevel", "-l", default="info", show_default=True, help="日志级别")
 @click.option("--hostname", default=None, help="Worker hostname")
-@click.option("--pool", "-P", default="prefork", show_default=True, help="Pool类型: prefork/solo/gevent/eventlet")
-def worker(concurrency: int, queues: str, loglevel: str, hostname: str | None, pool: str):
+@click.option(
+    "--pool",
+    "-P",
+    default="prefork",
+    show_default=True,
+    help="Pool类型: prefork/solo/gevent/eventlet",
+)
+def worker(
+    concurrency: int, queues: str, loglevel: str, hostname: str | None, pool: str
+):
     """启动 Celery Worker"""
     queues = _normalize_queues(queues)
 
     cmd = [
-        sys.executable, "-m", "celery",
-        "-A", "aiwen.celery_worker.celery_app",
+        sys.executable,
+        "-m",
+        "celery",
+        "-A",
+        "aiwen.celery_worker.celery_app",
         "worker",
         f"--concurrency={concurrency}",
         f"--queues={queues}",
@@ -52,8 +69,11 @@ def worker(concurrency: int, queues: str, loglevel: str, hostname: str | None, p
 def beat(loglevel: str):
     """启动 Celery Beat（定时任务调度器）"""
     cmd = [
-        sys.executable, "-m", "celery",
-        "-A", "aiwen.celery_worker.celery_app",
+        sys.executable,
+        "-m",
+        "celery",
+        "-A",
+        "aiwen.celery_worker.celery_app",
         "beat",
         f"--loglevel={loglevel}",
     ]
@@ -63,7 +83,9 @@ def beat(loglevel: str):
 
 @cli.command()
 @click.option("--port", "-p", default=5555, show_default=True, help="Flower 端口")
-@click.option("--address", "-a", default="0.0.0.0", show_default=True, help="Flower 监听地址")
+@click.option(
+    "--address", "-a", default="0.0.0.0", show_default=True, help="Flower 监听地址"
+)
 def flower(port: int, address: str):
     """启动 Flower（Celery 监控面板）"""
     try:
@@ -73,8 +95,11 @@ def flower(port: int, address: str):
         raise SystemExit(1)  # noqa: B904
 
     cmd = [
-        sys.executable, "-m", "celery",
-        "-A", "aiwen.celery_worker.celery_app",
+        sys.executable,
+        "-m",
+        "celery",
+        "-A",
+        "aiwen.celery_worker.celery_app",
         "flower",
         f"--port={port}",
         f"--address={address}",

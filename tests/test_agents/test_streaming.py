@@ -2,9 +2,8 @@
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
-import pytest
-
 from aiwen.routers.agents.chat import event_generator
+import pytest
 
 
 @pytest.mark.asyncio

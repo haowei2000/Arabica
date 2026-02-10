@@ -67,7 +67,9 @@ async def example_2_specific_groups():
     logger.info("✓ Agent initialized with CONTEXT_TOOLS and UTILITY_TOOLS")
 
     # Test: Get current time (utility tool)
-    message = UserMessage(message="What's the current server time in Asia/Shanghai timezone?")
+    message = UserMessage(
+        message="What's the current server time in Asia/Shanghai timezone?"
+    )
 
     result = await agent.run(message)
     logger.info(f"Agent response: {result['answer']}")
@@ -184,13 +186,14 @@ async def example_4_combined_tools():
 
 async def example_5_workspace_query():
     """Example 5: Using workspace and run history tools"""
+    from sqlalchemy import select
+
     from aiwen.extensions.database import get_session
+    from aiwen.models.workspaces.workspace import Workspace
     from aiwen.schemas.events.event_payloads import UserMessage
     from aiwen.services.executor.executor_template.default.concrete import (
         DefaultAgentTemplate,
     )
-    from sqlalchemy import select
-    from aiwen.models.workspaces.workspace import Workspace
 
     logger.info("\n" + "=" * 80)
     logger.info("Example 5: Workspace Information Query")

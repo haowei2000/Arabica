@@ -32,10 +32,18 @@ class BrowserLaunchTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         headless: bool = Field(default=True, description="Run browser in headless mode")
-        viewport_width: int = Field(default=1280, description="Viewport width in pixels")
-        viewport_height: int = Field(default=720, description="Viewport height in pixels")
-        user_agent: str | None = Field(default=None, description="Custom user agent string")
-        slow_mo_ms: int = Field(default=0, description="Slow down operations by specified milliseconds")
+        viewport_width: int = Field(
+            default=1280, description="Viewport width in pixels"
+        )
+        viewport_height: int = Field(
+            default=720, description="Viewport height in pixels"
+        )
+        user_agent: str | None = Field(
+            default=None, description="Custom user agent string"
+        )
+        slow_mo_ms: int = Field(
+            default=0, description="Slow down operations by specified milliseconds"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_launch(
@@ -70,9 +78,11 @@ class BrowserGotoTool(InnerTool):
         url: str = Field(description="URL to navigate to")
         wait_until: str = Field(
             default="load",
-            description="When to consider navigation complete: 'load', 'domcontentloaded', 'networkidle', or 'commit'"
+            description="When to consider navigation complete: 'load', 'domcontentloaded', 'networkidle', or 'commit'",
         )
-        timeout_ms: int = Field(default=30000, description="Navigation timeout in milliseconds")
+        timeout_ms: int = Field(
+            default=30000, description="Navigation timeout in milliseconds"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_goto(
@@ -104,8 +114,12 @@ class BrowserClickTool(InnerTool):
     class InputSchema(ToolInputSchema):
         session_id: str = Field(description="Browser session ID")
         selector: str = Field(description="CSS selector of the element to click")
-        button: str = Field(default="left", description="Mouse button: 'left', 'right', or 'middle'")
-        delay_ms: int = Field(default=0, description="Delay between mousedown and mouseup in milliseconds")
+        button: str = Field(
+            default="left", description="Mouse button: 'left', 'right', or 'middle'"
+        )
+        delay_ms: int = Field(
+            default=0, description="Delay between mousedown and mouseup in milliseconds"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_click(
@@ -138,8 +152,12 @@ class BrowserTypeTool(InnerTool):
         session_id: str = Field(description="Browser session ID")
         selector: str = Field(description="CSS selector of the input element")
         text: str = Field(description="Text to type")
-        delay_ms: int = Field(default=50, description="Delay between key presses in milliseconds")
-        clear: bool = Field(default=True, description="Clear existing text before typing")
+        delay_ms: int = Field(
+            default=50, description="Delay between key presses in milliseconds"
+        )
+        clear: bool = Field(
+            default=True, description="Clear existing text before typing"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_type(
@@ -205,9 +223,11 @@ class BrowserWaitForTool(InnerTool):
         selector: str = Field(description="CSS selector of the element")
         state: str = Field(
             default="visible",
-            description="State to wait for: 'visible', 'hidden', 'attached', or 'detached'"
+            description="State to wait for: 'visible', 'hidden', 'attached', or 'detached'",
         )
-        timeout_ms: int = Field(default=30000, description="Wait timeout in milliseconds")
+        timeout_ms: int = Field(
+            default=30000, description="Wait timeout in milliseconds"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_wait_for(
@@ -267,8 +287,13 @@ class BrowserScrollTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         session_id: str = Field(description="Browser session ID")
-        delta_y: int = Field(description="Vertical scroll amount in pixels (positive = down, negative = up)")
-        delta_x: int = Field(default=0, description="Horizontal scroll amount in pixels (positive = right, negative = left)")
+        delta_y: int = Field(
+            description="Vertical scroll amount in pixels (positive = down, negative = up)"
+        )
+        delta_x: int = Field(
+            default=0,
+            description="Horizontal scroll amount in pixels (positive = right, negative = left)",
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_scroll(
@@ -300,7 +325,9 @@ class BrowserMoveMouseTool(InnerTool):
         session_id: str = Field(description="Browser session ID")
         x: int = Field(description="X coordinate in pixels")
         y: int = Field(description="Y coordinate in pixels")
-        steps: int = Field(default=10, description="Number of intermediate steps for smooth movement")
+        steps: int = Field(
+            default=10, description="Number of intermediate steps for smooth movement"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_move_mouse(
@@ -331,7 +358,10 @@ class BrowserScreenshotTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         session_id: str = Field(description="Browser session ID")
-        full_page: bool = Field(default=False, description="Capture full scrollable page instead of just viewport")
+        full_page: bool = Field(
+            default=False,
+            description="Capture full scrollable page instead of just viewport",
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_screenshot(
@@ -389,7 +419,9 @@ class BrowserGetHtmlTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         session_id: str = Field(description="Browser session ID")
-        selector: str | None = Field(default=None, description="CSS selector of element (None = entire page)")
+        selector: str | None = Field(
+            default=None, description="CSS selector of element (None = entire page)"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         result = await browser_module._browser_get_html(
@@ -448,18 +480,18 @@ BROWSER_TOOLS = [
 ]
 
 __all__ = [
-    "BrowserLaunchTool",
-    "BrowserGotoTool",
-    "BrowserClickTool",
-    "BrowserTypeTool",
-    "BrowserPressTool",
-    "BrowserWaitForTool",
-    "BrowserSleepTool",
-    "BrowserScrollTool",
-    "BrowserMoveMouseTool",
-    "BrowserScreenshotTool",
-    "BrowserGetTextTool",
-    "BrowserGetHtmlTool",
-    "BrowserCloseTool",
     "BROWSER_TOOLS",
+    "BrowserClickTool",
+    "BrowserCloseTool",
+    "BrowserGetHtmlTool",
+    "BrowserGetTextTool",
+    "BrowserGotoTool",
+    "BrowserLaunchTool",
+    "BrowserMoveMouseTool",
+    "BrowserPressTool",
+    "BrowserScreenshotTool",
+    "BrowserScrollTool",
+    "BrowserSleepTool",
+    "BrowserTypeTool",
+    "BrowserWaitForTool",
 ]

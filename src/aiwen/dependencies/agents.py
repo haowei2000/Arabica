@@ -28,7 +28,6 @@ async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
     return AppCRUD(db)
 
 
-
 async def get_template_crud(
     db: AsyncSession = Depends(get_aiwen_db),
 ) -> ExecutorCRUD:

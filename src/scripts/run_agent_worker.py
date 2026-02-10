@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Agent Worker 启动脚本
 
@@ -9,8 +8,8 @@ Agent Worker 启动脚本
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
+import sys
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent.parent
@@ -29,9 +28,10 @@ else:
     print("   Worker may fail if environment variables are not set!")
 
 from aiwen.celery_worker.task_worker import start_worker
+
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
-from aiwen.services.executor.executor_registry import init_executor_registry
+from aiwen.registries import ExecutorRegistry
 
 # 确保日志目录存在
 log_dir = project_root / "logs"
@@ -73,14 +73,14 @@ async def main():
         logger.info("Initializing Agent Registry...")
 
         try:
-            await init_executor_registry()
+            # In the new unified registry system, discovery happens via bootstrap
+            # For standalone scripts, we manually trigger executor discovery
+            ExecutorRegistry.discover_and_import_executors()
 
             # 验证注册是否成功
-            from aiwen.services.executor.executor_registry import ExecutorRegistry
-
             registered_templates = ExecutorRegistry.list()
 
-            print(f"✅ Agent Registry initialized successfully!")
+            print("✅ Agent Registry initialized successfully!")
             print(f"📋 Registered templates: {registered_templates}")
             logger.info(
                 f"Agent Registry initialized with templates: {registered_templates}"

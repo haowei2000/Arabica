@@ -4,5 +4,4 @@ from .concrete import DefaultAgentTemplate
 
 __all__ = [
     "DefaultAgentTemplate",
-
 ]

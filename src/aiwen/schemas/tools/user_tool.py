@@ -39,19 +39,29 @@ EXECUTION_MODE_TO_INNER_TOOL: dict[str, str] = {
 class UserToolBase(BaseModel):
     """Base schema for user tool (ExternalTool)"""
 
-    name: str = Field(..., description="Tool name (unique per user)", min_length=1, max_length=100)
-    display_name: str = Field(..., description="Display name", min_length=1, max_length=200)
+    name: str = Field(
+        ..., description="Tool name (unique per user)", min_length=1, max_length=100
+    )
+    display_name: str = Field(
+        ..., description="Display name", min_length=1, max_length=200
+    )
     description: str = Field(..., description="Tool description", min_length=1)
     execution_mode: AllowedExecutionMode = Field(
         default=AllowedExecutionMode.SERVER_RUN,
         description="Execution mode: server_run (code execution), http (HTTP API call)",
     )
-    input_schema: dict[str, Any] = Field(..., description="Input parameters schema (JSON Schema format)")
-    output_schema: dict[str, Any] | None = Field(None, description="Output schema (optional)")
+    input_schema: dict[str, Any] = Field(
+        ..., description="Input parameters schema (JSON Schema format)"
+    )
+    output_schema: dict[str, Any] | None = Field(
+        None, description="Output schema (optional)"
+    )
     category: str = Field(default="custom", description="Tool category")
     tags: list[str] | None = Field(None, description="Tool tags")
     version: int | str = Field(default=1, description="Tool version")
-    timeout: int = Field(default=30, ge=1, le=3600, description="Execution timeout in seconds")
+    timeout: int = Field(
+        default=30, ge=1, le=3600, description="Execution timeout in seconds"
+    )
     enabled: bool = Field(default=True, description="Whether tool is enabled")
     is_public: bool = Field(default=False, description="Whether tool is public")
 
@@ -81,9 +91,15 @@ class UserToolCreate(UserToolBase):
     # Execution mode specific configurations
     code: str | None = Field(None, description="Python code for server_run mode")
     http_config: dict[str, Any] | None = Field(None, description="HTTP configuration")
-    container_config: dict[str, Any] | None = Field(None, description="Container configuration")
-    client_config: dict[str, Any] | None = Field(None, description="Client configuration")
-    celery_config: dict[str, Any] | None = Field(None, description="Celery configuration")
+    container_config: dict[str, Any] | None = Field(
+        None, description="Container configuration"
+    )
+    client_config: dict[str, Any] | None = Field(
+        None, description="Client configuration"
+    )
+    celery_config: dict[str, Any] | None = Field(
+        None, description="Celery configuration"
+    )
 
 
 class UserToolUpdate(BaseModel):
@@ -95,8 +111,12 @@ class UserToolUpdate(BaseModel):
         None,
         description="Execution mode: server_run (code execution), http (HTTP API call)",
     )
-    inner_tool_name: str | None = Field(None, description="Name of the InnerTool to delegate to")
-    parameter_mapping: dict[str, str] | None = Field(None, description="Param name mapping")
+    inner_tool_name: str | None = Field(
+        None, description="Name of the InnerTool to delegate to"
+    )
+    parameter_mapping: dict[str, str] | None = Field(
+        None, description="Param name mapping"
+    )
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     code: str | None = None
@@ -117,9 +137,13 @@ class UserToolResponse(UserToolBase):
 
     id: UUID
     tool_code: str = Field(default="", description="Unique tool identifier code")
-    user_id: UUID | None = Field(None, description="Tool owner ID (NULL for inner tools)")
+    user_id: UUID | None = Field(
+        None, description="Tool owner ID (NULL for inner tools)"
+    )
     workspace_id: UUID | None = None
-    tool_type: str = Field(default="external", description="Tool type: inner or external")
+    tool_type: str = Field(
+        default="external", description="Tool type: inner or external"
+    )
     # Override to accept any execution mode (inner tools may use container_run, celery_run, etc.)
     execution_mode: str | None = Field(None, description="Execution mode")
     inner_tool_name: str | None = Field(

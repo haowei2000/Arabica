@@ -8,9 +8,8 @@ and automatic JSON Schema generation.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, TypeVar
-
 import logging
+from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -177,22 +176,28 @@ class BaseTool(ABC):
         # Validate required configuration based on execution mode
         if metadata.execution_mode == ToolExecutionMode.HTTP:
             if not metadata.http_config or not metadata.http_config.url:
-                raise ValueError(f"HTTP tool {cls.__name__} must provide http_config with url")
+                raise ValueError(
+                    f"HTTP tool {cls.__name__} must provide http_config with url"
+                )
 
         elif metadata.execution_mode == ToolExecutionMode.CONTAINER_RUN:
             if not metadata.container_config or not metadata.container_config.image:
-                raise ValueError(f"Container tool {cls.__name__} must provide container_config")
+                raise ValueError(
+                    f"Container tool {cls.__name__} must provide container_config"
+                )
 
         elif metadata.execution_mode == ToolExecutionMode.CLIENT_RUN:
             if not metadata.client_config or not metadata.client_config.handler_name:
-                raise ValueError(f"Client tool {cls.__name__} must provide client_config")
+                raise ValueError(
+                    f"Client tool {cls.__name__} must provide client_config"
+                )
 
         elif metadata.execution_mode == ToolExecutionMode.CELERY_RUN:
             if not metadata.celery_config:
                 metadata.celery_config = CeleryConfig()
 
     @abstractmethod
-    async def execute(self, input_data:Any) -> Any:
+    async def execute(self, input_data: Any) -> Any:
         """
         Core method to execute the tool
 
@@ -372,7 +377,8 @@ class BaseTool(ABC):
         except Exception as e:
             # Error handling
             error_output = await self.on_error(
-                input_data if "input_data" in locals() else None, e  # type: ignore
+                input_data if "input_data" in locals() else None,
+                e,  # type: ignore
             )
             return self.format_output(error_output)
 
@@ -517,7 +523,7 @@ class ExternalTool(BaseTool):
         4. Call the inner tool and return its result
         """
         # Lazy import to avoid circular dependency
-        from aiwen.services.tools.tool_registry import ToolRegistry
+        from aiwen.registries import ToolRegistry
 
         inner_tool = ToolRegistry.get_tool_instance(self.inner_tool_name)
         if not inner_tool:
@@ -558,5 +564,5 @@ class ExternalTool(BaseTool):
             )
             return ToolOutputSchema(
                 success=False,
-                error=f"Delegation to inner tool failed: {str(e)}",
+                error=f"Delegation to inner tool failed: {e!s}",
             )

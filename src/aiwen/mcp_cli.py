@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import logging
 import os
 
+from aiwen.mcp_router.nl2sql import nl2sql_mcp
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 import fastmcp.server.middleware
@@ -23,7 +24,6 @@ from aiwen.config.factory import get_settings
 from aiwen.core.bootstrap import bootstrap_mcp
 from aiwen.extensions.logger import setup_logging
 from aiwen.mcp_router.browser import browser_mcp, shutdown_browser_sessions
-from aiwen.mcp_router.nl2sql import nl2sql_mcp
 
 # 初始化日志
 setup_logging()

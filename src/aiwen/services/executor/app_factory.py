@@ -25,7 +25,7 @@
 # aiwen/services/agent/app_factory.py
 from typing import Any, Dict
 
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from aiwen.registries import ExecutorRegistry
 from aiwen.services.executor.base import Executor
 
 

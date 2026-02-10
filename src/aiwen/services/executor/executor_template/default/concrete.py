@@ -24,17 +24,16 @@ from langchain_core.messages import (
     messages_to_dict,
 )
 
+from aiwen.registries import ToolRegistry, register_executor
 from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.executor.base import AgentEvent, Executor, WaitingForTool
-from aiwen.services.executor.executor_registry import register_executor
 from aiwen.services.tools.inner_tool.browser_tools import BROWSER_TOOLS
 from aiwen.services.tools.inner_tool.server_tools import (
     CONTEXT_TOOLS,
     SERVER_TOOLS,
     UTILITY_TOOLS,
 )
-from aiwen.services.tools.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +96,7 @@ class DefaultAgentTemplate(Executor):
         user_tools = self._load_registry_tools()
         tools.extend(user_tools)
 
-        system_prompt = (
-            "You are a helpful Assistant "
-        )
+        system_prompt = "You are a helpful Assistant "
         self.agent = create_agent(
             model=self.llm, tools=tools, system_prompt=system_prompt
         )
@@ -174,7 +171,9 @@ class DefaultAgentTemplate(Executor):
                 logger.info("Loaded UTILITY_TOOLS")
             return tools
 
-        logger.warning(f"Invalid server_tools config: {config}, using default (no tools)")
+        logger.warning(
+            f"Invalid server_tools config: {config}, using default (no tools)"
+        )
         return []
 
     # ── user tool loading ────────────────────────────────────────
@@ -247,7 +246,6 @@ class DefaultAgentTemplate(Executor):
 
     # ── context ──────────────────────────────────────────────────
 
-
     # ── message conversion ───────────────────────────────────────
 
     def _prepare_messages(self, user_message: UserMessage) -> list:
@@ -287,7 +285,8 @@ class DefaultAgentTemplate(Executor):
     # ── stream ───────────────────────────────────────────────────
 
     async def stream(
-        self,user_message: UserMessage,
+        self,
+        user_message: UserMessage,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Stream typed events from the agentic loop.
 

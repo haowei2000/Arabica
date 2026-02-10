@@ -93,9 +93,7 @@ result = {
             timeout=5,
             input_schema={
                 "type": "object",
-                "properties": {
-                    "city": {"type": "string", "description": "City name"}
-                },
+                "properties": {"city": {"type": "string", "description": "City name"}},
                 "required": ["city"],
             },
             code="""

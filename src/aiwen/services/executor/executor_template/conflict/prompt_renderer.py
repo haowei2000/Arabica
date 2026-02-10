@@ -234,9 +234,7 @@ class PromptRenderer:
             parts.append(f"trigger: {run.trigger_type}")
         self.ctx.run_info = ", ".join(parts)
 
-    async def _load_workspace_runs(
-        self, workspace_id: str, limit: int = 10
-    ) -> None:
+    async def _load_workspace_runs(self, workspace_id: str, limit: int = 10) -> None:
         """Load recent runs for the workspace."""
         from aiwen.models.runs.run import Run
 
@@ -256,9 +254,7 @@ class PromptRenderer:
                 trigger_type=r.trigger_type or "unknown",
                 created_at=r.created_at.isoformat() if r.created_at else "",
                 started_at=r.started_at.isoformat() if r.started_at else None,
-                completed_at=r.completed_at.isoformat()
-                if r.completed_at
-                else None,
+                completed_at=r.completed_at.isoformat() if r.completed_at else None,
                 error=r.error,
             )
             for r in runs
@@ -361,9 +357,7 @@ class PromptRenderer:
             .where(
                 and_(
                     Event.user_id == user_id,
-                    Event.event_type.in_(
-                        ["user.message", "user.feedback"]
-                    ),
+                    Event.event_type.in_(["user.message", "user.feedback"]),
                 )
             )
             .order_by(Event.created_at.desc())
@@ -415,8 +409,7 @@ class PromptRenderer:
             if len(content) > 200:
                 content = content[:200] + "..."
             lines.append(
-                f"- [{e.get('created_at', '')}] "
-                f"{e.get('event_type', '')}: {content}"
+                f"- [{e.get('created_at', '')}] {e.get('event_type', '')}: {content}"
             )
 
         return "\n".join(lines)
@@ -430,8 +423,7 @@ class PromptRenderer:
         for k in self.ctx.knowledge_list:
             desc = f" — {k.description}" if k.description else ""
             lines.append(
-                f"- [{k.id}] {k.name}{desc} "
-                f"({k.document_count} documents, {k.status})"
+                f"- [{k.id}] {k.name}{desc} ({k.document_count} documents, {k.status})"
             )
 
         return "\n".join(lines)
@@ -527,16 +519,12 @@ class PromptRenderer:
         other_users = ", ".join(self.ctx.member_ids) if self.ctx.member_ids else "none"
         run_info_str = f"\n│   {self.ctx.run_info}" if self.ctx.run_info else ""
 
-        rendered = tpl_system.replace(
-            "{{CURRENT_WORKSPACE_ID}}", self.ctx.workspace_id
-        ).replace(
-            "{{CURRENT_RUN_ID}}", self.ctx.run_id
-        ).replace(
-            "{{CURRENT_RUN_INFO}}", run_info_str
-        ).replace(
-            "{{OWNER}}", self.ctx.owner_id
-        ).replace(
-            "{{OTHER_USER}}", other_users
+        rendered = (
+            tpl_system.replace("{{CURRENT_WORKSPACE_ID}}", self.ctx.workspace_id)
+            .replace("{{CURRENT_RUN_ID}}", self.ctx.run_id)
+            .replace("{{CURRENT_RUN_INFO}}", run_info_str)
+            .replace("{{OWNER}}", self.ctx.owner_id)
+            .replace("{{OTHER_USER}}", other_users)
         )
 
         # Append available context overview
@@ -564,9 +552,7 @@ class PromptRenderer:
 
         if include_skills and self.ctx.skills:
             sections.append(
-                tpl_skills.replace(
-                    "{{skills}}", self._format_skills()
-                ).strip()
+                tpl_skills.replace("{{skills}}", self._format_skills()).strip()
             )
 
         if include_user_history and self.ctx.user_history_events:

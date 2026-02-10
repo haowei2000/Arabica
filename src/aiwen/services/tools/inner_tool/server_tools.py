@@ -5,8 +5,8 @@ Migrated from LangChain @tool decorator to unified BaseTool interface.
 All tools execute directly in the API server process.
 """
 
-import logging
 from datetime import UTC, datetime
+import logging
 from typing import Any
 
 from pydantic import Field
@@ -89,7 +89,9 @@ class CacheGetTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         key: str = Field(description="Cache key")
-        namespace: str = Field(default="default", description="Cache namespace for isolation")
+        namespace: str = Field(
+            default="default", description="Cache namespace for isolation"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from aiwen.middleware.cache_middleware import get_redis_client
@@ -193,7 +195,9 @@ class GetWorkspaceInfoTool(InnerTool):
 
             # Get run count
             run_count_result = await db.execute(
-                select(func.count(Run.id)).where(Run.workspace_id == input_data.workspace_id)
+                select(func.count(Run.id)).where(
+                    Run.workspace_id == input_data.workspace_id
+                )
             )
             run_count = run_count_result.scalar() or 0
 
@@ -230,9 +234,12 @@ class GetRunHistoryTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="The workspace UUID")
-        limit: int = Field(default=10, ge=1, le=100, description="Maximum runs to return")
+        limit: int = Field(
+            default=10, ge=1, le=100, description="Maximum runs to return"
+        )
         status: str | None = Field(
-            default=None, description="Filter by status (running, completed, failed, etc.)"
+            default=None,
+            description="Filter by status (running, completed, failed, etc.)",
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
@@ -305,12 +312,18 @@ class SearchContextTool(InnerTool):
         context_id: str | None = Field(
             default=None, description="Optional specific context ID to search in"
         )
-        user_id: str | None = Field(default=None, description="Optional user ID to scope the search")
+        user_id: str | None = Field(
+            default=None, description="Optional user ID to scope the search"
+        )
         context_type: str | None = Field(
-            default=None, description="Optional context type filter (conversation, tool, knowledge)"
+            default=None,
+            description="Optional context type filter (conversation, tool, knowledge)",
         )
         max_results: int = Field(
-            default=10, ge=1, le=100, description="Maximum number of matching contexts to return"
+            default=10,
+            ge=1,
+            le=100,
+            description="Maximum number of matching contexts to return",
         )
         context_chars: int = Field(
             default=100,
@@ -321,7 +334,9 @@ class SearchContextTool(InnerTool):
         ignore_case: bool = Field(
             default=True, description="Whether to ignore case in pattern matching"
         )
-        multiline: bool = Field(default=False, description="Whether to enable multiline mode")
+        multiline: bool = Field(
+            default=False, description="Whether to enable multiline mode"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         import re
@@ -418,7 +433,9 @@ class SearchContextTool(InnerTool):
                             "context_type": ctx.context_type,
                             "user_id": str(ctx.user_id),
                             "source_id": str(ctx.source_id) if ctx.source_id else None,
-                            "created_at": ctx.created_at.isoformat() if ctx.created_at else None,
+                            "created_at": ctx.created_at.isoformat()
+                            if ctx.created_at
+                            else None,
                             "summary": ctx.summary,
                             "keywords": ctx.keywords,
                             "importance": ctx.importance,
@@ -585,7 +602,7 @@ class CodeExecutionInnerTool(InnerTool):
             }
 
             # Execute code
-            exec(typed_input.code, context)  # noqa: S102
+            exec(typed_input.code, context)
 
             # Get result
             if "result" in context:
@@ -595,17 +612,16 @@ class CodeExecutionInnerTool(InnerTool):
                     message="Code executed successfully",
                     data=result if isinstance(result, dict) else {"result": result},
                 )
-            else:
-                return ToolOutputSchema(
-                    success=False,
-                    error="Code did not produce a 'result' variable",
-                )
+            return ToolOutputSchema(
+                success=False,
+                error="Code did not produce a 'result' variable",
+            )
 
         except Exception as e:
             logger.error(f"Code execution error: {e}", exc_info=True)
             return ToolOutputSchema(
                 success=False,
-                error=f"Execution error: {str(e)}",
+                error=f"Execution error: {e!s}",
             )
 
 
@@ -628,11 +644,19 @@ class HttpRequestInnerTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         url: str = Field(description="Target URL")
-        method: str = Field(default="POST", description="HTTP method (GET, POST, PUT, DELETE, PATCH)")
-        headers: dict[str, str] = Field(default_factory=dict, description="Request headers")
+        method: str = Field(
+            default="POST", description="HTTP method (GET, POST, PUT, DELETE, PATCH)"
+        )
+        headers: dict[str, str] = Field(
+            default_factory=dict, description="Request headers"
+        )
         body: dict = Field(default_factory=dict, description="Request body (JSON)")
-        timeout: int = Field(default=30, ge=1, le=300, description="Request timeout in seconds")
-        verify_ssl: bool = Field(default=True, description="Whether to verify SSL certificates")
+        timeout: int = Field(
+            default=30, ge=1, le=300, description="Request timeout in seconds"
+        )
+        verify_ssl: bool = Field(
+            default=True, description="Whether to verify SSL certificates"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         """Execute HTTP request"""
@@ -648,7 +672,10 @@ class HttpRequestInnerTool(InnerTool):
                 }
 
                 # Add body for methods that support it
-                if input_data.method.upper() in ("POST", "PUT", "PATCH") and input_data.body:
+                if (
+                    input_data.method.upper() in ("POST", "PUT", "PATCH")
+                    and input_data.body
+                ):
                     request_kwargs["json"] = input_data.body
                 elif input_data.body:
                     request_kwargs["params"] = input_data.body
@@ -680,7 +707,7 @@ class HttpRequestInnerTool(InnerTool):
             logger.error(f"HTTP request error: {e}", exc_info=True)
             return ToolOutputSchema(
                 success=False,
-                error=f"HTTP request failed: {str(e)}",
+                error=f"HTTP request failed: {e!s}",
             )
 
 
@@ -853,7 +880,7 @@ class SandboxExecutionInnerTool(InnerTool):
         )
 
         try:
-            import docker  # noqa: F811
+            import docker
             from docker.errors import ContainerError, ImageNotFound
 
             client = docker.from_env()
@@ -890,12 +917,12 @@ class SandboxExecutionInnerTool(InnerTool):
                 )
                 exit_code = result.get("StatusCode", -1)
 
-                stdout = (await asyncio.to_thread(container.logs, stdout=True, stderr=False)).decode(
-                    "utf-8", errors="replace"
-                )
-                stderr = (await asyncio.to_thread(container.logs, stdout=False, stderr=True)).decode(
-                    "utf-8", errors="replace"
-                )
+                stdout = (
+                    await asyncio.to_thread(container.logs, stdout=True, stderr=False)
+                ).decode("utf-8", errors="replace")
+                stderr = (
+                    await asyncio.to_thread(container.logs, stdout=False, stderr=True)
+                ).decode("utf-8", errors="replace")
             finally:
                 # Always clean up the container
                 try:
@@ -923,17 +950,19 @@ class SandboxExecutionInnerTool(InnerTool):
         except ContainerError as e:
             return ToolOutputSchema(
                 success=False,
-                error=f"Container error: {str(e)}",
+                error=f"Container error: {e!s}",
                 data={
                     "exit_code": e.exit_status,
-                    "stderr": e.stderr.decode("utf-8", errors="replace") if e.stderr else "",
+                    "stderr": e.stderr.decode("utf-8", errors="replace")
+                    if e.stderr
+                    else "",
                 },
             )
         except Exception as e:
             logger.error(f"Sandbox execution error: {e}", exc_info=True)
             return ToolOutputSchema(
                 success=False,
-                error=f"Sandbox execution failed: {str(e)}",
+                error=f"Sandbox execution failed: {e!s}",
             )
 
 

@@ -27,6 +27,7 @@ def _collect_all_inner_tools() -> list[type[InnerTool]]:
             INNER_TOOLS,
             SERVER_TOOLS,
         )
+
         all_tools.extend(SERVER_TOOLS)
         all_tools.extend(INNER_TOOLS)
     except ImportError:
@@ -36,9 +37,12 @@ def _collect_all_inner_tools() -> list[type[InnerTool]]:
         from aiwen.services.tools.inner_tool.browser_tools import (
             BROWSER_TOOLS,
         )
+
         all_tools.extend(BROWSER_TOOLS)
     except ImportError:
-        logger.warning("Could not import browser_tools (playwright may not be installed)")
+        logger.warning(
+            "Could not import browser_tools (playwright may not be installed)"
+        )
 
     return all_tools
 
