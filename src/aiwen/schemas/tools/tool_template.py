@@ -330,6 +330,119 @@ _CODE_EXECUTION_TEMPLATE = ToolTemplate(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CLIENT-SIDE EXECUTION TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_CLIENT_REQUEST_TEMPLATE = ToolTemplate(
+    id="client_request",
+    name="Client Request",
+    description="Send a request to be executed on the user's client (browser-side handler)",
+    execution_mode="client_run",
+    category="client",
+    tags=["client", "browser", "request"],
+    template={
+        "name": "my_client_tool",
+        "display_name": "My Client Tool",
+        "description": "Execute a request on the user's client",
+        "execution_mode": "client_run",
+        "category": "client",
+        "tags": ["client", "browser"],
+        "timeout": 120,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "handler_name": {
+                    "type": "string",
+                    "description": "Name of the frontend handler to invoke",
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Action for the handler to perform",
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Parameters to pass to the client handler",
+                    "default": {},
+                },
+            },
+            "required": ["handler_name", "action"],
+        },
+        "client_config": {
+            "handler_name": "clientRequest",
+            "config": {},
+            "require_user_approval": True,
+        },
+    },
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SANDBOX EXECUTION TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_SANDBOX_EXECUTION_TEMPLATE = ToolTemplate(
+    id="sandbox_execution",
+    name="Sandbox Command Execution",
+    description="Execute shell commands in an isolated Docker sandbox with resource limits",
+    execution_mode="container_run",
+    category="code",
+    tags=["sandbox", "container", "docker", "shell"],
+    template={
+        "name": "my_sandbox_tool",
+        "display_name": "My Sandbox Tool",
+        "description": "Execute a command safely in a Docker sandbox",
+        "execution_mode": "container_run",
+        "category": "code",
+        "tags": ["sandbox", "docker"],
+        "timeout": 120,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute inside the sandbox",
+                },
+                "image": {
+                    "type": "string",
+                    "description": "Docker image to use",
+                    "default": "python:3.12-slim",
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "Execution timeout in seconds",
+                    "default": 60,
+                },
+                "memory_limit": {
+                    "type": "string",
+                    "description": "Memory limit (e.g., '256m', '1g')",
+                    "default": "256m",
+                },
+                "network_enabled": {
+                    "type": "boolean",
+                    "description": "Whether to allow network access",
+                    "default": False,
+                },
+            },
+            "required": ["command"],
+        },
+        "container_config": {
+            "image": "python:3.12-slim",
+            "workdir": "/workspace",
+            "resource_limits": {
+                "memory": "256m",
+                "cpu_quota": 50000,
+                "cpu_period": 100000,
+                "network_enabled": False,
+                "read_only_rootfs": True,
+                "pids_limit": 100,
+            },
+            "environment": {"PYTHONUNBUFFERED": "1"},
+        },
+    },
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TEMPLATE REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -343,6 +456,8 @@ TOOL_TEMPLATES: dict[str, ToolTemplate] = {
         _HTTP_REST_CRUD_TEMPLATE,
         _HTTP_FORM_SUBMIT_TEMPLATE,
         _CODE_EXECUTION_TEMPLATE,
+        _CLIENT_REQUEST_TEMPLATE,
+        _SANDBOX_EXECUTION_TEMPLATE,
     ]
 }
 
