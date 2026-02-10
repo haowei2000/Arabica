@@ -7,7 +7,7 @@ Unified management of all tool classes with discovery, registration, and query c
 import logging
 from typing import Dict, List, Optional  # 导入其他必要的类型
 
-from aiwen.services.executor.tools.base_tool import BaseTool, ToolExecutionMode
+from aiwen.services.tools.base_tool import BaseTool, ToolExecutionMode
 
 logger = logging.getLogger(__name__)
 

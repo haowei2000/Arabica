@@ -30,7 +30,7 @@ from aiwen.schemas.tools.user_tool import (
     UserToolResponse,
     UserToolUpdate,
 )
-from aiwen.services.executor.tools.tool_registry import ToolRegistry
+from aiwen.services.tools.tool_registry import ToolRegistry
 from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
 from aiwen.services.tools.user_tool_crud import UserToolCRUD
 

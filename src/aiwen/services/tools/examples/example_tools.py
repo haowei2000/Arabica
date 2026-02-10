@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import Field
 
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     InnerTool,
     CeleryConfig,
     ClientConfig,
@@ -22,7 +22,7 @@ from aiwen.services.executor.tools.base_tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.services.executor.tools.tool_registry import register_tool
+from aiwen.services.tools.tool_registry import register_tool
 
 logger = logging.getLogger(__name__)
 

@@ -71,7 +71,7 @@
 ### Step 1: Create Tool Class Template
 
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool,
     ToolExecutionMode,
     ToolInputSchema,
@@ -113,7 +113,7 @@ class ToolNameTool(BaseTool):
 **Before:**
 ```python
 from langchain_core.tools import tool
-from aiwen.services.executor.tools.execution_mode import server_tool
+from aiwen.services.tools.execution_mode import server_tool
 
 @tool("tool_name")
 @server_tool(timeout=30)
@@ -124,7 +124,7 @@ async def tool_function(param1: str, param2: int = 10) -> dict:
 
 **After:**
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool,
     ToolExecutionMode,
     ToolInputSchema,

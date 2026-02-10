@@ -88,7 +88,7 @@ UTILITY_TOOLS = [get_current_time, ...]  # Function references
 ### After (BaseTool)
 
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
 
@@ -249,7 +249,7 @@ schema = ToolClass.get_langchain_schema()
 ### Creating a New Tool
 
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
 from pydantic import Field

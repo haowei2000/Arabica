@@ -49,7 +49,7 @@ Tools execute directly in the API server process. Best for trusted, lightweight 
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.executor.tools import server_tool
+from aiwen.services.tools import server_tool
 
 
 @tool("database_query")
@@ -82,7 +82,7 @@ Tools execute in isolated Docker containers with configurable resource limits. B
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.executor.tools import sandbox_tool
+from aiwen.services.tools import sandbox_tool
 
 
 @tool("execute_python")
@@ -153,7 +153,7 @@ Tools execute in the user's browser via SSE events and HTTP callbacks. Best for 
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.executor.tools import client_tool
+from aiwen.services.tools import client_tool
 
 
 @tool("select_file")
@@ -205,7 +205,7 @@ async def select_file(
 The central hub that routes tool execution to the appropriate executor.
 
 ```python
-from aiwen.services.executor.tools import ExecutionRouter, get_execution_router
+from aiwen.services.tools import ExecutionRouter, get_execution_router
 
 # Get singleton router
 router = get_execution_router()
@@ -230,7 +230,7 @@ result = await router.execute(
 Defines how a tool should be executed.
 
 ```python
-from aiwen.services.executor.tools import ToolMetadata, ToolExecutionMode
+from aiwen.services.tools import ToolMetadata, ToolExecutionMode
 
 metadata = ToolMetadata(
     execution_mode=ToolExecutionMode.SANDBOX,
@@ -514,7 +514,7 @@ Complete example showing all three execution modes.
 """
 
 from langchain_core.tools import tool
-from aiwen.services.executor.tools import (
+from aiwen.services.tools import (
     sandbox_tool,
     client_tool,
     server_tool,

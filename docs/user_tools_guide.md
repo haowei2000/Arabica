@@ -131,7 +131,7 @@ curl "http://localhost:8000/tools/registry/schemas?format=openai"
 **Python Code:**
 
 ```python
-from aiwen.services.executor.tools.tool_registry import ToolRegistry
+from aiwen.services.tools.tool_registry import ToolRegistry
 from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
 
 # In your agent initialization

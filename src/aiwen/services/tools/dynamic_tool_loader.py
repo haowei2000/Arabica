@@ -12,7 +12,7 @@ from pydantic import Field, create_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.tool import Tool
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     CeleryConfig,
     ClientConfig,
     ContainerConfig,
@@ -23,7 +23,7 @@ from aiwen.services.executor.tools.base_tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.services.executor.tools.tool_registry import ToolRegistry
+from aiwen.services.tools.tool_registry import ToolRegistry
 from aiwen.services.tools.user_tool_crud import UserToolCRUD
 
 logger = logging.getLogger(__name__)
@@ -31,10 +31,17 @@ logger = logging.getLogger(__name__)
 
 class DynamicToolLoader:
     """
-    Dynamically load user tools from database and register them
+    Dynamically load, register, and manage external tools based on user-defined configurations.
 
-    This class creates tool classes on-the-fly based on user tool definitions
-    stored in the database.
+    The class allows dynamic creation of Pydantic input schemas and tool implementations to
+    register tools into a system. It leverages user and database configurations to determine
+    tool behavior, input validation, and execution logic. This facilitates extending the
+    system's capabilities with minimal hardcoding. Additionally, tools can be unloaded as
+    needed to support dynamic management of the tool lifecycle.
+
+    Attributes:
+        db (AsyncSession): The database session used for retrieving and updating tool data.
+        crud (UserToolCRUD): Instance of UserToolCRUD for operations on user tools.
     """
 
     def __init__(self, db_session: AsyncSession):

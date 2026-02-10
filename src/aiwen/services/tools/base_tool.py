@@ -517,7 +517,7 @@ class ExternalTool(BaseTool):
         4. Call the inner tool and return its result
         """
         # Lazy import to avoid circular dependency
-        from aiwen.services.executor.tools.tool_registry import ToolRegistry
+        from aiwen.services.tools.tool_registry import ToolRegistry
 
         inner_tool = ToolRegistry.get_tool_instance(self.inner_tool_name)
         if not inner_tool:

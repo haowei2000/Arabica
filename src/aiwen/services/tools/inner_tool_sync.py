@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.agents.tool import Tool
-from aiwen.services.executor.tools.base_tool import InnerTool, ToolMetadata
+from aiwen.services.tools.base_tool import InnerTool, ToolMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _collect_all_inner_tools() -> list[type[InnerTool]]:
     all_tools: list[type[InnerTool]] = []
 
     try:
-        from aiwen.services.executor.tools.inner_tool.server_tools import (
+        from aiwen.services.tools.inner_tool.server_tools import (
             INNER_TOOLS,
             SERVER_TOOLS,
         )
@@ -33,7 +33,7 @@ def _collect_all_inner_tools() -> list[type[InnerTool]]:
         logger.warning("Could not import server_tools")
 
     try:
-        from aiwen.services.executor.tools.inner_tool.browser_tools import (
+        from aiwen.services.tools.inner_tool.browser_tools import (
             BROWSER_TOOLS,
         )
         all_tools.extend(BROWSER_TOOLS)

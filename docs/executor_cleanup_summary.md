@@ -36,11 +36,11 @@ The codebase contained a complex executor routing system (ExecutionRouter, async
 
 ```python
 # Removed imports
-from aiwen.services.executor.tools.execution_mode import (
+from aiwen.services.tools.execution_mode import (
     ToolExecutionMode,
     get_tool_metadata,
 )
-from aiwen.services.executor.tools.execution_router import ExecutionRouter
+from aiwen.services.tools.execution_router import ExecutionRouter
 from aiwen.schemas.tools.execution import ExecutionContext
 
 # Removed initialization
@@ -184,7 +184,7 @@ INFO: ✅ Test 1 PASSED: Browser tools loaded successfully
 
 ### Test 3: Import Verification
 ```bash
-$ uv run python -c "from aiwen.services.executor.tools import BROWSER_TOOLS, SERVER_TOOLS"
+$ uv run python -c "from aiwen.services.tools import BROWSER_TOOLS, SERVER_TOOLS"
 ```
 
 **Result:** ✅ PASSED
@@ -293,12 +293,12 @@ async def __call__(self, **kwargs):
 
 **Problem:** Import errors after cleanup
 ```python
-from aiwen.services.executor.tools import ExecutionRouter  # ❌ No longer exists
+from aiwen.services.tools import ExecutionRouter  # ❌ No longer exists
 ```
 
 **Solution:** Use BaseTool directly
 ```python
-from aiwen.services.executor.tools.base_tool import BaseTool
+from aiwen.services.tools.base_tool import BaseTool
 
 class MyTool(BaseTool):
     # All execution handled by BaseTool.__call__()

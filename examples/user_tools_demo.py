@@ -18,7 +18,7 @@ async def demo():
     """Run complete user tools demo"""
     from aiwen.extensions.database import get_session
     from aiwen.schemas.tools.user_tool import UserToolCreate
-    from aiwen.services.executor.tools.tool_registry import ToolRegistry
+    from aiwen.services.tools.tool_registry import ToolRegistry
     from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
     from aiwen.services.tools.user_tool_crud import UserToolCRUD
 
@@ -244,7 +244,7 @@ result = {
 async def demo_with_langchain():
     """Demo integration with LangChain"""
     from aiwen.extensions.database import get_session
-    from aiwen.services.executor.tools.tool_registry import ToolRegistry
+    from aiwen.services.tools.tool_registry import ToolRegistry
     from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
 
     logger.info("\n" + "=" * 80)

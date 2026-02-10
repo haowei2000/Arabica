@@ -52,7 +52,7 @@ async def browser_launch(
 
 **After (BaseTool):**
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool, ToolExecutionMode, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
 

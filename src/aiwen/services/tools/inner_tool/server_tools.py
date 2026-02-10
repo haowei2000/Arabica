@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     InnerTool,
     ToolExecutionMode,
     ToolInputSchema,

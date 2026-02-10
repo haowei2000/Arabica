@@ -93,7 +93,7 @@ async def get_current_time(timezone: str = "UTC") -> dict:
 ### After: Unified BaseTool System
 
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
 
@@ -440,7 +440,7 @@ schema = GetCurrentTimeTool.get_langchain_schema()
 ### Creating a New Tool
 
 ```python
-from aiwen.services.executor.tools.base_tool import (
+from aiwen.services.tools.base_tool import (
     BaseTool,
     ToolExecutionMode,
     ToolInputSchema,

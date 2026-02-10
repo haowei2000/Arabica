@@ -28,14 +28,14 @@ from aiwen.schemas.agents.app import AppConfig, Model
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.executor.base import AgentEvent, Executor, WaitingForTool
 from aiwen.services.executor.executor_registry import register_executor
-from aiwen.services.executor.tools.inner_tool.browser_tools import BROWSER_TOOLS
-from aiwen.services.executor.tools.inner_tool.server_tools import (
+from aiwen.services.tools.inner_tool.browser_tools import BROWSER_TOOLS
+from aiwen.services.tools.inner_tool.server_tools import (
     CONTEXT_TOOLS,
     FILE_TOOLS,
     SERVER_TOOLS,
     UTILITY_TOOLS,
 )
-from aiwen.services.executor.tools.tool_registry import ToolRegistry
+from aiwen.services.tools.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

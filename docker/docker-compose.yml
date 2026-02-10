@@ -276,7 +276,6 @@ services:
       - nginx
       - app
       - all
-      - infra
     image: nginx:alpine
     container_name: aiwen-nginx
     ports:
