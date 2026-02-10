@@ -12,7 +12,10 @@ from typing import Any
 from pydantic import Field
 
 from aiwen.services.tools.base_tool import (
+    ClientConfig,
+    ContainerConfig,
     InnerTool,
+    ResourceLimits,
     ToolExecutionMode,
     ToolInputSchema,
     ToolMetadata,
@@ -681,7 +684,262 @@ class HttpRequestInnerTool(InnerTool):
             )
 
 
+class ClientRequestInnerTool(InnerTool):
+    """Execute a request on the user's client (browser)
+
+    This is the built-in execution backend for user-defined CLIENT_RUN tools.
+    ExternalTool instances delegate to this tool to send instructions to the
+    user's browser, where a registered frontend handler picks up and executes
+    the request. The server packages the payload and returns it via WebSocket
+    or SSE so the client can act on it.
+    """
+
+    METADATA = ToolMetadata(
+        name="client_request",
+        display_name="Client Request",
+        description="Send a request to be executed on the user's client (browser-side handler)",
+        execution_mode=ToolExecutionMode.CLIENT_RUN,
+        category="execution",
+        tags=["client", "browser", "request", "inner"],
+        timeout=120,
+        client_config=ClientConfig(
+            handler_name="clientRequest",
+            config={},
+            require_user_approval=True,
+        ),
+    )
+
+    class InputSchema(ToolInputSchema):
+        handler_name: str = Field(
+            description="Name of the frontend handler to invoke (e.g., 'filePicker', 'clipboard', 'notification')",
+        )
+        action: str = Field(
+            description="Action for the handler to perform (e.g., 'read', 'write', 'show')",
+        )
+        params: dict = Field(
+            default_factory=dict,
+            description="Parameters to pass to the client handler",
+        )
+        require_approval: bool = Field(
+            default=True,
+            description="Whether user approval is required before execution",
+        )
+        timeout_ms: int = Field(
+            default=60000,
+            ge=1000,
+            le=300000,
+            description="Client-side execution timeout in milliseconds",
+        )
+
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        """Package the client request payload for delivery to the frontend.
+
+        The actual execution happens on the client side. This method builds
+        the instruction payload that will be sent over the WebSocket / SSE
+        channel. The client framework dispatches it to the registered handler
+        and streams the result back.
+        """
+        if not input_data.handler_name:
+            return ToolOutputSchema(
+                success=False,
+                error="No handler_name provided for client request",
+            )
+
+        payload = {
+            "type": "client_request",
+            "handler_name": input_data.handler_name,
+            "action": input_data.action,
+            "params": input_data.params,
+            "require_approval": input_data.require_approval,
+            "timeout_ms": input_data.timeout_ms,
+        }
+
+        logger.info(
+            f"Client request prepared: handler={input_data.handler_name}, "
+            f"action={input_data.action}"
+        )
+
+        return ToolOutputSchema(
+            success=True,
+            message=f"Client request dispatched to handler '{input_data.handler_name}'",
+            data=payload,
+        )
+
+
+class SandboxExecutionInnerTool(InnerTool):
+    """Execute a command in an isolated sandbox (Docker container)
+
+    This is the built-in execution backend for user-defined CONTAINER_RUN tools.
+    ExternalTool instances delegate to this tool to run arbitrary shell commands
+    inside a short-lived Docker container with configurable resource limits.
+    """
+
+    METADATA = ToolMetadata(
+        name="sandbox_execution",
+        display_name="Sandbox Execution",
+        description="Execute a shell command in an isolated Docker sandbox with resource limits",
+        execution_mode=ToolExecutionMode.CONTAINER_RUN,
+        category="execution",
+        tags=["sandbox", "container", "docker", "shell", "inner"],
+        timeout=120,
+        container_config=ContainerConfig(
+            image="python:3.12-slim",
+            workdir="/workspace",
+            resource_limits=ResourceLimits(
+                memory="256m",
+                cpu_quota=50000,
+                cpu_period=100000,
+                network_enabled=False,
+                read_only_rootfs=True,
+                pids_limit=100,
+            ),
+            environment={"PYTHONUNBUFFERED": "1"},
+        ),
+    )
+
+    class InputSchema(ToolInputSchema):
+        command: str = Field(
+            description="Shell command to execute inside the sandbox",
+        )
+        image: str = Field(
+            default="python:3.12-slim",
+            description="Docker image to use for the sandbox",
+        )
+        timeout_seconds: int = Field(
+            default=60,
+            ge=1,
+            le=600,
+            description="Execution timeout in seconds",
+        )
+        memory_limit: str = Field(
+            default="256m",
+            description="Memory limit (e.g., '256m', '1g')",
+        )
+        network_enabled: bool = Field(
+            default=False,
+            description="Whether to allow network access inside the sandbox",
+        )
+        workdir: str = Field(
+            default="/workspace",
+            description="Working directory inside the container",
+        )
+        environment: dict[str, str] = Field(
+            default_factory=dict,
+            description="Additional environment variables for the container",
+        )
+        stdin_data: str | None = Field(
+            default=None,
+            description="Optional data to pass via stdin",
+        )
+
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        """Execute a command inside a Docker container sandbox.
+
+        Spins up a short-lived container with the specified resource limits,
+        runs the command, captures stdout/stderr and the exit code, then
+        tears down the container.
+        """
+        import asyncio
+
+        if not input_data.command:
+            return ToolOutputSchema(
+                success=False,
+                error="No command provided for sandbox execution",
+            )
+
+        logger.info(
+            f"Sandbox execution: image={input_data.image}, "
+            f"command={input_data.command[:100]}..."
+        )
+
+        try:
+            import docker  # noqa: F811
+            from docker.errors import ContainerError, ImageNotFound
+
+            client = docker.from_env()
+
+            # Build resource limit kwargs
+            container_kwargs: dict[str, Any] = {
+                "image": input_data.image,
+                "command": ["sh", "-c", input_data.command],
+                "working_dir": input_data.workdir,
+                "mem_limit": input_data.memory_limit,
+                "pids_limit": 100,
+                "network_disabled": not input_data.network_enabled,
+                "read_only": True,
+                "detach": True,
+                "stdout": True,
+                "stderr": True,
+                "environment": {
+                    "PYTHONUNBUFFERED": "1",
+                    **input_data.environment,
+                },
+                # tmpfs so writable /tmp is available even with read_only rootfs
+                "tmpfs": {"/tmp": "size=64m"},
+            }
+
+            if input_data.stdin_data:
+                container_kwargs["stdin_open"] = True
+
+            container = client.containers.run(**container_kwargs)
+
+            try:
+                # Wait for the container to finish with a timeout
+                result = await asyncio.to_thread(
+                    container.wait, timeout=input_data.timeout_seconds
+                )
+                exit_code = result.get("StatusCode", -1)
+
+                stdout = (await asyncio.to_thread(container.logs, stdout=True, stderr=False)).decode(
+                    "utf-8", errors="replace"
+                )
+                stderr = (await asyncio.to_thread(container.logs, stdout=False, stderr=True)).decode(
+                    "utf-8", errors="replace"
+                )
+            finally:
+                # Always clean up the container
+                try:
+                    await asyncio.to_thread(container.remove, force=True)
+                except Exception:
+                    pass
+
+            return ToolOutputSchema(
+                success=exit_code == 0,
+                message=f"Command exited with code {exit_code}",
+                data={
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "exit_code": exit_code,
+                    "image": input_data.image,
+                    "command": input_data.command,
+                },
+            )
+
+        except ImageNotFound:
+            return ToolOutputSchema(
+                success=False,
+                error=f"Docker image not found: {input_data.image}",
+            )
+        except ContainerError as e:
+            return ToolOutputSchema(
+                success=False,
+                error=f"Container error: {str(e)}",
+                data={
+                    "exit_code": e.exit_status,
+                    "stderr": e.stderr.decode("utf-8", errors="replace") if e.stderr else "",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Sandbox execution error: {e}", exc_info=True)
+            return ToolOutputSchema(
+                success=False,
+                error=f"Sandbox execution failed: {str(e)}",
+            )
+
+
 INNER_TOOLS = [
     CodeExecutionInnerTool,
     HttpRequestInnerTool,
+    ClientRequestInnerTool,
+    SandboxExecutionInnerTool,
 ]
