@@ -5,10 +5,9 @@ Migrated from LangChain @tool decorator to unified BaseTool interface.
 All tools execute directly in the API server process.
 """
 
-from datetime import UTC, datetime
 import logging
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
 
 from pydantic import Field
 
@@ -21,6 +20,7 @@ from aiwen.services.tools.base_tool import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITY TOOLS
@@ -88,7 +88,7 @@ class CacheGetTool(InnerTool):
         key: str = Field(description="Cache key")
         namespace: str = Field(default="default", description="Cache namespace for isolation")
 
-    async def execute(self, input_data:InputSchema) -> ToolOutputSchema:
+    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from aiwen.middleware.cache_middleware import get_redis_client
 
         redis = get_redis_client(is_async=True)
@@ -446,52 +446,6 @@ class SearchContextTool(InnerTool):
             )
 
 
-class GetRunMemoryTool(InnerTool):
-    """Retrieve conversation history for context"""
-
-    METADATA = ToolMetadata(
-        name="get_run_memory",
-        display_name="Get Run Memory",
-        description="Retrieve conversation history for a run to provide context",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
-        category="context",
-        tags=["memory", "conversation", "history", "context"],
-        timeout=15,
-    )
-
-    class InputSchema(ToolInputSchema):
-        run_id: str = Field(description="The conversation UUID")
-        max_messages: int = Field(
-            default=20, ge=1, le=100, description="Maximum number of messages to retrieve"
-        )
-        include_system: bool = Field(
-            default=False, description="Whether to include system messages"
-        )
-
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from aiwen.services.executor.executor_template.default.context import (
-            get_messages_from_context,
-        )
-
-        messages = await get_messages_from_context(
-            conversation_id=UUID(input_data.run_id),
-            max_messages=input_data.max_messages,
-        )
-
-        if not input_data.include_system:
-            messages = [m for m in messages if m.get("role") != "system"]
-
-        return ToolOutputSchema(
-            success=True,
-            message=f"Retrieved {len(messages)} messages",
-            data={
-                "messages": messages,
-                "total": len(messages),
-                "conversation_id": input_data.run_id,
-            },
-        )
-
-
 class QueryStructuredDataTool(InnerTool):
     """Execute a read-only SQL query on structured data"""
 
@@ -563,242 +517,6 @@ class QueryStructuredDataTool(InnerTool):
             )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FILE TOOLS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class ListWorkspaceFilesTool(InnerTool):
-    """List files in a workspace directory"""
-
-    METADATA = ToolMetadata(
-        name="list_workspace_files",
-        display_name="List Workspace Files",
-        description="List files in a workspace directory with optional filtering",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
-        category="file",
-        tags=["files", "workspace", "list", "directory"],
-        timeout=10,
-    )
-
-    class InputSchema(ToolInputSchema):
-        workspace_id: str = Field(description="The workspace UUID")
-        path: str = Field(default="/", description="Relative path within workspace (default: root)")
-        recursive: bool = Field(
-            default=False, description="Whether to list subdirectories recursively"
-        )
-        file_types: list[str] | None = Field(
-            default=None, description='Filter by file extensions (e.g., [".pdf", ".txt"])'
-        )
-
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import or_, select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.document import Document
-
-        async with get_session("aiwen") as db:
-            query = select(Document).where(Document.workspace_id == input_data.workspace_id)
-
-            if input_data.path != "/":
-                query = query.where(Document.path.like(f"{input_data.path}%"))
-
-            if input_data.file_types:
-                # Filter by extension
-                ext_filters = [
-                    Document.name.like(f"%{ext}") for ext in input_data.file_types
-                ]
-                query = query.where(or_(*ext_filters))
-
-            result = await db.execute(query)
-            documents = result.scalars().all()
-
-            files = []
-            directories = set()
-
-            for doc in documents:
-                doc_path = doc.path or "/"
-                relative_path = (
-                    doc_path[len(input_data.path) :]
-                    if doc_path.startswith(input_data.path)
-                    else doc_path
-                )
-
-                # Check if it's in a subdirectory
-                if "/" in relative_path.strip("/"):
-                    if not input_data.recursive:
-                        # Just record the immediate subdirectory
-                        subdir = relative_path.strip("/").split("/")[0]
-                        directories.add(subdir)
-                        continue
-
-                files.append(
-                    {
-                        "name": doc.name,
-                        "path": doc.path,
-                        "size": doc.size,
-                        "type": doc.content_type,
-                        "modified": doc.updated_at.isoformat() if doc.updated_at else None,
-                    }
-                )
-
-            return ToolOutputSchema(
-                success=True,
-                message=f"Found {len(files)} files in workspace",
-                data={
-                    "files": files,
-                    "directories": list(directories),
-                    "total_files": len(files),
-                    "path": input_data.path,
-                },
-            )
-
-
-class ReadFileContentTool(InnerTool):
-    """Read the content of a file from storage"""
-
-    METADATA = ToolMetadata(
-        name="read_file_content",
-        display_name="Read File Content",
-        description="Read the content of a file from storage with optional truncation",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
-        category="file",
-        tags=["files", "read", "content", "document"],
-        timeout=30,
-    )
-
-    class InputSchema(ToolInputSchema):
-        file_id: str = Field(description="The file/document UUID")
-        max_length: int = Field(
-            default=10000, ge=1, le=100000, description="Maximum characters to return"
-        )
-        encoding: str = Field(default="utf-8", description="Text encoding")
-
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.document import Document
-
-        async with get_session("aiwen") as db:
-            result = await db.execute(select(Document).where(Document.id == input_data.file_id))
-            doc = result.scalar_one_or_none()
-
-            if not doc:
-                return ToolOutputSchema(
-                    success=False,
-                    message=f"File not found: {input_data.file_id}",
-                    error=f"No document found with ID {input_data.file_id}",
-                    data={
-                        "content": None,
-                        "truncated": False,
-                        "total_length": 0,
-                    },
-                )
-
-            # Get content from storage
-            content = doc.content or ""
-            total_length = len(content)
-            truncated = total_length > input_data.max_length
-
-            return ToolOutputSchema(
-                success=True,
-                message=f"Read file {doc.name}" + (" (truncated)" if truncated else ""),
-                data={
-                    "content": content[: input_data.max_length],
-                    "truncated": truncated,
-                    "total_length": total_length,
-                    "metadata": {
-                        "name": doc.name,
-                        "type": doc.content_type,
-                        "size": doc.size,
-                        "path": doc.path,
-                    },
-                },
-            )
-
-
-class SearchFilesTool(InnerTool):
-    """Search files by name or content"""
-
-    METADATA = ToolMetadata(
-        name="search_files",
-        display_name="Search Files",
-        description="Search files by name or content with optional filtering",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
-        category="file",
-        tags=["files", "search", "find", "documents"],
-        timeout=20,
-    )
-
-    class InputSchema(ToolInputSchema):
-        query: str = Field(description="Search query")
-        workspace_id: str | None = Field(
-            default=None, description="Optional workspace to scope search"
-        )
-        file_types: list[str] | None = Field(
-            default=None, description="Filter by extensions"
-        )
-        max_results: int = Field(
-            default=20, ge=1, le=100, description="Maximum results to return"
-        )
-
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import or_, select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.document import Document
-
-        async with get_session("aiwen") as db:
-            base_query = select(Document)
-
-            if input_data.workspace_id:
-                base_query = base_query.where(Document.workspace_id == input_data.workspace_id)
-
-            # Search in name and content
-            search_filter = or_(
-                Document.name.ilike(f"%{input_data.query}%"),
-                Document.content.ilike(f"%{input_data.query}%"),
-            )
-            base_query = base_query.where(search_filter)
-
-            if input_data.file_types:
-                ext_filters = [Document.name.like(f"%{ext}") for ext in input_data.file_types]
-                base_query = base_query.where(or_(*ext_filters))
-
-            base_query = base_query.limit(input_data.max_results)
-
-            result = await db.execute(base_query)
-            documents = result.scalars().all()
-
-            return ToolOutputSchema(
-                success=True,
-                message=f"Found {len(documents)} matching files",
-                data={
-                    "results": [
-                        {
-                            "id": str(doc.id),
-                            "name": doc.name,
-                            "path": doc.path,
-                            "type": doc.content_type,
-                            "size": doc.size,
-                            "match_in_name": input_data.query.lower()
-                            in (doc.name or "").lower(),
-                            "match_in_content": input_data.query.lower()
-                            in (doc.content or "").lower(),
-                        }
-                        for doc in documents
-                    ],
-                    "total": len(documents),
-                    "query": input_data.query,
-                },
-            )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Tool Collections (Class references, not instances)
-# ═══════════════════════════════════════════════════════════════════════════════
-
 UTILITY_TOOLS = [
     GetCurrentTimeTool,
     GetWorkspaceInfoTool,
@@ -809,18 +527,11 @@ UTILITY_TOOLS = [
 
 CONTEXT_TOOLS = [
     SearchContextTool,
-    GetRunMemoryTool,
     QueryStructuredDataTool,
 ]
 
-FILE_TOOLS = [
-    ListWorkspaceFilesTool,
-    ReadFileContentTool,
-    SearchFilesTool,
-]
-
 # All server tools combined
-SERVER_TOOLS = CONTEXT_TOOLS + FILE_TOOLS + UTILITY_TOOLS
+SERVER_TOOLS = CONTEXT_TOOLS + UTILITY_TOOLS
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -856,7 +567,7 @@ class CodeExecutionInnerTool(InnerTool):
         """Execute Python code with input_data in execution context"""
         # Cast input_data to the specific InputSchema type
         typed_input = self.InputSchema.model_validate(input_data.model_dump())
-        
+
         if not typed_input.code:
             return ToolOutputSchema(
                 success=False,

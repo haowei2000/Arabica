@@ -31,7 +31,6 @@ from aiwen.services.executor.executor_registry import register_executor
 from aiwen.services.tools.inner_tool.browser_tools import BROWSER_TOOLS
 from aiwen.services.tools.inner_tool.server_tools import (
     CONTEXT_TOOLS,
-    FILE_TOOLS,
     SERVER_TOOLS,
     UTILITY_TOOLS,
 )
