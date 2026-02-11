@@ -26,7 +26,7 @@
 from typing import Any
 
 from aiwen.registries import ExecutorRegistry
-from aiwen.services.executor.base import Executor
+from aiwen.registries.base_class.base_executor import Executor
 
 
 class AppAgentFactory:

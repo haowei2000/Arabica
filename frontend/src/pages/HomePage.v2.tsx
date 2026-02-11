@@ -242,7 +242,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Context Sub-tabs */}
+        {/* ContextSchema Sub-tabs */}
         {mainTab === 'context' && (
           <div className="mb-6 flex flex-wrap gap-2 animate-slide-in">
             {(['knowledge', 'tool', 'memory', 'skill'] as ContextTab[]).map((tab) => (

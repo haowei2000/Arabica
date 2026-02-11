@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_context_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.app import ContextType
+from aiwen.models.context.context import ContextType
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.schemas.context.context import (
+from aiwen.schemas.context.context_schema import (
     ContextCreate,
     ContextListResponse,
     ContextResponse,
@@ -41,9 +41,9 @@ async def create_context(
     Create a new context entry.
 
     Args:
-        data: Context creation data
+        data: ContextSchema creation data
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Created context
@@ -64,10 +64,10 @@ async def get_context(
     Args:
         context_id: The context ID
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
-        Context details
+        ContextSchema details
 
     Raises:
         HTTPException: If context not found or not authorized
@@ -76,7 +76,7 @@ async def get_context(
     if not context:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Context {context_id} not found",
+            detail=f"ContextSchema {context_id} not found",
         )
     return context
 
@@ -93,7 +93,7 @@ async def get_contexts_by_ids(
     Args:
         ids: List of context IDs
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         List of contexts
@@ -116,7 +116,7 @@ async def update_context(
         context_id: The context ID
         data: Update data
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Updated context
@@ -128,7 +128,7 @@ async def update_context(
     if not context:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Context {context_id} not found",
+            detail=f"ContextSchema {context_id} not found",
         )
     return context
 
@@ -145,7 +145,7 @@ async def delete_context(
     Args:
         context_id: The context ID
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Raises:
         HTTPException: If context not found or not authorized
@@ -154,7 +154,7 @@ async def delete_context(
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Context {context_id} not found",
+            detail=f"ContextSchema {context_id} not found",
         )
     return
 
@@ -182,7 +182,7 @@ async def list_contexts(
         page: Page number (starting from 1)
         page_size: Number of items per page
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Paginated list of contexts
@@ -231,7 +231,7 @@ async def grep_contexts(
         page: Page number (starting from 1)
         page_size: Number of items per page
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Paginated list of matching contexts
@@ -265,7 +265,7 @@ async def grep_contexts_post(
     Args:
         request: Grep search request parameters
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Paginated list of matching contexts
@@ -304,7 +304,7 @@ async def vector_search(
     Args:
         request: Vector search request with embedding and parameters
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         List of contexts with similarity scores
@@ -375,7 +375,7 @@ async def hybrid_search(
         vector_weight: Weight for vector similarity (0-1)
         text_weight: Weight for text matching (0-1)
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         List of contexts with combined scores
@@ -431,7 +431,7 @@ async def create_contexts_batch(
     Args:
         items: List of context creation data
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         List of created contexts
@@ -452,7 +452,7 @@ async def delete_contexts_by_source(
     Args:
         source_id: The source ID to delete contexts for
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Number of deleted contexts
@@ -480,7 +480,7 @@ async def list_chunks_by_knowledge(
         page: Page number (starting from 1)
         page_size: Number of items per page
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Paginated list of chunks
@@ -512,7 +512,7 @@ async def list_chunks_by_document(
         page: Page number (starting from 1)
         page_size: Number of items per page
         current_user: Current authenticated user
-        crud: Context CRUD service
+        crud: ContextSchema CRUD service
 
     Returns:
         Paginated list of chunks for the document

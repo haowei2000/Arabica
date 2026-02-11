@@ -2,7 +2,7 @@
 from aiwen.services.executor.concrete import AnomalyAgent, NL2SQLAgent
 import pytest
 
-from aiwen.services.executor.app_factory import AppFactory
+from aiwen.services.executor.executor_factory import AppFactory
 
 
 def test_agent_factory_registration():

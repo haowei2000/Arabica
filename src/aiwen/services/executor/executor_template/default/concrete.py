@@ -27,7 +27,7 @@ from langchain_core.messages import (
 from aiwen.registries import ToolRegistry, register_executor
 from aiwen.schemas.app import AppConfig, Model
 from aiwen.schemas.events.event_payloads import UserMessage
-from aiwen.services.executor.base import AgentEvent, Executor, WaitingForTool
+from aiwen.registries.base_class.base_executor import AgentEvent, Executor, WaitingForTool
 from aiwen.services.context.tools.inner_tool.browser_tools import BROWSER_TOOLS
 
 

@@ -68,7 +68,7 @@ class ToolInfo:
 
 @dataclass
 class SkillInfo:
-    """Lightweight snapshot of a Skill / Context of type SKILL."""
+    """Lightweight snapshot of a Skill / ContextSchema of type SKILL."""
 
     id: str
     content: str

@@ -288,13 +288,13 @@ templates = ExecutorRegistry.list()
 **用途:** 为单个应用创建配置好的 agent 实例
 
 ```python
-from aiwen.services.executor.app_factory import AppAgentFactory
+from aiwen.services.executor.executor_factory import AppAgentFactory
 
 # 创建工厂
 factory = AppAgentFactory(
-   appid="uuid-string",
-   agent_type="chat",  # 必须在 AgentRegistry 中注册
-   app_config={"model": "gpt-4", "temperature": 0.7}
+    appid="uuid-string",
+    agent_type="chat",  # 必须在 AgentRegistry 中注册
+    app_config={"model": "gpt-4", "temperature": 0.7}
 )
 
 # 创建实例（会合并 app_config 和 text_message）

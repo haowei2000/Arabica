@@ -1,4 +1,4 @@
-"""Context domain models - agent context, knowledge, tools, and memory."""
+"""ContextSchema domain models - agent context, knowledge, tools, and memory."""
 
 from aiwen.models.context.context import Context
 from aiwen.models.context.knowledge import Chunk, Document, Knowledge, Preprocess

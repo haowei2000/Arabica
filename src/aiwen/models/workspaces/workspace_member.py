@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -17,6 +18,9 @@ if TYPE_CHECKING:
     from aiwen.models.workspaces.workspace import Workspace
 
 Base = get_base("aiwen")
+
+# Import enums from workspace to avoid duplication
+from aiwen.models.workspaces.workspace import InvitationStatus, MemberRole
 
 
 class WorkspaceMember(Base):
@@ -49,16 +53,16 @@ class WorkspaceMember(Base):
     )
 
     # Role in workspace
-    role: Mapped[str] = mapped_column(
-        String(50), default="viewer", comment="角色: owner/admin/editor/viewer"
+    role: Mapped[MemberRole] = mapped_column(
+        String(50), default=MemberRole.VIEWER, comment="角色: owner/admin/editor/viewer"
     )
 
     # Invitation details
     invited_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="邀请人ID"
     )
-    invitation_status: Mapped[str] = mapped_column(
-        String(50), default="accepted", comment="邀请状态: pending/accepted/declined"
+    invitation_status: Mapped[InvitationStatus] = mapped_column(
+        String(50), default=InvitationStatus.ACCEPTED, comment="邀请状态: pending/accepted/declined"
     )
 
     # Timestamps

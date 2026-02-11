@@ -302,7 +302,7 @@ class SearchContextTool(InnerTool):
 
     METADATA = ToolMetadata(
         name="search_context",
-        display_name="Search Context",
+        display_name="Search ContextSchema",
         description="Search through context content using regex patterns (grep-like)",
         execution_mode=ToolExecutionMode.SERVER_RUN,
         category="context",

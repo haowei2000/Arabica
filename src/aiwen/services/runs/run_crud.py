@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.runs.run import Run
+from aiwen.models.runs.run import Run, TriggerType
 from aiwen.models.workspaces.workspace import Workspace
 
 
@@ -44,7 +44,7 @@ class RunCRUD:
         app_id: str | UUID,
         user_id: str | UUID,
         parent_run_id: str | UUID | None = None,
-        trigger_type: str = "user",
+        trigger_type: TriggerType = TriggerType.USER,
         auto_commit: bool = False,
     ) -> Run:
         """Create a new run.

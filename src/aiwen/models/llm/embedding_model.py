@@ -54,7 +54,7 @@ class EmbeddingModel(Base):
         String(255), comment="API密钥引用（存储密钥名称，非实际密钥）"
     )
 
-    # Model specifications
+    # ChatLLM specifications
     dimension: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="向量维度: 384/768/1024/1536"
     )

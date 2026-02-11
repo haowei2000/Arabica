@@ -1,18 +1,25 @@
-"""Pydantic schemas for Context API endpoints."""
+"""Pydantic schemas for ContextSchema API endpoints."""
 
-from datetime import datetime
+from __future__ import annotations
+
 import json
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from aiwen.schemas.app import ContextType
+from aiwen.models.context.context import ContextType
+from aiwen.schemas.context.knowledge.knowledge import KnowledgeResponse
+from aiwen.schemas.context.tools.tool import ToolResponse
 from aiwen.utils.schema_mixins import ResponseMixin
 
-if TYPE_CHECKING:
-    from aiwen.schemas.context.knowledge.knowledge import KnowledgeResponse
-    from aiwen.schemas.context.tools.tool import ToolResponse
+
+class ContextSchema(BaseModel):
+    """Schema for context configuration."""
+
+    type: ContextType
+    enabled: bool = Field(default=True, description="Whether the context is enabled")
+    config: dict[str, Any] | None = Field(None, description="ContextSchema configuration")
 
 
 class ContextCreate(BaseModel):
@@ -20,13 +27,13 @@ class ContextCreate(BaseModel):
 
     context_type: ContextType = Field(
         default=ContextType.CONVERSATION,
-        description="Context type: conversation, message, user_memory, skill, tool, knowledge, chunk",
+        description="ContextSchema type: conversation, message, user_memory, skill, tool, knowledge, chunk",
     )
     source_id: str | UUID | None = Field(
         None, description="Related source ID (e.g., knowledge_id, conversation_id)"
     )
-    content: str = Field(..., min_length=1, description="Context content")
-    summary: str | None = Field(None, description="Context summary")
+    content: str = Field(..., min_length=1, description="ContextSchema content")
+    summary: str | None = Field(None, description="ContextSchema summary")
     keywords: list[str] | None = Field(None, description="Keywords for search")
     embedding_384: list[float] | None = Field(None, description="384-dim embedding")
     embedding_768: list[float] | None = Field(None, description="768-dim embedding")
@@ -41,10 +48,10 @@ class ContextCreate(BaseModel):
 class ContextUpdate(BaseModel):
     """Schema for updating a context entry."""
 
-    context_type: ContextType | None = Field(None, description="Context type")
+    context_type: ContextType | None = Field(None, description="ContextSchema type")
     source_id: str | UUID | None = Field(None, description="Related source ID")
-    content: str | None = Field(None, min_length=1, description="Context content")
-    summary: str | None = Field(None, description="Context summary")
+    content: str | None = Field(None, min_length=1, description="ContextSchema content")
+    summary: str | None = Field(None, description="ContextSchema summary")
     keywords: list[str] | None = Field(None, description="Keywords for search")
     embedding_384: list[float] | None = Field(None, description="384-dim embedding")
     embedding_768: list[float] | None = Field(None, description="768-dim embedding")
@@ -250,7 +257,7 @@ class ContextFromSource(BaseModel):
 
 
 class ContextWithScore(ContextResponse):
-    """Context response with similarity score for vector search."""
+    """ContextSchema response with similarity score for vector search."""
 
     score: float = Field(..., description="Similarity score (cosine distance)")
 

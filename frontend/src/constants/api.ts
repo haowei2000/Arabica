@@ -101,7 +101,7 @@ export const API_ENDPOINTS = {
         TOGGLE: (id: string) => `/tools/${id}/toggle`,
     },
 
-    // Context/Chunk 管理
+    // ContextSchema/Chunk 管理
     CONTEXT: {
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/context/knowledge/${knowledgeId}/chunks`,
         LIST_BY_DOCUMENT: (documentId: string) => `/agent/context/document/${documentId}/chunks`,

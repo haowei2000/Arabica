@@ -15,18 +15,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
-from typing import Any, TypeVar
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.services.executor.base import Executor
-from aiwen.services.context.tools import BaseTool
-from aiwen.services.context.tools.base_tool import ToolExecutionMode
-
-# Type variables for generic registry
-K = TypeVar("K")  # Key type (e.g., str)
-T = TypeVar("T")  # Component type (e.g., BaseTool, Executor)
+from aiwen.registries.base_class.base_tool import BaseTool
+from aiwen.registries.base_class.base_executor import Executor
 
 logger = logging.getLogger(__name__)
 
@@ -278,7 +273,7 @@ class BaseRegistry[K, T](ABC):
 # ============================================================================
 
 
-class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
+class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
     """
     Registry for managing tool classes.
 
@@ -659,50 +654,50 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         failed_count = 0
         deleted_count = 0
 
-        # Sync registered templates
-        for template_code, executor_cls in self._registry.items():
+        # Sync registered executors
+        for executor_code, executor_cls in self._registry.items():
             try:
-                template = executor_cls.TEMPLATE
-                existing = await crud.get_template_by_code(template_code)
+                executor = executor_cls.EXECUTOR
+                existing = await crud.get_executor_by_code(executor_code)
 
                 if not existing:
-                    await crud.create_template(
-                        template_code=template_code,
-                        template_name=template["template_name"],
-                        config=_normalize_config(template.get("config")),
-                        enabled=template.get("enabled", True),
-                        version=template.get("version", 1),
+                    await crud.create_executor(
+                        executor_code=executor_code,
+                        executor_name=executor["executor_name"],
+                        config=_normalize_config(executor.get("config")),
+                        enabled=executor.get("enabled", True),
+                        version=executor.get("version", 1),
                         auto_commit=False,
                     )
-                    self.logger.info(f"✓ Created: {template_code}")
+                    self.logger.info(f"✓ Created: {executor_code}")
                     synced_count += 1
                 else:
                     if not existing.enabled:
                         existing.enabled = True
-                        self.logger.info(f"✓ Re-enabled: {template_code}")
+                        self.logger.info(f"✓ Re-enabled: {executor_code}")
                     synced_count += 1
 
             except Exception as e:
-                self.logger.error(f"Failed to sync {template_code}: {e}")
+                self.logger.error(f"Failed to sync {executor_code}: {e}")
                 failed_count += 1
 
-        # Mark unregistered templates as deleted
+        # Mark unregistered executors as deleted
         try:
-            all_db_templates = await crud.list_templates(include_disabled=False)
+            all_db_executors = await crud.list_executors(include_disabled=False)
             registered_codes = set(self._registry.keys())
 
-            for db_template in all_db_templates:
-                if db_template.template_code not in registered_codes:
-                    await crud.mark_template_as_deleted(
-                        db_template.template_code, auto_commit=False
+            for db_executor in all_db_executors:
+                if db_executor.executor_code not in registered_codes:
+                    await crud.mark_executor_as_deleted(
+                        db_executor.executor_code, auto_commit=False
                     )
                     self.logger.warning(
-                        f"⚠ Marked as deleted: {db_template.template_code}"
+                        f"⚠ Marked as deleted: {db_executor.executor_code}"
                     )
                     deleted_count += 1
 
         except Exception as e:
-            self.logger.error(f"Failed to check orphaned templates: {e}")
+            self.logger.error(f"Failed to check orphaned executors: {e}")
 
         await db.commit()
         self.logger.info(

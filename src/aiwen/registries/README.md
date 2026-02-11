@@ -7,9 +7,11 @@ This module provides a unified, extensible registry architecture for managing di
 The registry system provides:
 
 - **Consistent patterns** across all registry types (tools, agents, models, etc.)
+- **Protocol-based interfaces** using PEP 544 structural typing for flexibility
 - **Flexible configuration** for caching, validation, and persistence
 - **Database synchronization** with automatic CRUD operations
 - **Lifecycle hooks** for custom behavior on registration/retrieval
+- **Type safety** with runtime protocol validation
 - **Backward compatibility** with existing code
 - **Centralized management** through RegistryManager
 
@@ -17,19 +19,44 @@ The registry system provides:
 
 ```
 registries/
-├── __init__.py           # Public API exports
-├── base.py               # BaseRegistry abstract class
-├── manager.py            # RegistryManager for coordinating registries
-├── tool_registry.py      # ToolRegistry implementation
-├── executor_registry.py  # ExecutorRegistry implementation
-└── README.md            # This file
+├── __init__.py               # Public API exports
+├── core.py                   # BaseRegistry + concrete implementations
+├── manager.py                # RegistryManager for coordinating registries
+├── base_class/               # Base classes for components
+│   ├── base_tool.py         # BaseTool (ABC) - implements ToolProtocol
+│   ├── base_executor.py     # Executor Protocol re-export
+│   └── __init__.py
+└── README.md                # This file
+
+core/interfaces/              # Protocol definitions
+├── protocols.py             # All protocol definitions
+├── executor.py              # Executor Protocol implementation
+├── tool.py                  # Tool interface exports
+└── __init__.py
 ```
 
 ### Key Components
 
-#### 1. BaseRegistry (Abstract Base Class)
+#### 1. Protocol Layer (Structural Typing)
 
-Provides common functionality for all registries:
+Defines interfaces for registrable components using PEP 544 Protocols:
+
+- **RegistrableProtocol**: Base protocol for all registrable components
+- **ToolProtocol**: Interface for tool components
+- **ExecutorProtocol**: Interface for executor components
+- **RegistryProtocol**: Interface for registry implementations
+
+**Benefits:**
+- Structural typing (no mandatory inheritance)
+- Better type safety with static type checkers
+- Easier third-party integration
+- Clear interface documentation
+
+See [PROTOCOLS.md](../../../docs/PROTOCOLS.md) for detailed documentation.
+
+#### 2. BaseRegistry (Abstract Base Class)
+
+Provides common functionality for all registries (implements RegistryProtocol):
 
 - **Registration**: Register components with validation
 - **Retrieval**: Get components or instances (with optional caching)
@@ -38,7 +65,7 @@ Provides common functionality for all registries:
 - **Lifecycle hooks**: Custom callbacks on register/retrieve
 - **Statistics**: Introspection and monitoring
 
-#### 2. RegistryManager (Singleton Coordinator)
+#### 3. RegistryManager (Singleton Coordinator)
 
 Central coordinator for all registries:
 
@@ -47,12 +74,42 @@ Central coordinator for all registries:
 - **Cross-registry queries**: Get statistics from all registries
 - **Lifecycle management**: Clear all registries (for testing)
 
-#### 3. Specific Registries
+#### 4. Specific Registries
 
 - **ToolRegistry**: Manages tool classes (InnerTools, ExternalTools)
 - **ExecutorRegistry**: Manages agent executor templates
 
 ## Usage Examples
+
+### 0. Using Protocols for Type Safety
+
+```python
+from aiwen.registries import ToolProtocol, ExecutorProtocol, is_tool, is_executor
+
+# Type-safe function accepting any tool-like object
+async def execute_tool(tool: ToolProtocol, input_data: dict) -> dict:
+    """Works with any object implementing ToolProtocol."""
+    validated = await tool.validate_input(input_data)
+    result = await tool.execute(validated)
+    return tool.format_output(result)
+
+# Runtime validation
+if is_tool(my_component):
+    await execute_tool(my_component, {"param": "value"})
+
+# Check protocol requirements
+from aiwen.registries import PROTOCOL_REGISTRY
+print(PROTOCOL_REGISTRY["ToolProtocol"])
+# Shows required attributes and methods
+```
+
+**Benefits:**
+- Works with any tool-like object, not just BaseTool subclasses
+- Static type checkers verify protocol compliance
+- Clear interface contracts
+- Easier testing with mocks
+
+See [PROTOCOLS.md](../../../docs/PROTOCOLS.md) for comprehensive protocol documentation.
 
 ### 1. Register a Tool
 
@@ -81,7 +138,8 @@ class MyTool(BaseTool):
 
 ```python
 from aiwen.registries import register_executor
-from aiwen.services.executor.base import Executor
+from aiwen.registries.base_class.base_executor import Executor
+
 
 @register_executor
 class MyExecutor(Executor):

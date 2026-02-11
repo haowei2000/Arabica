@@ -3,7 +3,7 @@
 This module contains three chained tasks:
 1. download_chunk_and_store: Download file from MinIO, parse, chunk, and store to Chunk table
 2. embed_chunks: Generate embeddings for stored chunks
-3. link_chunks_to_context: Link chunks to Context table for knowledge base
+3. link_chunks_to_context: Link chunks to ContextSchema table for knowledge base
 """
 
 import asyncio
@@ -516,12 +516,12 @@ def link_chunks_to_context(
     prev_result: dict[str, Any],
     knowledge_id: str,
 ) -> dict[str, Any]:
-    """Create Context records from embedded chunks for knowledge base.
+    """Create ContextSchema records from embedded chunks for knowledge base.
 
     Args:
         self: Celery task instance.
         prev_result: Output from embed_chunks task.
-        knowledge_id: Knowledge base UUID (used as source_id in Context).
+        knowledge_id: Knowledge base UUID (used as source_id in ContextSchema).
 
     Returns:
         dict: Processing result with status and context count.
@@ -554,7 +554,7 @@ def link_chunks_to_context(
         from aiwen.models.context.context import Context
         from aiwen.models.context.knowledge.chunk import Chunk
         from aiwen.models.context.knowledge.documents import Document
-        from aiwen.schemas.app import ContextType
+        from aiwen.models.context.context import ContextType
 
         # Update document status
         async with get_session("aiwen") as session:
@@ -583,7 +583,7 @@ def link_chunks_to_context(
             if not chunk_records:
                 logger.warning(f"No chunks found for document {document_id}")
             else:
-                # Create Context records
+                # Create ContextSchema records
                 context_records = []
                 for chunk_record in chunk_records:
                     embedding = getattr(chunk_record, embedding_field, None)
@@ -679,7 +679,7 @@ def process_document_to_context(
     Task chain:
     1. download_chunk_and_store: Download, parse, chunk, store to Chunk table
     2. embed_chunks: Generate embeddings for chunks
-    3. link_chunks_to_context: Create Context records for knowledge base
+    3. link_chunks_to_context: Create ContextSchema records for knowledge base
 
     Args:
         document_id: Document UUID.
@@ -739,7 +739,7 @@ def process_document_async(
     chunk_size: int = 1024,
     chunk_overlap: int = 50,
 ) -> str:
-    """Create and execute 2-task document processing chain (without Context linking).
+    """Create and execute 2-task document processing chain (without ContextSchema linking).
 
     Task chain:
     1. download_chunk_and_store: Download, parse, chunk, store to Chunk table

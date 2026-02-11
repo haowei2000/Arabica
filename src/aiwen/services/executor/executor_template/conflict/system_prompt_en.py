@@ -46,7 +46,7 @@ Use the following core tools to access workspace resources. Each tool takes a co
 """
 
 available_context_prompt_en = """
-## Available Context Resources
+## Available ContextSchema Resources
 
 The following context resources are accessible in the current workspace. Query them using core tools (read, list, search, etc.) with the corresponding ID:
 

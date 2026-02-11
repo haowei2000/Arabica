@@ -54,7 +54,7 @@ class ChatModel(Base):
         String(255), comment="API密钥引用（存储密钥名称，非实际密钥）"
     )
 
-    # Model capabilities
+    # ChatLLM capabilities
     max_tokens: Mapped[int | None] = mapped_column(Integer, comment="最大输出token数")
     context_window: Mapped[int | None] = mapped_column(
         Integer, comment="上下文窗口大小"

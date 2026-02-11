@@ -1,4 +1,4 @@
-"""Context domain services."""
+"""ContextSchema domain services."""
 
 from aiwen.services.context.context_crud import ContextCRUD
 

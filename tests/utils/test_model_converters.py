@@ -442,9 +442,9 @@ class TestModelsToSchemas:
 
         # Simulating vector search results
         contexts = [
-            MockModel(id=uuid4(), content="Context 1"),
-            MockModel(id=uuid4(), content="Context 2"),
-            MockModel(id=uuid4(), content="Context 3"),
+            MockModel(id=uuid4(), content="ContextSchema 1"),
+            MockModel(id=uuid4(), content="ContextSchema 2"),
+            MockModel(id=uuid4(), content="ContextSchema 3"),
         ]
         scores = [0.95, 0.87, 0.72]
 
@@ -455,9 +455,9 @@ class TestModelsToSchemas:
         )
 
         assert len(schemas) == 3
-        assert schemas[0].content == "Context 1"
+        assert schemas[0].content == "ContextSchema 1"
         assert schemas[0].score == 0.95
-        assert schemas[1].content == "Context 2"
+        assert schemas[1].content == "ContextSchema 2"
         assert schemas[1].score == 0.87
 
     def test_extra_factory_with_model_access(self):

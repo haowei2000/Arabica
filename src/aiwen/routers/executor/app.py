@@ -10,7 +10,7 @@ from aiwen.dependencies.auth import get_current_user
 from aiwen.schemas.executor.executor import ExecutorResponse
 from aiwen.schemas.app import AppCreate, AppListResponse, AppResponse, AppUpdate
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.services.executor.app_crud import AppCRUD
+from aiwen.services.app.app_crud import AppCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 
 router = APIRouter(prefix="/apps", tags=["apps"])

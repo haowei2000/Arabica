@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
 from aiwen.services.context.context_crud import ContextCRUD
-from aiwen.services.executor.app_crud import AppCRUD
+from aiwen.services.app.app_crud import AppCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.executor.tool_crud import ToolCRUD

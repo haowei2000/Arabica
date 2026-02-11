@@ -242,7 +242,7 @@ alembic heads
 
 ```python
 # src/aiwen/services/agent/agent_template/my_agent/concrete.py
-from aiwen.services.executor.base import BaseAgentTemplate
+from aiwen.registries.base_class.base_executor import BaseAgentTemplate
 
 
 class MyCustomAgent(BaseAgentTemplate):

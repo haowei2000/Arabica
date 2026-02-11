@@ -37,7 +37,7 @@ EXECUTION_MODE_TO_INNER_TOOL: dict[str, str] = {
 
 
 class UserToolBase(BaseModel):
-    """Base schema for user tool (ExternalTool)"""
+    """Base schema for the user tool (ExternalTool)"""
 
     name: str = Field(
         ..., description="Tool name (unique per user)", min_length=1, max_length=100

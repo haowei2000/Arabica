@@ -48,7 +48,7 @@ class EmbeddingService:
 
         Args:
             provider: Embedding provider (tongyi, openai, ollama).
-            model: Model name.
+            model: ChatLLM name.
             dimension: Embedding dimension.
         """
         self.provider = provider
@@ -300,7 +300,7 @@ class EmbeddingService:
         """Get the default dimension for a known model.
 
         Args:
-            model: Model name.
+            model: ChatLLM name.
 
         Returns:
             int | None: Dimension if known, None otherwise.
@@ -329,7 +329,7 @@ def get_embedding_service(
 
     Args:
         provider: Embedding provider.
-        model: Model name.
+        model: ChatLLM name.
         dimension: Optional dimension override. If None, uses model default.
 
     Returns:

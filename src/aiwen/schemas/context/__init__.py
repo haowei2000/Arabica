@@ -1,6 +1,6 @@
-"""Context domain schemas."""
+"""ContextSchema domain schemas."""
 
-from aiwen.schemas.context.context import (
+from aiwen.schemas.context.context_schema import (
     ContextCreate,
     ContextFromSource,
     ContextListResponse,

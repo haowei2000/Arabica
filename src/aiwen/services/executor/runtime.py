@@ -23,7 +23,7 @@
 # aiwen/services/agent/runtime.py
 from uuid import UUID
 
-from aiwen.services.executor.base import Executor
+from aiwen.registries.base_class.base_executor import Executor
 
 
 class AgentRuntime:

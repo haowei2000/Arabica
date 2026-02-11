@@ -10,7 +10,7 @@ from aiwen.schemas.events.event_payloads import BaseEvent
 
 
 class ExecutionContext(BaseModel):
-    """Context information for tool execution."""
+    """ContextSchema information for tool execution."""
 
     run_id: UUID = Field(..., description="Run ID")
     workspace_id: UUID = Field(..., description="Workspace ID")

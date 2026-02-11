@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import StrEnum
+from enum import StrEnum, Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -22,6 +22,16 @@ if TYPE_CHECKING:
     from aiwen.models.workspaces.workspace import Workspace
 
 Base = get_base("aiwen")
+
+
+
+class TriggerType(str, Enum):
+    """Run trigger type options."""
+
+    USER = "user"
+    TOOL_CALLBACK = "tool_callback"
+    AGENT = "agent"
+    SYSTEM = "system"
 
 
 class RunStatus(StrEnum):
@@ -92,9 +102,9 @@ class Run(Base):
     )
 
     # Trigger type
-    trigger_type: Mapped[str] = mapped_column(
+    trigger_type: Mapped[TriggerType] = mapped_column(
         String(50),
-        default="user",
+        default=TriggerType.USER,
         comment="触发类型: user/tool_callback/agent/system",
     )
 

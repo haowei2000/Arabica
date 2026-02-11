@@ -104,7 +104,7 @@ async def upload_document(
     The document will be:
     1. Uploaded to S3 storage
     2. Processed asynchronously via Celery
-    3. Chunked and embedded into the Context table
+    3. Chunked and embedded into the ContextSchema table
 
     Args:
         file: The file to upload
@@ -112,7 +112,7 @@ async def upload_document(
         chunk_size: Size of text chunks for splitting
         chunk_overlap: Overlap between chunks
         embedding_provider: Provider for embeddings
-        embedding_model: Model for embeddings
+        embedding_model: ChatLLM for embeddings
         embedding_dimension: Dimension of embeddings
         current_user: Current authenticated user
         document_crud: Document CRUD service

@@ -1,4 +1,4 @@
-"""CRUD operations for Context model with vector search and text retrieval."""
+"""CRUD operations for ContextSchema model with vector search and text retrieval."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from sqlalchemy import Integer, and_, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.context import Context
-from aiwen.schemas.app import ContextType
-from aiwen.schemas.context.context import ContextCreate, ContextUpdate
+from aiwen.schemas.context.context_schema import ContextCreate, ContextUpdate
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -36,7 +35,7 @@ def normalize_uuid_to_str(val: str | UUID) -> str:
 
 
 class ContextCRUD:
-    """CRUD operations for Context model with retrieval methods."""
+    """CRUD operations for ContextSchema model with retrieval methods."""
 
     def __init__(self, db_session: AsyncSession):
         """
@@ -59,12 +58,12 @@ class ContextCRUD:
         Create a new context entry.
 
         Args:
-            data: Context creation data
+            data: ContextSchema creation data
             user_id: ID of the user creating the context
             auto_commit: If True, immediately commit the transaction.
 
         Returns:
-            Created Context instance
+            Created ContextSchema instance
         """
         data_dict = data.model_dump()
         data_dict["user_id"] = normalize_uuid_to_str(user_id)
@@ -100,7 +99,7 @@ class ContextCRUD:
             auto_commit: If True, immediately commit the transaction.
 
         Returns:
-            Updated Context instance or None if not found or unauthorized
+            Updated ContextSchema instance or None if not found or unauthorized
         """
         context = await self.get_by_id(context_id, user_id)
         if not context:
@@ -169,7 +168,7 @@ class ContextCRUD:
             user_id: The user ID (must match context owner)
 
         Returns:
-            Context instance or None if not found or unauthorized
+            ContextSchema instance or None if not found or unauthorized
         """
         normalized_id = normalize_uuid_to_str(context_id)
         normalized_user_id = normalize_uuid_to_str(user_id)
@@ -196,7 +195,7 @@ class ContextCRUD:
             user_id: The user ID (must match context owner)
 
         Returns:
-            List of Context instances (only those belonging to user)
+            List of ContextSchema instances (only those belonging to user)
         """
         if not context_ids:
             return []
@@ -439,7 +438,7 @@ class ContextCRUD:
             threshold: Minimum similarity threshold (0-1, where 1 is identical)
 
         Returns:
-            List of tuples (Context, similarity_score) ordered by similarity
+            List of tuples (ContextSchema, similarity_score) ordered by similarity
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
 
@@ -559,7 +558,7 @@ class ContextCRUD:
             text_weight: Weight for text matching (0-1)
 
         Returns:
-            List of tuples (Context, combined_score) ordered by score
+            List of tuples (ContextSchema, combined_score) ordered by score
         """
         # Get vector search results
         vector_results = await self.cosine_search(
@@ -630,7 +629,7 @@ class ContextCRUD:
             auto_commit: If True, immediately commit the transaction.
 
         Returns:
-            List of created Context instances
+            List of created ContextSchema instances
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
         contexts = []

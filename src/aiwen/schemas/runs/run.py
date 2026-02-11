@@ -2,33 +2,16 @@
 """Pydantic schemas for Run API endpoints."""
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from aiwen.models.runs.run import RunStatus, TriggerType
 from aiwen.utils.schema_mixins import ResponseMixin
 
 
-class RunStatus(str, Enum):
-    """Run status options (state machine states)."""
 
-    PENDING = "pending"
-    RUNNING = "running"
-    WAITING = "waiting"
-    FINISHED = "finished"
-    CANCELLED = "cancelled"
-    FAILED = "failed"
-
-
-class TriggerType(str, Enum):
-    """Run trigger type options."""
-
-    USER = "user"
-    TOOL_CALLBACK = "tool_callback"
-    AGENT = "agent"
-    SYSTEM = "system"
 
 
 class RunCreate(BaseModel):
@@ -59,8 +42,8 @@ class RunResponse(ResponseMixin, BaseModel):
     app_id: str
     user_id: str
     parent_run_id: str | None = None
-    status: str
-    trigger_type: str
+    status: RunStatus
+    trigger_type: TriggerType
     input_data: dict[str, Any] | None = None
     output_data: dict[str, Any] | None = None
     error: str | None = None

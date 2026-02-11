@@ -18,9 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.models.app import App
 from aiwen.models.runs.run import Run
 from aiwen.registries import ExecutorRegistry
-from aiwen.schemas.events.event_payloads import UserMessage, UserMessageEvent
+from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
-from aiwen.services.executor.base import AgentEvent, Executor
+from aiwen.registries.base_class.base_executor import AgentEvent, Executor
 from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 

@@ -1,9 +1,10 @@
-# aiwen/models/context/context.py
-"""Context model for storing agent context with vector embeddings."""
+# aiwen/models/context/contextschema.py
+"""ContextSchema model for storing agent context with vector embeddings."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,13 +17,24 @@ from sqlalchemy.dialects.postgresql import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aiwen.extensions.database import get_base
-from aiwen.schemas.app import ContextType
 
 Base = get_base("aiwen")
 
 
+class ContextType(StrEnum):
+    """Context type options."""
+
+    CHUNK = "CHUNK"
+    CONVERSATION = "conversation"
+    MESSAGE = "message"
+    USER_MEMORY = "user_memory"
+    SKILL = "SKILL"
+    TOOL = "tool"
+    KNOWLEDGE = "knowledge"
+
+
 class Context(Base):  # ty:ignore[unsupported-base]
-    """Context table for storing agent context with vector embeddings."""
+    """ContextSchema table for storing agent context with vector embeddings."""
 
     __tablename__ = "context"
 
@@ -37,7 +49,7 @@ class Context(Base):  # ty:ignore[unsupported-base]
     source_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="关联的源ID"
     )
-    # Context type
+    # ContextSchema type
     context_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -45,7 +57,7 @@ class Context(Base):  # ty:ignore[unsupported-base]
         comment="上下文类型: history, tool, knowledge",
     )
 
-    # Context content
+    # ContextSchema content
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="上下文内容")
     summary: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="上下文摘要"
@@ -135,4 +147,4 @@ class Context(Base):  # ty:ignore[unsupported-base]
     )
 
     def __repr__(self) -> str:
-        return f"<Context(id={self.id}, type='{self.context_type}', user_id='{self.user_id}')>"
+        return f"<ContextSchema(id={self.id}, type='{self.context_type}', user_id='{self.user_id}')>"

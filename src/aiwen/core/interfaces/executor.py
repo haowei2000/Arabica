@@ -4,9 +4,9 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-from aiwen.registries import ToolRegistry
+from aiwen.schemas.context.tools import ToolClientRequestPayload
 from aiwen.schemas.events.event_payloads import (
     AgentPlanEvent,
     AgentTokenEvent,
@@ -16,6 +16,10 @@ from aiwen.schemas.events.event_payloads import (
     ToolResultEvent,
     UserMessage,
 )
+
+# Avoid circular import by using TYPE_CHECKING
+if TYPE_CHECKING:
+    from aiwen.registries import ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -59,7 +63,7 @@ class WaitingForTool(Exception):
         super().__init__(f"Waiting for tool approval: {info.get('tool_name')}")
 
 
-class Executor(ABC):
+class Executor(Protocol):
     """Abstract base for every agent in the system.
 
     Subclasses must:
@@ -95,7 +99,7 @@ class Executor(ABC):
         ...
 
     async def stream(
-        self, user_message: UserMessage, tool_registry: ToolRegistry
+        self, user_message: UserMessage, tool_registry: "ToolRegistry"
     ) -> AsyncGenerator[AgentEvent, None]:
         """Yield typed events while processing input.
 

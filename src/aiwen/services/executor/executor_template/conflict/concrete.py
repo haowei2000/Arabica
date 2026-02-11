@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 
 from aiwen.registries import register_executor, ToolRegistry
 from aiwen.schemas.events.event_payloads import UserMessage
-from aiwen.services.executor.base import AgentEvent, Executor
+from aiwen.registries.base_class.base_executor import AgentEvent, Executor
 
 
 @register_executor

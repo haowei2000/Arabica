@@ -143,7 +143,9 @@ def convert_uuid_fields(obj: Any) -> dict[str, Any]:
     return result
 
 
-def model_to_schema(
+def model_to_schema[
+    T: BaseModel
+](
     schema_class: type[T],
     model_instance: Any,
     exclude: set[str] | None = None,
@@ -196,7 +198,9 @@ def model_to_schema(
     return schema_class.model_validate(data)
 
 
-def models_to_schemas(
+def models_to_schemas[
+    T: BaseModel
+](
     schema_class: type[T],
     model_instances: list[Any],
     exclude: set[str] | None = None,

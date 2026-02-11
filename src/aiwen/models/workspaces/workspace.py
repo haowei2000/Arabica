@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -19,10 +20,41 @@ from aiwen.extensions.database import get_base
 if TYPE_CHECKING:
     from aiwen.models.events.event import Event
     from aiwen.models.runs.run import Run
-    from aiwen.models.workspaces.workspace_member import WorkspaceMember
 
 Base = get_base("aiwen")
 
+
+class WorkspaceVisibility(str, Enum):
+    """Workspace visibility options."""
+
+    PRIVATE = "private"
+    TEAM = "team"
+    PUBLIC = "public"
+
+
+class WorkspaceStatus(str, Enum):
+    """Workspace status options."""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    DELETED = "deleted"
+
+
+class MemberRole(str, Enum):
+    """Workspace member role options."""
+
+    OWNER = "owner"
+    ADMIN = "admin"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+
+class InvitationStatus(str, Enum):
+    """Invitation status options."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
 
 class Workspace(Base):
     """Workspace model - top-level container for runs and events.
@@ -63,8 +95,8 @@ class Workspace(Base):
     )
 
     # Visibility and sharing
-    visibility: Mapped[str] = mapped_column(
-        String(50), default="private", comment="可见性: private/team/public"
+    visibility: Mapped[WorkspaceVisibility] = mapped_column(
+        String(50), default=WorkspaceVisibility.PRIVATE, comment="可见性: private/team/public"
     )
     is_shared: Mapped[bool] = mapped_column(
         Boolean, default=False, comment="是否已共享"
@@ -76,8 +108,8 @@ class Workspace(Base):
     )
 
     # Status
-    status: Mapped[str] = mapped_column(
-        String(50), default="active", comment="状态: active/archived/deleted"
+    status: Mapped[WorkspaceStatus] = mapped_column(
+        String(50), default=WorkspaceStatus.ACTIVE, comment="状态: active/archived/deleted"
     )
 
     # Denormalized counts for performance
@@ -108,13 +140,13 @@ class Workspace(Base):
     )
 
     # Relationships
-    runs: Mapped[list[Run]] = relationship(
+    runs: Mapped[list["Run"]] = relationship(
         "Run", back_populates="workspace", cascade="all, delete-orphan"
     )
-    members: Mapped[list[WorkspaceMember]] = relationship(
+    members: Mapped[list["WorkspaceMember"]] = relationship(
         "WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan"
     )
-    events: Mapped[list[Event]] = relationship(
+    events: Mapped[list["Event"]] = relationship(
         "Event", back_populates="workspace", cascade="all, delete-orphan"
     )
 

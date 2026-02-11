@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.conversations.conversation import Conversation
 from aiwen.models.conversations.message import Message
-from aiwen.models.runs.run import Run
+from aiwen.models.runs.run import Run, TriggerType
 from aiwen.models.workspaces.workspace import Workspace
 from aiwen.models.workspaces.workspace_member import WorkspaceMember
 from aiwen.schemas.events.event_payloads import EventType
@@ -245,7 +245,7 @@ class ConversationCompat:
             workspace_id=workspace_id_str,
             app_id=app_id_str,
             user_id=user_id_str,
-            trigger_type="user",
+            trigger_type=TriggerType.USER,
             input_data={
                 "message": message_content,
                 "attachments": attachments,
