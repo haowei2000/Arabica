@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,22 +15,11 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from aiwen.enums.context import ContextType
+
 from aiwen.extensions.database import get_base
 
 Base = get_base("aiwen")
-
-
-class ContextType(StrEnum):
-    """Context type options."""
-
-    CHUNK = "CHUNK"
-    CONVERSATION = "conversation"
-    MESSAGE = "message"
-    USER_MEMORY = "user_memory"
-    SKILL = "SKILL"
-    TOOL = "tool"
-    KNOWLEDGE = "knowledge"
-
 
 class Context(Base):  # ty:ignore[unsupported-base]
     """ContextSchema table for storing agent context with vector embeddings."""

@@ -1,21 +1,7 @@
-from enum import Enum
 
 from pydantic import BaseModel, Field
 
-
-class InputFormat(str, Enum):
-    """支持的输入格式"""
-
-    markdown = "md"
-    text = "txt"
-
-
-class OutputFormat(str, Enum):
-    """支持的输出格式"""
-
-    word = "word"
-    pdf = "pdf"
-
+from aiwen.enums.files import InputFormat, OutputFormat
 
 class ConvertRequest(BaseModel):
     """文件转换请求模型"""

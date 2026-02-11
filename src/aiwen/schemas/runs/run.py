@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from aiwen.models.runs.run import RunStatus, TriggerType
+from aiwen.enums.runs import RunStatus, TriggerType
 from aiwen.utils.schema_mixins import ResponseMixin
 
 

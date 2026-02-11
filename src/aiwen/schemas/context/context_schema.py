@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from aiwen.models.context.context import ContextType
+from aiwen.enums.context import ContextType
 from aiwen.schemas.context.knowledge.knowledge import KnowledgeResponse
 from aiwen.schemas.context.tools.tool import ToolResponse
 from aiwen.utils.schema_mixins import ResponseMixin

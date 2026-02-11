@@ -10,7 +10,8 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.runs.run import Run, TriggerType
+from aiwen.enums.runs import TriggerType
+from aiwen.models.runs.run import Run
 from aiwen.models.workspaces.workspace import Workspace
 
 

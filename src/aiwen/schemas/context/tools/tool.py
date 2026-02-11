@@ -5,22 +5,12 @@ through the API. Inner tools are code-defined and registered at startup.
 """
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
-class AllowedToolType(str, Enum):
-    """Allowed tool types for API creation.
-
-    Only 'external' tools can be created via the API.
-    'inner' tools are code-defined and cannot be created through the API.
-    """
-
-    EXTERNAL = "external"
-
+from aiwen.enums.tools import AllowedToolType
 
 class ToolCreate(BaseModel):
     """Schema for creating a new tool.
@@ -52,7 +42,6 @@ class ToolCreate(BaseModel):
     )
     version: int = Field(default=1, ge=1, description="Tool version number")
 
-
 class ToolUpdate(BaseModel):
     """Schema for updating an existing tool.
 
@@ -73,7 +62,6 @@ class ToolUpdate(BaseModel):
     enabled: bool | None = Field(None, description="Whether the tool is enabled")
     is_public: bool | None = Field(None, description="Whether publicly available")
     version: int | None = Field(None, ge=1, description="Tool version number")
-
 
 class ToolResponse(BaseModel):
     """Schema for tool response."""
@@ -105,7 +93,6 @@ class ToolResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 class ToolListResponse(BaseModel):
     """Schema for paginated list of tools."""

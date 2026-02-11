@@ -17,10 +17,9 @@ from aiwen.extensions.database import get_base
 if TYPE_CHECKING:
     from aiwen.models.workspaces.workspace import Workspace
 
-Base = get_base("aiwen")
+from aiwen.enums.workspaces import InvitationStatus, MemberRole
 
-# Import enums from workspace to avoid duplication
-from aiwen.models.workspaces.workspace import InvitationStatus, MemberRole
+Base = get_base("aiwen")
 
 
 class WorkspaceMember(Base):

@@ -550,11 +550,11 @@ def link_chunks_to_context(
     async def _execute():
         from sqlalchemy import select, update
 
+        from aiwen.enums.context import ContextType
         from aiwen.extensions.database import get_session
         from aiwen.models.context.context import Context
         from aiwen.models.context.knowledge.chunk import Chunk
         from aiwen.models.context.knowledge.documents import Document
-        from aiwen.models.context.context import ContextType
 
         # Update document status
         async with get_session("aiwen") as session:
