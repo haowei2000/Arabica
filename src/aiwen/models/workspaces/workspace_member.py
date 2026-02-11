@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
-from typing import from uuid import UUID, uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from aiwen.enums.workspaces import InvitationStatus, MemberRole
 from aiwen.extensions.database import get_base
+from aiwen.models.event_sourcing import Workspace
 
 Base = get_base("aiwen")
 
@@ -73,8 +74,8 @@ class WorkspaceMember(Base):
         comment="更新时间",
     )
 
-    # Relationship
-    workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="members")
+    # Relationship - using actual class reference (no strings!)
+    workspace: Mapped[Workspace] = relationship("Workspace", back_populates="members")
 
     __table_args__ = (
         # Unique constraint: one user can only be a member once per workspace
