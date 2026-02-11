@@ -7,26 +7,16 @@ and automatic JSON Schema generation.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
 import logging
 from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, Field
 
+from aiwen.enums.tools import ToolExecutionMode
+
 T = TypeVar("T", bound="BaseTool")
 
 logger = logging.getLogger(__name__)
-
-
-class ToolExecutionMode(str, Enum):
-    """Tool execution modes"""
-
-    HTTP = "http"  # HTTP API call
-    SERVER_RUN = "server_run"  # Server-side direct execution
-    CLIENT_RUN = "client_run"  # Client-side execution
-    CONTAINER_RUN = "container_run"  # Container isolated execution
-    CELERY_RUN = "celery_run"  # Celery async task
-
 
 @dataclass
 class ResourceLimits:
@@ -39,7 +29,6 @@ class ResourceLimits:
     read_only_rootfs: bool = True  # Read-only root filesystem
     pids_limit: int = 100  # Maximum number of processes
 
-
 @dataclass
 class HTTPConfig:
     """HTTP tool configuration"""
@@ -50,7 +39,6 @@ class HTTPConfig:
     timeout: int = 30  # Timeout in seconds
     retry_times: int = 3  # Number of retries
     verify_ssl: bool = True  # Whether to verify SSL
-
 
 @dataclass
 class CeleryConfig:
@@ -63,7 +51,6 @@ class CeleryConfig:
     max_retries: int = 3  # Maximum retry attempts
     countdown: int = 0  # Delayed execution (seconds)
 
-
 @dataclass
 class ContainerConfig:
     """Container execution configuration"""
@@ -74,7 +61,6 @@ class ContainerConfig:
     environment: dict[str, str] = field(default_factory=dict)  # Environment variables
     volumes: dict[str, str] = field(default_factory=dict)  # Volume mounts
 
-
 @dataclass
 class ClientConfig:
     """Client execution configuration"""
@@ -82,7 +68,6 @@ class ClientConfig:
     handler_name: str = ""  # Frontend handler name
     config: dict[str, Any] = field(default_factory=dict)  # Additional configuration
     require_user_approval: bool = False  # Whether user approval is required
-
 
 @dataclass
 class ToolMetadata:
@@ -105,12 +90,10 @@ class ToolMetadata:
     container_config: ContainerConfig | None = None
     client_config: ClientConfig | None = None
 
-
 class ToolInputSchema(BaseModel):
     """Base class for tool input parameters (auto-generate schema using Pydantic)"""
 
     pass
-
 
 class ToolOutputSchema(BaseModel):
     """Base class for tool output results"""
@@ -119,7 +102,6 @@ class ToolOutputSchema(BaseModel):
     message: str | None = Field(default=None, description="Result message")
     data: dict[str, Any] | None = Field(default=None, description="Return data")
     error: str | None = Field(default=None, description="Error information")
-
 
 class BaseTool(ABC):
     """
@@ -391,7 +373,6 @@ class BaseTool(ABC):
             f"mode={self.METADATA.execution_mode.value})>"
         )
 
-
 class InnerTool(BaseTool, ABC):
     """
     Inner Tool - Developer-defined tools implemented in code
@@ -478,7 +459,6 @@ class InnerTool(BaseTool, ABC):
                 },
             },
         }
-
 
 class ExternalTool(BaseTool):
     """

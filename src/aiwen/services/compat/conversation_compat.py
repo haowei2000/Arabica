@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.conversations.conversation import Conversation
 from aiwen.models.conversations.message import Message
-from aiwen.models.runs.run import Run, TriggerType
+from aiwen.enums.runs import TriggerType
+from aiwen.models.runs.run import Run
 from aiwen.models.workspaces.workspace import Workspace
 from aiwen.models.workspaces.workspace_member import WorkspaceMember
 from aiwen.schemas.events.event_payloads import EventType

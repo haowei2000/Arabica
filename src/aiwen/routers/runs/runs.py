@@ -18,7 +18,7 @@ from aiwen.models.app import App
 from aiwen.models.executor.executor import Executor
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventType, UserMessageEvent
-from aiwen.models.runs.run import TriggerType
+from aiwen.enums.runs import TriggerType
 from aiwen.schemas.runs.run import (
     RunListResponse,
     RunResponse,

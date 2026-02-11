@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -15,6 +14,13 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from aiwen.enums.workspaces import (
+    InvitationStatus,
+    MemberRole,
+    WorkspaceStatus,
+    WorkspaceVisibility,
+)
+
 from aiwen.extensions.database import get_base
 
 if TYPE_CHECKING:
@@ -22,39 +28,6 @@ if TYPE_CHECKING:
     from aiwen.models.runs.run import Run
 
 Base = get_base("aiwen")
-
-
-class WorkspaceVisibility(str, Enum):
-    """Workspace visibility options."""
-
-    PRIVATE = "private"
-    TEAM = "team"
-    PUBLIC = "public"
-
-
-class WorkspaceStatus(str, Enum):
-    """Workspace status options."""
-
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-    DELETED = "deleted"
-
-
-class MemberRole(str, Enum):
-    """Workspace member role options."""
-
-    OWNER = "owner"
-    ADMIN = "admin"
-    EDITOR = "editor"
-    VIEWER = "viewer"
-
-
-class InvitationStatus(str, Enum):
-    """Invitation status options."""
-
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    DECLINED = "declined"
 
 class Workspace(Base):
     """Workspace model - top-level container for runs and events.

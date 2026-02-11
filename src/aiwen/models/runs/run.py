@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import StrEnum, Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -15,6 +14,8 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from aiwen.enums.runs import RunStatus, TriggerType
+
 from aiwen.extensions.database import get_base
 
 if TYPE_CHECKING:
@@ -22,28 +23,6 @@ if TYPE_CHECKING:
     from aiwen.models.workspaces.workspace import Workspace
 
 Base = get_base("aiwen")
-
-
-
-class TriggerType(str, Enum):
-    """Run trigger type options."""
-
-    USER = "user"
-    TOOL_CALLBACK = "tool_callback"
-    AGENT = "agent"
-    SYSTEM = "system"
-
-
-class RunStatus(StrEnum):
-    """Run status values."""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    WAITING = "waiting"
-    FINISHED = "finished"
-    CANCELLED = "cancelled"
-    FAILED = "failed"
-
 
 class Run(Base):
     """Run model - represents a single execution unit within a workspace.
