@@ -60,8 +60,8 @@ class AppSettings(BaseSettings):
 
     postgres: PostgresConfig
     mysql: MysqlConfig
-    redis: RedisConfig | None = None
-    auth: AuthConfig | None = None
+    redis: RedisConfig
+    auth: AuthConfig
     ollama: OllamaConfig | None = None
     openai: OpenAIConfig | None = None
-    rustfs: RustfsConfig | None = None
+    rustfs: RustfsConfig

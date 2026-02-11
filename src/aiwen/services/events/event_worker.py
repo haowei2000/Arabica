@@ -15,7 +15,7 @@ import redis.asyncio as redis_async
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.app import App
+from aiwen.models.app import App
 from aiwen.models.runs.run import Run
 from aiwen.registries import ExecutorRegistry
 from aiwen.schemas.events.event_payloads import UserMessage, UserMessageEvent
@@ -53,6 +53,35 @@ class Worker:
         self.state_machine = RunStateMachine(db, redis_client)
         # EventPublisher for unified event format
         self.event_publisher = EventPublisher(db, redis_client)
+
+    def _parse_redis_event(self, event_data: dict[bytes, bytes]) -> dict:
+        """Parse Redis stream event data.
+
+        Redis streams return data as bytes, and JSON fields are serialized strings.
+        This method converts them back to proper Python types.
+
+        Args:
+            event_data: Raw event data from Redis stream
+
+        Returns:
+            Parsed event data as a dict
+        """
+        # Decode bytes to strings
+        decoded = {
+            k.decode() if isinstance(k, bytes) else k:
+            v.decode() if isinstance(v, bytes) else v
+            for k, v in event_data.items()
+        }
+
+        # Parse JSON payload back to dict
+        if "payload" in decoded and decoded["payload"]:
+            try:
+                decoded["payload"] = json.loads(decoded["payload"])
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse payload JSON: {decoded['payload']}")
+                decoded["payload"] = {}
+
+        return decoded
 
     async def _ensure_consumer_group(self, stream_name: str) -> None:
         """Ensure consumer group exists, create if not."""
@@ -92,8 +121,9 @@ class Worker:
                 _, event_queue = redis_messages[0]
                 for event_id, event_data in event_queue:
                     try:
-                        event = UserMessageEvent.model_validate(event_data)
-                        await self.handle_event(event)
+                        # Parse Redis stream data (bytes to strings, JSON to dicts)
+                        parsed_event = self._parse_redis_event(event_data)
+                        await self.handle_event(parsed_event)
                         # 成功处理后确认消息
                         await self.redis.xack(stream_name, CONSUMER_GROUP, event_id)
                     except Exception as e:
@@ -144,25 +174,28 @@ class Worker:
 
         return executor_cls(config)
 
-    async def handle_event(self, event: UserMessageEvent):
+    async def handle_event(self, event: dict):
         """
         处理来自 run_tasks stream 的消息。
+
+        Args:
+            event: Parsed event data from Redis stream
         """
         run_id = None
         try:
             # 1. 验证事件数据
-            if not event.run_id:
+            if not event.get("run_id"):
                 logger.warning("Received message without run_id, skipping")
                 return
 
-            if not event.executor_code:
+            if not event.get("executor_code"):
                 logger.error(
                     "Received message without executor_code, cannot determine executor"
                 )
                 return
 
-            run_id = UUID(str(event.run_id))
-            input_data = event.payload or {}
+            run_id = UUID(str(event["run_id"]))
+            input_data = event.get("payload") or {}
 
             # 2. 获取 Run 及相关数据
             run, app_config = await self._fetch_run_data(run_id)
@@ -174,7 +207,7 @@ class Worker:
                 return
 
             # 3. 准备 Executor
-            executor = self.prepare_executor(event.executor_code, app_config)
+            executor = self.prepare_executor(event["executor_code"], app_config)
             self.runtime.attach(run_id, executor)
 
             # 4. 根据 Run 状态执行相应操作

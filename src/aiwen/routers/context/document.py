@@ -24,7 +24,7 @@ from aiwen.dependencies.agents import get_document_crud, get_knowledge_crud
 from aiwen.dependencies.auth import get_current_user
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.schemas.knowledge.document import (
+from aiwen.schemas.context.knowledge.document import (
     DocumentListResponse,
     DocumentResponse,
     DocumentUploadResponse,

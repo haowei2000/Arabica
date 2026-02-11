@@ -7,11 +7,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from aiwen.schemas.agents.app import ContextType
+from aiwen.schemas.app import ContextType
+from aiwen.utils.schema_mixins import ResponseMixin
 
 if TYPE_CHECKING:
-    from aiwen.schemas.knowledge.knowledge import KnowledgeResponse
-    from aiwen.schemas.tools.tool import ToolResponse
+    from aiwen.schemas.context.knowledge.knowledge import KnowledgeResponse
+    from aiwen.schemas.context.tools.tool import ToolResponse
 
 
 class ContextCreate(BaseModel):
@@ -53,7 +54,7 @@ class ContextUpdate(BaseModel):
     importance: int | None = Field(None, ge=0, le=100, description="Importance score")
 
 
-class ContextResponse(BaseModel):
+class ContextResponse(ResponseMixin, BaseModel):
     """Schema for context response."""
 
     id: str
@@ -65,26 +66,7 @@ class ContextResponse(BaseModel):
     keywords: list[str] | None = None
     meta: dict[str, Any] | None = None
     importance: int | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def convert_uuids(cls, data: Any) -> Any:
-        """Convert UUIDs to strings."""
-        if hasattr(data, "__dict__"):
-            result = {}
-            for field_name in cls.model_fields.keys():
-                value = getattr(data, field_name, None)
-                if isinstance(value, UUID):
-                    result[field_name] = str(value)
-                else:
-                    result[field_name] = value
-            return result
-        return data
-
-    class Config:
-        from_attributes = True
+    # created_at, updated_at, UUID conversion, ORM config inherited from ResponseMixin
 
 
 class ToolContextInput(BaseModel):

@@ -15,10 +15,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from aiwen.services.executor.base import Executor
+from aiwen.services.context.tools import BaseTool
+from aiwen.services.context.tools.base_tool import ToolExecutionMode
 
 # Type variables for generic registry
 K = TypeVar("K")  # Key type (e.g., str)
@@ -76,7 +80,7 @@ class BaseRegistry[K, T](ABC):
         - _validate_component(): Validate before registration
         - _extract_key(): Extract unique key from component
         - _create_instance(): Create instance from component
-        - _sync_to_database(): Sync to database (optional)
+        - _sync_to_database(): Sync to a database (optional)
 
     Example:
         class ToolRegistry[str, type[BaseTool]](BaseRegistry):
@@ -115,11 +119,12 @@ class BaseRegistry[K, T](ABC):
 
     @abstractmethod
     def _create_instance(self, key: K, component: T, **kwargs) -> Any:
-        """Create instance from component."""
+        """Create instance from a component."""
         pass
 
+    @abstractmethod
     async def _sync_to_database(self, db: AsyncSession) -> None:
-        """Sync registry to database (optional, override if needed)."""
+        """Sync registry to a database (optional, override if needed)."""
         pass
 
     # ==================== Core Registry Methods ====================
@@ -293,24 +298,24 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
             )
         super().__init__(config)
 
-    def _validate_component(self, tool_class: type["BaseTool"]) -> None:
+    def _validate_component(self, tool_class: type[BaseTool]) -> None:  # ty:ignore[invalid-method-override]
         """Validate tool class before registration."""
         tool_class._validate_metadata()
 
-    def _extract_key(self, tool_class: type["BaseTool"]) -> str:
+    def _extract_key(self, tool_class: type[BaseTool]) -> str:  # ty:ignore[invalid-method-override]
         """Extract tool name from tool class."""
         return tool_class.METADATA.name
 
     def _create_instance(
-        self, key: str, tool_class: type["BaseTool"], **kwargs
-    ) -> "BaseTool":
-        """Create tool instance."""
+        self, key: str, tool_class: type[BaseTool], **kwargs
+    ) -> BaseTool:  # ty:ignore[invalid-method-override]
+        """Create a tool instance."""
         return tool_class()
 
     async def _sync_to_database(self, db: AsyncSession) -> None:
-        """Sync InnerTools to database."""
-        from aiwen.models.agents.tool import Tool as ToolModel
-        from aiwen.services.tools.base_tool import InnerTool
+        """Sync InnerTools to a database."""
+        from aiwen.models.context.tools import Tool as ToolModel
+        from aiwen.services.context.tools.base_tool import InnerTool
 
         synced_count = 0
         skipped_count = 0
@@ -322,7 +327,7 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
                 continue
 
             try:
-                # Check if exists in database
+                # Check if exists in a database
                 stmt = select(ToolModel).where(
                     ToolModel.tool_code == tool_name,
                     ToolModel.tool_type == "inner",
@@ -333,13 +338,21 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
                 metadata = tool_class.METADATA
 
                 # Prepare tool data
+                # Extract major version number from semantic version string (e.g., "1.0.0" -> 1)
+                version_int = 1
+                if metadata.version:
+                    try:
+                        version_int = int(metadata.version.split('.')[0])
+                    except (ValueError, AttributeError):
+                        version_int = 1
+
                 tool_data = {
                     "tool_code": tool_name,
-                    "tool_name": metadata.display_name,
+                    "name": metadata.name,
+                    "display_name": metadata.display_name,
                     "tool_type": "inner",
                     "description": metadata.description,
-                    "version": metadata.version,
-                    "author": metadata.author or "Aiwen",
+                    "version": version_int,
                     "tags": metadata.tags,
                     "category": metadata.category,
                     "enabled": metadata.enabled,
@@ -369,9 +382,9 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
 
     # ==================== Tool-Specific Methods ====================
 
-    def list_tools(
+    def _list_tools_instance(
         self,
-        execution_mode: Optional["ToolExecutionMode"] = None,
+        execution_mode: ToolExecutionMode|None = None,
         category: str | None = None,
         enabled_only: bool = True,
     ) -> list[str]:
@@ -384,27 +397,25 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
                 return False
             if category and metadata.category != category:
                 return False
-            if enabled_only and not metadata.enabled:
-                return False
-            return True
+            return not (enabled_only and not metadata.enabled)
 
         filtered = self.filter(predicate)
         return sorted(filtered.keys())
 
     def list_tool_classes(
         self,
-        execution_mode: Optional["ToolExecutionMode"] = None,
+        execution_mode: ToolExecutionMode|None = None,
         category: str | None = None,
         enabled_only: bool = True,
-    ) -> list[type["BaseTool"]]:
+    ) -> list[type[BaseTool]]:
         """List tool classes with optional filters."""
-        tool_names = self.list_tools(execution_mode, category, enabled_only)
+        tool_names = self._list_tools_instance(execution_mode, category, enabled_only)
         return [self._registry[name] for name in tool_names]
 
     def get_tools_by_tag(self, tag: str) -> list[str]:
         """Query tools by tag."""
 
-        def predicate(name: str, tool_class: type["BaseTool"]) -> bool:
+        def predicate(name: str, tool_class: type[BaseTool]) -> bool:
             return tag in tool_class.METADATA.tags
 
         filtered = self.filter(predicate)
@@ -449,13 +460,13 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
     # ==================== Backward Compatibility ====================
 
     @classmethod
-    def get_tool_class(cls, tool_name: str) -> type["BaseTool"] | None:
+    def get_tool_class(cls, tool_name: str) -> type[BaseTool] | None:
         """Get tool class (backward compatibility)."""
         instance = cls._get_singleton_instance()
         return instance.get(tool_name)
 
     @classmethod
-    def get_tool_instance(cls, tool_name: str) -> Optional["BaseTool"]:
+    def get_tool_instance(cls, tool_name: str) -> BaseTool | None:
         """Get tool instance (backward compatibility)."""
         instance = cls._get_singleton_instance()
         try:
@@ -464,7 +475,7 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
             return None
 
     @classmethod
-    def _get_singleton_instance(cls) -> "ToolRegistry":
+    def _get_singleton_instance(cls) -> ToolRegistry:
         """Get singleton instance of ToolRegistry."""
         from aiwen.registries.manager import RegistryManager
 
@@ -472,6 +483,82 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
         if not manager.is_registered(cls):
             manager.register_registry(cls)
         return manager.get_registry(cls)
+
+    # ==================== Backward Compatibility Class Methods ====================
+
+    @classmethod
+    def list_tools(  # type: ignore[misc]
+        cls,
+        execution_mode: ToolExecutionMode | None = None,
+        category: str | None = None,
+        enabled_only: bool = True,
+    ) -> list[str]:
+        """List tool names (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        return instance._list_tools_instance(execution_mode=execution_mode, category=category, enabled_only=enabled_only)
+
+    @classmethod
+    def get_tool_class(cls, tool_name: str) -> type[BaseTool] | None:  # type: ignore[misc]
+        """Get tool class by name (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        return BaseRegistry.get(instance, tool_name)
+
+    @classmethod
+    def get_tool_instance(cls, tool_name: str, **kwargs) -> BaseTool | None:  # type: ignore[misc]
+        """Get tool instance by name (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        return BaseRegistry.get_instance(instance, tool_name, **kwargs)
+
+    @classmethod
+    def get_tool_info(cls, tool_name: str) -> dict | None:  # type: ignore[misc]
+        """Get tool info by name (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        tool_class = BaseRegistry.get(instance, tool_name)
+        if not tool_class:
+            return None
+        metadata = tool_class.METADATA
+        return {
+            "name": metadata.name,
+            "display_name": metadata.display_name,
+            "description": metadata.description,
+            "category": metadata.category,
+            "execution_mode": metadata.execution_mode.value,
+            "enabled": metadata.enabled,
+            "version": metadata.version,
+        }
+
+    @classmethod
+    def get_all_schemas(cls, format: str = "openai") -> list[dict]:  # type: ignore[misc]
+        """Get all tool schemas (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        schemas = []
+        # Use the instance method directly to avoid recursion
+        for tool_name in instance._list_tools_instance(enabled_only=True):
+            tool_class = BaseRegistry.get(instance, tool_name)
+            if tool_class:
+                if format == "openai":
+                    schema = tool_class.to_openai_schema()
+                elif format == "langchain":
+                    schema = tool_class.to_langchain_schema()
+                else:
+                    raise ValueError(f"Unsupported format: {format}")
+                schemas.append(schema)
+        return schemas
+
+    @classmethod
+    def register(cls, tool_class: type[BaseTool]) -> type[BaseTool]:  # type: ignore[misc]
+        """Register a tool class (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        # Call BaseRegistry.register to avoid recursion
+        return BaseRegistry.register(instance, tool_class)
+
+    @classmethod
+    def unregister(cls, tool_name: str) -> bool:  # type: ignore[misc]
+        """Unregister a tool (backward compatibility class method)."""
+        instance = cls._get_singleton_instance()
+        # Call BaseRegistry.unregister to avoid recursion
+        BaseRegistry.unregister(instance, tool_name)
+        return True
 
     def get_statistics(self) -> dict:
         """Get detailed registry statistics."""
@@ -484,7 +571,7 @@ class ToolRegistry(BaseRegistry[str, type["BaseTool"]]):
         # Group by execution mode
         mode_stats = {}
         for mode in ToolExecutionMode:
-            count = len(self.list_tools(execution_mode=mode, enabled_only=False))
+            count = len(self._list_tools_instance(execution_mode=mode, enabled_only=False))
             mode_stats[mode.value] = count
 
         # Group by category
@@ -527,7 +614,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
             )
         super().__init__(config)
 
-    def _validate_component(self, executor_cls: type["Executor"]) -> None:
+    def _validate_component(self, executor_cls: type[Executor]) -> None:  # ty:ignore[invalid-method-override]
         """Validate executor class before registration."""
         if not hasattr(executor_cls, "TEMPLATE"):
             raise ValueError(
@@ -542,13 +629,13 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
                 f"Executor {executor_cls.__name__} TEMPLATE missing fields: {missing}"
             )
 
-    def _extract_key(self, executor_cls: type["Executor"]) -> str:
-        """Extract template code from executor class."""
+    def _extract_key(self, executor_cls: type[Executor]) -> str:  # ty:ignore[invalid-method-override]
+        """Extract template code from the executor class."""
         return executor_cls.TEMPLATE["template_code"]
 
     def _create_instance(
-        self, key: str, executor_cls: type["Executor"], **kwargs
-    ) -> "Executor":
+        self, key: str, executor_cls: type[Executor], **kwargs
+    ) -> Executor:  # ty:ignore[invalid-method-override]
         """Create executor instance."""
         return executor_cls(**kwargs)
 
@@ -624,7 +711,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
     # ==================== Executor-Specific Methods ====================
 
-    def list_templates(self) -> list[str]:
+    def list_templates(self) -> list[str]:  # ty:ignore[invalid-type-form]
         """List all registered template codes."""
         return sorted(self.list_keys())
 
@@ -632,7 +719,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         self,
         template_code: str,
         template_name: str,
-        executor_cls: type["Executor"],
+        executor_cls: type[Executor],
         db: AsyncSession,
         config: dict | None = None,
         enabled: bool = True,
@@ -701,7 +788,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
                 continue
 
             try:
-                # Convert file path to module path
+                # Convert file path to a module path
                 # e.g., executor_template/default/concrete.py -> executor_template.default.concrete
                 relative_path = py_file.relative_to(current_dir)
                 module_parts = list(relative_path.parts[:-1]) + [py_file.stem]
@@ -723,14 +810,14 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
     # ==================== Backward Compatibility ====================
 
     @classmethod
-    def list(cls) -> list[str]:
+    def list(cls) -> list[str]:  # ty:ignore[invalid-type-form]
         """List all template codes (backward compatibility)."""
         instance = cls._get_singleton_instance()
         return instance.list_templates()
 
     @classmethod
-    def _get_singleton_instance(cls) -> "ExecutorRegistry":
-        """Get singleton instance."""
+    def _get_singleton_instance(cls) -> ExecutorRegistry:
+        """Get a singleton instance."""
         from aiwen.registries.manager import RegistryManager
 
         manager = RegistryManager.get_instance()
@@ -763,13 +850,13 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 # ============================================================================
 
 
-def register_tool(tool_class: type["BaseTool"]) -> type["BaseTool"]:
+def register_tool(tool_class: type[BaseTool]) -> type[BaseTool]:
     """Decorator to register tool class."""
     registry = ToolRegistry._get_singleton_instance()
     return registry.register(tool_class)
 
 
-def register_executor(executor_cls: type["Executor"]) -> type["Executor"]:
+def register_executor(executor_cls: type[Executor]) -> type[Executor]:
     """Decorator to register executor class."""
     registry = ExecutorRegistry._get_singleton_instance()
     return registry.register(executor_cls)

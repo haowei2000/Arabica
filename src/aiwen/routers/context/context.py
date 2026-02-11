@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_context_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.agents.app import ContextType
+from aiwen.schemas.app import ContextType
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.context.context import (
     ContextCreate,
@@ -19,6 +19,7 @@ from aiwen.schemas.context.context import (
     VectorSearchRequest,
 )
 from aiwen.services.context.context_crud import ContextCRUD
+from aiwen.utils.model_converters import models_to_schemas
 
 router = APIRouter(prefix="/context", tags=["context"])
 
@@ -324,23 +325,16 @@ async def vector_search(
             detail=str(e),
         )
 
-    items = [
-        ContextWithScore(
-            id=str(context.id),
-            user_id=str(context.user_id),
-            source_id=str(context.source_id) if context.source_id else None,
-            context_type=context.context_type,
-            content=context.content,
-            summary=context.summary,
-            keywords=context.keywords,
-            meta=context.meta,
-            importance=context.importance,
-            created_at=context.created_at,
-            updated_at=context.updated_at,
-            score=score,
-        )
-        for context, score in results
-    ]
+    # Extract contexts and scores from results
+    contexts = [context for context, _ in results]
+    scores = [score for _, score in results]
+
+    # Convert models to schemas with dynamic score injection
+    items = models_to_schemas(
+        ContextWithScore,
+        contexts,
+        extra_factory=lambda ctx, idx: {"score": scores[idx]},
+    )
 
     return ContextSearchResponse(total=len(items), items=items)
 
@@ -404,23 +398,16 @@ async def hybrid_search(
             detail=str(e),
         )
 
-    items = [
-        ContextWithScore(
-            id=str(context.id),
-            user_id=str(context.user_id),
-            source_id=str(context.source_id) if context.source_id else None,
-            context_type=context.context_type,
-            content=context.content,
-            summary=context.summary,
-            keywords=context.keywords,
-            meta=context.meta,
-            importance=context.importance,
-            created_at=context.created_at,
-            updated_at=context.updated_at,
-            score=score,
-        )
-        for context, score in results
-    ]
+    # Extract contexts and scores from results
+    contexts = [context for context, _ in results]
+    scores = [score for _, score in results]
+
+    # Convert models to schemas with dynamic score injection
+    items = models_to_schemas(
+        ContextWithScore,
+        contexts,
+        extra_factory=lambda ctx, idx: {"score": scores[idx]},
+    )
 
     return ContextSearchResponse(total=len(items), items=items)
 

@@ -21,12 +21,12 @@ async def main():
     """Complete integration example"""
     from aiwen.extensions.database import get_session
     from aiwen.schemas.events.event_payloads import UserMessage
-    from aiwen.schemas.tools.user_tool import UserToolCreate
+    from aiwen.schemas.context.tools.user_tool import UserToolCreate
     from aiwen.services.executor.executor_template.default.concrete import (
         DefaultAgentTemplate,
     )
-    from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
-    from aiwen.services.tools.user_tool_crud import UserToolCRUD
+    from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
+    from aiwen.services.context.tools.tool_crud import UserToolCRUD
 
     user_id = uuid4()
 

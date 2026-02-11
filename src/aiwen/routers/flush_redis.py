@@ -23,7 +23,6 @@
     POST /flush-redis-cache?pattern=cache:user:*
 """
 
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 

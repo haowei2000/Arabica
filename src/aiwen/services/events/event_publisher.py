@@ -239,6 +239,7 @@ class EventPublisher:
                 "payload": json.dumps(event.payload) if event.payload else "{}",
                 "sequence": str(event.sequence),
                 "created_at": event.created_at.isoformat(),
+                "executor_code": event.executor_code or "",
             }
 
             # Publish to run stream if applicable
@@ -255,7 +256,7 @@ class EventPublisher:
             workspace_stream = f"workspace:{event.workspace_id}:events"
             await self.redis.xadd(
                 name=workspace_stream,
-                fields=event_data,
+                fields=event,
                 maxlen=10000,
                 approximate=True,
             )

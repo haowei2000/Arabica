@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from aiwen.services.tools.execution_mode import (
+from aiwen.services.context.tools.execution_mode import (
     ResourceLimits,
     ToolExecutionMode,
     ToolMetadata,
@@ -25,10 +25,10 @@ from aiwen.services.tools.execution_mode import (
     sandbox_tool,
     server_tool,
 )
-from aiwen.services.tools.execution_router import ExecutionRouter
+from aiwen.services.context.tools.execution_router import ExecutionRouter
 import pytest
 
-from aiwen.schemas.tools.execution import (
+from aiwen.schemas.context.tools.execution import (
     ExecutionContext,
     ToolResult,
     ToolResultSubmission,
@@ -360,7 +360,7 @@ class TestSandboxExecutor:
     @pytest.mark.asyncio
     async def test_execute_success(self, mock_docker):
         """Test successful sandbox execution."""
-        from aiwen.services.tools.sandbox_executor import SandboxExecutor
+        from aiwen.services.context.tools.sandbox_executor import SandboxExecutor
 
         executor = SandboxExecutor()
         executor._docker = mock_docker
@@ -389,7 +389,7 @@ class TestSandboxExecutor:
         """Test sandbox execution timeout."""
         import asyncio
 
-        from aiwen.services.tools.sandbox_executor import SandboxExecutor
+        from aiwen.services.context.tools.sandbox_executor import SandboxExecutor
 
         # Make wait hang forever
         mock_docker.containers.create.return_value.wait = AsyncMock(
@@ -444,7 +444,7 @@ class TestClientExecutor:
     @pytest.mark.asyncio
     async def test_execute_timeout(self, mock_redis):
         """Test client execution timeout."""
-        from aiwen.services.tools.client_executor import ClientExecutor
+        from aiwen.services.context.tools.client_executor import ClientExecutor
 
         executor = ClientExecutor(redis_client=mock_redis)
 
@@ -469,7 +469,7 @@ class TestClientExecutor:
     @pytest.mark.asyncio
     async def test_submit_result(self, mock_redis):
         """Test submitting client tool result."""
-        from aiwen.services.tools.client_executor import (
+        from aiwen.services.context.tools.client_executor import (
             PENDING_TOOL_KEY,
             ClientExecutor,
         )
@@ -493,7 +493,7 @@ class TestClientExecutor:
     @pytest.mark.asyncio
     async def test_submit_result_not_found(self, mock_redis):
         """Test submitting result for non-existent tool."""
-        from aiwen.services.tools.client_executor import ClientExecutor
+        from aiwen.services.context.tools.client_executor import ClientExecutor
 
         # Mock pending execution does not exist
         mock_redis.get = AsyncMock(return_value=None)

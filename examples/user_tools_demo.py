@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 async def demo():
     """Run complete user tools demo"""
-    from aiwen.services.tools.tool_registry import ToolRegistry
+    from aiwen.services.context.tools.tool_registry import ToolRegistry
 
     from aiwen.extensions.database import get_session
-    from aiwen.schemas.tools.user_tool import UserToolCreate
-    from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
-    from aiwen.services.tools.user_tool_crud import UserToolCRUD
+    from aiwen.schemas.context.tools.user_tool import UserToolCreate
+    from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
+    from aiwen.services.context.tools.tool_crud import UserToolCRUD
 
     # Simulated user ID
     user_id = uuid4()
@@ -203,7 +203,7 @@ result = {
         logger.info("\n[Step 7] Tool management operations...")
 
         # Update tool
-        from aiwen.schemas.tools.user_tool import UserToolUpdate
+        from aiwen.schemas.context.tools.user_tool import UserToolUpdate
 
         updated = await crud.update_tool(
             tool1.id,
@@ -246,10 +246,10 @@ result = {
 
 async def demo_with_langchain():
     """Demo integration with LangChain"""
-    from aiwen.services.tools.tool_registry import ToolRegistry
+    from aiwen.services.context.tools.tool_registry import ToolRegistry
 
     from aiwen.extensions.database import get_session
-    from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
+    from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
 
     logger.info("\n" + "=" * 80)
     logger.info("LangChain Integration Demo")

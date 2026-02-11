@@ -1,7 +1,7 @@
 """Health check endpoints and utilities."""
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from aiwen.extensions.database import _engines, check_database_health
 

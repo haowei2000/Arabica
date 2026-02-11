@@ -1,6 +1,5 @@
 """Pydantic models for authentication and token management."""
 
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel

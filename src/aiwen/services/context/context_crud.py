@@ -10,7 +10,7 @@ from sqlalchemy import Integer, and_, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.context import Context
-from aiwen.schemas.agents.app import ContextType
+from aiwen.schemas.app import ContextType
 from aiwen.schemas.context.context import ContextCreate, ContextUpdate
 
 

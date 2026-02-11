@@ -18,10 +18,10 @@ Version: v2.0.0
 
 from dataclasses import dataclass
 import logging
-from typing import Optional
 
 from sqlalchemy import select
 
+from aiwen.config.components.redis import RedisConfig
 from aiwen.config.factory import get_settings
 from aiwen.extensions.database import _engines, _ensure_registered, get_session
 from aiwen.extensions.logger import setup_logging
@@ -50,13 +50,13 @@ class BootstrapConfig:
     # Whether to initialize Redis
     init_redis: bool = True
 
-    # Whether to initialize database connection
+    # Whether to initialize a database connection
     init_database: bool = True
 
     # Whether to create database tables (only API service needs this)
     create_tables: bool = False
 
-    # Whether to create admin user (only API service needs this)
+    # Whether to create an admin user (only API service needs this)
     create_admin_user: bool = False
 
     # Whether to initialize registries (unified: tools, executors, etc.)
@@ -68,43 +68,43 @@ class BootstrapConfig:
 
 async def _initialize_databases() -> None:
     """Initialize database connections"""
-    logger.info("🗄️  Initializing database connections...")
+    logger.info("Initializing database connections...")
     _ensure_registered()
-    logger.info(f"✅ Registered {len(_engines)} databases")
+    logger.info(f"Registered {len(_engines)} databases")
 
 
 async def _create_tables() -> None:
     """
     Create database tables (disabled)
 
-    ⚠️  Tables should be managed by Alembic, not auto-created in code.
+    Tables should be managed by Alembic, not auto-created in code.
 
     To create tables:
     1. Run: alembic upgrade head
     2. For new tables, create model first: alembic revision --autogenerate -m "add new table"
     3. Then run: alembic upgrade head
     """
-    logger.warning("⚠️  Skipping database table creation - tables managed by Alembic")
+    logger.warning("Skipping database table creation - tables managed by Alembic")
     logger.warning("   Please ensure you've run: alembic upgrade head")
 
 
 def _setup_logging() -> None:
     """Setup logging system"""
-    logger.info("📝 Setting up logging system...")
+    logger.info("Setting up logging system...")
     setup_logging()
-    logger.info("✅ Logging system configured")
+    logger.info("Logging system configured")
 
 
 async def _shutdown_redis() -> None:
     """Shutdown Redis connection"""
-    logger.info("🔴 Shutting down Redis connection...")
+    logger.info("Shutting down Redis connection...")
     try:
         from aiwen.middleware.cache_middleware import close_redis_client
 
         await close_redis_client()
-        logger.info("✅ Redis connection closed")
+        logger.info("Redis connection closed")
     except Exception as e:
-        logger.error(f"⚠️  Error closing Redis connection: {e}")
+        logger.error(f"Error closing Redis connection: {e}")
 
 
 async def _shutdown_databases() -> None:
@@ -113,25 +113,25 @@ async def _shutdown_databases() -> None:
     for bind_name, engine in _engines.items():
         try:
             await engine.dispose()
-            logger.info(f"   ✅ Database {bind_name} closed")
+            logger.info(f"Database {bind_name = } closed")
         except Exception as e:
-            logger.error(f"   ⚠️  Error closing database {bind_name}: {e}")
-    logger.info("✅ All database connections closed")
+            logger.error(f"Error closing database {bind_name = }: {e}")
+    logger.info("All database connections closed")
 
 
 async def _initialize_registries() -> None:
     """
-    Initialize all registries using centralized system.
+    Initialize all registries using a centralized system.
 
     This replaces the old separate initialization:
     - _initialize_agent_registry() (executor registry)
     - _sync_inner_tools() (tool registry)
 
-    New approach syncs all registries in one call.
+    The new approach syncs all registries in one call.
     """
-    logger.info("📦 Initializing centralized registry system...")
+    logger.info("Initializing centralized registry system...")
     try:
-        # Import from new centralized location
+        # Import from a new centralized location
         from aiwen.registries import (
             ExecutorRegistry,
             RegistryManager,
@@ -140,10 +140,10 @@ async def _initialize_registries() -> None:
         )
 
         # Step 1: Import all executor modules (triggers @register_executor decorators)
-        logger.info("   🔍 Auto-discovering executor modules...")
+        logger.info("Auto-discovering executor modules...")
         ExecutorRegistry.discover_and_import_executors()
 
-        # Step 2: Get registry manager instance
+        # Step 2: Get a registry manager instance
         manager = RegistryManager.get_instance()
 
         # Step 3: Register registries if not already registered
@@ -173,18 +173,12 @@ async def _initialize_registries() -> None:
         logger.info(f"   ✓ ToolRegistry: {tool_count} tools registered")
         logger.info(f"   ✓ ExecutorRegistry: {executor_count} executors registered")
 
-        # Verify key templates
-        if executor_registry.is_registered("DEFAULT001"):
-            logger.info("   ✓ DEFAULT001 template verified")
-        else:
-            logger.warning("   ⚠️  DEFAULT001 template not registered")
-
         # Get statistics
         stats = manager.get_statistics()
         logger.info(f"   📈 Registry statistics: {stats}")
 
     except Exception as e:
-        logger.error(f"❌ Registry initialization failed: {e}", exc_info=True)
+        logger.error(f" Registry initialization failed: {e}", exc_info=True)
         # Don't raise exception, allow app to continue
 
 
@@ -205,12 +199,12 @@ class ApplicationBootstrap:
 
     async def initialize(self) -> None:
         """
-        Execute complete initialization flow
+        Execute the complete initialization flow
 
-        Initialize components in correct order
+        Initialize components in the correct order
         """
         logger.info("=" * 60)
-        logger.info("🚀 Application initialization started (v2)")
+        logger.info("Application initialization started (v2)")
         logger.info("=" * 60)
 
         # Step 1: Logging system (if needed)
@@ -229,11 +223,11 @@ class ApplicationBootstrap:
         if self.config.init_redis:
             await self._initialize_redis()
 
-        # Step 5: Create admin user (API service only)
+        # Step 5: Create an admin user (API service only)
         if self.config.create_admin_user:
             await self._create_admin_user()
 
-        # Step 6: ⭐ NEW: Unified registry initialization
+        # Step 6: NEW: Unified registry initialization
         if self.config.init_registries:
             await _initialize_registries()
 
@@ -281,31 +275,36 @@ class ApplicationBootstrap:
 
             if not self.redis_client:
                 raise RuntimeError("Redis client initialization returned None")
-
-            logger.info(
-                f"✅ Redis connected: {self.settings.redis.host}:{self.settings.redis.port}"
-            )
+            redis_conf = self.settings.redis
+            if not redis_conf:
+                logger.error("Redis configuration is missing")
+                return
+            logger.info(f"✅ Redis connected: {redis_conf.host}:{redis_conf.port}")
         except Exception as e:
-            logger.error(f"❌ Redis initialization failed: {e}")
+            logger.error(f" Redis initialization failed: {e}")
             raise
 
     async def _init_storage_backend(self) -> None:
         """Initialize storage backend (for Worker)"""
         from aiwen.extensions.storage.global_storage import init_global_s3_storage
 
+        rustfs_conf = self.settings.rustfs
+        if not rustfs_conf:
+            logger.error("RustFS configuration is missing")
+            return
         init_global_s3_storage(
-            endpoint_url=self.settings.rustfs.endpoint,
-            bucket=self.settings.rustfs.bucket,
-            access_key=self.settings.rustfs.access_key,
-            secret_key=self.settings.rustfs.secret_key,
-            use_ssl=self.settings.rustfs.secure,
+            endpoint_url=rustfs_conf.endpoint,
+            bucket=rustfs_conf.bucket,
+            access_key=rustfs_conf.access_key,
+            secret_key=rustfs_conf.secret_key,
+            use_ssl=rustfs_conf.secure,
         )
         self.storage = get_global_s3_storage()
-        logger.info("✅ Storage initialized successfully")
+        logger.info("Storage initialized successfully")
 
     async def _create_admin_user(self) -> None:
         """Create admin user"""
-        logger.info("👤 Checking admin user...")
+        logger.info("Checking admin user...")
         try:
             async with get_session("aiwen") as session:
                 # Check default tenant
@@ -320,9 +319,9 @@ class ApplicationBootstrap:
                     session.add(tenant)
                     await session.commit()
                     await session.refresh(tenant)
-                    logger.info("   ✅ Default tenant created")
+                    logger.info("   Default tenant created")
                 else:
-                    logger.info("   ✅ Default tenant exists")
+                    logger.info("   Default tenant exists")
 
                 # Check admin user
                 admin_username = self.settings.auth.admin_username

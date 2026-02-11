@@ -23,7 +23,7 @@
 """
 
 # aiwen/services/agent/app_factory.py
-from typing import Any, Dict
+from typing import Any
 
 from aiwen.registries import ExecutorRegistry
 from aiwen.services.executor.base import Executor
@@ -48,7 +48,7 @@ class AppAgentFactory:
         Args:
             appid (str): 应用的唯一标识符
             template_code (str): Agent 模板代码（在 AgentRegistry 中注册的代码）
-            app_config (Dict[str, Any]): 应用的默认配置，将与任务载荷合并
+            app_config (dict[str, Any]): 应用的默认配置，将与任务载荷合并
         """
         self.appid = appid
         self.template_code = template_code
@@ -64,7 +64,7 @@ class AppAgentFactory:
         该方法将应用ID、应用配置和任务载荷合并为最终配置，然后创建代理实例
 
         Args:
-            payload (Dict[str, Any]): 任务特定的配置参数，将与应用默认配置合并
+            payload (dict[str, Any]): 任务特定的配置参数，将与应用默认配置合并
 
         Returns:
             Executor: 创建的代理实例

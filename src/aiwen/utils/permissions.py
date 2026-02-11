@@ -1,7 +1,6 @@
 """Permission decorators for role-based access control."""
 
 from functools import wraps
-from typing import List
 
 from fastapi import HTTPException, Request, status
 

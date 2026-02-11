@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from aiwen.utils.schema_mixins import ResponseMixin
+
 
 class WorkspaceVisibility(str, Enum):
     """Workspace visibility options."""
@@ -68,7 +70,7 @@ class WorkspaceUpdate(BaseModel):
     status: WorkspaceStatus | None = Field(None, description="状态")
 
 
-class WorkspaceResponse(BaseModel):
+class WorkspaceResponse(ResponseMixin, BaseModel):
     """Schema for workspace response."""
 
     id: str
@@ -83,26 +85,7 @@ class WorkspaceResponse(BaseModel):
     run_count: int
     member_count: int
     legacy_conversation_id: str | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def convert_uuids(cls, data: Any) -> Any:
-        """Convert UUIDs to strings."""
-        if hasattr(data, "__dict__"):
-            result = {}
-            for field_name in cls.model_fields.keys():
-                value = getattr(data, field_name, None)
-                if isinstance(value, UUID):
-                    result[field_name] = str(value)
-                else:
-                    result[field_name] = value
-            return result
-        return data
-
-    class Config:
-        from_attributes = True
+    # created_at, updated_at, UUID conversion, ORM config inherited from ResponseMixin
 
 
 class WorkspaceListResponse(BaseModel):
@@ -128,7 +111,7 @@ class WorkspaceMemberUpdate(BaseModel):
     invitation_status: InvitationStatus | None = Field(None, description="邀请状态")
 
 
-class WorkspaceMemberResponse(BaseModel):
+class WorkspaceMemberResponse(ResponseMixin, BaseModel):
     """Schema for workspace member response."""
 
     id: str
@@ -138,23 +121,4 @@ class WorkspaceMemberResponse(BaseModel):
     invited_by: str | None = None
     invitation_status: str
     joined_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def convert_uuids(cls, data: Any) -> Any:
-        """Convert UUIDs to strings."""
-        if hasattr(data, "__dict__"):
-            result = {}
-            for field_name in cls.model_fields.keys():
-                value = getattr(data, field_name, None)
-                if isinstance(value, UUID):
-                    result[field_name] = str(value)
-                else:
-                    result[field_name] = value
-            return result
-        return data
-
-    class Config:
-        from_attributes = True
+    # created_at, updated_at, UUID conversion, ORM config inherited from ResponseMixin

@@ -262,7 +262,7 @@ class PromptRenderer:
 
     async def _load_knowledge(self, user_id: str) -> None:
         """Load knowledge bases owned by the user."""
-        from aiwen.models.knowledge.knowledge import Knowledge
+        from aiwen.models.context.knowledge.knowledge import Knowledge
 
         stmt = (
             select(Knowledge)
@@ -288,7 +288,7 @@ class PromptRenderer:
 
     async def _load_tools(self, user_id: str) -> None:
         """Load tools accessible to the user (own + public)."""
-        from aiwen.models.agents.tool import Tool
+        from aiwen.models.context.tools import Tool
 
         stmt = (
             select(Tool)

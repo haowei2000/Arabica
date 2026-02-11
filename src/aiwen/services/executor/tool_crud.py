@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.tool import Tool
-from aiwen.schemas.tools.tool import ToolCreate, ToolUpdate
+from aiwen.models.context.tools import Tool
+from aiwen.schemas.context.tools.tool import ToolCreate, ToolUpdate
 
 
 class ToolCRUD:

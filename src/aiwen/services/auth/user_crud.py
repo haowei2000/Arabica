@@ -1,6 +1,5 @@
 """CRUD operations for User model."""
 
-from typing import List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import func, select

@@ -15,7 +15,7 @@ from aiwen.schemas.events.event_payloads import (
     ToolResultEvent,
     UserMessage,
 )
-from aiwen.schemas.tools.execution import ToolClientRequestPayload
+from aiwen.schemas.context.tools.execution import ToolClientRequestPayload
 
 
 @dataclass(frozen=True)

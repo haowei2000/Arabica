@@ -21,7 +21,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.agent_template import AgentTemplate
+from aiwen.models.executor.agent_template import AgentTemplate
 
 
 class ExecutorCRUD:

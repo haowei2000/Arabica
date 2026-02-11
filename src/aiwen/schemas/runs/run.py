@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from aiwen.utils.schema_mixins import ResponseMixin
+
 
 class RunStatus(str, Enum):
     """Run status options (state machine states)."""
@@ -49,7 +51,7 @@ class RunUpdate(BaseModel):
     waiting_for: dict[str, Any] | None = Field(None, description="等待信息")
 
 
-class RunResponse(BaseModel):
+class RunResponse(ResponseMixin, BaseModel):
     """Schema for run response."""
 
     id: str
@@ -66,28 +68,9 @@ class RunResponse(BaseModel):
     waiting_for: dict[str, Any] | None = None
     last_event_sequence: int
     legacy_task_id: str | None = None
-    created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    updated_at: datetime | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def convert_uuids(cls, data: Any) -> Any:
-        """Convert UUIDs to strings."""
-        if hasattr(data, "__dict__"):
-            result = {}
-            for field_name in cls.model_fields.keys():
-                value = getattr(data, field_name, None)
-                if isinstance(value, UUID):
-                    result[field_name] = str(value)
-                else:
-                    result[field_name] = value
-            return result
-        return data
-
-    class Config:
-        from_attributes = True
+    # created_at, updated_at, UUID conversion, ORM config inherited from ResponseMixin
 
 
 class RunListResponse(BaseModel):

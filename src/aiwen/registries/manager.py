@@ -8,8 +8,10 @@ Provides:
 - Cross-registry operations
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Dict, List, Optional, Type, TypeVar
+from typing import TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +35,7 @@ class RegistryManager:
         await manager.sync_all_to_database(db)
     """
 
-    _instance: Optional["RegistryManager"] = None
+    _instance: RegistryManager | None = None
     _registries: dict[type[BaseRegistry], BaseRegistry] = {}
 
     def __new__(cls):
@@ -43,9 +45,9 @@ class RegistryManager:
         return cls._instance
 
     @classmethod
-    def get_instance(cls) -> "RegistryManager":
+    def get_instance(cls) -> RegistryManager:
         """
-        Get singleton instance of RegistryManager.
+        Get a singleton instance of RegistryManager.
 
         Returns:
             RegistryManager instance

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import BinaryIO, Optional
+from typing import BinaryIO
 
 import boto3
 from botocore.config import Config

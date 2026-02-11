@@ -1,7 +1,6 @@
 """Authentication middleware for validating JWT tokens."""
 
 import logging
-from typing import Optional
 
 from fastapi import HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware

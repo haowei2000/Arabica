@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from aiwen.dependencies.agents import get_knowledge_crud
 from aiwen.dependencies.auth import get_current_user
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.schemas.knowledge.knowledge import (
+from aiwen.schemas.context.knowledge.knowledge import (
     KnowledgeCreate,
     KnowledgeListResponse,
     KnowledgeResponse,

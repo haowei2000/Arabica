@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime, timedelta, timezone
 import logging
-from typing import Dict, Optional
 
 from jose import JWTError, jwt
 

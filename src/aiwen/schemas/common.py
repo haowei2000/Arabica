@@ -13,7 +13,7 @@ class SuccessResponse(BaseModel, Generic[T]):
     Attributes:
         code (int): 响应状态码，默认为200
         message (str): 响应消息，默认为"success"
-        data (Optional[T]): 响应数据，可以是任意类型
+        data (T | None): 响应数据，可以是任意类型
     """
 
     code: int = 200
@@ -28,7 +28,7 @@ class ErrorResponse(BaseModel):
     Attributes:
         code (int): 错误状态码
         message (str): 错误消息
-        detail (Optional[Any]): 详细错误信息，可选
+        detail (Any | None): 详细错误信息，可选
     """
 
     code: int

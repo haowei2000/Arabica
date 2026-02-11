@@ -14,27 +14,24 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     Returns:
         List of tuples (router, prefix)
     """
-    from aiwen.routers.app.app import router as agents_router
-    from aiwen.routers.auth import router as auth_router
+    from aiwen.routers.executor.app import router as agents_router
+    from aiwen.routers.auth.auth import router as auth_router
     from aiwen.routers.context.context import router as context_router
     from aiwen.routers.context.document import router as document_router
     from aiwen.routers.context.knowledge import router as knowledge_router
     from aiwen.routers.flush_redis import router as flush_redis_router
     from aiwen.routers.streaming import router as streaming_router
 
-    # Tool registry router
-    from aiwen.routers.tool.tools import router as tools_router
+    # Unified tool management (inner + external tools + templates)
+    from aiwen.routers.context.tools.tools import router as tools_router
 
-    # User-defined tools (ExternalTools with templates)
-    from aiwen.routers.tools.user_tools import router as user_tools_router
+    # User management
+    from aiwen.routers.auth.users.user_examples import router as user_examples_router
+    from aiwen.routers.auth.users.user_management import router as user_management_router
 
-    # Tool execution router (for client-side tool execution)
-    from aiwen.routers.user.user_examples import router as user_examples_router
-    from aiwen.routers.user.user_management import router as user_management_router
-
-    # Workspace routers (event-sourced architecture)
-    from aiwen.routers.workspaces.event_crud import router as event_crud_router
-    from aiwen.routers.workspaces.runs import (
+    # Event and run routers
+    from aiwen.routers.events.event_crud import router as event_crud_router
+    from aiwen.routers.runs.runs import (
         router as runs_router,
         runs_standalone_router,
     )
@@ -59,10 +56,8 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (runs_standalone_router, "/api"),
         # Event CRUD & Search
         (event_crud_router, "/api"),
-        # Tool Registry
-        (tools_router, "/api/agent"),
-        # User-defined Tools (ExternalTools)
-        (user_tools_router, "/api"),
+        # Unified Tool Management
+        (tools_router, "/api"),
     ]
 
 

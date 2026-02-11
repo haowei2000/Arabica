@@ -6,8 +6,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.agent_task import AgentTask
-from aiwen.schemas.agents.input import TextInput
+from aiwen.models.executor.agent_task import AgentTask
+from aiwen.schemas.executor.input import TextInput
 
 
 class AgentTaskCRUD:

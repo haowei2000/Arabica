@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import dataclass
-from typing import Optional
 from uuid import uuid4
 
 from fastmcp import FastMCP

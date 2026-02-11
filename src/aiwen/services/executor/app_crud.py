@@ -5,8 +5,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.agents.app import App
-from aiwen.schemas.agents.app import AppCreate, AppUpdate
+from aiwen.models.app import App
+from aiwen.schemas.app import AppCreate, AppUpdate
 
 
 class AppCRUD:

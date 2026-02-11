@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Optional
 
 
 def to_naive_utc(dt: datetime | None) -> datetime | None:
