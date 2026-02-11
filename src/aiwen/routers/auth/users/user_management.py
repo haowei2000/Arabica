@@ -4,17 +4,18 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.dependencies.auth import get_admin_user, get_current_user
 from aiwen.extensions.database import get_aiwen_db
-from aiwen.schemas.auth.user import UserCreate, UserInDB, UserResponse
+from aiwen.schemas.auth.user import UserCreate, UserResponse
 from aiwen.services.auth.auth_service import AuthService
 from aiwen.services.auth.user_crud import UserCRUD
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def get_user_crud(db=Depends(get_aiwen_db)):
+async def get_user_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]):
     """Dependency to get UserCRUD instance."""
     return UserCRUD(db)
 
@@ -22,8 +23,8 @@ async def get_user_crud(db=Depends(get_aiwen_db)):
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: UserCreate,
-    user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_admin_user),
+    user_crud: Annotated[UserCRUD,Depends(get_user_crud)],
+    current_user: Annotated[UserResponse, Depends(get_admin_user)],
 ):
     """
     Create a new user.
@@ -72,8 +73,8 @@ async def create_user(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: UUID,
-    user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_current_user),
+    user_crud: Annotated[UserCRUD,Depends(get_user_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
     Get user by ID.
@@ -110,8 +111,8 @@ async def get_user(
 
 @router.get("/", response_model=list[UserResponse])
 async def list_users(
-    user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_current_user),
+    user_crud: Annotated[UserCRUD, Depends(get_user_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(
         100, ge=1, le=1000, description="Maximum number of records to return"
@@ -153,14 +154,14 @@ async def list_users(
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: UUID,
+    user_crud: Annotated[UserCRUD, Depends(get_user_crud)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     username: str | None = Body(None),
     email: str | None = Body(None),
     phone: str | None = Body(None),
     role: str | None = Body(None),
     is_active: bool | None = Body(None),
     is_superuser: bool | None = Body(None),
-    user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_current_user),
 ):
     """
     Update an existing user.
@@ -213,8 +214,8 @@ async def update_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: UUID,
-    user_crud: UserCRUD = Depends(get_user_crud),
-    current_user: UserInDB = Depends(get_admin_user),
+    user_crud: Annotated[UserCRUD, Depends(get_user_crud)],
+    current_user: Annotated[UserResponse, Depends(get_admin_user)],
 ):
     """
     Delete a user.

@@ -25,10 +25,11 @@ from langchain_core.messages import (
 )
 
 from aiwen.registries import ToolRegistry, register_executor
-from aiwen.schemas.app import AppConfig, Model
+from aiwen.schemas.app import AppConfig
+from aiwen.schemas.llm.chat_llm import ChatLLM
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.registries.base_class.base_executor import AgentEvent, Executor, WaitingForTool
-from aiwen.services.context.tools.inner_tool.browser_tools import BROWSER_TOOLS
+from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
 
 
 logger = logging.getLogger(__name__)
@@ -46,13 +47,13 @@ class DefaultExecutor(Executor):
     默认Agent，支持对话历史和结构化事件流。
     """
 
-    EXECUTOR: ClassVar[dict[str, Any]] = {
-        "executor_code": "SimpleAgent",
-        "executor_name": "Default Detection Agent",
+    TEMPLATE: ClassVar[dict[str, Any]] = {
+        "template_code": "SimpleAgent",
+        "template_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,
         "config": AppConfig(
-            model=Model(provider="tongyi", name="qwen-plus"), context=None
+            model=ChatLLM(provider="tongyi", name="qwen-plus"), context=None
         ),
     }
 

@@ -1,4 +1,6 @@
 """REST API endpoints for App (Agent) management."""
+from aiwen.utils.model_converters import model_to_schema, models_to_schemas
+import aiwen.utils.model_converters
 
 from typing import Annotated
 from uuid import UUID
@@ -7,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from aiwen.dependencies.agents import get_app_crud, get_executor_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.executor.executor import ExecutorResponse
-from aiwen.schemas.app import AppCreate, AppListResponse, AppResponse, AppUpdate
+from aiwen.schemas.app.app import AppCreate, AppListResponse, AppResponse, AppUpdate
 from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.executor.executor import ExecutorResponse
 from aiwen.services.app.app_crud import AppCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 
@@ -278,7 +280,7 @@ async def query_apps(
 
     return AppListResponse(
         total=user_total,
-        items=user_apps,
+        items=models_to_schemas(AppResponse,user_apps),
         page=page,
-        page_size=page_size,  # ty:ignore[invalid-argument-type]
+        page_size=page_size,
     )

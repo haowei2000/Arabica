@@ -29,8 +29,8 @@ from aiwen.schemas.context.knowledge.document import (
     DocumentResponse,
     DocumentUploadResponse,
 )
-from aiwen.services.knowledge.document_crud import DocumentCRUD
-from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
+from aiwen.services.context.knowledge.document_crud import DocumentCRUD
+from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 
 
 class TaskStatusResponse(BaseModel):
@@ -82,6 +82,8 @@ def compute_file_hash(content: bytes) -> str:
 )
 async def upload_document(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
+    knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
     file: UploadFile = File(..., description="File to upload"),
     knowledge_id: str = Form(..., description="Knowledge base ID"),
     chunk_size: int = Form(
@@ -95,8 +97,6 @@ async def upload_document(
         default="text-embedding-v3", description="Embedding model"
     ),
     embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
-    document_crud: DocumentCRUD = Depends(get_document_crud),
-    knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     Upload a document to a knowledge base.
@@ -268,10 +268,10 @@ async def get_task_status(
 async def list_documents_by_knowledge(
     knowledge_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
+    knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    document_crud: DocumentCRUD = Depends(get_document_crud),
-    knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
 ):
     """
     List documents in a knowledge base.
@@ -323,7 +323,7 @@ async def list_documents_by_knowledge(
 async def get_document(
     document_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    document_crud: DocumentCRUD = Depends(get_document_crud),
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
 ):
     """
     Get document by ID.
@@ -352,8 +352,8 @@ async def get_document(
 async def delete_document(
     document_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    document_crud: DocumentCRUD = Depends(get_document_crud),
-    knowledge_crud: KnowledgeCRUD = Depends(get_knowledge_crud),
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
+    knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
 ):
     """
     Delete a document and its chunks.
@@ -390,7 +390,7 @@ async def delete_document(
 async def download_document(
     document_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    document_crud: DocumentCRUD = Depends(get_document_crud),
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
 ):
     """
     Download the original document file.
@@ -454,7 +454,7 @@ class DocumentPreviewResponse(BaseModel):
 async def preview_document(
     document_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    document_crud: DocumentCRUD = Depends(get_document_crud),
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
 ):
     """
     Get a preview of the document content (parsed text).

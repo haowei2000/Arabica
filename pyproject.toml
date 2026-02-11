@@ -89,6 +89,7 @@ dev = [
     "faker>=30.0.0",
     "ty>=0.0.7",
     "types-redis>=4.6.0",
+    "celery-types"
 ]
 
 [project.scripts]

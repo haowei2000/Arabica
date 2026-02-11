@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.enums import ToolExecutionMode
 from aiwen.registries.base_class.base_tool import BaseTool
 from aiwen.registries.base_class.base_executor import Executor
 
@@ -384,7 +385,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         enabled_only: bool = True,
     ) -> list[str]:
         """List tool names with optional filters."""
-        from aiwen.services.tools.base_tool import BaseTool
 
         def predicate(name: str, tool_class: type[BaseTool]) -> bool:
             metadata = tool_class.METADATA
@@ -557,7 +557,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
     def get_statistics(self) -> dict:
         """Get detailed registry statistics."""
-        from aiwen.services.tools.base_tool import ToolExecutionMode
 
         base_stats = super().get_statistics()
         total = len(self._registry)
@@ -624,7 +623,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
                 f"Executor {executor_cls.__name__} TEMPLATE missing fields: {missing}"
             )
 
-    def _extract_key(self, executor_cls: type[Executor]) -> str:  # ty:ignore[invalid-method-override]
+    def _extract_key(self, executor_cls: Executor) -> str:
         """Extract template code from the executor class."""
         return executor_cls.TEMPLATE["template_code"]
 

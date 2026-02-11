@@ -41,7 +41,6 @@ from aiwen.schemas.context.tools.user_tool import (
     UserToolResponse,
     UserToolUpdate,
 )
-from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
 from aiwen.services.context.tools.tool_crud import UserToolCRUD
 
 logger = logging.getLogger(__name__)
@@ -149,7 +148,7 @@ async def get_template(template_id: str):
 async def create_tool(
     tool_data: UserToolCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Create a new user-defined external tool.
@@ -201,7 +200,7 @@ async def create_tool(
 )
 async def list_tools(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
     workspace_id: UUID | None = None,
     enabled_only: bool = True,
     include_public: bool = True,
@@ -249,7 +248,7 @@ async def list_tools(
 async def get_tool(
     tool_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Get a specific tool by ID.
@@ -286,7 +285,7 @@ async def update_tool(
     tool_id: UUID,
     tool_data: UserToolUpdate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Update an existing external tool (must be owner).
@@ -335,7 +334,7 @@ async def update_tool(
 async def delete_tool(
     tool_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Delete a tool (must be owner).
@@ -379,7 +378,7 @@ async def toggle_tool(
     tool_id: UUID,
     enabled: bool,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Enable or disable a tool.
@@ -430,7 +429,7 @@ async def toggle_tool(
 )
 async def load_user_tools(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
     workspace_id: UUID | None = None,
 ):
     """
@@ -465,7 +464,7 @@ async def load_user_tools(
 async def reload_tool(
     tool_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Reload a specific tool.
@@ -494,76 +493,7 @@ async def reload_tool(
     return {"success": True, "message": "Tool reloaded successfully"}
 
 
-@router.post(
-    "/execute",
-    response_model=UserToolExecutionResponse,
-    summary="Execute a user tool",
-)
-async def execute_tool(
-    request: UserToolExecutionRequest,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_aiwen_db),
-):
-    """
-    Execute a user tool directly.
 
-    This endpoint is for testing purposes. In production, tools should be
-    called by the agent automatically.
-
-    Args:
-        request: Execution request with tool_id and parameters
-        current_user: Current authenticated user
-        db: Database session
-
-    Returns:
-        Execution result with timing information
-
-    Raises:
-        HTTPException 404: If tool not found
-        HTTPException 500: If tool not loaded in registry
-    """
-    # Load tool if not already loaded
-    loader = DynamicToolLoader(db)
-    await loader.load_user_tools(current_user.id)
-
-    # Get tool instance
-    crud = UserToolCRUD(db)
-    tool_model = await crud.get_tool_by_id(request.tool_id, current_user.id)
-
-    if not tool_model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
-        )
-
-    # Get tool from registry
-    tool_instance = ToolRegistry.get_tool_instance(tool_model.name)
-    if not tool_instance:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Tool not loaded in registry",
-        )
-
-    # Execute tool
-    start_time = time.time()
-    try:
-        result = await tool_instance(**request.parameters)
-        execution_time = time.time() - start_time
-
-        return UserToolExecutionResponse(
-            success=result.get("success", True),
-            message=result.get("message"),
-            data=result.get("data"),
-            error=result.get("error"),
-            execution_time=execution_time,
-        )
-    except Exception as e:
-        execution_time = time.time() - start_time
-        logger.error(f"Tool execution failed: {e}", exc_info=True)
-        return UserToolExecutionResponse(
-            success=False,
-            error=str(e),
-            execution_time=execution_time,
-        )
 
 
 # ============================================================================

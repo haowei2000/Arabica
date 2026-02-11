@@ -16,7 +16,9 @@ from aiwen.services.auth.token_service import TokenService
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
-async def get_auth_service(db: AsyncSession = Depends(get_aiwen_db)) -> AuthService:
+async def get_auth_service(
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)]
+) -> AuthService:
     """Dependency to get AuthService instance."""
     return AuthService(db)
 
@@ -25,7 +27,8 @@ async def get_auth_service(db: AsyncSession = Depends(get_aiwen_db)) -> AuthServ
     "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
 )
 async def register_user(
-    user_data: UserCreate, auth_service: AuthService = Depends(get_auth_service)
+    user_data: UserCreate,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
     Register a new user.
@@ -67,8 +70,8 @@ async def register_user(
 
 @router.post("/login", response_model=Token)
 async def login_user(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    auth_service: AuthService = Depends(get_auth_service),
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
     Login a user and return JWT tokens.

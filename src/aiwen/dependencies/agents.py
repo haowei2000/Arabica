@@ -1,5 +1,7 @@
 """Dependency injection functions for agent-related services."""
 
+from typing import Annotated
+
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,14 +9,15 @@ from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
 from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.app.app_crud import AppCRUD
+from aiwen.services.context.knowledge.document_crud import DocumentCRUD
+from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.executor.tool_crud import ToolCRUD
-from aiwen.services.knowledge.document_crud import DocumentCRUD
-from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
 
 
-async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
+
+async def get_app_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]) -> AppCRUD:
     """
     Dependency to get AppCRUD instance.
 
@@ -28,7 +31,7 @@ async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
 
 
 async def get_executor_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ) -> ExecutorCRUD:
     """
     Dependency to get ExecutorCRUD instance.
@@ -37,7 +40,7 @@ async def get_executor_crud(
 
 
 async def get_knowledge_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ) -> KnowledgeCRUD:
     """
     Dependency to get KnowledgeCRUD instance.
@@ -52,7 +55,7 @@ async def get_knowledge_crud(
 
 
 async def get_context_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ) -> ContextCRUD:
     """
     Dependency to get ContextCRUD instance.
@@ -67,7 +70,7 @@ async def get_context_crud(
 
 
 async def get_document_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ) -> DocumentCRUD:
     """
     Dependency to get DocumentCRUD instance.
@@ -82,7 +85,7 @@ async def get_document_crud(
 
 
 async def get_tool_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ) -> ToolCRUD:
     """Dependency to get ToolCRUD instance.
 

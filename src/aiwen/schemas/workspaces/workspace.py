@@ -2,15 +2,13 @@
 """Pydantic schemas for Workspace API endpoints."""
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
+from aiwen.enums import WorkspaceStatus, WorkspaceVisibility, MemberRole, InvitationStatus
 from aiwen.utils.schema_mixins import ResponseMixin
-
-
 
 
 class WorkspaceCreate(BaseModel):

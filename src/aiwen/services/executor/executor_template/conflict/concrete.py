@@ -11,13 +11,17 @@ from aiwen.registries.base_class.base_executor import AgentEvent, Executor
 class ConflictExecutor(Executor):
     """Natural Language to SQL conversion agent."""
 
-    EXECUTOR: ClassVar[dict[str, Any]] = {
-        "executor_code": "ConflictExecutor",
-        "executor_name": "Conflict Detection Executor",
+    TEMPLATE: ClassVar[dict[str, Any]] = {
+        "template_code": "ConflictExecutor",
+        "template_name": "Conflict Detection Executor",
         "enabled": True,
         "version": 1,
         "config": {},
     }
+
+    async def setup(self) -> None:
+        """Setup any resources needed by the executor."""
+        pass
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """Execute the NL2SQL workflow."""

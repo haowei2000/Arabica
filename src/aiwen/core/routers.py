@@ -14,27 +14,29 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     Returns:
         List of tuples (router, prefix)
     """
-    from aiwen.routers.executor.app import router as agents_router
     from aiwen.routers.auth.auth import router as auth_router
+
+    # User management
+    from aiwen.routers.auth.users.user_examples import router as user_examples_router
+    from aiwen.routers.auth.users.user_management import (
+        router as user_management_router,
+    )
     from aiwen.routers.context.context import router as context_router
     from aiwen.routers.context.document import router as document_router
     from aiwen.routers.context.knowledge import router as knowledge_router
-    from aiwen.routers.flush_redis import router as flush_redis_router
-    from aiwen.routers.streaming import router as streaming_router
 
     # Unified tool management (inner + external tools + templates)
     from aiwen.routers.context.tools.tools import router as tools_router
 
-    # User management
-    from aiwen.routers.auth.users.user_examples import router as user_examples_router
-    from aiwen.routers.auth.users.user_management import router as user_management_router
-
     # Event and run routers
     from aiwen.routers.events.event_crud import router as event_crud_router
+    from aiwen.routers.executor.app import router as agents_router
+    from aiwen.routers.flush_redis import router as flush_redis_router
     from aiwen.routers.runs.runs import (
         router as runs_router,
         runs_standalone_router,
     )
+    from aiwen.routers.streaming import router as streaming_router
     from aiwen.routers.workspaces.workspace import router as workspace_router
 
     return [
