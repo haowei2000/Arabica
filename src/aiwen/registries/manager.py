@@ -71,7 +71,7 @@ class RegistryManager:
         """
         if registry_cls in self._registries:
             logger.warning(f"Registry {registry_cls.__name__} already registered")
-            return self._registries[registry_cls]
+            return self._registries[registry_cls]  # type: ignore[return-value]
 
         if instance is None:
             instance = registry_cls()
@@ -98,7 +98,7 @@ class RegistryManager:
                 f"Registry {registry_cls.__name__} not registered. "
                 f"Available: {list(self._registries.keys())}"
             )
-        return self._registries[registry_cls]
+        return self._registries[registry_cls]  # ty:ignore[invalid-return-type]
 
     def get_all_registries(self) -> list[BaseRegistry]:
         """

@@ -59,7 +59,7 @@ export const API_ENDPOINTS = {
 
   // App 管理
   APPS: {
-      TEMPLATES: '/apps/templates/list',
+      TEMPLATES: '/apps/executors/list',
       LIST: '/apps/list',
       CREATE: '/apps/create',
       GET: (appId: string) => `/apps/${appId}/get`,

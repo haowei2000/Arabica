@@ -25,12 +25,15 @@ from langchain_core.messages import (
 )
 
 from aiwen.registries import ToolRegistry, register_executor
+from aiwen.registries.base_class.base_executor import (
+    AgentEvent,
+    Executor,
+    WaitingForTool,
+)
 from aiwen.schemas.app import AppConfig
-from aiwen.schemas.llm.chat_llm import ChatLLM
 from aiwen.schemas.events.event_payloads import UserMessage
-from aiwen.registries.base_class.base_executor import AgentEvent, Executor, WaitingForTool
+from aiwen.schemas.llm.chat_llm import ChatLLM
 from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
-
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +409,7 @@ class DefaultExecutor(Executor):
                             "tool_id": tool_id,
                             "arguments": arguments,
                             "ai_message": messages_to_dict([last_ai_output])[0],
-                            "executor_code": self.EXECUTOR["executor_code"],
+                            "executor_code": self.TEMPLATE["template_code"],
                         }
                     )
 

@@ -623,7 +623,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
                 f"Executor {executor_cls.__name__} TEMPLATE missing fields: {missing}"
             )
 
-    def _extract_key(self, executor_cls: Executor) -> str:
+    def _extract_key(self, executor_cls: Executor) -> str:  # ty:ignore[invalid-method-override]
         """Extract template code from the executor class."""
         return executor_cls.TEMPLATE["template_code"]
 
@@ -656,16 +656,16 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         # Sync registered executors
         for executor_code, executor_cls in self._registry.items():
             try:
-                executor = executor_cls.EXECUTOR
+                template = executor_cls.TEMPLATE
                 existing = await crud.get_executor_by_code(executor_code)
 
                 if not existing:
                     await crud.create_executor(
                         executor_code=executor_code,
-                        executor_name=executor["executor_name"],
-                        config=_normalize_config(executor.get("config")),
-                        enabled=executor.get("enabled", True),
-                        version=executor.get("version", 1),
+                        executor_name=template["template_name"],
+                        config=_normalize_config(template.get("config")),
+                        enabled=template.get("enabled", True),
+                        version=template.get("version", 1),
                         auto_commit=False,
                     )
                     self.logger.info(f"✓ Created: {executor_code}")
@@ -688,7 +688,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
             for db_executor in all_db_executors:
                 if db_executor.executor_code not in registered_codes:
                     await crud.mark_executor_as_deleted(
-                        db_executor.executor_code, auto_commit=False
+                        str(db_executor.executor_code), auto_commit=False
                     )
                     self.logger.warning(
                         f"⚠ Marked as deleted: {db_executor.executor_code}"
@@ -711,8 +711,8 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
     async def register_with_db(
         self,
-        template_code: str,
-        template_name: str,
+        executor_code: str,
+        executor_name: str,
         executor_cls: type[Executor],
         db: AsyncSession,
         config: dict | None = None,
@@ -720,9 +720,9 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         version: int = 1,
     ):
         """Register executor in both memory and database."""
-        if not template_code or not template_code.strip():
+        if not executor_code or not executor_code.strip():
             raise ValueError("template_code cannot be empty")
-        if not template_name or not template_name.strip():
+        if not executor_name or not executor_name.strip():
             raise ValueError("template_name cannot be empty")
 
         # Register in memory
@@ -732,20 +732,21 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 
         crud = ExecutorCRUD(db)
-        existing = await crud.get_template_by_code(template_code)
+        existing = await crud.get_executor_by_code(executor_code)
 
         if not existing:
-            template = await crud.create_template(
-                template_code=template_code,
-                template_name=template_name,
-                config=config or {},
+            executor = await crud.create_executor(
+                executor_code=executor_code,
+                executor_name=executor_name,
+                config=config if config else {},
                 enabled=enabled,
                 version=version,
+                auto_commit=False,
             )
-            self.logger.info(f"✓ Registered: {template_code} (id: {template.id})")
-            return template
+            self.logger.info(f"✓ Registered: {executor_code = } {executor.id = }")
+            return executor
 
-        self.logger.info(f"Executor exists: {template_code} (id: {existing.id})")
+        self.logger.info(f"Executor exists: {executor_code} (id: {existing.id})")
         return existing
 
     @staticmethod

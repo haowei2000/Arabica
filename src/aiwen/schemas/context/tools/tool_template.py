@@ -483,6 +483,7 @@ def get_inner_tool_templates() -> dict[str, ToolTemplate]:
         dict[str, ToolTemplate]: Dynamic templates keyed by template ID
     """
     from aiwen.registries import ToolRegistry
+    from aiwen.registries.base_class.base_tool import InnerTool
 
     templates: dict[str, ToolTemplate] = {}
 
