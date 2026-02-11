@@ -2,7 +2,7 @@
 """Knowledge management models for storing knowledge bases, knowledge and chunks."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
@@ -14,12 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aiwen.extensions.database import get_base
 
-if TYPE_CHECKING:
-    from aiwen.models.context.knowledge.documents import Document
-    from aiwen.models.context.knowledge.preprocess import Preprocess
-
 Base = get_base("aiwen")
-
 
 class Knowledge(Base):
     """Knowledge table for storing knowledge base information."""

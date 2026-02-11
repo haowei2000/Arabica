@@ -5,8 +5,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from typing import from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -14,13 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aiwen.extensions.database import get_base
 
-if TYPE_CHECKING:
-    from aiwen.models.workspaces.workspace import Workspace
-
-from aiwen.enums.workspaces import InvitationStatus, MemberRole
-
 Base = get_base("aiwen")
-
 
 class WorkspaceMember(Base):
     """WorkspaceMember model - represents a user's membership in a workspace.
@@ -52,7 +45,7 @@ class WorkspaceMember(Base):
     )
 
     # Role in workspace
-    role: Mapped[MemberRole] = mapped_column(
+    role: Mapped["MemberRole"] = mapped_column(
         String(50), default=MemberRole.VIEWER, comment="角色: owner/admin/editor/viewer"
     )
 
@@ -60,7 +53,7 @@ class WorkspaceMember(Base):
     invited_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="邀请人ID"
     )
-    invitation_status: Mapped[InvitationStatus] = mapped_column(
+    invitation_status: Mapped["InvitationStatus"] = mapped_column(
         String(50), default=InvitationStatus.ACCEPTED, comment="邀请状态: pending/accepted/declined"
     )
 
@@ -81,7 +74,7 @@ class WorkspaceMember(Base):
     )
 
     # Relationship
-    workspace: Mapped[Workspace] = relationship("Workspace", back_populates="members")
+    workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="members")
 
     __table_args__ = (
         # Unique constraint: one user can only be a member once per workspace

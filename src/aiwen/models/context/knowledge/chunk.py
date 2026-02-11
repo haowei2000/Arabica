@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
@@ -12,11 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aiwen.extensions.database import get_base
 
-if TYPE_CHECKING:
-    from aiwen.models.context.knowledge.documents import Document
-
 Base = get_base("aiwen")
-
 
 class Chunk(Base):
     """Chunk table for storing document segments/chunks with vector embeddings."""

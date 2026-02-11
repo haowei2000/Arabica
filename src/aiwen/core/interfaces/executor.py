@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from aiwen.schemas.context.tools import ToolClientRequestPayload
 from aiwen.schemas.events.event_payloads import (
@@ -16,10 +16,6 @@ from aiwen.schemas.events.event_payloads import (
     ToolResultEvent,
     UserMessage,
 )
-
-# Avoid circular import by using TYPE_CHECKING
-if TYPE_CHECKING:
-    from aiwen.registries import ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -36,7 +32,6 @@ class AgentEvent:
 
     def to_dict(self) -> dict[str, Any]:
         return {"event_type": self.event_type, "payload": self.payload}
-
 
 class WaitingForTool(Exception):
     """Raised when a tool requires human approval before execution.
@@ -61,7 +56,6 @@ class WaitingForTool(Exception):
     def __init__(self, info: dict[str, Any]):
         self.info = info
         super().__init__(f"Waiting for tool approval: {info.get('tool_name')}")
-
 
 class Executor(Protocol):
     """Abstract base for every agent in the system.

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
@@ -22,10 +22,6 @@ from aiwen.enums.workspaces import (
 )
 
 from aiwen.extensions.database import get_base
-
-if TYPE_CHECKING:
-    from aiwen.models.events.event import Event
-    from aiwen.models.runs.run import Run
 
 Base = get_base("aiwen")
 

@@ -2,8 +2,7 @@
 """Document model for storing documents belonging to knowledge bases."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from typing import from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -11,12 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aiwen.extensions.database import get_base
 
-if TYPE_CHECKING:
-    from aiwen.models.context.knowledge.chunk import Chunk
-    from aiwen.models.context.knowledge.knowledge import Knowledge
-
 Base = get_base("aiwen")
-
 
 class Document(Base):
     """Document table for storing knowledge belonging to knowledge bases."""

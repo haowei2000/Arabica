@@ -2,13 +2,9 @@
 """Preprocess model for defining document processing methods."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
-if TYPE_CHECKING:
-    from aiwen.models.context.knowledge.knowledge import Knowledge
-
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -18,7 +14,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from aiwen.extensions.database import get_base
 
 Base = get_base("aiwen")
-
 
 class Preprocess(Base):
     """Preprocess table for defining document processing configurations."""

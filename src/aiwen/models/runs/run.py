@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
@@ -17,10 +17,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from aiwen.enums.runs import RunStatus, TriggerType
 
 from aiwen.extensions.database import get_base
-
-if TYPE_CHECKING:
-    from aiwen.models.events.event import Event
-    from aiwen.models.workspaces.workspace import Workspace
 
 Base = get_base("aiwen")
 
@@ -136,11 +132,11 @@ class Run(Base):
     )
 
     # Relationships
-    workspace: Mapped[Workspace] = relationship("Workspace", back_populates="runs")
-    events: Mapped[list[Event]] = relationship(
+    workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="runs")
+    events: Mapped[list["Event"]] = relationship(
         "Event", back_populates="run", cascade="all, delete-orphan"
     )
-    parent_run: Mapped[Run | None] = relationship(
+    parent_run: Mapped["Run | None"] = relationship(
         "Run",
         remote_side=[id],
         backref="child_runs",
