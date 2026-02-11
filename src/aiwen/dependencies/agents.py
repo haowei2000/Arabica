@@ -9,7 +9,6 @@ from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.executor.app_crud import AppCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 from aiwen.services.executor.runtime import AgentRuntime
-from aiwen.services.executor.task_crud import AgentTaskCRUD
 from aiwen.services.executor.tool_crud import ToolCRUD
 from aiwen.services.knowledge.document_crud import DocumentCRUD
 from aiwen.services.knowledge.knowledge_crud import KnowledgeCRUD
@@ -28,19 +27,13 @@ async def get_app_crud(db: AsyncSession = Depends(get_aiwen_db)) -> AppCRUD:
     return AppCRUD(db)
 
 
-async def get_template_crud(
+async def get_executor_crud(
     db: AsyncSession = Depends(get_aiwen_db),
 ) -> ExecutorCRUD:
     """
-    Dependency to get AgentTemplateCRUD instance.
+    Dependency to get ExecutorCRUD instance.
     """
     return ExecutorCRUD(db)
-
-
-async def get_task_crud(
-    db: AsyncSession = Depends(get_aiwen_db),
-) -> AgentTaskCRUD:
-    return AgentTaskCRUD(db)
 
 
 async def get_knowledge_crud(

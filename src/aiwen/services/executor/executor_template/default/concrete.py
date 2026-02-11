@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Default Agent Template – conversation context + structured event stream.
+"""Default Executor – conversation context + structured event stream.
 
 Streaming event map (LangGraph ``astream_events`` → project schema):
     on_chat_model_stream  →  AGENT_THINKING  (while inside a <think> block)
@@ -10,7 +10,7 @@ Streaming event map (LangGraph ``astream_events`` → project schema):
     on_tool_end           →  TOOL_RESULT
     on_tool_error         →  TOOL_ERROR
 
-默认Agent模版，支持会话上下文和结构化事件流。
+默认执行器，支持会话上下文和结构化事件流。
 """
 
 from collections.abc import AsyncGenerator
@@ -40,15 +40,15 @@ _THINK_CLOSE = "</think>"
 
 
 @register_executor
-class DefaultAgentTemplate(Executor):
+class DefaultExecutor(Executor):
     """Default agent with conversation context and structured event streaming.
 
     默认Agent，支持对话历史和结构化事件流。
     """
 
-    TEMPLATE: ClassVar[dict[str, Any]] = {
-        "template_code": "SimpleAgent",
-        "template_name": "Default Detection Agent",
+    EXECUTOR: ClassVar[dict[str, Any]] = {
+        "executor_code": "SimpleAgent",
+        "executor_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,
         "config": AppConfig(
@@ -405,7 +405,7 @@ class DefaultAgentTemplate(Executor):
                             "tool_id": tool_id,
                             "arguments": arguments,
                             "ai_message": messages_to_dict([last_ai_output])[0],
-                            "executor_code": self.TEMPLATE["template_code"],
+                            "executor_code": self.EXECUTOR["executor_code"],
                         }
                     )
 

@@ -1,5 +1,5 @@
-"""aiwen/models/agent/agent_template.py
-Agent template model for storing agent templates.
+"""aiwen/models/executor/executor.py
+Executor model for storing executor configurations.
 """
 
 from __future__ import annotations
@@ -17,18 +17,18 @@ from aiwen.extensions.database import get_base
 Base = get_base("aiwen")
 
 
-class AgentTemplate(Base):
-    __tablename__ = "agent_template"
+class Executor(Base):
+    __tablename__ = "executor"
 
     # Primary key
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
 
-    # Template identification
-    template_code: Mapped[str] = mapped_column(
-        String, unique=True, nullable=False, comment="模板标识"
+    # Executor identification
+    executor_code: Mapped[str] = mapped_column(
+        String, unique=True, nullable=False, comment="执行器标识"
     )
-    template_name: Mapped[str] = mapped_column(
-        String, nullable=False, comment="模板名称"
+    executor_name: Mapped[str] = mapped_column(
+        String, nullable=False, comment="执行器名称"
     )
 
     # Status and configuration
@@ -36,7 +36,7 @@ class AgentTemplate(Base):
         Boolean, default=True, server_default="true", comment="是否启用"
     )
     config: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, comment="Agent参数配置"
+        JSONB, comment="执行器参数配置"
     )
     version: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1", comment="版本号"
@@ -57,4 +57,4 @@ class AgentTemplate(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<AgentTemplate(id={self.id}, template_code='{self.template_code}', template_name='{self.template_name}', enabled={self.enabled})>"
+        return f"<Executor(id={self.id}, executor_code='{self.executor_code}', executor_name='{self.executor_name}', enabled={self.enabled})>"

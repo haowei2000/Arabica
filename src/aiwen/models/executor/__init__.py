@@ -1,9 +1,7 @@
-"""Executor domain models - templates and tasks."""
+"""Executor domain models."""
 
-from aiwen.models.executor.agent_task import AgentTask
-from aiwen.models.executor.agent_template import AgentTemplate
+from aiwen.models.executor.executor import Executor
 
 __all__ = [
-    "AgentTask",
-    "AgentTemplate",
+    "Executor",
 ]

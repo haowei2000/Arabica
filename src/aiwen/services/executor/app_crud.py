@@ -52,7 +52,7 @@ class AppCRUD:
         app = App(
             id=uuid4(),
             app_code=data.app_code,
-            agent_template_id=data.agent_template_id,
+            executor_id=data.executor_id,
             user_id=user_id,  # Add user_id from the request
             enabled=data.enabled,
             config=data.config or {},
@@ -123,8 +123,8 @@ class AppCRUD:
 
         # Apply filters
         if enabled_only:
-            stmt = stmt.where(App.enabled == True)
-            count_stmt = count_stmt.where(App.enabled == True)
+            stmt = stmt.where(App.enabled == True)  # noqa: E712
+            count_stmt = count_stmt.where(App.enabled == True)  # noqa: E712
 
         if user_id:
             stmt = stmt.where(App.user_id == user_id)
@@ -201,14 +201,14 @@ class AppCRUD:
 
         return True
 
-    async def filter_apps_by_template(
-        self, agent_template_id: UUID, skip: int = 0, limit: int = 100
+    async def filter_apps_by_executor(
+        self, executor_id: UUID, skip: int = 0, limit: int = 100
     ) -> tuple[list[App], int]:
         """
-        Get all apps using a specific agent template.
+        Get all apps using a specific executor.
 
         Args:
-            agent_template_id: ID of the agent template
+            executor_id: ID of the executor
             skip: Number of records to skip
             limit: Maximum number of records to return
 
@@ -216,9 +216,9 @@ class AppCRUD:
             Tuple of (list of apps, total count)
         """
         # Base query
-        stmt = select(App).where(App.agent_template_id == agent_template_id)
+        stmt = select(App).where(App.executor_id == executor_id)
         count_stmt = select(func.count(App.id)).where(
-            App.agent_template_id == agent_template_id
+            App.executor_id == executor_id
         )
 
         # Get total count
@@ -263,14 +263,14 @@ class AppCRUD:
 
         return items, total
 
-    async def get_latest_app_by_template_and_user(
-        self, agent_template_id: UUID, user_id: UUID
+    async def get_latest_app_by_executor_and_user(
+        self, executor_id: UUID, user_id: UUID
     ) -> App | None:
-        """Get the most recent app for a template created by a user."""
+        """Get the most recent app for an executor created by a user."""
         stmt = (
             select(App)
             .where(
-                App.agent_template_id == agent_template_id,
+                App.executor_id == executor_id,
                 App.user_id == user_id,
             )
             .order_by(App.created_at.desc())

@@ -1,130 +1,118 @@
 #!/usr/bin/env python3
 """
-模块名称: {模块名称}
-
-功能描述:
-    {详细描述模块的主要功能、实现逻辑和用途}
-
-
-依赖模块:
-    - {依赖模块1}
-    - {依赖模块2}
-
-使用示例:
-    {提供简单的使用示例代码}
+Executor CRUD operations.
 """
 
-# aiwen/services/agent/agent_template_crud.py
 from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.executor.agent_template import AgentTemplate
+from aiwen.models.executor.executor import Executor
 
 
 class ExecutorCRUD:
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
 
-    async def create_template(
+    async def create_executor(
         self,
-        template_code: str,
-        template_name: str,
+        executor_code: str,
+        executor_name: str,
         config: dict = None,
         enabled: bool = True,
         version: int = 1,
         auto_commit: bool = True,
-    ) -> AgentTemplate:
+    ) -> Executor:
         """
-        Create a new agent template.
+        Create a new executor.
 
         Args:
-            template_code: Unique code for the template
-            template_name: Name of the template
+            executor_code: Unique code for the executor
+            executor_name: Name of the executor
             config: Configuration dictionary
-            enabled: Whether the template is enabled
+            enabled: Whether the executor is enabled
             version: Version number
             auto_commit: If True (default), immediately commit the transaction.
                          If False, only flush changes.
 
         Returns:
-            Created AgentTemplate instance
+            Created Executor instance
         """
-        template = AgentTemplate(
-            template_code=template_code,
-            template_name=template_name,
+        executor = Executor(
+            executor_code=executor_code,
+            executor_name=executor_name,
             config=config or {},
             enabled=enabled,
             version=version,
         )
-        self.db_session.add(template)
+        self.db_session.add(executor)
 
         if auto_commit:
             await self.db_session.commit()
         else:
             await self.db_session.flush()
 
-        await self.db_session.refresh(template)
-        return template
+        await self.db_session.refresh(executor)
+        return executor
 
-    async def get_template_by_code(self, template_code: str) -> AgentTemplate | None:
+    async def get_executor_by_code(self, executor_code: str) -> Executor | None:
         result = await self.db_session.execute(
-            select(AgentTemplate).where(AgentTemplate.template_code == template_code)
+            select(Executor).where(Executor.executor_code == executor_code)
         )
         return result.scalars().first()
 
-    async def get_template_by_id(self, template_id: UUID) -> AgentTemplate | None:
+    async def get_executor_by_id(self, executor_id: UUID) -> Executor | None:
         result = await self.db_session.execute(
-            select(AgentTemplate).where(AgentTemplate.id == template_id)
+            select(Executor).where(Executor.id == executor_id)
         )
         return result.scalars().first()
 
-    async def list_templates(
+    async def list_executors(
         self, include_disabled: bool = True
-    ) -> Sequence[AgentTemplate]:
+    ) -> Sequence[Executor]:
         """
-        List all agent templates.
+        List all executors.
 
         Args:
-            include_disabled: If True, include disabled templates. If False, only return enabled ones.
+            include_disabled: If True, include disabled executors. If False, only return enabled ones.
 
         Returns:
-            Sequence of AgentTemplate instances
+            Sequence of Executor instances
         """
-        query = select(AgentTemplate)
+        query = select(Executor)
         if not include_disabled:
-            query = query.where(AgentTemplate.enabled == True)  # noqa: E712
+            query = query.where(Executor.enabled == True)  # noqa: E712
 
         result = await self.db_session.execute(query)
         return result.scalars().all()
 
-    async def mark_template_as_deleted(
-        self, template_code: str, auto_commit: bool = True
+    async def mark_executor_as_deleted(
+        self, executor_code: str, auto_commit: bool = True
     ) -> bool:
         """
-        Mark a template as deleted by setting enabled=False.
+        Mark an executor as deleted by setting enabled=False.
 
         This is a soft delete - the record remains in the database but is marked as disabled.
 
         Args:
-            template_code: The template code to mark as deleted
+            executor_code: The executor code to mark as deleted
             auto_commit: If True (default), immediately commit the transaction.
                          If False, only flush changes.
 
         Returns:
-            True if the template was found and marked as deleted, False otherwise
+            True if the executor was found and marked as deleted, False otherwise
         """
         result = await self.db_session.execute(
-            select(AgentTemplate).where(AgentTemplate.template_code == template_code)
+            select(Executor).where(Executor.executor_code == executor_code)
         )
-        template = result.scalars().first()
+        executor = result.scalars().first()
 
-        if not template:
+        if not executor:
             return False
 
-        template.enabled = False
+        executor.enabled = False
 
         if auto_commit:
             await self.db_session.commit()

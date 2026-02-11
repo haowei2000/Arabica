@@ -1,7 +1,7 @@
-"""Conflict agent template module."""
+"""Conflict executor module."""
 
-from .concrete import AgentTemplate
+from .concrete import ConflictExecutor
 
 __all__ = [
-    "AgentTemplate",
+    "ConflictExecutor",
 ]

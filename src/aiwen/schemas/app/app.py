@@ -17,11 +17,11 @@ class AppCreate(BaseModel):
         min_length=1,
         max_length=100,
     )
-    agent_template_code: str | None = Field(
-        "DEFAULT001", description="Code of the agent template to use"
+    executor_code: str | None = Field(
+        "DEFAULT001", description="Code of the executor to use"
     )
-    agent_template_id: UUID | None = Field(
-        None, description="ID of the agent template to use"
+    executor_id: UUID | None = Field(
+        None, description="ID of the executor to use"
     )
     user_id: UUID | None = Field(None, description="ID of the user creating the app")
     enabled: bool = Field(default=True, description="Whether the app is enabled")
@@ -34,8 +34,8 @@ class AppCreate(BaseModel):
 class AppUpdate(BaseModel):
     """Schema for updating an existing app."""
 
-    agent_template_id: UUID | None = Field(
-        None, description="ID of the agent template to use"
+    executor_id: UUID | None = Field(
+        None, description="ID of the executor to use"
     )
     enabled: bool | None = Field(None, description="Whether the app is enabled")
     config: dict[str, Any] | None = Field(None, description="App configuration as JSON")
@@ -47,7 +47,7 @@ class AppResponse(BaseModel):
 
     id: UUID = Field(..., description="App UUID")
     app_code: str = Field(..., description="Unique app code")
-    agent_template_id: UUID | None = Field(None, description="Agent template ID")
+    executor_id: UUID | None = Field(None, description="Executor ID")
     user_id: UUID | None = Field(None, description="User ID who created the app")
     enabled: bool = Field(..., description="Whether the app is enabled")
     config: dict[str, Any] | None = Field(None, description="App configuration")

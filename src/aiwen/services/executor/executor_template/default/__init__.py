@@ -1,7 +1,7 @@
-"""Default agent template module."""
+"""Default executor module."""
 
-from .concrete import DefaultAgentTemplate
+from .concrete import DefaultExecutor
 
 __all__ = [
-    "DefaultAgentTemplate",
+    "DefaultExecutor",
 ]

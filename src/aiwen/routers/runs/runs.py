@@ -15,7 +15,7 @@ from aiwen.dependencies.workspace import (
     WorkspaceCRUDDep,
 )
 from aiwen.models.app import App
-from aiwen.models.executor.agent_template import AgentTemplate
+from aiwen.models.executor.executor import Executor
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventType, UserMessageEvent
 from aiwen.schemas.runs.run import (
@@ -77,17 +77,17 @@ async def create_run(
         auto_commit=False,
     )
 
-    # Resolve executor_code from the app's linked agent template
+    # Resolve executor_code from the app's linked executor
     app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
     app_row = app_result.scalar_one_or_none()
     executor_code = "DEFAULT001"
-    if app_row and app_row.agent_template_id:
+    if app_row and app_row.executor_id:
         tmpl_result = await state_machine.db.execute(
-            select(AgentTemplate).where(AgentTemplate.id == app_row.agent_template_id)
+            select(Executor).where(Executor.id == app_row.executor_id)
         )
         tmpl = tmpl_result.scalar_one_or_none()
         if tmpl:
-            executor_code = tmpl.template_code
+            executor_code = tmpl.executor_code
 
     # Publish user message event (also triggers Worker via run_tasks stream)
     await event_publisher.publish(

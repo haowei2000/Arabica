@@ -5,9 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from aiwen.dependencies.agents import get_app_crud, get_template_crud
+from aiwen.dependencies.agents import get_app_crud, get_executor_crud
 from aiwen.dependencies.auth import get_current_user
-from aiwen.schemas.executor.agent_template import AgentTemplateResponse
+from aiwen.schemas.executor.executor import ExecutorResponse
 from aiwen.schemas.app import AppCreate, AppListResponse, AppResponse, AppUpdate
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.services.executor.app_crud import AppCRUD
@@ -16,25 +16,25 @@ from aiwen.services.executor.executor_template_crud import ExecutorCRUD
 router = APIRouter(prefix="/apps", tags=["apps"])
 
 
-@router.get("/templates/list", response_model=list[AgentTemplateResponse])
-async def list_agent_templates(
+@router.get("/executors/list", response_model=list[ExecutorResponse])
+async def list_executors(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    curd: Annotated[ExecutorCRUD, Depends(get_template_crud)],
+    curd: Annotated[ExecutorCRUD, Depends(get_executor_crud)],
 ):
     """
-    List all available agent templates.
+    List all available executors.
 
     Returns:
-        List of available agent template codes
+        List of available executor codes
     """
-    return await curd.list_templates()
+    return await curd.list_executors()
 
 
 @router.post("/create", response_model=AppResponse, status_code=status.HTTP_201_CREATED)
 async def create_app(
     data: AppCreate,
     app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
-    template_crud: Annotated[ExecutorCRUD, Depends(get_template_crud)],
+    executor_crud: Annotated[ExecutorCRUD, Depends(get_executor_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """
@@ -49,7 +49,7 @@ async def create_app(
         Created app information
 
     Raises:
-        HTTPException 400: If app_id already exists or template not found
+        HTTPException 400: If app_id already exists or executor not found
     """
     # Check if app already exists
     existing_app = await app_crud.get_app_by_code(data.app_code)
@@ -58,25 +58,25 @@ async def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"App with code '{data.app_code}' already exists",
         )
-    # Validate agent template if provided
-    if data.agent_template_code:  # Check if a template code was provided
-        template = await template_crud.get_template_by_code(data.agent_template_code)
-        if not template:
+    # Validate executor if provided
+    if data.executor_code:  # Check if an executor code was provided
+        executor = await executor_crud.get_executor_by_code(data.executor_code)
+        if not executor:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Agent template '{data.agent_template_code}' not found",
+                detail=f"Executor '{data.executor_code}' not found",
             )
-        # Create the app with the current user's ID and resolved template ID
+        # Create the app with the current user's ID and resolved executor ID
         data_dict = data.model_dump()
         data_dict["user_id"] = (
             current_user.id
         )  # Automatically associate with current user
-        data_dict["agent_template_id"] = template.id  # Use the resolved template ID
+        data_dict["executor_id"] = executor.id  # Use the resolved executor ID
         updated_data = AppCreate(**data_dict)
 
         app = await app_crud.create_app(updated_data)
         return app
-    # Create the app without a template, with the current user's ID
+    # Create the app without an executor, with the current user's ID
     data_dict = data.model_dump()
     data_dict["user_id"] = current_user.id  # Automatically associate with current user
     updated_data = AppCreate(**data_dict)
@@ -240,7 +240,7 @@ async def delete_app(
 async def query_apps(
     app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    template_id: UUID | None = Query(None, description="Filter by agent template UUID"),
+    executor_id: UUID | None = Query(None, description="Filter by executor UUID"),
     enabled: bool | None = Query(None, description="Filter by enabled status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
@@ -249,7 +249,7 @@ async def query_apps(
     Query apps with optional filters.
 
     Args:
-        template_id: Filter by agent template UUID (optional)
+        executor_id: Filter by executor UUID (optional)
         enabled: Filter by enabled status (optional)
         page: Page number (starting from 1)
         page_size: Number of items per page
@@ -261,9 +261,9 @@ async def query_apps(
     """
     skip = (page - 1) * page_size
 
-    if template_id:
-        apps, total = await app_crud.filter_apps_by_template(
-            agent_template_id=template_id, skip=skip, limit=page_size
+    if executor_id:
+        apps, total = await app_crud.filter_apps_by_executor(
+            executor_id=executor_id, skip=skip, limit=page_size
         )
         # Filter apps to only show those belonging to the current user
         user_apps = [app for app in apps if app.user_id == current_user.id]

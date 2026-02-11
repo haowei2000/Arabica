@@ -30,8 +30,8 @@ class App(Base):
     app_code: Mapped[str] = mapped_column(
         String, unique=True, nullable=False, comment="对外使用的agent标识"
     )
-    agent_template_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), comment="构建该app使用的模板ID"
+    executor_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), comment="构建该app使用的执行器ID"
     )
 
     # User relationship
@@ -65,4 +65,4 @@ class App(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<App(id={self.id}, app_code='{self.app_code}', agent_template_id='{self.agent_template_id}', enabled={self.enabled})>"
+        return f"<App(id={self.id}, app_code='{self.app_code}', executor_id='{self.executor_id}', enabled={self.enabled})>"

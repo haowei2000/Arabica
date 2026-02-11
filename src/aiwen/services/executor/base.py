@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from aiwen.registries import ToolRegistry
 from aiwen.schemas.events.event_payloads import (
     AgentPlanEvent,
     AgentTokenEvent,
@@ -15,7 +16,6 @@ from aiwen.schemas.events.event_payloads import (
     ToolResultEvent,
     UserMessage,
 )
-from aiwen.schemas.context.tools.execution import ToolClientRequestPayload
 
 
 @dataclass(frozen=True)
@@ -95,11 +95,11 @@ class Executor(ABC):
         ...
 
     async def stream(
-        self, user_message: UserMessage
+        self, user_message: UserMessage, tool_registry: ToolRegistry
     ) -> AsyncGenerator[AgentEvent, None]:
         """Yield typed events while processing input.
 
-        Default implementation runs the agent to completion and emits
+        The default implementation runs the agent to completion and emits
         a single ``AGENT_MESSAGE``.  Override for true streaming.
         """
         result = await self.run(user_message)
