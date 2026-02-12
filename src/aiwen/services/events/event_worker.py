@@ -52,9 +52,15 @@ class Worker:
         self.db = db
         self.consumer_name = consumer_name
         self.runtime = AgentRuntime()
-        self.state_machine = RunStateMachine(db, redis_client)
-        # EventPublisher for unified event format
+        # EventPublisher created once, shared with RunStateMachine
         self.event_publisher = EventPublisher(db, redis_client)
+        self.state_machine = RunStateMachine(
+            db, redis_client, event_publisher=self.event_publisher
+        )
+
+        # ── Startup-initialized tool services (stateless / reusable) ──
+        self._tool_caller = RegistryToolCaller()
+        self._default_tool_provider = self._build_default_tool_provider()
 
     def _parse_redis_event(self, event_data: dict[bytes, bytes]) -> dict:
         """Parse Redis stream event data.
@@ -142,15 +148,25 @@ class Worker:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
+    @staticmethod
+    def _build_default_tool_provider() -> RegistryToolProvider:
+        """Build the default ToolProvider with browser tools at startup."""
+        extra: list = []
+        try:
+            from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
+            extra.extend(BROWSER_TOOLS)
+        except ImportError:
+            logger.warning("Browser tools module not available")
+        return RegistryToolProvider(extra_tool_classes=extra)
+
     def prepare_executor(
         self, executor_code: str, app_config: dict | None = None
     ) -> ExecutorProtocol:
-        """
-        Build an Executor instance with dependency-injected tool services.
+        """Build an Executor with startup-initialized tool services.
 
-        The concrete ToolProvider / ToolCaller are created here (at the
-        composition root) and passed into the executor via config so the
-        executor only depends on the abstract protocols.
+        The ToolCaller singleton and default ToolProvider are created once
+        in ``__init__`` and reused across runs.  A per-run ToolProvider is
+        only created if the app config explicitly disables browser tools.
 
         Args:
             executor_code: Executor identifier (matches TEMPLATE["template_code"]).
@@ -179,20 +195,15 @@ class Worker:
         if app_config:
             config.update(app_config)
 
-        # ── Inject tool abstractions (Dependency Inversion) ──────
-        # Collect extra tool classes based on config flags
-        extra_tool_classes: list = []
-        if config.get("enable_browser_tools", True):
-            try:
-                from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
-                extra_tool_classes.extend(BROWSER_TOOLS)
-            except ImportError:
-                logger.warning("Browser tools module not available")
+        # ── Inject startup-initialized tool services ─────────────
+        config["tool_caller"] = self._tool_caller
 
-        config["tool_provider"] = RegistryToolProvider(
-            extra_tool_classes=extra_tool_classes,
-        )
-        config["tool_caller"] = RegistryToolCaller()
+        if config.get("enable_browser_tools", True):
+            # Reuse the default provider (includes browser tools)
+            config["tool_provider"] = self._default_tool_provider
+        else:
+            # App explicitly disabled browser tools — minimal provider
+            config["tool_provider"] = RegistryToolProvider()
 
         return executor_cls(config)
 
@@ -203,6 +214,11 @@ class Worker:
         Args:
             event: Parsed event data from Redis stream
         """
+        # Expire cached ORM objects so each run starts with fresh DB state.
+        # This prevents stale identity-map entries from accumulating across
+        # runs without requiring a full per-run session swap.
+        self.db.expire_all()
+
         run_id = None
         try:
             # 1. 验证事件数据

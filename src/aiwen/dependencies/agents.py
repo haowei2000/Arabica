@@ -12,7 +12,6 @@ from aiwen.services.app.app_crud import AppCRUD
 from aiwen.services.context.knowledge.document_crud import DocumentCRUD
 from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
-from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.executor.tool_crud import ToolCRUD
 
 
@@ -100,17 +99,3 @@ async def get_tool_crud(
 
 async def get_redis_client_dep():
     return get_redis_client(is_async=True)
-
-
-# 全局 AgentRuntime 单例
-_agent_runtime = AgentRuntime()
-
-
-def get_agent_runtime() -> AgentRuntime:
-    """
-    Get the global AgentRuntime instance.
-
-    Returns:
-        Global AgentRuntime singleton
-    """
-    return _agent_runtime

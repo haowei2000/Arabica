@@ -70,16 +70,19 @@ class RunStateMachine:
         self,
         db: AsyncSession,
         redis_client: redis_async.Redis | None = None,
+        event_publisher: EventPublisher | None = None,
     ):
         """Initialize RunStateMachine.
 
         Args:
             db: SQLAlchemy async session
             redis_client: Redis client for event publishing (optional)
+            event_publisher: Shared EventPublisher instance. If ``None``,
+                a new one is created (backward-compatible).
         """
         self.db = db
         self.redis = redis_client
-        self.event_publisher = EventPublisher(db, redis_client)
+        self.event_publisher = event_publisher or EventPublisher(db, redis_client)
 
     async def transition(
         self,
