@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
 """Default Executor – conversation context + structured event stream.
 
-Streaming event map (LangGraph ``astream_events`` → project schema):
-    on_chat_model_stream  →  AGENT_THINKING  (while inside a <think> block)
-                          →  AGENT_TOKEN     (normal response text)
-    on_chat_model_end     →  AGENT_MESSAGE   (final response only; skipped on
-                                              intermediate tool-call steps)
-    on_tool_start         →  TOOL_CALL
-    on_tool_end           →  TOOL_RESULT
-    on_tool_error         →  TOOL_ERROR
+Implements a manual agentic loop with tool calling through the ToolRegistry.
+When the LLM outputs tool calls, the executor looks up each tool by name
+in the ToolRegistry and executes it directly via ``BaseTool.__call__()``,
+then feeds the results back to the LLM as ``ToolMessage`` instances.
 
-默认执行器，支持会话上下文和结构化事件流。
+Tool approval (HITL) flow
+-------------------------
+When a tool in ``approval_tools`` is called, the executor:
+  1. Serialises the full conversation state (``messages``) and the
+     remaining unprocessed tool calls.
+  2. Emits ``TOOL_PENDING`` and raises ``WaitingForTool``.
+  3. The worker persists the info, transitions the run to *waiting*.
+  4. On resume the executor reconstructs ``messages``, handles the
+     approved/rejected tool, processes any remaining tool calls, and
+     continues the agentic loop.
+
+Streaming event map:
+    LLM streaming        ->  AGENT_THINKING  (inside <think> block)
+                          ->  AGENT_TOKEN     (normal response text)
+    LLM final response   ->  AGENT_MESSAGE   (no tool calls)
+    Tool execution       ->  TOOL_CALL -> TOOL_RESULT / TOOL_ERROR
+    Tool approval        ->  TOOL_PENDING  (run paused)
 """
 
 from collections.abc import AsyncGenerator
+import json
 import logging
 import time
 from typing import Any, ClassVar
 
-from langchain.agents import create_agent
 from langchain_core.messages import (
     AIMessage,
+    ToolMessage,
     messages_to_dict,
 )
 
@@ -47,7 +60,12 @@ _THINK_CLOSE = "</think>"
 class DefaultExecutor(Executor):
     """Default agent with conversation context and structured event streaming.
 
-    默认Agent，支持对话历史和结构化事件流。
+    Uses a manual agentic loop: the LLM is called with tool schemas bound
+    via ``bind_tools()``.  When the LLM response contains tool calls, each
+    tool is looked up in the **ToolRegistry** and executed directly via
+    ``BaseTool.__call__()``.  Tool results are fed back to the LLM as
+    ``ToolMessage`` instances and the loop continues until the LLM produces
+    a final text response (no tool calls).
     """
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
@@ -70,36 +88,43 @@ class DefaultExecutor(Executor):
         self.server_tools_config = config.get("server_tools", False)
         # Tools in this list pause the run and ask the user before executing.
         self.approval_tools: list[str] = config.get("approval_tools", [])
+        # Maximum tool-call iterations before forcing a stop.
+        self.max_iterations: int = config.get("max_iterations", 10)
 
         from aiwen.extensions.llm.llm import get_llm
 
         self.llm = get_llm(self.model_name, self.model_provider)
 
-        # Collect all tools
-        tools = []
+        # Collect tool definitions (LangChain StructuredTool objects)
+        # used to inform the LLM which tools are available.
+        lc_tools: list = []
 
-        # Add browser tools if enabled (convert BaseTool classes to LangChain tools)
+        # Add browser tools if enabled
         if self.enable_browser_tools:
             for tool_class in BROWSER_TOOLS:
                 lc_tool = self._convert_to_langchain_tool(tool_class)
-                tools.append(lc_tool)
+                lc_tools.append(lc_tool)
             logger.info(f"Loaded {len(BROWSER_TOOLS)} browser tools")
 
         # Add server tools based on configuration
         server_tool_classes = self._load_server_tools()
-        # Convert BaseTool classes to LangChain tools
         for tool_class in server_tool_classes:
             lc_tool = self._convert_to_langchain_tool(tool_class)
-            tools.append(lc_tool)
+            lc_tools.append(lc_tool)
 
         # Add user-defined tools from ToolRegistry
         user_tools = self._load_registry_tools()
-        tools.extend(user_tools)
+        lc_tools.extend(user_tools)
 
-        system_prompt = "You are a helpful Assistant "
-        self.agent = create_agent(
-            model=self.llm, tools=tools, system_prompt=system_prompt
-        )
+        self.system_prompt = "You are a helpful Assistant "
+
+        # Bind tool schemas to the LLM so it knows which tools are available.
+        # Tool *execution* goes through the ToolRegistry at runtime, not through
+        # LangChain's agent loop.
+        if lc_tools:
+            self.llm_with_tools = self.llm.bind_tools(lc_tools)
+        else:
+            self.llm_with_tools = self.llm
 
     # ── setup ────────────────────────────────────────────────────
 
@@ -242,22 +267,196 @@ class DefaultExecutor(Executor):
 
         return langchain_tools
 
-    # ── tool execution routing ───────────────────────────────────
+    # ── tool execution via ToolRegistry ──────────────────────────
 
-    # ── context ──────────────────────────────────────────────────
+    async def _execute_tool_call(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a tool call by looking it up in the ToolRegistry.
+
+        All tools (browser, server, user-defined) are registered via
+        ``@register_tool`` and can be retrieved from the ToolRegistry by name.
+
+        Args:
+            tool_name: Name of the tool (matches ``METADATA.name``).
+            arguments: Arguments to pass to the tool.
+
+        Returns:
+            dict: Tool execution result from ``BaseTool.__call__()``.
+
+        Raises:
+            ValueError: If the tool is not found in the registry.
+        """
+        tool_instance = ToolRegistry.get_tool_instance(tool_name)
+        if tool_instance is not None:
+            return await tool_instance(**arguments)
+
+        raise ValueError(f"Tool '{tool_name}' not found in ToolRegistry")
+
+    # ── message serialization for HITL state persistence ─────────
+
+    @staticmethod
+    def _serialize_messages(messages: list) -> list[dict[str, Any]]:
+        """Serialize a mixed messages list to JSON-compatible format.
+
+        Handles both dict-format messages (system/user) and LangChain
+        message objects (AIMessage, ToolMessage).
+        """
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            if isinstance(msg, AIMessage):
+                result.append({
+                    "_type": "ai",
+                    "content": msg.content,
+                    "tool_calls": msg.tool_calls,
+                })
+            elif isinstance(msg, ToolMessage):
+                result.append({
+                    "_type": "tool",
+                    "content": msg.content,
+                    "tool_call_id": msg.tool_call_id,
+                })
+            elif isinstance(msg, dict):
+                result.append({"_type": "dict", "data": msg})
+            else:
+                # Fallback for other LangChain message types
+                result.append({
+                    "_type": "dict",
+                    "data": {"role": "unknown", "content": str(msg)},
+                })
+        return result
+
+    @staticmethod
+    def _deserialize_messages(serialized: list[dict[str, Any]]) -> list:
+        """Reconstruct messages list from serialized format."""
+        result: list = []
+        for msg in serialized:
+            msg_type = msg.get("_type", "dict")
+            if msg_type == "ai":
+                result.append(AIMessage(
+                    content=msg.get("content", ""),
+                    tool_calls=msg.get("tool_calls", []),
+                ))
+            elif msg_type == "tool":
+                result.append(ToolMessage(
+                    content=msg.get("content", ""),
+                    tool_call_id=msg.get("tool_call_id", ""),
+                ))
+            elif msg_type == "dict":
+                result.append(msg.get("data", {}))
+        return result
+
+    # ── tool call processing (shared by stream & resume) ─────────
+
+    async def _process_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        messages: list,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Execute a list of tool calls, yielding events and appending results.
+
+        If a tool requires approval, raises ``WaitingForTool`` with the
+        full conversation state so the run can be resumed later.
+
+        Args:
+            tool_calls: Tool call dicts from ``AIMessage.tool_calls``.
+            messages: The live conversation messages list (mutated in-place).
+
+        Yields:
+            TOOL_CALL, TOOL_RESULT, TOOL_ERROR, or TOOL_PENDING events.
+
+        Raises:
+            WaitingForTool: When a tool in ``approval_tools`` is encountered.
+        """
+        for idx, tool_call in enumerate(tool_calls):
+            tc_name = tool_call["name"]
+            tc_id = tool_call["id"]
+            tc_args = tool_call.get("args", {})
+
+            # ── HITL approval gate ───────────────────────────────
+            if tc_name in self.approval_tools:
+                # Collect the tool calls that haven't been processed yet
+                # (the current one + everything after it).
+                remaining = tool_calls[idx + 1:]
+
+                yield self._emit_tool_pending(
+                    tool_name=tc_name,
+                    tool_id=tc_id,
+                    arguments=tc_args,
+                )
+                raise WaitingForTool(
+                    {
+                        "type": "tool_approval",
+                        "tool_name": tc_name,
+                        "tool_id": tc_id,
+                        "arguments": tc_args,
+                        "messages": self._serialize_messages(messages),
+                        "remaining_tool_calls": remaining,
+                        "executor_code": self.TEMPLATE["template_code"],
+                    }
+                )
+
+            yield self._emit_tool_call(
+                tool_name=tc_name,
+                tool_id=tc_id,
+                arguments=tc_args,
+            )
+
+            start_time = time.time()
+            try:
+                result = await self._execute_tool_call(tc_name, tc_args)
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                yield self._emit_tool_result(
+                    tool_name=tc_name,
+                    tool_id=tc_id,
+                    result=result,
+                    execution_time_ms=elapsed_ms,
+                )
+                messages.append(
+                    ToolMessage(
+                        content=json.dumps(
+                            result, ensure_ascii=False, default=str
+                        ),
+                        tool_call_id=tc_id,
+                    )
+                )
+            except Exception as e:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                error_msg = str(e)
+                yield self._emit_tool_error(
+                    tool_name=tc_name,
+                    tool_id=tc_id,
+                    error_message=error_msg,
+                )
+                messages.append(
+                    ToolMessage(
+                        content=json.dumps(
+                            {"success": False, "error": error_msg},
+                            ensure_ascii=False,
+                        ),
+                        tool_call_id=tc_id,
+                    )
+                )
 
     # ── message conversion ───────────────────────────────────────
 
-    def _prepare_messages(self, user_message: UserMessage) -> list:
+    def _prepare_messages(self, user_message: UserMessage | dict) -> list:
         """Convert UserMessage to LangChain message format.
 
+        Accepts both ``UserMessage`` Pydantic model and raw dict (the
+        worker may pass either depending on whether the run is fresh or
+        resumed).
+
         Args:
-            user_message: Input message (can be string or list)
+            user_message: Input message (UserMessage or dict)
 
         Returns:
             list: LangChain-compatible message list
         """
-        message = user_message.message
+        if isinstance(user_message, dict):
+            message = user_message.get("message", "")
+        else:
+            message = user_message.message
 
         # If already a list, use as-is
         if isinstance(message, list):
@@ -270,66 +469,143 @@ class DefaultExecutor(Executor):
         # Fallback: try to use as-is
         return [message]
 
-    # ── run (non-streaming) ──────────────────────────────────────
-    async def run(self, user_message: UserMessage) -> dict[str, Any]:
-        """Execute the agent and return the final answer."""
+    # ── resume handling ──────────────────────────────────────────
 
-        messages = self._prepare_messages(user_message)
-        response = await self.agent.ainvoke({"messages": messages})
-        final_messages = response.get("messages", [])
-        final_text = ""
-        if final_messages and isinstance(final_messages[-1], AIMessage):
-            final_text = final_messages[-1].content or ""
-        return {"answer": final_text}
-
-    # ── stream ───────────────────────────────────────────────────
-
-    async def stream(
+    async def _handle_resume(
         self,
-        user_message: UserMessage,
+        user_message: dict,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Stream typed events from the agentic loop.
+        """Handle a resumed run after tool approval / rejection.
 
-        Thinking-block detection
-        ────────────────────────
-        Reasoning models (e.g. Qwen3 with thinking enabled) wrap their
-        chain-of-thought in ``<think>...</think>``.  The tag may arrive
-        split across multiple tokens, so the first few tokens are buffered
-        until we can decide whether the stream starts with the tag.
+        Reconstructs the conversation from stored state, processes the
+        approved or rejected tool, handles any remaining tool calls, then
+        continues the normal agentic loop.
 
-        * If it does  → buffer until ``</think>``, emit one
-          ``AGENT_THINKING`` event, then stream the rest as normal tokens.
-        * If it doesn't → flush the buffer as ``AGENT_TOKEN`` events with
-          essentially zero additional latency (decision made as soon as the
-          accumulated prefix can no longer match ``<think>``).
+        Args:
+            user_message: Dict containing ``_resumed``, ``_waiting_info``,
+                and ``_approval`` keys injected by the worker.
 
-        The state resets on every ``on_chat_model_end`` so that each
-        iteration of the agentic loop is handled independently.
+        Yields:
+            AgentEvent instances for the entire remainder of the run.
         """
+        waiting_info: dict = user_message.get("_waiting_info", {})
+        approval: dict = user_message.get("_approval", {})
+        approved: bool = approval.get("approved", True)
 
-        self._reset_token_index()
+        tool_name: str = waiting_info.get("tool_name", "")
+        tool_id: str = waiting_info.get("tool_id", "")
+        tool_args: dict = waiting_info.get("arguments", {})
 
-        # ── per-LLM-call state (reset on on_chat_model_end) ──────
-        response_buf = ""  # accumulates response text for AGENT_MESSAGE
-        think_buf = ""  # accumulates content inside <think>
-        # None = haven't seen enough tokens to decide yet
-        # True  = currently inside a <think> block
-        # False = past any possible <think> block
-        in_thinking: bool | None = None
+        # ── reconstruct conversation state ───────────────────────
+        stored = waiting_info.get("messages", [])
+        messages: list = self._deserialize_messages(stored)
 
-        # tool_id → wall-clock start; used to compute execution_time_ms
-        tool_start_times: dict[str, float] = {}
-        # Snapshot of the latest AIMessage – needed so the HITL gate in
-        # on_tool_start can serialise it for the resume path.
-        last_ai_output: AIMessage | None = None
+        # ── handle the approved / rejected tool ──────────────────
+        if approved:
+            yield self._emit_tool_call(
+                tool_name=tool_name,
+                tool_id=tool_id,
+                arguments=tool_args,
+            )
+            start_time = time.time()
+            try:
+                result = await self._execute_tool_call(tool_name, tool_args)
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                yield self._emit_tool_result(
+                    tool_name=tool_name,
+                    tool_id=tool_id,
+                    result=result,
+                    execution_time_ms=elapsed_ms,
+                )
+                messages.append(
+                    ToolMessage(
+                        content=json.dumps(
+                            result, ensure_ascii=False, default=str
+                        ),
+                        tool_call_id=tool_id,
+                    )
+                )
+            except Exception as e:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                error_msg = str(e)
+                yield self._emit_tool_error(
+                    tool_name=tool_name,
+                    tool_id=tool_id,
+                    error_message=error_msg,
+                )
+                messages.append(
+                    ToolMessage(
+                        content=json.dumps(
+                            {"success": False, "error": error_msg},
+                            ensure_ascii=False,
+                        ),
+                        tool_call_id=tool_id,
+                    )
+                )
+        else:
+            # Tool rejected by user
+            yield self._emit_tool_error(
+                tool_name=tool_name,
+                tool_id=tool_id,
+                error_message="Tool call rejected by user",
+            )
+            messages.append(
+                ToolMessage(
+                    content=json.dumps(
+                        {"success": False, "error": "Tool call rejected by user"},
+                        ensure_ascii=False,
+                    ),
+                    tool_call_id=tool_id,
+                )
+            )
 
-        messages = self._prepare_messages(user_message)
-        async for event in self.agent.astream_events({"messages": messages}):
-            event_name: str = event["event"]
+        # ── process remaining tool calls from the same AI turn ───
+        remaining = waiting_info.get("remaining_tool_calls", [])
+        if remaining:
+            async for event in self._process_tool_calls(remaining, messages):
+                yield event
 
-            # ── streaming token ──────────────────────────────────
-            if event_name == "on_chat_model_stream":
-                token: str = event["data"]["chunk"].content
+        # ── continue the normal agentic loop ─────────────────────
+        async for event in self._agentic_loop(messages):
+            yield event
+
+    # ── agentic loop (core streaming logic) ──────────────────────
+
+    async def _agentic_loop(
+        self,
+        messages: list,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Run the agentic loop: call LLM, process tool calls, repeat.
+
+        This is the core streaming logic extracted so it can be called
+        both from ``stream()`` (fresh run) and ``_handle_resume()``
+        (resumed run after approval).
+
+        Args:
+            messages: The conversation messages list (mutated in-place).
+
+        Yields:
+            AgentEvent instances.
+        """
+        for _iteration in range(self.max_iterations):
+            # ── per-iteration state ──────────────────────────────
+            response_buf = ""  # accumulates response text
+            think_buf = ""  # accumulates content inside <think>
+            # None = haven't seen enough tokens to decide yet
+            # True  = currently inside a <think> block
+            # False = past any possible <think> block
+            in_thinking: bool | None = None
+            full_response = None  # accumulated AIMessageChunk
+
+            # ── stream LLM response tokens ───────────────────────
+            async for chunk in self.llm_with_tools.astream(messages):
+                # Accumulate chunks into a complete response
+                if full_response is None:
+                    full_response = chunk
+                else:
+                    full_response = full_response + chunk
+
+                token: str = chunk.content or ""
                 if not token:
                     continue
 
@@ -338,13 +614,13 @@ class DefaultExecutor(Executor):
                     think_buf += token
                     # Can the buffer still be the start of <think>?
                     if not _THINK_TAG.startswith(think_buf[:_THINK_TAG_LEN]):
-                        # Definitely not a thinking stream – flush
+                        # Definitely not a thinking stream - flush
                         in_thinking = False
                         response_buf = think_buf
                         yield self._emit_token(think_buf)
                         think_buf = ""
                     elif _THINK_TAG in think_buf:
-                        # Opening tag complete – enter thinking mode
+                        # Opening tag complete - enter thinking mode
                         in_thinking = True
                         think_buf = think_buf.split(_THINK_TAG, 1)[1]
                         # Closing tag may already be present
@@ -375,68 +651,141 @@ class DefaultExecutor(Executor):
                 response_buf += token
                 yield self._emit_token(token)
 
-            # ── model finished one response ─────────────────────
-            elif event_name == "on_chat_model_end":
-                output = event["data"]["output"]
-                last_ai_output = output
-                # Emit AGENT_MESSAGE only for the final text response;
-                # skip intermediate steps that end with tool calls.
-                if not getattr(output, "tool_calls", None):
-                    yield self._emit_token("", is_final=True)
-                    yield self._emit_message(output.content or response_buf)
-                # Reset state for the next iteration of the agentic loop
-                response_buf = ""
-                in_thinking = None
+            # ── flush remaining buffers ──────────────────────────
+            if in_thinking is None and think_buf:
+                response_buf = think_buf
+                yield self._emit_token(think_buf)
+                think_buf = ""
+            elif in_thinking is True and think_buf:
+                yield self._emit_thinking(think_buf)
                 think_buf = ""
 
-            # ── tool lifecycle ──────────────────────────────────
-            elif event_name == "on_tool_start":
-                tool_id: str = event["run_id"]
-                tool_name: str = event["name"]
-                arguments: dict = event["data"].get("input", {})
+            # ── process accumulated response ─────────────────────
+            if full_response is None:
+                break
 
-                # ── HITL approval gate ──────────────────────────────
-                if tool_name in self.approval_tools:
-                    yield self._emit_tool_pending(
-                        tool_name=tool_name,
-                        tool_id=tool_id,
-                        arguments=arguments,
+            # Build a proper AIMessage for the conversation history
+            ai_message = AIMessage(
+                content=full_response.content or "",
+                tool_calls=getattr(full_response, "tool_calls", None) or [],
+            )
+            messages.append(ai_message)
+
+            # ── no tool calls -> final text response ─────────────
+            if not ai_message.tool_calls:
+                yield self._emit_token("", is_final=True)
+                yield self._emit_message(ai_message.content or response_buf)
+                break
+
+            # ── execute tool calls (may raise WaitingForTool) ────
+            async for event in self._process_tool_calls(
+                ai_message.tool_calls, messages
+            ):
+                yield event
+
+            # Reset token index for the next LLM call iteration
+            self._reset_token_index()
+
+        else:
+            # for/else: max_iterations reached without a final text response
+            yield self._emit_token("", is_final=True)
+            yield self._emit_message(
+                "Maximum tool-calling iterations reached. Stopping."
+            )
+
+    # ── run (non-streaming) ──────────────────────────────────────
+
+    async def run(self, user_message: UserMessage | dict) -> dict[str, Any]:
+        """Execute the agent loop and return the final answer.
+
+        Calls the LLM in a loop, executing tool calls through the ToolRegistry
+        until the LLM produces a final text response without tool calls.
+
+        Note: HITL approval is only supported in ``stream()`` mode.  In
+        ``run()`` mode approval-listed tools are executed without pausing
+        (the caller is expected to use ``stream()`` for interactive runs).
+        """
+        messages: list = [
+            {"role": "system", "content": self.system_prompt},
+        ]
+        messages.extend(self._prepare_messages(user_message))
+
+        for _ in range(self.max_iterations):
+            response: AIMessage = await self.llm_with_tools.ainvoke(messages)
+            messages.append(response)
+
+            # If no tool calls, return the final text
+            if not response.tool_calls:
+                return {"answer": response.content or ""}
+
+            # Execute each tool call through the ToolRegistry
+            for tool_call in response.tool_calls:
+                tc_name = tool_call["name"]
+                tc_id = tool_call["id"]
+                tc_args = tool_call.get("args", {})
+
+                try:
+                    result = await self._execute_tool_call(tc_name, tc_args)
+                    messages.append(
+                        ToolMessage(
+                            content=json.dumps(
+                                result, ensure_ascii=False, default=str
+                            ),
+                            tool_call_id=tc_id,
+                        )
                     )
-                    raise WaitingForTool(
-                        {
-                            "type": "tool_approval",
-                            "tool_name": tool_name,
-                            "tool_id": tool_id,
-                            "arguments": arguments,
-                            "ai_message": messages_to_dict([last_ai_output])[0],
-                            "executor_code": self.TEMPLATE["template_code"],
-                        }
+                except Exception as e:
+                    messages.append(
+                        ToolMessage(
+                            content=json.dumps(
+                                {"success": False, "error": str(e)},
+                                ensure_ascii=False,
+                            ),
+                            tool_call_id=tc_id,
+                        )
                     )
 
-                # All tools execute directly through BaseTool's __call__() method
-                tool_start_times[tool_id] = time.time()
-                yield self._emit_tool_call(
-                    tool_name=tool_name,
-                    tool_id=tool_id,
-                    arguments=arguments,
-                )
+        return {"answer": "Maximum tool-calling iterations reached."}
 
-            elif event_name == "on_tool_end":
-                tool_id = event["run_id"]
-                start = tool_start_times.pop(tool_id, None)
-                elapsed_ms = int((time.time() - start) * 1000) if start else None
-                yield self._emit_tool_result(
-                    tool_name=event["name"],
-                    tool_id=tool_id,
-                    result=event["data"].get("output", ""),
-                    execution_time_ms=elapsed_ms,
-                )
+    # ── stream ───────────────────────────────────────────────────
 
-            elif event_name == "on_tool_error":
-                tool_id = event["run_id"]
-                tool_start_times.pop(tool_id, None)
-                yield self._emit_tool_error(
-                    tool_name=event["name"],
-                    tool_id=tool_id,
-                    error_message=str(event["data"].get("output", "")),
-                )
+    async def stream(
+        self,
+        user_message: UserMessage | dict,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Stream typed events from the agentic loop.
+
+        Supports two entry modes:
+
+        1. **Fresh run** – ``user_message`` is a ``UserMessage`` (or plain
+           dict with a ``message`` key).  The executor builds the initial
+           messages list and enters the agentic loop.
+
+        2. **Resumed run** – ``user_message`` is a dict with
+           ``_resumed=True``.  The executor reconstructs the conversation
+           from the stored state, handles the approved/rejected tool, and
+           continues the agentic loop.
+
+        Thinking-block detection
+        ------------------------
+        Reasoning models (e.g. Qwen3 with thinking enabled) wrap their
+        chain-of-thought in ``<think>...</think>``.  The tag may arrive
+        split across multiple tokens, so the first few tokens are buffered
+        until we can decide whether the stream starts with the tag.
+        """
+        self._reset_token_index()
+
+        # ── resumed run (after tool approval) ────────────────────
+        if isinstance(user_message, dict) and user_message.get("_resumed"):
+            async for event in self._handle_resume(user_message):
+                yield event
+            return
+
+        # ── fresh run ────────────────────────────────────────────
+        messages: list = [
+            {"role": "system", "content": self.system_prompt},
+        ]
+        messages.extend(self._prepare_messages(user_message))
+
+        async for event in self._agentic_loop(messages):
+            yield event
