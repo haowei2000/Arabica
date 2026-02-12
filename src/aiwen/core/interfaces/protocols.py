@@ -70,7 +70,7 @@ class ToolProtocol(RegistrableProtocol, Protocol):
     # ── Required Class Attributes ────────────────────────────────────
 
     METADATA: ClassVar[Any]  # ToolMetadata instance
-    """Tool metadata (name, description, execution_mode, etc.)"""
+    """Tool metadata (name, description, category, etc.)"""
 
     InputSchema: ClassVar[type[Any]]  # type[ToolInputSchema]
     """Pydantic model defining input parameters"""
@@ -150,11 +150,6 @@ class ToolProtocol(RegistrableProtocol, Protocol):
     @classmethod
     def get_metadata(cls) -> Any:
         """Get tool metadata instance."""
-        ...
-
-    @classmethod
-    def get_execution_mode(cls) -> Any:
-        """Get tool execution mode."""
         ...
 
     # ── Lifecycle Hooks ──────────────────────────────────────────────

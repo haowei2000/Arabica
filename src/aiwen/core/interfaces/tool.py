@@ -8,13 +8,13 @@ and centralized access.
 from aiwen.registries.base_class.base_tool import (
     BaseTool,
     CeleryConfig,
+    ChainStep,
     ClientConfig,
     ContainerConfig,
     ExternalTool,
     HTTPConfig,
     InnerTool,
     ResourceLimits,
-    ToolExecutionMode,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
@@ -25,12 +25,11 @@ __all__ = [
     "BaseTool",
     "InnerTool",
     "ExternalTool",
+    "ChainStep",
     # Schemas
     "ToolInputSchema",
     "ToolOutputSchema",
     "ToolMetadata",
-    # Execution Mode
-    "ToolExecutionMode",
     # Configs
     "HTTPConfig",
     "CeleryConfig",

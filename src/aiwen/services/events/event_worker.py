@@ -20,6 +20,7 @@ from aiwen.models.runs.run import Run
 from aiwen.registries import ExecutorRegistry
 from aiwen.core.interfaces.executor import AgentEvent
 from aiwen.core.interfaces.protocols import ExecutorProtocol
+from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
@@ -160,17 +161,23 @@ class Worker:
         return RegistryToolProvider(extra_tool_classes=extra)
 
     def prepare_executor(
-        self, executor_code: str, app_config: dict | None = None
+        self,
+        executor_code: str,
+        app_config: dict | None = None,
+        user_tool_classes: list | None = None,
     ) -> ExecutorProtocol:
         """Build an Executor with startup-initialized tool services.
 
         The ToolCaller singleton and default ToolProvider are created once
-        in ``__init__`` and reused across runs.  A per-run ToolProvider is
-        only created if the app config explicitly disables browser tools.
+        in ``__init__`` and reused across runs.  When ``user_tool_classes``
+        is provided (user-defined ExternalTools loaded from the DB), a
+        per-run ToolProvider and ToolCaller are created that include them.
 
         Args:
             executor_code: Executor identifier (matches TEMPLATE["template_code"]).
             app_config: App-level config that overrides the template defaults.
+            user_tool_classes: Optional list of dynamic ExternalTool subclasses
+                loaded from the database for the current user.
 
         Returns:
             A fully configured Executor instance.
@@ -195,15 +202,31 @@ class Worker:
         if app_config:
             config.update(app_config)
 
-        # ── Inject startup-initialized tool services ─────────────
-        config["tool_caller"] = self._tool_caller
+        # ── Inject tool services ─────────────────────────────────
+        if user_tool_classes:
+            # Per-run ToolCaller that knows about user-defined tools
+            user_instances = {
+                cls.METADATA.name: cls() for cls in user_tool_classes
+            }
+            config["tool_caller"] = RegistryToolCaller(
+                extra_instances=user_instances,
+            )
 
-        if config.get("enable_browser_tools", True):
-            # Reuse the default provider (includes browser tools)
-            config["tool_provider"] = self._default_tool_provider
+            # Per-run ToolProvider that includes user tools
+            base_extra = list(self._default_tool_provider._extra_tool_classes)
+            if not config.get("enable_browser_tools", True):
+                base_extra = []
+            config["tool_provider"] = RegistryToolProvider(
+                extra_tool_classes=base_extra + list(user_tool_classes),
+            )
         else:
-            # App explicitly disabled browser tools — minimal provider
-            config["tool_provider"] = RegistryToolProvider()
+            # No user tools — reuse startup singletons
+            config["tool_caller"] = self._tool_caller
+
+            if config.get("enable_browser_tools", True):
+                config["tool_provider"] = self._default_tool_provider
+            else:
+                config["tool_provider"] = RegistryToolProvider()
 
         return executor_cls(config)
 
@@ -244,11 +267,20 @@ class Worker:
                 logger.warning(f"Run {run_id} is terminal, skipping execution")
                 return
 
-            # 3. 准备 Executor
-            executor = self.prepare_executor(event["executor_code"], app_config)
+            # 3. Load user-defined external tools (incl. chain/pipeline tools)
+            user_tool_classes = []
+            if run.user_id:
+                user_tool_classes = await DynamicToolLoader.load_user_tools(
+                    self.db, run.user_id, run.workspace_id,
+                )
+
+            # 4. Prepare Executor with user tools injected
+            executor = self.prepare_executor(
+                event["executor_code"], app_config, user_tool_classes or None,
+            )
             self.runtime.attach(run_id, executor)
 
-            # 4. 根据 Run 状态执行相应操作
+            # 5. 根据 Run 状态执行相应操作
             workspace_id = str(run.workspace_id)
             await self._handle_run_by_status(
                 executor, run, input_data, run_id, workspace_id

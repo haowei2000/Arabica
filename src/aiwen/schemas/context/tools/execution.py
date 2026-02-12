@@ -69,7 +69,6 @@ class ToolResult(BaseModel):
     execution_time_ms: int = Field(..., description="Execution time in milliseconds")
 
     # Execution metadata
-    execution_mode: str = Field(..., description="How the tool was executed")
     sandbox_container_id: str | None = Field(
         None, description="Container ID for sandbox"
     )

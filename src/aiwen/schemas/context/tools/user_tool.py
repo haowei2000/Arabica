@@ -4,36 +4,14 @@ User Tool Schemas
 Pydantic models for user tool API requests and responses.
 
 All user tools are ExternalTools — they delegate execution to a registered
-InnerTool backend. The execution_mode determines which InnerTool is used:
-  - server_run → delegates to "code_execution" InnerTool
-  - http → delegates to "http_request" InnerTool
+InnerTool backend via the unified ``execute()`` / ``__call__()`` protocol.
 """
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-
-
-class AllowedExecutionMode(str, Enum):
-    """Allowed execution modes for user-created external tools.
-
-    Each mode maps to a corresponding InnerTool execution backend:
-      - server_run: delegates to CodeExecutionInnerTool ("code_execution")
-      - http: delegates to HttpRequestInnerTool ("http_request")
-    """
-
-    SERVER_RUN = "server_run"
-    HTTP = "http"
-
-
-# Mapping from execution mode to the InnerTool name it delegates to
-EXECUTION_MODE_TO_INNER_TOOL: dict[str, str] = {
-    AllowedExecutionMode.SERVER_RUN: "code_execution",
-    AllowedExecutionMode.HTTP: "http_request",
-}
 
 
 class UserToolBase(BaseModel):
@@ -46,10 +24,6 @@ class UserToolBase(BaseModel):
         ..., description="Display name", min_length=1, max_length=200
     )
     description: str = Field(..., description="Tool description", min_length=1)
-    execution_mode: AllowedExecutionMode = Field(
-        default=AllowedExecutionMode.SERVER_RUN,
-        description="Execution mode: server_run (code execution), http (HTTP API call)",
-    )
     input_schema: dict[str, Any] = Field(
         ..., description="Input parameters schema (JSON Schema format)"
     )
@@ -71,25 +45,32 @@ class UserToolCreate(UserToolBase):
 
     workspace_id: UUID | None = Field(None, description="Workspace ID (optional)")
 
-    # InnerTool delegation (optional — overrides execution_mode-based defaults)
+    # ── Single delegation mode ──
     inner_tool_name: str | None = Field(
         None,
-        description=(
-            "Name of the InnerTool to delegate to. "
-            "If not set, derived from execution_mode (server_run→code_execution, http→http_request)"
-        ),
+        description="Name of the tool to delegate to (single delegation mode)",
     )
     parameter_mapping: dict[str, str] | None = Field(
         None,
         description=(
-            "Maps external param names to InnerTool param names. "
+            "Maps external param names to target tool param names. "
             "e.g. {'city': 'query', 'count': 'limit'}. "
-            "If not set, all input fields are passed as a single 'input_data' dict"
+            "If not set, all input fields are passed as-is"
         ),
     )
 
-    # Execution mode specific configurations
-    code: str | None = Field(None, description="Python code for server_run mode")
+    # ── Chain / pipeline mode (takes precedence over inner_tool_name) ──
+    chain: list[dict[str, Any]] | None = Field(
+        None,
+        description=(
+            "Ordered list of chain steps. Each step: "
+            '{"tool_name": "...", "parameter_mapping": {...}, "extra_params": {...}}. '
+            "Output data of step N becomes input for step N+1."
+        ),
+    )
+
+    # Tool-specific configurations
+    code: str | None = Field(None, description="Python code for code execution tools")
     http_config: dict[str, Any] | None = Field(None, description="HTTP configuration")
     container_config: dict[str, Any] | None = Field(
         None, description="Container configuration"
@@ -107,16 +88,13 @@ class UserToolUpdate(BaseModel):
 
     display_name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = Field(None, min_length=1)
-    execution_mode: AllowedExecutionMode | None = Field(
-        None,
-        description="Execution mode: server_run (code execution), http (HTTP API call)",
-    )
     inner_tool_name: str | None = Field(
-        None, description="Name of the InnerTool to delegate to"
+        None, description="Name of the tool to delegate to"
     )
     parameter_mapping: dict[str, str] | None = Field(
         None, description="Param name mapping"
     )
+    chain: list[dict[str, Any]] | None = None
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     code: str | None = None
@@ -144,15 +122,17 @@ class UserToolResponse(UserToolBase):
     tool_type: str = Field(
         default="external", description="Tool type: inner or external"
     )
-    # Override to accept any execution mode (inner tools may use container_run, celery_run, etc.)
-    execution_mode: str | None = Field(None, description="Execution mode")
     inner_tool_name: str | None = Field(
         None,
-        description="Name of the InnerTool this external tool delegates to",
+        description="Name of the tool this external tool delegates to",
     )
     parameter_mapping: dict[str, str] | None = Field(
         None,
-        description="Maps external param names to InnerTool param names",
+        description="Maps external param names to target tool param names",
+    )
+    chain: list[dict[str, Any]] | None = Field(
+        None,
+        description="Tool chain steps (pipeline mode)",
     )
     code: str | None = None
     http_config: dict[str, Any] | None = None

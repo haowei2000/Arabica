@@ -66,12 +66,27 @@ class RegistryToolCaller(ToolCaller):
 
     Looks up the tool instance by name, then calls it with the
     provided arguments using ``BaseTool.__call__()``.
+
+    An optional ``extra_instances`` dict allows per-run tools
+    (e.g. user-defined ExternalTools loaded from the database)
+    to be resolved without polluting the global ToolRegistry.
+    Extra instances take precedence over registry look-ups.
     """
+
+    def __init__(
+        self,
+        extra_instances: dict[str, BaseTool] | None = None,
+    ) -> None:
+        self._extra_instances: dict[str, BaseTool] = extra_instances or {}
 
     async def call(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Execute a tool through the registry."""
+        """Execute a tool through extra instances or the registry."""
+        # Per-run extra instances (user-defined tools) checked first
+        if tool_name in self._extra_instances:
+            return await self._extra_instances[tool_name](**arguments)
+
         from aiwen.registries.core import ToolRegistry
 
         tool_instance = ToolRegistry.get_tool_instance(tool_name)

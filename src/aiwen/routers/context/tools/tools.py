@@ -8,9 +8,7 @@ Key concepts:
 - **External tools**: User-created tools that delegate to inner tool backends
 - **Tool templates**: Pre-configured examples for creating external tools
 
-External tools support multiple execution modes:
-- server_run: Execute Python code via CodeExecutionInnerTool
-- http: Make HTTP requests via HttpRequestInnerTool
+All tools run through the same unified ``execute()`` / ``__call__()`` protocol.
 """
 
 import logging
@@ -33,7 +31,6 @@ from aiwen.schemas.context.tools.tool_template import (
     get_inner_tool_templates,
 )
 from aiwen.schemas.context.tools.user_tool import (
-    EXECUTION_MODE_TO_INNER_TOOL,
     UserToolCreate,
     UserToolExecutionRequest,
     UserToolExecutionResponse,
@@ -52,7 +49,7 @@ PROTECTED_TOOL_TYPES = {"inner"}
 
 
 def _build_user_tool_response(tool) -> UserToolResponse:
-    """Build a UserToolResponse with computed fields.
+    """Build a UserToolResponse from a Tool model instance.
 
     Args:
         tool: Tool model instance
@@ -60,11 +57,7 @@ def _build_user_tool_response(tool) -> UserToolResponse:
     Returns:
         UserToolResponse with tool_code and inner_tool_name populated
     """
-    response = UserToolResponse.model_validate(tool)
-    # For external tools, derive inner_tool_name from execution_mode if not explicit
-    if response.tool_type == "external" and not response.inner_tool_name:
-        response.inner_tool_name = EXECUTION_MODE_TO_INNER_TOOL.get(tool.execution_mode)
-    return response
+    return UserToolResponse.model_validate(tool)
 
 
 # ============================================================================
@@ -78,7 +71,6 @@ def _build_user_tool_response(tool) -> UserToolResponse:
     summary="List available tool templates",
 )
 async def list_templates(
-    execution_mode: str | None = None,
     source: str | None = None,
 ):
     """
@@ -93,10 +85,9 @@ async def list_templates(
     - **inner_tool**: Auto-generated from every registered InnerTool via ``to_template()``
 
     Args:
-        execution_mode: Optional filter by execution mode ("http", "server_run", etc.)
         source: Optional filter by template source ("static" or "inner_tool")
     """
-    templates = get_all_templates(execution_mode=execution_mode, source=source)
+    templates = get_all_templates(source=source)
     return ToolTemplateListResponse(templates=templates, total=len(templates))
 
 
@@ -153,9 +144,8 @@ async def create_tool(
     """
     Create a new user-defined external tool.
 
-    External tools delegate execution to a built-in InnerTool backend:
-    - **server_run**: Executes Python code (requires `code` field)
-    - **http**: Makes HTTP API calls (requires `http_config` field)
+    External tools delegate execution to a registered InnerTool backend.
+    Specify `inner_tool_name` to choose which InnerTool to delegate to.
 
     Args:
         tool_data: Tool creation data
@@ -168,22 +158,6 @@ async def create_tool(
     Raises:
         HTTPException 400: If validation fails or tool name already exists
     """
-    # Validate configuration based on execution mode
-    if not tool_data.inner_tool_name:
-        mode = tool_data.execution_mode
-        if mode == "server_run" and not tool_data.code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="execution_mode 'server_run' requires a 'code' field "
-                "(or set 'inner_tool_name' for direct delegation)",
-            )
-        if mode == "http" and not tool_data.http_config:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="execution_mode 'http' requires an 'http_config' field "
-                "(or set 'inner_tool_name' for direct delegation)",
-            )
-
     crud = UserToolCRUD(db)
 
     try:
