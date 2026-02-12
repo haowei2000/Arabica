@@ -24,7 +24,6 @@ class ToolTemplate(BaseModel):
     id: str = Field(..., description="Unique template identifier")
     name: str = Field(..., description="Template display name")
     description: str = Field(..., description="What this template does")
-    execution_mode: str = Field(..., description="Execution mode (server_run or http)")
     inner_tool_name: str | None = Field(
         None, description="InnerTool this template delegates to (for dynamic templates)"
     )
@@ -54,14 +53,12 @@ _HTTP_GET_API_TEMPLATE = ToolTemplate(
     id="http_get_api",
     name="HTTP GET API",
     description="Call an external REST API with GET method and query parameters",
-    execution_mode="http",
     category="api",
     tags=["http", "get", "rest", "api"],
     template={
         "name": "my_get_api",
         "display_name": "My GET API",
         "description": "Call an external API to fetch data",
-        "execution_mode": "http",
         "category": "api",
         "tags": ["http", "api"],
         "timeout": 30,
@@ -98,14 +95,12 @@ _HTTP_POST_JSON_TEMPLATE = ToolTemplate(
     id="http_post_json",
     name="HTTP POST JSON API",
     description="Send JSON data to an external API with POST method",
-    execution_mode="http",
     category="api",
     tags=["http", "post", "json", "rest", "api"],
     template={
         "name": "my_post_api",
         "display_name": "My POST API",
         "description": "Send data to an external API",
-        "execution_mode": "http",
         "category": "api",
         "tags": ["http", "api"],
         "timeout": 30,
@@ -147,14 +142,12 @@ _HTTP_WEBHOOK_TEMPLATE = ToolTemplate(
     id="http_webhook",
     name="Webhook Notification",
     description="Send event notifications to a webhook URL (Slack, Discord, etc.)",
-    execution_mode="http",
     category="notification",
     tags=["http", "webhook", "notification", "post"],
     template={
         "name": "my_webhook",
         "display_name": "My Webhook",
         "description": "Send notifications to a webhook endpoint",
-        "execution_mode": "http",
         "category": "notification",
         "tags": ["webhook", "notification"],
         "timeout": 15,
@@ -190,14 +183,12 @@ _HTTP_REST_CRUD_TEMPLATE = ToolTemplate(
     id="http_rest_crud",
     name="REST CRUD Operation",
     description="Perform CRUD operations on a REST resource with configurable method",
-    execution_mode="http",
     category="api",
     tags=["http", "rest", "crud", "api"],
     template={
         "name": "my_rest_resource",
         "display_name": "My REST Resource",
         "description": "Perform operations on a REST API resource",
-        "execution_mode": "http",
         "category": "api",
         "tags": ["rest", "crud"],
         "timeout": 30,
@@ -240,14 +231,12 @@ _HTTP_FORM_SUBMIT_TEMPLATE = ToolTemplate(
     id="http_form_submit",
     name="HTTP Form Submit",
     description="Submit form data to an external endpoint via POST",
-    execution_mode="http",
     category="api",
     tags=["http", "post", "form", "submit"],
     template={
         "name": "my_form_submit",
         "display_name": "My Form Submit",
         "description": "Submit form data to an external service",
-        "execution_mode": "http",
         "category": "api",
         "tags": ["form", "submit"],
         "timeout": 30,
@@ -292,14 +281,12 @@ _CODE_EXECUTION_TEMPLATE = ToolTemplate(
     id="code_basic",
     name="Python Code Execution",
     description="Execute custom Python code with input parameters",
-    execution_mode="server_run",
     category="code",
-    tags=["python", "code", "server_run"],
+    tags=["python", "code"],
     template={
         "name": "my_code_tool",
         "display_name": "My Code Tool",
         "description": "Execute custom Python logic",
-        "execution_mode": "server_run",
         "category": "code",
         "tags": ["python", "code"],
         "timeout": 30,
@@ -338,14 +325,12 @@ _CLIENT_REQUEST_TEMPLATE = ToolTemplate(
     id="client_request",
     name="Client Request",
     description="Send a request to be executed on the user's client (browser-side handler)",
-    execution_mode="client_run",
     category="client",
     tags=["client", "browser", "request"],
     template={
         "name": "my_client_tool",
         "display_name": "My Client Tool",
         "description": "Execute a request on the user's client",
-        "execution_mode": "client_run",
         "category": "client",
         "tags": ["client", "browser"],
         "timeout": 120,
@@ -385,14 +370,12 @@ _SANDBOX_EXECUTION_TEMPLATE = ToolTemplate(
     id="sandbox_execution",
     name="Sandbox Command Execution",
     description="Execute shell commands in an isolated Docker sandbox with resource limits",
-    execution_mode="container_run",
     category="code",
     tags=["sandbox", "container", "docker", "shell"],
     template={
         "name": "my_sandbox_tool",
         "display_name": "My Sandbox Tool",
         "description": "Execute a command safely in a Docker sandbox",
-        "execution_mode": "container_run",
         "category": "code",
         "tags": ["sandbox", "docker"],
         "timeout": 120,
@@ -472,13 +455,6 @@ def get_inner_tool_templates() -> dict[str, ToolTemplate]:
     """
     Generate ToolTemplate instances from all registered InnerTools.
 
-    Iterates over every tool in the ToolRegistry, filters for InnerTools
-    (tool_type == "inner"), and calls ``to_template()`` on each to produce
-    a ToolTemplate. The returned dict is keyed by template ID.
-
-    This function is called at request time (not import time) so it always
-    reflects the current state of the registry.
-
     Returns:
         dict[str, ToolTemplate]: Dynamic templates keyed by template ID
     """
@@ -502,7 +478,6 @@ def get_inner_tool_templates() -> dict[str, ToolTemplate]:
                 id=raw["id"],
                 name=raw["name"],
                 description=raw["description"],
-                execution_mode=raw["execution_mode"],
                 inner_tool_name=raw.get("inner_tool_name"),
                 category=raw.get("category", "general"),
                 tags=raw.get("tags", []),
@@ -520,14 +495,12 @@ def get_inner_tool_templates() -> dict[str, ToolTemplate]:
 
 
 def get_all_templates(
-    execution_mode: str | None = None,
     source: str | None = None,
 ) -> list[ToolTemplate]:
     """
     Get all templates (static + dynamic), with optional filters.
 
     Args:
-        execution_mode: Filter by execution mode (e.g. "http", "server_run")
         source: Filter by source ("static" or "inner_tool")
 
     Returns:
@@ -539,9 +512,6 @@ def get_all_templates(
     all_templates.update(TOOL_TEMPLATES)  # static overrides dynamic on collision
 
     result = list(all_templates.values())
-
-    if execution_mode:
-        result = [t for t in result if t.execution_mode == execution_mode]
 
     if source:
         result = [t for t in result if t.source == source]

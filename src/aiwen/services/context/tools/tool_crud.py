@@ -54,7 +54,6 @@ class UserToolCRUD:
             name=tool_data.name,
             display_name=tool_data.display_name,
             description=tool_data.description,
-            execution_mode=tool_data.execution_mode,
             inner_tool_name=tool_data.inner_tool_name,
             parameter_mapping=tool_data.parameter_mapping,
             input_schema=tool_data.input_schema,

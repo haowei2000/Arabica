@@ -11,7 +11,7 @@ from aiwen.enums.context import ContextType
 from aiwen.enums.events import EventType
 from aiwen.enums.files import InputFormat, OutputFormat
 from aiwen.enums.runs import RunStatus, TriggerType
-from aiwen.enums.tools import AllowedToolType, ToolExecutionMode
+from aiwen.enums.tools import AllowedToolType
 from aiwen.enums.workspaces import (
     InvitationStatus,
     MemberRole,
@@ -32,7 +32,6 @@ __all__ = [
     "TriggerType",
     # Tools
     "AllowedToolType",
-    "ToolExecutionMode",
     # Workspaces
     "InvitationStatus",
     "MemberRole",

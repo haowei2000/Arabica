@@ -72,7 +72,6 @@ class ToolResponse(BaseModel):
     description: str | None = Field(None, description="Tool description")
     display_name: str | None = Field(None, description="Display name")
     tool_type: str = Field(..., description="Tool type: inner or external")
-    execution_mode: str | None = Field(None, description="Execution mode")
     inner_tool_name: str | None = Field(None, description="InnerTool to delegate to")
     input_schema: dict[str, Any] | None = Field(
         None, description="JSON Schema for input parameters"

@@ -20,7 +20,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.enums import ToolExecutionMode
 from aiwen.registries.base_class.base_tool import BaseTool
 from aiwen.registries.base_class.base_executor import Executor
 
@@ -352,7 +351,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     "tags": metadata.tags,
                     "category": metadata.category,
                     "enabled": metadata.enabled,
-                    "execution_mode": metadata.execution_mode.value,
                     "timeout": metadata.timeout,
                     "input_schema": tool_class.InputSchema.model_json_schema(),
                     "verified": True,
@@ -380,7 +378,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
     def _list_tools_instance(
         self,
-        execution_mode: ToolExecutionMode|None = None,
         category: str | None = None,
         enabled_only: bool = True,
     ) -> list[str]:
@@ -388,8 +385,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
         def predicate(name: str, tool_class: type[BaseTool]) -> bool:
             metadata = tool_class.METADATA
-            if execution_mode and metadata.execution_mode != execution_mode:
-                return False
             if category and metadata.category != category:
                 return False
             return not (enabled_only and not metadata.enabled)
@@ -399,12 +394,11 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
     def list_tool_classes(
         self,
-        execution_mode: ToolExecutionMode|None = None,
         category: str | None = None,
         enabled_only: bool = True,
     ) -> list[type[BaseTool]]:
         """List tool classes with optional filters."""
-        tool_names = self._list_tools_instance(execution_mode, category, enabled_only)
+        tool_names = self._list_tools_instance(category, enabled_only)
         return [self._registry[name] for name in tool_names]
 
     def get_tools_by_tag(self, tag: str) -> list[str]:
@@ -445,7 +439,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             "tags": metadata.tags,
             "category": metadata.category,
             "enabled": metadata.enabled,
-            "execution_mode": metadata.execution_mode.value,
             "timeout": metadata.timeout,
             "class_name": tool_class.__name__,
             "input_schema": tool_class.InputSchema.model_json_schema(),
@@ -484,13 +477,12 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
     @classmethod
     def list_tools(  # type: ignore[misc]
         cls,
-        execution_mode: ToolExecutionMode | None = None,
         category: str | None = None,
         enabled_only: bool = True,
     ) -> list[str]:
         """List tool names (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
-        return instance._list_tools_instance(execution_mode=execution_mode, category=category, enabled_only=enabled_only)
+        return instance._list_tools_instance(category=category, enabled_only=enabled_only)
 
     @classmethod
     def get_tool_class(cls, tool_name: str) -> type[BaseTool] | None:  # type: ignore[misc]
@@ -517,7 +509,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             "display_name": metadata.display_name,
             "description": metadata.description,
             "category": metadata.category,
-            "execution_mode": metadata.execution_mode.value,
             "enabled": metadata.enabled,
             "version": metadata.version,
         }
@@ -562,14 +553,8 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         total = len(self._registry)
         enabled = len([t for t in self._registry.values() if t.METADATA.enabled])
 
-        # Group by execution mode
-        mode_stats = {}
-        for mode in ToolExecutionMode:
-            count = len(self._list_tools_instance(execution_mode=mode, enabled_only=False))
-            mode_stats[mode.value] = count
-
         # Group by category
-        category_stats = {}
+        category_stats: dict[str, int] = {}
         for tool_class in self._registry.values():
             category = tool_class.METADATA.category
             category_stats[category] = category_stats.get(category, 0) + 1
@@ -579,7 +564,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             "total_tools": total,
             "enabled_tools": enabled,
             "disabled_tools": total - enabled,
-            "by_execution_mode": mode_stats,
             "by_category": category_stats,
         }
 

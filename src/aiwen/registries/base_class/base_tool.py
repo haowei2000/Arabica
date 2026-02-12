@@ -1,8 +1,8 @@
 """
 Base Tool Class System
 
-Provides a unified tool interface with support for multiple execution modes
-and automatic JSON Schema generation.
+Provides a unified tool interface with automatic JSON Schema generation.
+All tools run through the same ``execute()`` / ``__call__()`` protocol.
 """
 
 from abc import ABC, abstractmethod
@@ -11,8 +11,6 @@ import logging
 from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, Field
-
-from aiwen.enums.tools import ToolExecutionMode
 
 T = TypeVar("T", bound="BaseTool")
 
@@ -81,14 +79,7 @@ class ToolMetadata:
     tags: list[str] = field(default_factory=list)  # Tags
     category: str = "general"  # Category
     enabled: bool = True  # Whether enabled
-    execution_mode: ToolExecutionMode = ToolExecutionMode.SERVER_RUN
     timeout: int = 30  # Timeout in seconds
-
-    # Execution mode specific configurations
-    http_config: HTTPConfig | None = None
-    celery_config: CeleryConfig | None = None
-    container_config: ContainerConfig | None = None
-    client_config: ClientConfig | None = None
 
 class ToolInputSchema(BaseModel):
     """Base class for tool input parameters (auto-generate schema using Pydantic)"""
@@ -116,7 +107,6 @@ class BaseTool(ABC):
                 name="search",
                 display_name="Search Tool",
                 description="Search content in knowledge base",
-                execution_mode=ToolExecutionMode.SERVER_RUN
             )
 
             class InputSchema(ToolInputSchema):
@@ -152,31 +142,6 @@ class BaseTool(ABC):
         """Validate that tool metadata is complete"""
         if not hasattr(cls, "METADATA"):
             raise ValueError(f"Tool {cls.__name__} must define METADATA")
-
-        metadata = cls.METADATA
-
-        # Validate required configuration based on execution mode
-        if metadata.execution_mode == ToolExecutionMode.HTTP:
-            if not metadata.http_config or not metadata.http_config.url:
-                raise ValueError(
-                    f"HTTP tool {cls.__name__} must provide http_config with url"
-                )
-
-        elif metadata.execution_mode == ToolExecutionMode.CONTAINER_RUN:
-            if not metadata.container_config or not metadata.container_config.image:
-                raise ValueError(
-                    f"Container tool {cls.__name__} must provide container_config"
-                )
-
-        elif metadata.execution_mode == ToolExecutionMode.CLIENT_RUN:
-            if not metadata.client_config or not metadata.client_config.handler_name:
-                raise ValueError(
-                    f"Client tool {cls.__name__} must provide client_config"
-                )
-
-        elif metadata.execution_mode == ToolExecutionMode.CELERY_RUN:
-            if not metadata.celery_config:
-                metadata.celery_config = CeleryConfig()
 
     @abstractmethod
     async def execute(self, input_data: Any) -> Any:
@@ -227,7 +192,7 @@ class BaseTool(ABC):
         Get tool JSON Schema (for Agent)
 
         Returns:
-            dict: OpenAI function calling 格式的 JSON Schema
+            dict: OpenAI function calling format JSON Schema
         """
         metadata = cls.METADATA
         input_schema = cls.InputSchema.model_json_schema()
@@ -267,20 +232,9 @@ class BaseTool(ABC):
         """Get tool metadata"""
         return cls.METADATA
 
-    @classmethod
-    def get_execution_mode(cls) -> ToolExecutionMode:
-        """Get tool execution mode"""
-        return cls.METADATA.execution_mode
-
     async def before_execute(self, input_data: ToolInputSchema) -> None:  # noqa: B027
         """
         Pre-execution hook method (optional)
-
-        Can be used for:
-        - Permission check
-        - Resource pre-allocation
-        - Logging
-        - Parameter preprocessing
 
         Args:
             input_data: Validated input parameters
@@ -292,12 +246,6 @@ class BaseTool(ABC):
     ) -> None:
         """
         Post-execution hook method (optional)
-
-        Can be used for:
-        - Clean up resources
-        - 记录日志
-        - Send notifications
-        - Update statistics
 
         Args:
             input_data: Input parameters
@@ -324,53 +272,34 @@ class BaseTool(ABC):
 
     async def __call__(self, **kwargs: Any) -> dict[str, Any]:
         """
-        Make tool instance callable
+        Unified entry point for tool execution.
 
-        This is the unified entry point for tool execution, which handles:
-        1. Input validation
-        2. 执行前钩子
-        3. Core execution
-        4. 执行后钩子
-        5. Error handling
-        6. Output formatting
+        Handles input validation, lifecycle hooks, core execution,
+        error handling, and output formatting.
 
         Args:
             **kwargs: Tool parameters
 
         Returns:
-            dict: 格式化后的Execution result
+            dict: Formatted execution result
         """
         input_data = None
         try:
-            # 1. 验证输入
             input_data = await self.validate_input(kwargs)
-
-            # 2. 执行前钩子
             await self.before_execute(input_data)
-
-            # 3. Core execution
             output = await self.execute(input_data)
-
-            # 4. 执行后钩子
             await self.after_execute(input_data, output)
-
-            # 5. 格式化输出
             return self.format_output(output)
 
         except Exception as e:
-            # Error handling
-            error_output = await self.on_error(
-                input_data,
-                e,
-            )
+            error_output = await self.on_error(input_data, e)
             return self.format_output(error_output)
 
     def __repr__(self) -> str:
         """String representation"""
         return (
             f"<{self.__class__.__name__}("
-            f"name='{self.METADATA.name}', "
-            f"mode={self.METADATA.execution_mode.value})>"
+            f"name='{self.METADATA.name}')>"
         )
 
 class InnerTool(BaseTool, ABC):
@@ -390,7 +319,6 @@ class InnerTool(BaseTool, ABC):
                 name="my_tool",
                 display_name="My Tool",
                 description="A built-in tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
             )
 
             class InputSchema(ToolInputSchema):
@@ -407,19 +335,6 @@ class InnerTool(BaseTool, ABC):
     def to_template(cls) -> dict[str, Any]:
         """
         Generate a tool creation template from this InnerTool.
-
-        The returned dict describes how to create an ExternalTool that
-        delegates execution to this InnerTool. It contains:
-        - id: Template identifier (same as the InnerTool name)
-        - name/description: Human-readable info
-        - inner_tool_name: The InnerTool to delegate to
-        - template: A pre-filled UserToolCreate body
-
-        The template's ``input_schema`` mirrors the InnerTool's InputSchema
-        so the ExternalTool's parameters map 1:1 to the InnerTool's parameters.
-
-        Subclasses can override this method to provide more specific templates
-        (e.g., with example values, curated descriptions, etc.).
 
         Returns:
             dict with template data (can be wrapped in ToolTemplate schema)
@@ -438,7 +353,6 @@ class InnerTool(BaseTool, ABC):
                 f"Create an external tool that delegates to the "
                 f"built-in '{metadata.display_name}' tool"
             ),
-            "execution_mode": metadata.execution_mode.value,
             "inner_tool_name": metadata.name,
             "category": metadata.category,
             "tags": metadata.tags,
@@ -446,7 +360,6 @@ class InnerTool(BaseTool, ABC):
                 "name": f"my_{metadata.name}",
                 "display_name": f"My {metadata.display_name}",
                 "description": metadata.description,
-                "execution_mode": metadata.execution_mode.value,
                 "inner_tool_name": metadata.name,
                 "parameter_mapping": parameter_mapping,
                 "category": metadata.category,
@@ -464,23 +377,13 @@ class ExternalTool(BaseTool):
     """
     External Tool - User-designed tools that delegate execution to an InnerTool
 
-    ExternalTools are created dynamically from user definitions stored in the
-    database (via DynamicToolLoader). They do not contain execution logic
-    themselves — instead, they delegate to a registered InnerTool.
+    ExternalTools do not contain execution logic themselves — instead, they
+    delegate to a registered InnerTool via parameter mapping.
 
     Class-level attributes (set by DynamicToolLoader when creating subclasses):
-        inner_tool_name: Name of the InnerTool to delegate to (looked up in ToolRegistry)
+        inner_tool_name: Name of the InnerTool to delegate to
         parameter_mapping: Maps external field names to inner tool field names
-        extra_params: Static parameters always passed to the inner tool (e.g., code string)
-
-    Example:
-        ```python
-        class UserWeatherTool(ExternalTool):
-            METADATA = ToolMetadata(name="user_weather", ...)
-            inner_tool_name = "http_request"
-            parameter_mapping = {"city": "body.city"}
-            extra_params = {"url": "https://api.weather.com", "method": "GET"}
-        ```
+        extra_params: Static parameters always passed to the inner tool
     """
 
     tool_type: ClassVar[str] = "external"
@@ -497,11 +400,6 @@ class ExternalTool(BaseTool):
     async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:
         """
         Execute by delegating to the configured InnerTool
-
-        1. Look up the inner tool from the registry
-        2. Map external parameters to inner tool parameters
-        3. Merge in extra static parameters
-        4. Call the inner tool and return its result
         """
         # Lazy import to avoid circular dependency
         from aiwen.registries import ToolRegistry
@@ -530,7 +428,6 @@ class ExternalTool(BaseTool):
 
         try:
             result = await inner_tool(**mapped_params)
-            # inner_tool.__call__ returns a dict (format_output result)
             return ToolOutputSchema(
                 success=result.get("success", False),
                 message=result.get("message"),

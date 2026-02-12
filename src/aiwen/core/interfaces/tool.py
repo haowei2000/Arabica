@@ -14,7 +14,6 @@ from aiwen.registries.base_class.base_tool import (
     HTTPConfig,
     InnerTool,
     ResourceLimits,
-    ToolExecutionMode,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
@@ -29,8 +28,6 @@ __all__ = [
     "ToolInputSchema",
     "ToolOutputSchema",
     "ToolMetadata",
-    # Execution Mode
-    "ToolExecutionMode",
     # Configs
     "HTTPConfig",
     "CeleryConfig",

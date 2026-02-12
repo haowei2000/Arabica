@@ -50,13 +50,6 @@ class Tool(Base):
         comment="Tool type: inner, external",
     )
 
-    # Execution mode
-    execution_mode: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True,
-        comment="Execution mode: server_run, http, client_run, container_run, celery_run",
-    )
-
     # InnerTool delegation
     inner_tool_name: Mapped[str | None] = mapped_column(
         String(100),

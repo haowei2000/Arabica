@@ -3,16 +3,6 @@
 from enum import Enum
 
 
-class ToolExecutionMode(str, Enum):
-    """Tool execution modes."""
-
-    HTTP = "http"  # HTTP API call
-    SERVER_RUN = "server_run"  # Server-side direct execution
-    CLIENT_RUN = "client_run"  # Client-side execution
-    CONTAINER_RUN = "container_run"  # Container isolated execution
-    CELERY_RUN = "celery_run"  # Celery async task
-
-
 class AllowedToolType(str, Enum):
     """Allowed tool types for API creation.
 
