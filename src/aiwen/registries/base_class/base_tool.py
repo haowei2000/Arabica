@@ -373,61 +373,133 @@ class InnerTool(BaseTool, ABC):
             },
         }
 
+@dataclass
+class ChainStep:
+    """A single step in a tool execution chain.
+
+    Each step calls a registered tool with mapped parameters.
+    For the first step, parameters come from the ExternalTool's input.
+    For subsequent steps, parameters come from the previous step's
+    ``data`` output dict.
+
+    Attributes:
+        tool_name: Name of the registered tool to call.
+        parameter_mapping: ``{source_key: target_param}``.
+            Supports dotted paths for nested access (e.g. ``"result.items"``).
+            If empty, the entire input/output dict is passed as-is.
+        extra_params: Static parameters merged into each call.
+    """
+
+    tool_name: str
+    parameter_mapping: dict[str, str] = field(default_factory=dict)
+    extra_params: dict[str, Any] = field(default_factory=dict)
+
+
+def _resolve_key(data: dict[str, Any], dotted_key: str) -> Any:
+    """Resolve a dotted key path against a dict.
+
+    Supports nested dicts and integer list indices::
+
+        _resolve_key({"a": {"b": [1, 2, 3]}}, "a.b.1")  # => 2
+
+    Returns ``None`` if any segment is missing.
+    """
+    current: Any = data
+    for segment in dotted_key.split("."):
+        if isinstance(current, dict):
+            current = current.get(segment)
+        elif isinstance(current, (list, tuple)):
+            try:
+                current = current[int(segment)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+def _map_params(
+    source: dict[str, Any],
+    mapping: dict[str, str],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build target params from *source* using *mapping*.
+
+    If *mapping* is empty, ``source`` is returned directly (pass-through).
+    Dotted source keys are resolved via :func:`_resolve_key`.
+    *extra* static params are merged last (highest priority).
+    """
+    if not mapping:
+        params = dict(source)
+    else:
+        params: dict[str, Any] = {}
+        for src_key, dst_key in mapping.items():
+            value = _resolve_key(source, src_key)
+            if value is not None:
+                params[dst_key] = value
+    if extra:
+        params.update(extra)
+    return params
+
+
 class ExternalTool(BaseTool):
     """
-    External Tool - User-designed tools that delegate execution to an InnerTool
+    External Tool - User-designed tools that delegate execution to other tools.
 
-    ExternalTools do not contain execution logic themselves — instead, they
-    delegate to a registered InnerTool via parameter mapping.
+    Supports two execution modes (mutually exclusive):
+
+    1. **Single delegation** (simple): set ``inner_tool_name`` +
+       ``parameter_mapping`` + ``extra_params``.
+    2. **Chain execution** (pipeline): set ``chain`` — a list of
+       :class:`ChainStep` that are executed sequentially.  The output
+       ``data`` dict of step *N* becomes the input source for step *N+1*.
+
+    If ``chain`` is non-empty it takes precedence over ``inner_tool_name``.
 
     Class-level attributes (set by DynamicToolLoader when creating subclasses):
-        inner_tool_name: Name of the InnerTool to delegate to
-        parameter_mapping: Maps external field names to inner tool field names
-        extra_params: Static parameters always passed to the inner tool
+        inner_tool_name: Name of the tool to delegate to (single mode).
+        parameter_mapping: Maps external field names to tool param names.
+        extra_params: Static parameters always passed to the tool.
+        chain: Ordered list of :class:`ChainStep` for pipeline mode.
     """
 
     tool_type: ClassVar[str] = "external"
 
-    # Name of the InnerTool to delegate to (must be registered in ToolRegistry)
+    # ── Single-delegation mode ──
     inner_tool_name: ClassVar[str] = ""
-
-    # Maps {external_param_name: inner_param_name}
     parameter_mapping: ClassVar[dict[str, str]] = {}
-
-    # Static params always passed to the inner tool (e.g., code, url, headers)
     extra_params: ClassVar[dict[str, Any]] = {}
 
+    # ── Chain / pipeline mode ──
+    chain: ClassVar[list[ChainStep]] = []
+
     async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:
-        """
-        Execute by delegating to the configured InnerTool
-        """
-        # Lazy import to avoid circular dependency
+        if self.chain:
+            return await self._execute_chain(input_data)
+        if self.inner_tool_name:
+            return await self._execute_single(input_data)
+        return ToolOutputSchema(
+            success=False,
+            error="No execution target: set 'inner_tool_name' or 'chain'",
+        )
+
+    # ── Single delegation (backward-compatible) ──────────────────────
+
+    async def _execute_single(self, input_data: ToolInputSchema) -> ToolOutputSchema:
         from aiwen.registries import ToolRegistry
 
-        inner_tool = ToolRegistry.get_tool_instance(self.inner_tool_name)
-        if not inner_tool:
+        tool_instance = ToolRegistry.get_tool_instance(self.inner_tool_name)
+        if not tool_instance:
             return ToolOutputSchema(
                 success=False,
-                error=f"Inner tool '{self.inner_tool_name}' not found in registry",
+                error=f"Tool '{self.inner_tool_name}' not found in registry",
             )
 
-        # Build mapped parameters from input_data
         input_dict = input_data.model_dump()
-        mapped_params: dict[str, Any] = {}
-
-        if self.parameter_mapping:
-            for ext_key, inner_key in self.parameter_mapping.items():
-                if ext_key in input_dict:
-                    mapped_params[inner_key] = input_dict[ext_key]
-        else:
-            # No explicit mapping — pass all input fields as 'input_data' dict
-            mapped_params["input_data"] = input_dict
-
-        # Merge in static extra params (e.g., code string, url, etc.)
-        mapped_params.update(self.extra_params)
+        params = _map_params(input_dict, self.parameter_mapping, self.extra_params)
 
         try:
-            result = await inner_tool(**mapped_params)
+            result = await tool_instance(**params)
             return ToolOutputSchema(
                 success=result.get("success", False),
                 message=result.get("message"),
@@ -436,11 +508,59 @@ class ExternalTool(BaseTool):
             )
         except Exception as e:
             logger.error(
-                f"ExternalTool '{self.METADATA.name}' delegation to "
+                f"ExternalTool '{self.METADATA.name}' → "
                 f"'{self.inner_tool_name}' failed: {e}",
                 exc_info=True,
             )
             return ToolOutputSchema(
-                success=False,
-                error=f"Delegation to inner tool failed: {e!s}",
+                success=False, error=f"Delegation failed: {e!s}"
             )
+
+    # ── Chain / pipeline execution ───────────────────────────────────
+
+    async def _execute_chain(self, input_data: ToolInputSchema) -> ToolOutputSchema:
+        """Run each :class:`ChainStep` in order, piping ``data`` forward."""
+        from aiwen.registries import ToolRegistry
+
+        current_data: dict[str, Any] = input_data.model_dump()
+
+        for idx, step in enumerate(self.chain):
+            tool_instance = ToolRegistry.get_tool_instance(step.tool_name)
+            if not tool_instance:
+                return ToolOutputSchema(
+                    success=False,
+                    error=(
+                        f"Chain step {idx} failed: tool "
+                        f"'{step.tool_name}' not found in registry"
+                    ),
+                )
+
+            params = _map_params(current_data, step.parameter_mapping, step.extra_params)
+
+            try:
+                result = await tool_instance(**params)
+            except Exception as e:
+                logger.error(
+                    f"ExternalTool '{self.METADATA.name}' chain step {idx} "
+                    f"('{step.tool_name}') raised: {e}",
+                    exc_info=True,
+                )
+                return ToolOutputSchema(
+                    success=False,
+                    error=f"Chain step {idx} ('{step.tool_name}') error: {e!s}",
+                )
+
+            if not result.get("success"):
+                return ToolOutputSchema(
+                    success=False,
+                    error=(
+                        f"Chain step {idx} ('{step.tool_name}') failed: "
+                        f"{result.get('error', 'unknown error')}"
+                    ),
+                )
+
+            # The step's output data becomes the next step's input.
+            # Fall back to the full result dict if 'data' is absent.
+            current_data = result.get("data") or result
+
+        return ToolOutputSchema(success=True, data=current_data)

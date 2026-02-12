@@ -56,6 +56,7 @@ class UserToolCRUD:
             description=tool_data.description,
             inner_tool_name=tool_data.inner_tool_name,
             parameter_mapping=tool_data.parameter_mapping,
+            chain=tool_data.chain,
             input_schema=tool_data.input_schema,
             output_schema=tool_data.output_schema,
             code=tool_data.code,

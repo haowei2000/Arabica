@@ -45,17 +45,27 @@ class UserToolCreate(UserToolBase):
 
     workspace_id: UUID | None = Field(None, description="Workspace ID (optional)")
 
-    # InnerTool delegation
+    # ── Single delegation mode ──
     inner_tool_name: str | None = Field(
         None,
-        description="Name of the InnerTool to delegate to",
+        description="Name of the tool to delegate to (single delegation mode)",
     )
     parameter_mapping: dict[str, str] | None = Field(
         None,
         description=(
-            "Maps external param names to InnerTool param names. "
+            "Maps external param names to target tool param names. "
             "e.g. {'city': 'query', 'count': 'limit'}. "
-            "If not set, all input fields are passed as a single 'input_data' dict"
+            "If not set, all input fields are passed as-is"
+        ),
+    )
+
+    # ── Chain / pipeline mode (takes precedence over inner_tool_name) ──
+    chain: list[dict[str, Any]] | None = Field(
+        None,
+        description=(
+            "Ordered list of chain steps. Each step: "
+            '{"tool_name": "...", "parameter_mapping": {...}, "extra_params": {...}}. '
+            "Output data of step N becomes input for step N+1."
         ),
     )
 
@@ -79,11 +89,12 @@ class UserToolUpdate(BaseModel):
     display_name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = Field(None, min_length=1)
     inner_tool_name: str | None = Field(
-        None, description="Name of the InnerTool to delegate to"
+        None, description="Name of the tool to delegate to"
     )
     parameter_mapping: dict[str, str] | None = Field(
         None, description="Param name mapping"
     )
+    chain: list[dict[str, Any]] | None = None
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     code: str | None = None
@@ -113,11 +124,15 @@ class UserToolResponse(UserToolBase):
     )
     inner_tool_name: str | None = Field(
         None,
-        description="Name of the InnerTool this external tool delegates to",
+        description="Name of the tool this external tool delegates to",
     )
     parameter_mapping: dict[str, str] | None = Field(
         None,
-        description="Maps external param names to InnerTool param names",
+        description="Maps external param names to target tool param names",
+    )
+    chain: list[dict[str, Any]] | None = Field(
+        None,
+        description="Tool chain steps (pipeline mode)",
     )
     code: str | None = None
     http_config: dict[str, Any] | None = None

@@ -50,16 +50,23 @@ class Tool(Base):
         comment="Tool type: inner, external",
     )
 
-    # InnerTool delegation
+    # Tool delegation (single mode)
     inner_tool_name: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
-        comment="Name of the InnerTool to delegate to",
+        comment="Name of the tool to delegate to (single delegation mode)",
     )
     parameter_mapping: Mapped[dict[str, str] | None] = mapped_column(
         JSONB,
         nullable=True,
-        comment="Maps external param names to InnerTool param names",
+        comment="Maps external param names to target tool param names",
+    )
+
+    # Tool chain (pipeline mode) — takes precedence over inner_tool_name
+    chain: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Ordered list of chain steps: [{tool_name, parameter_mapping, extra_params}]",
     )
 
     # Schema and configuration

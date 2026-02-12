@@ -12,6 +12,7 @@ from aiwen.registries.base_class.base_executor import (
 from aiwen.registries.base_class.base_tool import (
     BaseTool,
     CeleryConfig,
+    ChainStep,
     ClientConfig,
     ContainerConfig,
     ExternalTool,
@@ -32,6 +33,7 @@ __all__ = [
     "BaseTool",
     "InnerTool",
     "ExternalTool",
+    "ChainStep",
     "ToolInputSchema",
     "ToolOutputSchema",
     "ToolMetadata",
