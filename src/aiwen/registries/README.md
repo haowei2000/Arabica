@@ -138,7 +138,7 @@ class MyTool(BaseTool):
 
 ```python
 from aiwen.registries import register_executor
-from aiwen.registries.base_class.base_executor import Executor
+from aiwen.core.interfaces.executor import Executor
 
 
 @register_executor
@@ -481,7 +481,7 @@ def test_with_mock_registry(monkeypatch):
 ```python
 # Force import to trigger decorators
 import aiwen.services.tools.inner_tool.server_tools
-import aiwen.services.executor.executor_template.default.concrete
+import aiwen.plugins.executors.default.concrete
 ```
 
 ### "Already registered" errors

@@ -11,7 +11,7 @@ Demonstrates the complete workflow:
 
 import asyncio
 import logging
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ async def main():
     from aiwen.extensions.database import get_session
     from aiwen.schemas.events.event_payloads import UserMessage
     from aiwen.schemas.context.tools.user_tool import UserToolCreate
-    from aiwen.services.executor.executor_template.default.concrete import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader

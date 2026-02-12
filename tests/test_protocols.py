@@ -7,7 +7,7 @@ Verifies that protocols are correctly defined and components satisfy them.
 import pytest
 from typing import ClassVar, Any
 
-from aiwen.core.interfaces import (
+from aiwen.core.interfaces.protocols import (
     ToolProtocol,
     ExecutorProtocol,
     RegistryProtocol,
@@ -18,13 +18,12 @@ from aiwen.core.interfaces import (
     PROTOCOL_REGISTRY,
 )
 from aiwen.core.interfaces.tool import (
+    BaseTool,
     ToolMetadata,
     ToolInputSchema,
     ToolOutputSchema,
-    ToolExecutionMode,
 )
-from aiwen.registries import ToolRegistry, ExecutorRegistry
-from aiwen.registries.base_class import BaseTool
+from aiwen.registries.core import ToolRegistry, ExecutorRegistry
 
 
 class TestProtocolDefinitions:
@@ -77,7 +76,7 @@ class TestToolProtocolCompliance:
                 name="test_tool",
                 display_name="Test Tool",
                 description="A test tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
+
             )
 
             async def execute(self, input_data):
@@ -98,7 +97,7 @@ class TestToolProtocolCompliance:
                 name="test_tool",
                 display_name="Test Tool",
                 description="A test tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
+
             )
 
             async def execute(self, input_data):
@@ -116,7 +115,7 @@ class TestToolProtocolCompliance:
                 name="test_tool",
                 display_name="Test Tool",
                 description="A test tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
+
             )
 
             async def execute(self, input_data):
@@ -139,7 +138,7 @@ class TestToolProtocolCompliance:
                 name="custom",
                 display_name="Custom",
                 description="Custom tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
+
             )
 
             InputSchema: ClassVar[type[ToolInputSchema]] = ToolInputSchema
@@ -302,7 +301,7 @@ class TestTypeChecker:
                 name="valid",
                 display_name="Valid",
                 description="Valid tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
+
             )
 
             async def execute(self, input_data):
@@ -390,7 +389,7 @@ class TestProtocolWithFunctions:
                 name="test",
                 display_name="Test",
                 description="Test",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
+
             )
 
             async def execute(self, input_data):

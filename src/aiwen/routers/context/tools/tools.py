@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.dependencies.auth import get_current_user
 from aiwen.extensions.database import get_aiwen_db
-from aiwen.registries import ToolRegistry
+from aiwen.registries.core import ToolRegistry
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.context.tools.tool_template import (
     TOOL_TEMPLATES,

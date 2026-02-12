@@ -38,8 +38,8 @@ from langchain_core.messages import (
 )
 
 from aiwen.core.interfaces.tool_service import ToolCaller, ToolProvider
-from aiwen.registries import register_executor
-from aiwen.registries.base_class.base_executor import (
+from aiwen.registries.core import register_executor
+from aiwen.core.interfaces.executor import (
     AgentEvent,
     Executor,
     WaitingForTool,

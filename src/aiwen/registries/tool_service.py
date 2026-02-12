@@ -13,7 +13,7 @@ import logging
 from typing import Any
 
 from aiwen.core.interfaces.tool_service import ToolCaller, ToolProvider
-from aiwen.registries.base_class.base_tool import BaseTool
+from aiwen.core.interfaces.tool import BaseTool
 
 logger = logging.getLogger(__name__)
 

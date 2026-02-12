@@ -7,7 +7,7 @@ component registration and validation.
 
 from typing import Any, ClassVar
 
-from aiwen.core.interfaces import (
+from aiwen.core.interfaces.protocols import (
     ExecutorProtocol,
     ToolProtocol,
     is_executor,
@@ -15,13 +15,12 @@ from aiwen.core.interfaces import (
     PROTOCOL_REGISTRY,
 )
 from aiwen.core.interfaces.tool import (
-    ToolExecutionMode,
+    BaseTool,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.registries import ToolRegistry, register_tool
-from aiwen.registries.base_class import BaseTool
+from aiwen.registries.core import ToolRegistry, register_tool
 
 
 # ============================================================================
@@ -66,7 +65,7 @@ class ExampleCalculatorTool(BaseTool):
         name="example_calculator",
         display_name="Example Calculator",
         description="Performs basic calculations",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
+
         category="utility",
         tags=["math", "calculator"],
     )
@@ -118,7 +117,7 @@ class CustomTool:
         name="custom_tool",
         display_name="Custom Tool",
         description="A custom tool without BaseTool inheritance",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
+
     )
 
     InputSchema: ClassVar[type[ToolInputSchema]] = ToolInputSchema
@@ -165,11 +164,6 @@ class CustomTool:
     def get_metadata(cls) -> ToolMetadata:
         """Get metadata."""
         return cls.METADATA
-
-    @classmethod
-    def get_execution_mode(cls) -> ToolExecutionMode:
-        """Get execution mode."""
-        return cls.METADATA.execution_mode
 
     async def before_execute(self, input_data: Any) -> None:
         """Pre-execution hook."""
@@ -341,7 +335,7 @@ async def main():
 
     # 4. Registry integration
     print("\n4. Registry Integration:")
-    from aiwen.registries import get_registry
+    from aiwen.registries.manager import get_registry
 
     registry = get_registry(ToolRegistry)
     executor = ToolExecutor(registry)

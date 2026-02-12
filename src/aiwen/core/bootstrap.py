@@ -132,12 +132,8 @@ async def _initialize_registries() -> None:
     logger.info("Initializing centralized registry system...")
     try:
         # Import from a new centralized location
-        from aiwen.registries import (
-            ExecutorRegistry,
-            RegistryManager,
-            ToolRegistry,
-            sync_all_registries,
-        )
+        from aiwen.registries.core import ExecutorRegistry, ToolRegistry
+        from aiwen.registries.manager import RegistryManager, sync_all_registries
 
         # Step 1: Import all executor modules (triggers @register_executor decorators)
         logger.info("Auto-discovering executor modules...")
@@ -152,9 +148,13 @@ async def _initialize_registries() -> None:
         if not manager.is_registered(ExecutorRegistry):
             manager.register_registry(ExecutorRegistry)
 
-        # Step 4: Get registry instances
+        # Step 4: Get registry instances and auto-discover tools
         tool_registry = manager.get_registry(ToolRegistry)
         executor_registry = manager.get_registry(ExecutorRegistry)
+
+        # Auto-discover and register InnerTool subclasses
+        logger.info("Auto-discovering tool modules...")
+        tool_registry.discover_and_register_tools()
 
         # Log current state
         tool_count = len(tool_registry.list_tools())

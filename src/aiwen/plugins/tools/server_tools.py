@@ -5,15 +5,14 @@ Migrated from LangChain @tool decorator to unified BaseTool interface.
 All tools execute directly in the API server process.
 """
 
+import contextlib
 from datetime import UTC, datetime
 import logging
 from typing import Any
 
 from pydantic import Field
-from aiwen.registries.core import register_tool
 
-
-from aiwen.services.context.tools.base_tool import (
+from aiwen.core.interfaces.tool import (
     ClientConfig,
     ContainerConfig,
     InnerTool,
@@ -22,8 +21,6 @@ from aiwen.services.context.tools.base_tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
-import contextlib
-
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +28,6 @@ logger = logging.getLogger(__name__)
 # UTILITY TOOLS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@register_tool
 class GetCurrentTimeTool(InnerTool):
     """Get the current server time"""
 
@@ -74,7 +70,6 @@ class GetCurrentTimeTool(InnerTool):
             },
         )
 
-@register_tool
 class CacheGetTool(InnerTool):
     """Get a value from the cache"""
 
@@ -116,7 +111,6 @@ class CacheGetTool(InnerTool):
             },
         )
 
-@register_tool
 class CacheSetTool(InnerTool):
     """Set a value in the cache"""
 
@@ -155,7 +149,6 @@ class CacheSetTool(InnerTool):
             },
         )
 
-@register_tool
 class GetWorkspaceInfoTool(InnerTool):
     """Get detailed information about a workspace"""
 
@@ -216,7 +209,6 @@ class GetWorkspaceInfoTool(InnerTool):
                 },
             )
 
-@register_tool
 class GetRunHistoryTool(InnerTool):
     """Get recent run history for a workspace"""
 
@@ -290,7 +282,6 @@ class GetRunHistoryTool(InnerTool):
 # CONTEXT TOOLS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@register_tool
 class SearchContextTool(InnerTool):
     """Search context content using regular expressions"""
 
@@ -461,7 +452,6 @@ class SearchContextTool(InnerTool):
                 },
             )
 
-@register_tool
 class QueryStructuredDataTool(InnerTool):
     """Execute a read-only SQL query on structured data"""
 
@@ -532,7 +522,6 @@ class QueryStructuredDataTool(InnerTool):
             )
 
 
-@register_tool
 class CodeExecutionInnerTool(InnerTool):
     """Execute Python code with input data in a sandboxed context
 
@@ -597,7 +586,6 @@ class CodeExecutionInnerTool(InnerTool):
                 error=f"Execution error: {e!s}",
             )
 
-@register_tool
 class HttpRequestInnerTool(InnerTool):
     """Make HTTP API calls
 
@@ -682,7 +670,6 @@ class HttpRequestInnerTool(InnerTool):
                 error=f"HTTP request failed: {e!s}",
             )
 
-@register_tool
 class ClientRequestInnerTool(InnerTool):
     """Execute a request on the user's client (browser)
 
@@ -700,11 +687,6 @@ class ClientRequestInnerTool(InnerTool):
         category="execution",
         tags=["client", "browser", "request", "inner"],
         timeout=120,
-        client_config=ClientConfig(
-            handler_name="clientRequest",
-            config={},
-            require_user_approval=True,
-        ),
     )
 
     class InputSchema(ToolInputSchema):
@@ -763,7 +745,6 @@ class ClientRequestInnerTool(InnerTool):
             data=payload,
         )
 
-@register_tool
 class SandboxExecutionInnerTool(InnerTool):
     """Execute a command in an isolated sandbox (Docker container)
 

@@ -8,13 +8,14 @@ agents can call tools directly in-process.
 from pydantic import Field
 
 from aiwen.mcp_router import browser as browser_module
-from aiwen.registries.base_class.base_tool import InnerTool, ToolMetadata, ToolInputSchema, \
-    ToolOutputSchema
-from aiwen.registries.core import register_tool
+from aiwen.core.interfaces.tool import (
+    InnerTool,
+    ToolInputSchema,
+    ToolMetadata,
+    ToolOutputSchema,
+)
 
 
-
-@register_tool
 class BrowserLaunchTool(InnerTool):
     """Launch a browser session and return a session_id"""
 
@@ -56,7 +57,7 @@ class BrowserLaunchTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserGotoTool(InnerTool):
     """Navigate to a URL"""
 
@@ -93,7 +94,7 @@ class BrowserGotoTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserClickTool(InnerTool):
     """Click an element"""
 
@@ -129,7 +130,7 @@ class BrowserClickTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserTypeTool(InnerTool):
     """Type text into an element"""
 
@@ -167,7 +168,7 @@ class BrowserTypeTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserPressTool(InnerTool):
     """Press a key on an element"""
 
@@ -197,7 +198,7 @@ class BrowserPressTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserWaitForTool(InnerTool):
     """Wait for an element state"""
 
@@ -234,7 +235,7 @@ class BrowserWaitForTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserSleepTool(InnerTool):
     """Pause for a duration in ms"""
 
@@ -262,7 +263,7 @@ class BrowserSleepTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserScrollTool(InnerTool):
     """Scroll the page"""
 
@@ -297,7 +298,7 @@ class BrowserScrollTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserMoveMouseTool(InnerTool):
     """Move mouse cursor"""
 
@@ -331,7 +332,7 @@ class BrowserMoveMouseTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserScreenshotTool(InnerTool):
     """Take a screenshot and return base64 bytes"""
 
@@ -362,7 +363,7 @@ class BrowserScreenshotTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserGetTextTool(InnerTool):
     """Get inner text"""
 
@@ -390,7 +391,7 @@ class BrowserGetTextTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserGetHtmlTool(InnerTool):
     """Get HTML content"""
 
@@ -420,7 +421,7 @@ class BrowserGetHtmlTool(InnerTool):
             data=result,
         )
 
-@register_tool
+
 class BrowserCloseTool(InnerTool):
     """Close a browser session"""
 
@@ -445,38 +446,3 @@ class BrowserCloseTool(InnerTool):
             message="Browser session closed successfully",
             data=result,
         )
-
-
-# Export tool collections
-BROWSER_TOOLS = [
-    BrowserLaunchTool,
-    BrowserGotoTool,
-    BrowserClickTool,
-    BrowserTypeTool,
-    BrowserPressTool,
-    BrowserWaitForTool,
-    BrowserSleepTool,
-    BrowserScrollTool,
-    BrowserMoveMouseTool,
-    BrowserScreenshotTool,
-    BrowserGetTextTool,
-    BrowserGetHtmlTool,
-    BrowserCloseTool,
-]
-
-__all__ = [
-    "BROWSER_TOOLS",
-    "BrowserClickTool",
-    "BrowserCloseTool",
-    "BrowserGetHtmlTool",
-    "BrowserGetTextTool",
-    "BrowserGotoTool",
-    "BrowserLaunchTool",
-    "BrowserMoveMouseTool",
-    "BrowserPressTool",
-    "BrowserScreenshotTool",
-    "BrowserScrollTool",
-    "BrowserSleepTool",
-    "BrowserTypeTool",
-    "BrowserWaitForTool",
-]

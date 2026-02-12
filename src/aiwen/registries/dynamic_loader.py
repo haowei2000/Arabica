@@ -33,7 +33,7 @@ from pydantic import Field, create_model
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.registries.base_class.base_tool import (
+from aiwen.core.interfaces.tool import (
     ChainStep,
     ExternalTool,
     ToolInputSchema,

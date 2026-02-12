@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.app import App
 from aiwen.models.runs.run import Run
-from aiwen.registries import ExecutorRegistry
+from aiwen.registries.core import ExecutorRegistry
 from aiwen.core.interfaces.executor import AgentEvent
 from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.registries.dynamic_loader import DynamicToolLoader
@@ -154,7 +154,7 @@ class Worker:
         """Build the default ToolProvider with browser tools at startup."""
         extra: list = []
         try:
-            from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
+            from aiwen.plugins.tools.browser_tools import BROWSER_TOOLS
             extra.extend(BROWSER_TOOLS)
         except ImportError:
             logger.warning("Browser tools module not available")

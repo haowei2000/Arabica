@@ -130,7 +130,7 @@ config = {
 ## Complete Configuration Example
 
 ```python
-from aiwen.services.executor.executor_template.default.concrete import (
+from aiwen.plugins.executors.default import (
     DefaultAgentTemplate,
 )
 
@@ -146,9 +146,9 @@ config = {
 
     # Server tools (built-in server-side operations)
     "server_tools": {
-        "context": True,   # Search contexts, query DB, get history
-        "file": True,      # File operations
-        "utility": True,   # Time, workspace info, cache
+        "context": True,  # Search contexts, query DB, get history
+        "file": True,  # File operations
+        "utility": True,  # Time, workspace info, cache
     },
 
     # Tools requiring approval

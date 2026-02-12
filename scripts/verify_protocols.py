@@ -14,7 +14,7 @@ def verify_protocol_imports():
     """Verify that protocols can be imported."""
     print("1. Verifying protocol imports...")
     try:
-        from aiwen.core.interfaces import (
+        from aiwen.core.interfaces.protocols import (
             RegistrableProtocol,
             ToolProtocol,
             ExecutorProtocol,
@@ -35,7 +35,7 @@ def verify_protocol_metadata():
     """Verify that protocol metadata is available."""
     print("\n2. Verifying protocol metadata...")
     try:
-        from aiwen.core.interfaces import PROTOCOL_REGISTRY
+        from aiwen.core.interfaces.protocols import PROTOCOL_REGISTRY
 
         expected_protocols = [
             "RegistrableProtocol",
@@ -60,20 +60,14 @@ def verify_tool_protocol():
     """Verify that BaseTool implements ToolProtocol."""
     print("\n3. Verifying BaseTool implements ToolProtocol...")
     try:
-        from aiwen.registries.base_class import BaseTool
-        from aiwen.core.interfaces import ToolProtocol, is_tool
-        from aiwen.core.interfaces.tool import (
-            ToolMetadata,
-            ToolOutputSchema,
-            ToolExecutionMode,
-        )
+        from aiwen.core.interfaces.tool import BaseTool, ToolMetadata, ToolOutputSchema
+        from aiwen.core.interfaces.protocols import ToolProtocol, is_tool
 
         class TestTool(BaseTool):
             METADATA: ClassVar[ToolMetadata] = ToolMetadata(
                 name="test_tool",
                 display_name="Test Tool",
                 description="A test tool",
-                execution_mode=ToolExecutionMode.SERVER_RUN,
             )
 
             async def execute(self, input_data):
@@ -119,8 +113,8 @@ def verify_registry_protocol():
     """Verify that registries implement RegistryProtocol."""
     print("\n4. Verifying registries implement RegistryProtocol...")
     try:
-        from aiwen.registries import ToolRegistry, ExecutorRegistry
-        from aiwen.core.interfaces import RegistryProtocol, is_registry
+        from aiwen.registries.core import ToolRegistry, ExecutorRegistry
+        from aiwen.core.interfaces.protocols import RegistryProtocol, is_registry
 
         # Test ToolRegistry
         tool_registry = ToolRegistry()
@@ -153,8 +147,8 @@ def verify_type_checkers():
     """Verify that type checker functions work."""
     print("\n5. Verifying type checker functions...")
     try:
-        from aiwen.core.interfaces import is_tool, is_executor, is_registry
-        from aiwen.registries import ToolRegistry
+        from aiwen.core.interfaces.protocols import is_tool, is_executor, is_registry
+        from aiwen.registries.core import ToolRegistry
 
         # Test with valid objects
         registry = ToolRegistry()
@@ -179,24 +173,19 @@ def verify_type_checkers():
         return False
 
 
-def verify_exports():
-    """Verify that protocols are exported from registries module."""
-    print("\n6. Verifying protocol exports from registries module...")
+def verify_direct_imports():
+    """Verify that all source modules are directly importable."""
+    print("\n6. Verifying direct source module imports...")
     try:
-        from aiwen.registries import (
-            ToolProtocol,
-            ExecutorProtocol,
-            RegistryProtocol,
-            RegistrableProtocol,
-            is_tool,
-            is_executor,
-            is_registry,
-            PROTOCOL_REGISTRY,
-        )
-        print("   ✓ All protocols exported from aiwen.registries")
+        from aiwen.core.interfaces.protocols import ToolProtocol, ExecutorProtocol, RegistryProtocol
+        from aiwen.core.interfaces.tool import BaseTool, InnerTool, ToolMetadata
+        from aiwen.core.interfaces.executor import Executor, AgentEvent, WaitingForTool
+        from aiwen.registries.core import ToolRegistry, ExecutorRegistry, register_tool, register_executor
+        from aiwen.registries.manager import RegistryManager, get_registry
+        print("   ✓ All source modules importable directly")
         return True
     except ImportError as e:
-        print(f"   ✗ Failed to import protocols from registries: {e}")
+        print(f"   ✗ Failed to import from source modules: {e}")
         return False
 
 
@@ -212,7 +201,7 @@ def main():
         verify_tool_protocol,
         verify_registry_protocol,
         verify_type_checkers,
-        verify_exports,
+        verify_direct_imports,
     ]
 
     results = []

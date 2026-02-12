@@ -20,8 +20,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.registries.base_class.base_tool import BaseTool
-from aiwen.registries.base_class.base_executor import Executor
+from aiwen.core.interfaces.tool import BaseTool
+from aiwen.core.interfaces.executor import Executor
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +321,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
              are no longer registered.
         """
         from aiwen.models.context.tools import Tool as ToolModel
-        from aiwen.services.context.tools.base_tool import InnerTool
+        from aiwen.core.interfaces.tool import InnerTool
 
         # Collect the set of currently-registered InnerTool names
         registered_names: set[str] = set()
@@ -539,6 +539,71 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             "input_schema": tool_class.InputSchema.model_json_schema(),
             "output_schema": tool_class.OutputSchema.model_json_schema(),
         }
+
+    # ==================== Auto-Discovery ====================
+
+    def discover_and_register_tools(
+        self, extra_paths: list[str] | None = None
+    ) -> None:
+        """Auto-discover and register all InnerTool subclasses from plugins/tools/.
+
+        Recursively scans all Python files under ``aiwen/plugins/tools/``,
+        finds concrete ``BaseTool`` subclasses that define ``METADATA``, and
+        registers them in this registry.
+        """
+        import importlib
+        import inspect
+        from pathlib import Path
+
+        plugins_dir = Path(__file__).parent.parent / "plugins"
+        tools_dir = plugins_dir / "tools"
+
+        # Collect module paths by scanning the directory
+        paths: list[str] = []
+        if tools_dir.exists():
+            for py_file in tools_dir.rglob("*.py"):
+                if "__pycache__" in str(py_file) or py_file.name == "__init__.py":
+                    continue
+                relative_path = py_file.relative_to(plugins_dir)
+                module_parts = list(relative_path.parts[:-1]) + [py_file.stem]
+                paths.append(f"aiwen.plugins.{'.'.join(module_parts)}")
+        else:
+            self.logger.warning("Tool plugins directory not found: %s", tools_dir)
+
+        if extra_paths:
+            paths.extend(extra_paths)
+
+        registered = 0
+        for module_path in paths:
+            try:
+                mod = importlib.import_module(module_path)
+            except Exception as e:
+                self.logger.error(
+                    "Failed to import tool module %s: %s", module_path, e
+                )
+                continue
+
+            for _name, obj in inspect.getmembers(mod, inspect.isclass):
+                if (
+                    issubclass(obj, BaseTool)
+                    and obj is not BaseTool
+                    and not inspect.isabstract(obj)
+                    and hasattr(obj, "METADATA")
+                    and obj.METADATA.name not in self._registry
+                ):
+                    try:
+                        self.register(obj)
+                        registered += 1
+                    except Exception as e:
+                        self.logger.error(
+                            "Failed to register tool %s: %s", obj.__name__, e
+                        )
+
+        self.logger.info(
+            "Tool auto-discovery: %d tools registered from %d modules",
+            registered,
+            len(paths),
+        )
 
     # ==================== Backward Compatibility ====================
 
@@ -843,13 +908,13 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
         logger.info("Auto-discovering executor modules...")
 
-        # Get executor_template directory
-        current_dir = Path(__file__).parent.parent / "services" / "executor"
-        executor_template_dir = current_dir / "executor_template"
+        # Get plugins/executors directory
+        plugins_dir = Path(__file__).parent.parent / "plugins"
+        executors_dir = plugins_dir / "executors"
 
-        if not executor_template_dir.exists():
+        if not executors_dir.exists():
             logger.warning(
-                f"Executor template directory not found: {executor_template_dir}"
+                f"Executor plugins directory not found: {executors_dir}"
             )
             return
 
@@ -857,16 +922,16 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         failed_count = 0
 
         # Recursively find all Python files
-        for py_file in executor_template_dir.rglob("*.py"):
+        for py_file in executors_dir.rglob("*.py"):
             if "__pycache__" in str(py_file) or py_file.name == "__init__.py":
                 continue
 
             try:
                 # Convert file path to a module path
-                # e.g., executor_template/default/concrete.py -> executor_template.default.concrete
-                relative_path = py_file.relative_to(current_dir)
+                # e.g., plugins/executors/default/concrete.py -> aiwen.plugins.executors.default.concrete
+                relative_path = py_file.relative_to(plugins_dir)
                 module_parts = list(relative_path.parts[:-1]) + [py_file.stem]
-                module_name = f"aiwen.services.executor.{'.'.join(module_parts)}"
+                module_name = f"aiwen.plugins.{'.'.join(module_parts)}"
 
                 # Import the module
                 importlib.import_module(module_name)

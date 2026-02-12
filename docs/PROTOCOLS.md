@@ -47,11 +47,10 @@ Protocol for tool components registered in `ToolRegistry`.
 
 ```python
 from aiwen.core.interfaces import ToolProtocol
-from aiwen.core.interfaces.tool import (
+from aiwen.registries.base_class import (
     ToolMetadata,
     ToolInputSchema,
     ToolOutputSchema,
-    ToolExecutionMode
 )
 from typing import ClassVar
 
@@ -61,7 +60,6 @@ class MyTool(ToolProtocol):
         name="my_tool",
         display_name="My Tool",
         description="Does something",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
     )
 
     InputSchema: ClassVar[type[ToolInputSchema]] = ToolInputSchema

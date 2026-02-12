@@ -26,7 +26,7 @@ if env_file.exists():
 else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
 
-from aiwen.registries import ExecutorRegistry
+from aiwen.registries.core import ExecutorRegistry
 
 # 配置日志
 logging.basicConfig(

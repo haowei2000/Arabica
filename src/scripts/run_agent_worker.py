@@ -31,7 +31,7 @@ from aiwen.celery_worker.task_worker import start_worker
 
 from aiwen.extensions.database import get_session
 from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
-from aiwen.registries import ExecutorRegistry
+from aiwen.registries.core import ExecutorRegistry
 
 # 确保日志目录存在
 log_dir = project_root / "logs"

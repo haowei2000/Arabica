@@ -2,9 +2,9 @@
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from aiwen.registries import register_executor
+from aiwen.core.interfaces.executor import AgentEvent, Executor
+from aiwen.registries.core import register_executor
 from aiwen.schemas.events.event_payloads import UserMessage
-from aiwen.registries.base_class.base_executor import AgentEvent, Executor
 
 
 @register_executor
