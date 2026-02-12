@@ -280,10 +280,13 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         ...
 
     async def stream(
-        self, user_message: Any, tool_registry: Any
+        self, user_message: Any,
     ) -> AsyncGenerator[Any, None]:
         """
         Stream typed events during execution.
+
+        Tool dependencies are injected via the constructor (config),
+        not passed as arguments to this method.
 
         Yields events like:
           - AGENT_TOKEN: Streaming text chunks
@@ -295,7 +298,6 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
 
         Args:
             user_message: User message object
-            tool_registry: ToolRegistry instance for tool lookup
 
         Yields:
             AgentEvent instances

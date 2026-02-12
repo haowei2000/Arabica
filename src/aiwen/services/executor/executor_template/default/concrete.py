@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Default Executor – conversation context + structured event stream.
 
-Implements a manual agentic loop with tool calling through the ToolRegistry.
-When the LLM outputs tool calls, the executor looks up each tool by name
-in the ToolRegistry and executes it directly via ``BaseTool.__call__()``,
-then feeds the results back to the LLM as ``ToolMessage`` instances.
+Implements a manual agentic loop with tool calling through injected
+abstractions (``ToolProvider`` / ``ToolCaller``).  The executor never
+imports concrete tool registries or tool modules directly – all
+dependencies are injected via config by the Worker (composition root).
 
 Tool approval (HITL) flow
 -------------------------
@@ -37,7 +37,8 @@ from langchain_core.messages import (
     messages_to_dict,
 )
 
-from aiwen.registries import ToolRegistry, register_executor
+from aiwen.core.interfaces.tool_service import ToolCaller, ToolProvider
+from aiwen.registries import register_executor
 from aiwen.registries.base_class.base_executor import (
     AgentEvent,
     Executor,
@@ -46,7 +47,6 @@ from aiwen.registries.base_class.base_executor import (
 from aiwen.schemas.app import AppConfig
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.schemas.llm.chat_llm import ChatLLM
-from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +62,14 @@ class DefaultExecutor(Executor):
 
     Uses a manual agentic loop: the LLM is called with tool schemas bound
     via ``bind_tools()``.  When the LLM response contains tool calls, each
-    tool is looked up in the **ToolRegistry** and executed directly via
-    ``BaseTool.__call__()``.  Tool results are fed back to the LLM as
-    ``ToolMessage`` instances and the loop continues until the LLM produces
-    a final text response (no tool calls).
+    tool is executed via the injected ``ToolCaller`` abstraction.  Tool
+    results are fed back to the LLM as ``ToolMessage`` instances and the
+    loop continues until the LLM produces a final text response (no tool
+    calls).
+
+    Dependency Inversion:
+      - ``ToolProvider``  – provides available tool classes (injected via config)
+      - ``ToolCaller``    – executes a tool by name (injected via config)
     """
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
@@ -83,13 +87,16 @@ class DefaultExecutor(Executor):
         self.model_provider = config.get("model_provider", "tongyi")
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
-        self.enable_browser_tools = config.get("enable_browser_tools", True)
-        # Server tools configuration - see _load_server_tools() for details
-        self.server_tools_config = config.get("server_tools", False)
         # Tools in this list pause the run and ask the user before executing.
         self.approval_tools: list[str] = config.get("approval_tools", [])
         # Maximum tool-call iterations before forcing a stop.
         self.max_iterations: int = config.get("max_iterations", 10)
+
+        # ── Dependency-injected abstractions ─────────────────────
+        # The Worker injects concrete implementations; the executor
+        # only depends on the ToolProvider / ToolCaller protocols.
+        self.tool_provider: ToolProvider | None = config.get("tool_provider")
+        self.tool_caller: ToolCaller | None = config.get("tool_caller")
 
         from aiwen.extensions.llm.llm import get_llm
 
@@ -97,29 +104,12 @@ class DefaultExecutor(Executor):
 
         # Collect tool definitions (LangChain StructuredTool objects)
         # used to inform the LLM which tools are available.
-        lc_tools: list = []
-
-        # Add browser tools if enabled
-        if self.enable_browser_tools:
-            for tool_class in BROWSER_TOOLS:
-                lc_tool = self._convert_to_langchain_tool(tool_class)
-                lc_tools.append(lc_tool)
-            logger.info(f"Loaded {len(BROWSER_TOOLS)} browser tools")
-
-        # Add server tools based on configuration
-        server_tool_classes = self._load_server_tools()
-        for tool_class in server_tool_classes:
-            lc_tool = self._convert_to_langchain_tool(tool_class)
-            lc_tools.append(lc_tool)
-
-        # Add user-defined tools from ToolRegistry
-        user_tools = self._load_registry_tools()
-        lc_tools.extend(user_tools)
+        lc_tools: list = self._load_tools()
 
         self.system_prompt = "You are a helpful Assistant "
 
         # Bind tool schemas to the LLM so it knows which tools are available.
-        # Tool *execution* goes through the ToolRegistry at runtime, not through
+        # Tool *execution* goes through the ToolCaller at runtime, not through
         # LangChain's agent loop.
         if lc_tools:
             self.llm_with_tools = self.llm.bind_tools(lc_tools)
@@ -136,72 +126,31 @@ class DefaultExecutor(Executor):
         """
         pass
 
-    # ── server tool loading ──────────────────────────────────────
+    # ── tool loading (via injected ToolProvider) ────────────────
 
-    def _load_server_tools(self) -> list:
-        """Load server-side tools based on configuration.
+    def _load_tools(self) -> list:
+        """Load tools from the injected ToolProvider and convert to LangChain format.
 
-        Configuration options:
-        1. False (default): No server tools
-        2. True: All server tools (CONTEXT + FILE + UTILITY)
-        3. List of strings: Specific tool groups ["context", "file", "utility"]
-        4. Dict with group keys: {"context": True, "file": False, "utility": True}
+        If no ``tool_provider`` was injected, returns an empty list.
 
         Returns:
-            list: Selected server tools
+            list: LangChain StructuredTool instances for binding to the LLM.
         """
-        config = self.server_tools_config
-
-        # Case 1: Disabled
-        if config is False or config is None:
+        if self.tool_provider is None:
+            logger.warning("No ToolProvider injected; executor has no tools")
             return []
 
-        # Case 2: Enable all
-        if config is True:
-            logger.info("Loading all server tools")
-            return list(SERVER_TOOLS)
+        lc_tools: list = []
+        for tool_class in self.tool_provider.get_tool_classes():
+            try:
+                lc_tool = self._convert_to_langchain_tool(tool_class)
+                lc_tools.append(lc_tool)
+            except Exception as e:
+                name = getattr(getattr(tool_class, "METADATA", None), "name", tool_class)
+                logger.error(f"Failed to convert tool {name}: {e}", exc_info=True)
 
-        # Case 3: List of tool groups
-        if isinstance(config, list):
-            tools = []
-            for group_name in config:
-                group_name = group_name.lower()
-                if group_name == "context":
-                    tools.extend(CONTEXT_TOOLS)
-                    logger.info("Loaded CONTEXT_TOOLS")
-                elif group_name == "file":
-                    tools.extend(FILE_TOOLS)
-                    logger.info("Loaded FILE_TOOLS")
-                elif group_name == "utility":
-                    tools.extend(UTILITY_TOOLS)
-                    logger.info("Loaded UTILITY_TOOLS")
-                elif group_name == "all":
-                    tools.extend(SERVER_TOOLS)
-                    logger.info("Loaded all SERVER_TOOLS")
-                else:
-                    logger.warning(f"Unknown tool group: {group_name}")
-            return tools
-
-        # Case 4: Dict with fine-grained control
-        if isinstance(config, dict):
-            tools = []
-            if config.get("context", False):
-                tools.extend(CONTEXT_TOOLS)
-                logger.info("Loaded CONTEXT_TOOLS")
-            if config.get("file", False):
-                tools.extend(FILE_TOOLS)
-                logger.info("Loaded FILE_TOOLS")
-            if config.get("utility", False):
-                tools.extend(UTILITY_TOOLS)
-                logger.info("Loaded UTILITY_TOOLS")
-            return tools
-
-        logger.warning(
-            f"Invalid server_tools config: {config}, using default (no tools)"
-        )
-        return []
-
-    # ── user tool loading ────────────────────────────────────────
+        logger.info(f"Loaded {len(lc_tools)} tools via ToolProvider")
+        return lc_tools
 
     def _convert_to_langchain_tool(self, tool_class: type):
         """Convert BaseTool class to LangChain-compatible tool.
@@ -236,62 +185,27 @@ class DefaultExecutor(Executor):
 
         return lc_tool
 
-    def _load_registry_tools(self) -> list:
-        """Load tools from ToolRegistry and convert to LangChain format.
-
-        Returns:
-            list: LangChain-compatible tool instances
-        """
-        langchain_tools = []
-
-        # Get all registered tool names
-        tool_names = ToolRegistry.list_tools()
-
-        for tool_name in tool_names:
-            try:
-                # Get tool class and instance
-                tool_class = ToolRegistry.get_tool_class(tool_name)
-                tool_instance = ToolRegistry.get_tool_instance(tool_name)
-
-                if not tool_class or not tool_instance:
-                    logger.warning(f"Tool {tool_name} not found in registry")
-                    continue
-
-                # Convert to LangChain tool
-                lc_tool = self._convert_to_langchain_tool(tool_instance)
-                langchain_tools.append(lc_tool)
-                logger.info(f"Loaded tool from registry: {tool_name}")
-
-            except Exception as e:
-                logger.error(f"Failed to load tool {tool_name}: {e}", exc_info=True)
-
-        return langchain_tools
-
     # ── tool execution via ToolRegistry ──────────────────────────
 
     async def _execute_tool_call(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Execute a tool call by looking it up in the ToolRegistry.
-
-        All tools (browser, server, user-defined) are registered via
-        ``@register_tool`` and can be retrieved from the ToolRegistry by name.
+        """Execute a tool call via the injected ToolCaller.
 
         Args:
             tool_name: Name of the tool (matches ``METADATA.name``).
             arguments: Arguments to pass to the tool.
 
         Returns:
-            dict: Tool execution result from ``BaseTool.__call__()``.
+            dict: Tool execution result from ``ToolCaller.call()``.
 
         Raises:
-            ValueError: If the tool is not found in the registry.
+            ValueError: If no ToolCaller was injected or tool not found.
         """
-        tool_instance = ToolRegistry.get_tool_instance(tool_name)
-        if tool_instance is not None:
-            return await tool_instance(**arguments)
+        if self.tool_caller is None:
+            raise ValueError("No ToolCaller injected; cannot execute tools")
 
-        raise ValueError(f"Tool '{tool_name}' not found in ToolRegistry")
+        return await self.tool_caller.call(tool_name, arguments)
 
     # ── message serialization for HITL state persistence ─────────
 

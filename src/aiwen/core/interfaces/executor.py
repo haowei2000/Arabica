@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from aiwen.schemas.context.tools import ToolClientRequestPayload
 from aiwen.schemas.events.event_payloads import (
@@ -16,10 +16,6 @@ from aiwen.schemas.events.event_payloads import (
     ToolResultEvent,
     UserMessage,
 )
-
-# Avoid circular import by using TYPE_CHECKING
-if TYPE_CHECKING:
-    from aiwen.registries import ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -99,9 +95,12 @@ class Executor(Protocol):
         ...
 
     async def stream(
-        self, user_message: UserMessage, tool_registry: "ToolRegistry"
+        self, user_message: UserMessage | dict,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Yield typed events while processing input.
+
+        Tool dependencies are injected via the constructor (config),
+        not passed as arguments to this method.
 
         The default implementation runs the agent to completion and emits
         a single ``AGENT_MESSAGE``.  Override for true streaming.

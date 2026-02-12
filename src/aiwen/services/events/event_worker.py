@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.models.app import App
 from aiwen.models.runs.run import Run
 from aiwen.registries import ExecutorRegistry
+from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.registries.base_class.base_executor import AgentEvent, Executor
@@ -144,23 +145,27 @@ class Worker:
         self, executor_code: str, app_config: dict | None = None
     ) -> Executor:
         """
-        根据 executor_code 获取 Executor 类，并准备配置。
+        Build an Executor instance with dependency-injected tool services.
+
+        The concrete ToolProvider / ToolCaller are created here (at the
+        composition root) and passed into the executor via config so the
+        executor only depends on the abstract protocols.
 
         Args:
-            executor_code: Executor 的唯一标识符
-            app_config: 应用级别的配置，会覆盖模板配置
+            executor_code: Executor identifier (matches TEMPLATE["template_code"]).
+            app_config: App-level config that overrides the template defaults.
 
         Returns:
-            配置好的 Executor 实例
+            A fully configured Executor instance.
 
         Raises:
-            ValueError: 当 executor_code 未找到时
+            ValueError: When executor_code is not registered.
         """
         executor_cls = ExecutorRegistry.get(executor_code)
         if not executor_cls:
             raise ValueError(f"Executor with code '{executor_code}' not found")
 
-        # 获取模板配置
+        # Build config from template defaults
         config: dict = {}
         template_config = executor_cls.TEMPLATE.get("config")
         if template_config is not None:
@@ -169,9 +174,24 @@ class Worker:
             elif isinstance(template_config, dict):
                 config = dict(template_config)
 
-        # 应用级配置覆盖模板配置
+        # App-level config overrides template defaults
         if app_config:
             config.update(app_config)
+
+        # ── Inject tool abstractions (Dependency Inversion) ──────
+        # Collect extra tool classes based on config flags
+        extra_tool_classes: list = []
+        if config.get("enable_browser_tools", True):
+            try:
+                from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
+                extra_tool_classes.extend(BROWSER_TOOLS)
+            except ImportError:
+                logger.warning("Browser tools module not available")
+
+        config["tool_provider"] = RegistryToolProvider(
+            extra_tool_classes=extra_tool_classes,
+        )
+        config["tool_caller"] = RegistryToolCaller()
 
         return executor_cls(config)
 
