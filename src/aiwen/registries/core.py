@@ -308,21 +308,36 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         return tool_class()
 
     async def _sync_to_database(self, db: AsyncSession) -> None:
-        """Sync InnerTools to a database."""
+        """Sync InnerTools to the database and enforce consistency.
+
+        Three phases:
+          1. **Upsert** – create or update a DB record for every
+             registered InnerTool.
+          2. **Orphan cleanup** – disable DB inner-tool records whose
+             ``tool_code`` no longer exists in the registry (tool was
+             removed from code).
+          3. **Reference validation** – disable external tools whose
+             ``inner_tool_name`` or chain steps point to tools that
+             are no longer registered.
+        """
         from aiwen.models.context.tools import Tool as ToolModel
         from aiwen.services.context.tools.base_tool import InnerTool
 
+        # Collect the set of currently-registered InnerTool names
+        registered_names: set[str] = set()
+
+        # ── Phase 1: Upsert InnerTools ────────────────────────────
         synced_count = 0
         skipped_count = 0
 
         for tool_name, tool_class in self._registry.items():
-            # Only sync InnerTools
             if not issubclass(tool_class, InnerTool):
                 skipped_count += 1
                 continue
 
+            registered_names.add(tool_name)
+
             try:
-                # Check if exists in a database
                 stmt = select(ToolModel).where(
                     ToolModel.tool_code == tool_name,
                     ToolModel.tool_type == "inner",
@@ -332,8 +347,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
                 metadata = tool_class.METADATA
 
-                # Prepare tool data
-                # Extract major version number from semantic version string (e.g., "1.0.0" -> 1)
                 version_int = 1
                 if metadata.version:
                     try:
@@ -358,11 +371,9 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                 }
 
                 if existing_tool:
-                    # Update existing
                     for k, v in tool_data.items():
                         setattr(existing_tool, k, v)
                 else:
-                    # Create new
                     new_tool = ToolModel(**tool_data)
                     db.add(new_tool)
 
@@ -371,8 +382,92 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             except Exception as e:
                 self.logger.error(f"Failed to sync tool '{tool_name}': {e}")
 
+        await db.flush()
+
+        # ── Phase 2: Disable orphaned inner tools ─────────────────
+        orphan_count = 0
+        try:
+            orphan_stmt = select(ToolModel).where(
+                ToolModel.tool_type == "inner",
+                ToolModel.enabled == True,  # noqa: E712
+                ToolModel.tool_code.notin_(registered_names),
+            )
+            orphan_result = await db.execute(orphan_stmt)
+            for orphan in orphan_result.scalars():
+                orphan.enabled = False
+                orphan_count += 1
+                self.logger.warning(
+                    "Disabled orphaned inner tool: %s (removed from code)",
+                    orphan.tool_code,
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to clean up orphaned inner tools: {e}")
+
+        # ── Phase 3: Disable external tools with broken references ─
+        broken_count = 0
+        try:
+            ext_stmt = select(ToolModel).where(
+                ToolModel.tool_type == "external",
+                ToolModel.enabled == True,  # noqa: E712
+            )
+            ext_result = await db.execute(ext_stmt)
+
+            for ext_tool in ext_result.scalars():
+                broken_ref = self._find_broken_reference(ext_tool, registered_names)
+                if broken_ref:
+                    ext_tool.enabled = False
+                    broken_count += 1
+                    self.logger.warning(
+                        "Disabled external tool '%s' (id=%s): %s",
+                        ext_tool.name,
+                        ext_tool.id,
+                        broken_ref,
+                    )
+        except Exception as e:
+            self.logger.error(
+                f"Failed to validate external tool references: {e}"
+            )
+
         await db.commit()
-        self.logger.info(f"Tool sync: {synced_count} synced, {skipped_count} skipped")
+        self.logger.info(
+            "Tool sync: %d synced, %d skipped, "
+            "%d orphaned inner tools disabled, "
+            "%d external tools with broken refs disabled",
+            synced_count,
+            skipped_count,
+            orphan_count,
+            broken_count,
+        )
+
+    @staticmethod
+    def _find_broken_reference(
+        tool_record, registered_names: set[str]
+    ) -> str | None:
+        """Check if an external tool has broken inner-tool references.
+
+        Returns a human-readable reason string if broken, else ``None``.
+        """
+        # Check single-delegation mode
+        inner = getattr(tool_record, "inner_tool_name", None)
+        chain = getattr(tool_record, "chain", None)
+
+        if inner and not chain:
+            if inner not in registered_names:
+                return (
+                    f"inner_tool_name '{inner}' is no longer registered"
+                )
+
+        # Check chain/pipeline mode
+        if chain:
+            for idx, step in enumerate(chain):
+                step_tool = step.get("tool_name") if isinstance(step, dict) else None
+                if step_tool and step_tool not in registered_names:
+                    return (
+                        f"chain step {idx} references "
+                        f"'{step_tool}' which is no longer registered"
+                    )
+
+        return None
 
     # ==================== Tool-Specific Methods ====================
 
