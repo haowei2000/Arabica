@@ -73,13 +73,14 @@ class Worker:
             for k, v in event_data.items()
         }
 
-        # Parse JSON payload back to dict
-        if "payload" in decoded and decoded["payload"]:
-            try:
-                decoded["payload"] = json.loads(decoded["payload"])
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse payload JSON: {decoded['payload']}")
-                decoded["payload"] = {}
+        # Parse JSON fields back to dicts
+        for key in ("payload", "input"):
+            if key in decoded and decoded[key]:
+                try:
+                    decoded[key] = json.loads(decoded[key])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Failed to parse {key} JSON: {decoded[key]}")
+                    decoded[key] = {}
 
         return decoded
 
@@ -195,7 +196,7 @@ class Worker:
                 return
 
             run_id = UUID(str(event["run_id"]))
-            input_data = event.get("payload") or {}
+            input_data = event.get("payload") or event.get("input") or {}
 
             # 2. 获取 Run 及相关数据
             run, app_config = await self._fetch_run_data(run_id)
@@ -279,8 +280,9 @@ class Worker:
             await self._execute_run(executor, user_message, run_id, workspace_id)
 
         elif run_status == RunStatus.WAITING.value:
-            # TODO 处理恢复场景：获取审批信息
-            # user_message = await self._prepare_resume_data(run_id, run.waiting_for, user_message)  # noqa: ERA001
+            user_message = await self._prepare_resume_data(
+                run_id, run.waiting_for, user_message
+            )
             await self.state_machine.resume_from_tool(run_id, auto_commit=True)
             await self._execute_run(executor, user_message, run_id, workspace_id)
 
@@ -288,19 +290,24 @@ class Worker:
             await self._execute_run(executor, user_message, run_id, workspace_id)
 
     async def _prepare_resume_data(
-        self, run_id: UUID, waiting_for: dict | None, user_message: UserMessage
+        self, run_id: UUID, waiting_for: dict | None, user_message: dict | UserMessage
     ) -> dict:
-        """
-        准备恢复执行所需的数据（从 Redis 获取审批信息）。
+        """Prepare resume data by fetching approval info from Redis.
+
+        Merges the original user_message with the stored waiting_for
+        snapshot and the user's approval decision so the executor can
+        reconstruct the conversation and continue from the pause point.
 
         Args:
             run_id: Run UUID
-            waiting_for: 等待的工具信息
-            input_data: 原始输入数据
+            waiting_for: The ``Run.waiting_for`` dict stored at pause time.
+            user_message: Original input data (dict or UserMessage).
 
         Returns:
-            包含恢复信息的输入数据
+            Dict with ``_resumed``, ``_waiting_info``, ``_approval`` keys
+            that the executor's ``stream()`` checks on entry.
         """
+        # Fetch the short-lived approval decision from Redis
         resume_key = f"run:{run_id}:resume_approval"
         raw_approval = await self.redis.get(resume_key)
         approval_data = json.loads(raw_approval) if raw_approval else {}
@@ -308,8 +315,16 @@ class Worker:
         if raw_approval:
             await self.redis.delete(resume_key)
 
+        # Normalise user_message to a plain dict
+        if hasattr(user_message, "model_dump"):
+            base = user_message.model_dump()
+        elif isinstance(user_message, dict):
+            base = dict(user_message)
+        else:
+            base = {"message": str(user_message)}
+
         return {
-            **user_message,
+            **base,
             "_resumed": True,
             "_waiting_info": waiting_for or {},
             "_approval": {
@@ -322,7 +337,7 @@ class Worker:
     async def _execute_run(
         self,
         executor: Executor,
-        user_message: UserMessage,
+        user_message: UserMessage | dict,
         run_id: UUID,
         workspace_id: str,
     ):
