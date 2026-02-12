@@ -232,6 +232,7 @@ class DynamicToolLoader:
             return cached.tool_classes
 
         # ── Slow-path: full load + rebuild ────────────────────────
+        from aiwen.registries.core import ToolRegistry
         from aiwen.services.context.tools.tool_crud import UserToolCRUD
 
         crud = UserToolCRUD(db)
@@ -242,18 +243,59 @@ class DynamicToolLoader:
             tool_type="external",
         )
 
+        # Collect InnerTool names for collision detection
+        inner_names: set[str] = set(ToolRegistry.list_tools())
+
+        # Deduplicate: user's own tools win over public tools with
+        # the same name.  Tools that collide with InnerTool names are
+        # skipped entirely (should not happen if CRUD validation is
+        # in place, but acts as a safety net).
+        seen_names: dict[str, UUID] = {}  # name → owner user_id
         tool_classes: list[type[ExternalTool]] = []
+
         for record in tool_records:
+            name = record.name
+
+            # Safety net: skip external tools that shadow InnerTools
+            if name in inner_names:
+                logger.warning(
+                    "External tool '%s' (id=%s) shadows a built-in tool — skipped",
+                    name,
+                    record.id,
+                )
+                continue
+
+            # Dedup: user's own tool takes priority over public tools
+            if name in seen_names:
+                prev_owner = seen_names[name]
+                if prev_owner == user_id:
+                    # Already loaded the user's own tool — skip duplicate
+                    continue
+                if record.user_id == user_id:
+                    # Current record is the user's own — replace public
+                    tool_classes = [
+                        tc for tc in tool_classes if tc.METADATA.name != name
+                    ]
+                    logger.debug(
+                        "User tool '%s' overrides public tool from user %s",
+                        name,
+                        prev_owner,
+                    )
+                else:
+                    # Both are public from different users — keep first
+                    continue
+
             try:
                 tool_cls = cls.create_tool_class(record)
                 tool_classes.append(tool_cls)
+                seen_names[name] = record.user_id
                 logger.debug(
-                    "Loaded external tool: %s (id=%s)", record.name, record.id,
+                    "Loaded external tool: %s (id=%s)", name, record.id,
                 )
             except Exception as e:
                 logger.error(
                     "Failed to load external tool '%s': %s",
-                    record.name,
+                    name,
                     e,
                     exc_info=True,
                 )

@@ -2,9 +2,22 @@
 User Tool CRUD Operations
 
 Manages user-defined custom tools (external tools) in the unified tool table.
+
+Name-conflict prevention
+~~~~~~~~~~~~~~~~~~~~~~~~
+* **Reserved names** – user tools may not share a ``name`` with any
+  registered InnerTool (e.g. ``http_request``, ``code_execution``).
+* **Chain-step validation** – every ``tool_name`` referenced in
+  ``chain`` steps must exist in the ToolRegistry at creation time.
+* **Per-user uniqueness** – enforced at the application layer (the DB
+  has no composite unique constraint on ``(user_id, name)``).
 """
 
+from __future__ import annotations
+
 import logging
+import re
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -15,12 +28,81 @@ from aiwen.schemas.context.tools.user_tool import UserToolCreate, UserToolUpdate
 
 logger = logging.getLogger(__name__)
 
+# Regex: tool names must be identifier-like (letters, digits, underscores, hyphens)
+_TOOL_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,98}[a-zA-Z0-9]$")
+
 
 class UserToolCRUD:
     """CRUD operations for user tools (external tools in the unified tool table)"""
 
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
+
+    # ------------------------------------------------------------------
+    # Name / chain validation helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_reserved_names() -> set[str]:
+        """Return all InnerTool names currently registered.
+
+        These names are reserved and cannot be used for user tools.
+        """
+        from aiwen.registries.core import ToolRegistry
+
+        return set(ToolRegistry.list_tools())
+
+    @staticmethod
+    def validate_tool_name(name: str, reserved: set[str] | None = None) -> None:
+        """Validate a tool name.
+
+        Raises:
+            ValueError: On invalid format or reserved-name collision.
+        """
+        if not _TOOL_NAME_RE.match(name):
+            raise ValueError(
+                f"Tool name '{name}' is invalid. "
+                "Must start with a letter, end with a letter or digit, "
+                "and contain only letters, digits, underscores, or hyphens "
+                "(2-100 characters)."
+            )
+
+        if reserved is None:
+            reserved = UserToolCRUD._get_reserved_names()
+
+        if name in reserved:
+            raise ValueError(
+                f"Tool name '{name}' is reserved (conflicts with a built-in tool). "
+                "Please choose a different name."
+            )
+
+    @staticmethod
+    def validate_chain_steps(
+        chain: list[dict[str, Any]] | None,
+        reserved: set[str] | None = None,
+    ) -> None:
+        """Validate that every chain step references an existing tool.
+
+        Raises:
+            ValueError: If a step references an unknown tool name.
+        """
+        if not chain:
+            return
+
+        if reserved is None:
+            reserved = UserToolCRUD._get_reserved_names()
+
+        for idx, step in enumerate(chain):
+            step_tool = step.get("tool_name")
+            if not step_tool:
+                raise ValueError(
+                    f"Chain step {idx} is missing 'tool_name'."
+                )
+            if step_tool not in reserved:
+                raise ValueError(
+                    f"Chain step {idx} references unknown tool '{step_tool}'. "
+                    "Only registered built-in tools can be used in chain steps."
+                )
 
     async def create_tool(
         self, user_id: UUID, tool_data: UserToolCreate, auto_commit: bool = True
@@ -37,8 +119,14 @@ class UserToolCRUD:
             Tool: Created tool instance
 
         Raises:
-            ValueError: If tool name already exists for this user
+            ValueError: If tool name already exists, is reserved, or chain
+                steps reference unknown tools.
         """
+        # ── Name validation ──────────────────────────────────────
+        reserved = self._get_reserved_names()
+        self.validate_tool_name(tool_data.name, reserved)
+        self.validate_chain_steps(tool_data.chain, reserved)
+
         # Check if tool name already exists for this user (external only)
         existing = await self.get_tool_by_name(user_id, tool_data.name)
         if existing:
@@ -197,12 +285,20 @@ class UserToolCRUD:
 
         Returns:
             Tool | None: Updated tool or None if not found/not owner
+
+        Raises:
+            ValueError: If updated chain steps reference unknown tools.
         """
         tool = await self.get_tool_by_id(tool_id, user_id)
         if not tool or tool.user_id != user_id:
             return None
 
         update_data = tool_data.model_dump(exclude_unset=True)
+
+        # Validate chain steps if they are being updated
+        if "chain" in update_data and update_data["chain"] is not None:
+            self.validate_chain_steps(update_data["chain"])
+
         for field, value in update_data.items():
             setattr(tool, field, value)
 
