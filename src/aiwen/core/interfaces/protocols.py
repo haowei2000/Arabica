@@ -216,29 +216,27 @@ class ToolProtocol(RegistrableProtocol, Protocol):
 @runtime_checkable
 class ExecutorProtocol(RegistrableProtocol, Protocol):
     """
-    Protocol for executor (agent) components registered in ExecutorRegistry.
+    Protocol for executor (agent) components.
 
-    An executor is an agent that:
+    This is the **consumer-facing interface** that the Worker, Runtime,
+    and Factory depend on.  Concrete executors inherit from the
+    ``Executor`` ABC (in ``executor.py``) which satisfies this protocol.
+
+    An executor:
       - Has a template defining its configuration
       - Can be set up with resources
       - Executes user messages to produce results
       - Optionally streams events during execution
-      - Emits structured events for UI updates
-
-    This protocol defines the contract that all agent executors must satisfy.
+      - Supports graceful cancellation
     """
 
     # ── Required Class Attributes ────────────────────────────────────
 
     TEMPLATE: ClassVar[dict[str, Any]]
-    """
-    Executor template metadata containing:
-      - template_code: Unique identifier (e.g., "DEFAULT", "CONFLICT")
-      - template_name: Human-readable name
-      - enabled: Whether this executor is active
-      - version: Template version
-      - config: Default configuration dict
-    """
+    """Executor template metadata."""
+
+    WaitingForTool: ClassVar[type[Exception]]
+    """Exception class raised when a tool requires human approval."""
 
     # ── Configuration ────────────────────────────────────────────────
 
@@ -249,67 +247,29 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
 
     @abstractmethod
     async def setup(self) -> None:
-        """
-        Setup resources needed by the executor.
-
-        Called once before execution begins. Use this to:
-          - Initialize LLM clients
-          - Load tools from registry
-          - Set up state tracking
-          - Allocate resources
-
-        Raises:
-            Exception: If setup fails
-        """
+        """Setup resources needed by the executor."""
         ...
 
     @abstractmethod
     async def run(self, user_message: Any) -> dict[str, Any]:
-        """
-        Execute to completion and return final result.
-
-        Args:
-            user_message: User message object (UserMessage schema)
-
-        Returns:
-            Final result dictionary (typically contains "answer" key)
-
-        Raises:
-            Exception: Any execution error
-        """
+        """Execute to completion and return final result."""
         ...
 
     async def stream(
         self, user_message: Any,
     ) -> AsyncGenerator[Any, None]:
-        """
-        Stream typed events during execution.
+        """Stream typed events during execution.
 
         Tool dependencies are injected via the constructor (config),
         not passed as arguments to this method.
-
-        Yields events like:
-          - AGENT_TOKEN: Streaming text chunks
-          - TOOL_CALL: Tool invocation
-          - TOOL_RESULT: Tool execution result
-          - AGENT_MESSAGE: Complete response
-
-        Default implementation wraps run() in a single event.
-
-        Args:
-            user_message: User message object
-
-        Yields:
-            AgentEvent instances
-
-        Raises:
-            WaitingForTool: If tool requires approval
-            Exception: Other execution errors
         """
         ...
 
+    async def cancel(self) -> None:
+        """Request graceful cancellation of a running executor."""
+        ...
+
     # ── Event Emission Helpers ───────────────────────────────────────
-    # These methods create typed events for different stages of execution
 
     def _emit_token(self, token: str, *, is_final: bool = False) -> Any:
         """Emit a streaming token event."""

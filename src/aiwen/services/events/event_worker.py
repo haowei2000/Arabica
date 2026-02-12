@@ -18,10 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.models.app import App
 from aiwen.models.runs.run import Run
 from aiwen.registries import ExecutorRegistry
+from aiwen.core.interfaces.executor import AgentEvent
+from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
-from aiwen.registries.base_class.base_executor import AgentEvent, Executor
 from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
@@ -143,7 +144,7 @@ class Worker:
 
     def prepare_executor(
         self, executor_code: str, app_config: dict | None = None
-    ) -> Executor:
+    ) -> ExecutorProtocol:
         """
         Build an Executor instance with dependency-injected tool services.
 
@@ -275,7 +276,7 @@ class Worker:
 
     async def _handle_run_by_status(
         self,
-        executor: Executor,
+        executor: ExecutorProtocol,
         run: Run,
         user_message: UserMessage,
         run_id: UUID,
@@ -356,7 +357,7 @@ class Worker:
 
     async def _execute_run(
         self,
-        executor: Executor,
+        executor: ExecutorProtocol,
         user_message: UserMessage | dict,
         run_id: UUID,
         workspace_id: str,

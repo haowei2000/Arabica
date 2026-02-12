@@ -1,10 +1,18 @@
-# aiwen/services/agent/base.py
-"""Base agent class and typed event-stream protocol."""
+# aiwen/core/interfaces/executor.py
+"""Executor ABC and typed event-stream helpers.
+
+Provides the ``Executor`` abstract base class that concrete executors
+inherit from, along with the ``AgentEvent`` dataclass and the
+``WaitingForTool`` exception used across the streaming pipeline.
+
+Consumers should depend on ``ExecutorProtocol`` (in ``protocols.py``),
+not on this ABC directly — see the Dependency Inversion notes in the plan.
+"""
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar
 
 from aiwen.schemas.context.tools import ToolClientRequestPayload
 from aiwen.schemas.events.event_payloads import (
@@ -59,18 +67,20 @@ class WaitingForTool(Exception):
         super().__init__(f"Waiting for tool approval: {info.get('tool_name')}")
 
 
-class Executor(Protocol):
-    """Abstract base for every agent in the system.
+class Executor(ABC):
+    """Abstract base class for every agent in the system.
+
+    Concrete executors (DefaultExecutor, ConflictExecutor, …) inherit from
+    this class and get the ``_emit_*`` event-factory helpers for free.
+
+    Consumers (Worker, Runtime, Factory) should type-hint with
+    ``ExecutorProtocol`` from ``core.interfaces.protocols`` — **not** this
+    class — so they depend only on the abstract interface.
 
     Subclasses must:
-      * declare a ``TEMPLATE`` ClassVar (consumed by ``@register_agent``)
-      * implement ``run()``
-      * optionally override ``stream()`` – the default wraps ``run()``
-        into a single ``AGENT_MESSAGE`` event
-
-    The ``_emit_*`` helpers build correctly-typed ``AgentEvent`` instances
-    whose payloads are validated by the matching Pydantic schemas before
-    serialisation.
+      * declare a ``TEMPLATE`` ClassVar (consumed by ``@register_executor``)
+      * implement ``setup()``, ``run()``
+      * optionally override ``stream()`` and ``cancel()``
     """
 
     TEMPLATE: ClassVar[dict[str, Any]]
@@ -82,6 +92,7 @@ class Executor(Protocol):
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self._token_index: int = 0
+        self._cancelled: bool = False
 
     # ── core contract ────────────────────────────────────────────
     @abstractmethod
@@ -93,6 +104,15 @@ class Executor(Protocol):
     async def run(self, user_message: UserMessage) -> dict[str, Any]:
         """Run to completion and return the final result."""
         ...
+
+    async def cancel(self) -> None:
+        """Request graceful cancellation of a running executor.
+
+        The default implementation sets an internal flag.  Long-running
+        loops (e.g. the agentic loop) should check ``self._cancelled``
+        periodically.
+        """
+        self._cancelled = True
 
     async def stream(
         self, user_message: UserMessage | dict,

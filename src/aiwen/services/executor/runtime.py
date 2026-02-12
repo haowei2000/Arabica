@@ -23,17 +23,17 @@
 # aiwen/services/agent/runtime.py
 from uuid import UUID
 
-from aiwen.registries.base_class.base_executor import Executor
+from aiwen.core.interfaces.protocols import ExecutorProtocol
 
 
 class AgentRuntime:
     def __init__(self):
-        self._instances: dict[UUID, Executor] = {}
+        self._instances: dict[UUID, ExecutorProtocol] = {}
 
-    def attach(self, task_id: UUID, agent: Executor):
+    def attach(self, task_id: UUID, agent: ExecutorProtocol):
         self._instances[task_id] = agent
 
-    def get(self, task_id: UUID) -> Executor:
+    def get(self, task_id: UUID) -> ExecutorProtocol:
         return self._instances[task_id]
 
     def release(self, task_id: UUID):

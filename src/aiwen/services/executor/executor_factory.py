@@ -25,8 +25,8 @@
 # aiwen/services/agent/app_factory.py
 from typing import Any
 
+from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.registries import ExecutorRegistry
-from aiwen.registries.base_class.base_executor import Executor
 
 
 class AppAgentFactory:
@@ -57,17 +57,18 @@ class AppAgentFactory:
         # 启动时校验一次，失败即是配置错误
         self._agent_cls = ExecutorRegistry.get(template_code)
 
-    def create(self, payload: dict[str, Any]) -> Executor:
+    def create(self, payload: dict[str, Any]) -> ExecutorProtocol:
         """
-        为单个任务创建代理实例
+        Create an executor instance for a single task.
 
-        该方法将应用ID、应用配置和任务载荷合并为最终配置，然后创建代理实例
+        Merges app ID, app config, and task payload into the final
+        config, then instantiates the executor.
 
         Args:
-            payload (dict[str, Any]): 任务特定的配置参数，将与应用默认配置合并
+            payload: Task-specific config parameters.
 
         Returns:
-            Executor: 创建的代理实例
+            An executor instance satisfying ExecutorProtocol.
         """
         config = {
             "appid": self.appid,
