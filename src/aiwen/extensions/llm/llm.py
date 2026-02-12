@@ -10,44 +10,41 @@ from aiwen.middleware.cache_middleware import get_redis_client
 
 logger = logging.getLogger(__name__)
 
+# Cache LLM clients by (name, provider, add_cache) to avoid creating
+# new HTTP connection pools on every call.
+_llm_cache: dict[tuple[str, str, bool], BaseChatModel] = {}
+
 
 def get_llm(
     name: str, provider: str = "tongyi", add_cache: bool = False
 ) -> BaseChatModel:
-    """
-    Factory function to return langchain model instance based on model name and provider.
+    """Return a cached LangChain model instance.
+
+    Instances are cached by ``(name, provider, add_cache)`` so repeated
+    calls with the same arguments reuse the underlying HTTP connection
+    pool instead of creating a new one each time.
 
     Args:
-        name (str): The name of the model.
-        provider (str): The provider of the model. Defaults to "tongyi".
-        add_cache (bool): Whether to add cache to the model. Defaults to False.
+        name: Model name.
+        provider: Model provider. Defaults to ``"tongyi"``.
+        add_cache: Whether to attach a Redis response cache.
 
     Returns:
-        BaseChatModel: Langchain model instance.
-
-    根据模型名称和供应商返回langchain模型调用实例的工厂函数。
-
-    参数:
-        name (str): 模型名称。
-        provider (str): 模型供应商。默认为"tongyi"。
-        add_cache (bool): 是否给模型添加缓存。默认为False。
-
-    返回:
-        BaseChatModel: Langchain模型实例。
+        Cached ``BaseChatModel`` instance.
     """
+    cache_key = (name, provider, add_cache)
+    if cache_key in _llm_cache:
+        return _llm_cache[cache_key]
 
     if add_cache:
-        # Set up Redis cache if Redis URL is provided
         try:
             redis_client = get_redis_client(is_async=False)
             redis_cache = RedisCache(redis_client)
             logger.info("%s %s Redis cache initialized successfully", name, provider)
         except RuntimeError:
-            # Redis not initialized, proceed without cache
             logger.warning("%s %s Redis cache not initialized", name, provider)
             redis_cache = None
         except Exception:
-            # Other Redis error, proceed without cache
             logger.error("%s %s Redis cache initialization failed", name, provider)
             redis_cache = None
     else:
@@ -56,25 +53,26 @@ def get_llm(
     settings = get_settings()
     match provider:
         case "tongyi":
-            # Get settings for Tongyi API key
-            # Use OpenAI config if available, otherwise fall back to dashscope_api_key
             if settings.openai:
                 api_key = settings.openai.api_key or settings.dashscope_api_key
                 base_url = settings.openai.base_url
             else:
                 api_key = settings.dashscope_api_key
-                # Default to Alibaba DashScope compatible API
                 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-            return ChatOpenAI(
+            llm = ChatOpenAI(
                 model=name,
                 api_key=api_key,  # type: ignore
                 base_url=base_url,
                 cache=redis_cache,
             )
         case "ollama":
-            return ChatOllama(
+            llm = ChatOllama(
                 model=name, base_url=settings.ollama.base_url, cache=redis_cache
             )
         case _:
             raise ValueError(f"Unsupported provider: {provider}")
+
+    _llm_cache[cache_key] = llm
+    logger.info("Created and cached LLM client: %s/%s", provider, name)
+    return llm

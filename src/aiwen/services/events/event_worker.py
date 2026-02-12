@@ -18,9 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.models.app import App
 from aiwen.models.runs.run import Run
 from aiwen.registries import ExecutorRegistry
+from aiwen.core.interfaces.executor import AgentEvent
+from aiwen.core.interfaces.protocols import ExecutorProtocol
+from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
-from aiwen.registries.base_class.base_executor import AgentEvent, Executor
 from aiwen.services.executor.runtime import AgentRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
@@ -50,9 +52,15 @@ class Worker:
         self.db = db
         self.consumer_name = consumer_name
         self.runtime = AgentRuntime()
-        self.state_machine = RunStateMachine(db, redis_client)
-        # EventPublisher for unified event format
+        # EventPublisher created once, shared with RunStateMachine
         self.event_publisher = EventPublisher(db, redis_client)
+        self.state_machine = RunStateMachine(
+            db, redis_client, event_publisher=self.event_publisher
+        )
+
+        # ── Startup-initialized tool services (stateless / reusable) ──
+        self._tool_caller = RegistryToolCaller()
+        self._default_tool_provider = self._build_default_tool_provider()
 
     def _parse_redis_event(self, event_data: dict[bytes, bytes]) -> dict:
         """Parse Redis stream event data.
@@ -140,27 +148,41 @@ class Worker:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
+    @staticmethod
+    def _build_default_tool_provider() -> RegistryToolProvider:
+        """Build the default ToolProvider with browser tools at startup."""
+        extra: list = []
+        try:
+            from aiwen.services.context.tools.browser_tools import BROWSER_TOOLS
+            extra.extend(BROWSER_TOOLS)
+        except ImportError:
+            logger.warning("Browser tools module not available")
+        return RegistryToolProvider(extra_tool_classes=extra)
+
     def prepare_executor(
         self, executor_code: str, app_config: dict | None = None
-    ) -> Executor:
-        """
-        根据 executor_code 获取 Executor 类，并准备配置。
+    ) -> ExecutorProtocol:
+        """Build an Executor with startup-initialized tool services.
+
+        The ToolCaller singleton and default ToolProvider are created once
+        in ``__init__`` and reused across runs.  A per-run ToolProvider is
+        only created if the app config explicitly disables browser tools.
 
         Args:
-            executor_code: Executor 的唯一标识符
-            app_config: 应用级别的配置，会覆盖模板配置
+            executor_code: Executor identifier (matches TEMPLATE["template_code"]).
+            app_config: App-level config that overrides the template defaults.
 
         Returns:
-            配置好的 Executor 实例
+            A fully configured Executor instance.
 
         Raises:
-            ValueError: 当 executor_code 未找到时
+            ValueError: When executor_code is not registered.
         """
         executor_cls = ExecutorRegistry.get(executor_code)
         if not executor_cls:
             raise ValueError(f"Executor with code '{executor_code}' not found")
 
-        # 获取模板配置
+        # Build config from template defaults
         config: dict = {}
         template_config = executor_cls.TEMPLATE.get("config")
         if template_config is not None:
@@ -169,9 +191,19 @@ class Worker:
             elif isinstance(template_config, dict):
                 config = dict(template_config)
 
-        # 应用级配置覆盖模板配置
+        # App-level config overrides template defaults
         if app_config:
             config.update(app_config)
+
+        # ── Inject startup-initialized tool services ─────────────
+        config["tool_caller"] = self._tool_caller
+
+        if config.get("enable_browser_tools", True):
+            # Reuse the default provider (includes browser tools)
+            config["tool_provider"] = self._default_tool_provider
+        else:
+            # App explicitly disabled browser tools — minimal provider
+            config["tool_provider"] = RegistryToolProvider()
 
         return executor_cls(config)
 
@@ -182,6 +214,11 @@ class Worker:
         Args:
             event: Parsed event data from Redis stream
         """
+        # Expire cached ORM objects so each run starts with fresh DB state.
+        # This prevents stale identity-map entries from accumulating across
+        # runs without requiring a full per-run session swap.
+        self.db.expire_all()
+
         run_id = None
         try:
             # 1. 验证事件数据
@@ -255,7 +292,7 @@ class Worker:
 
     async def _handle_run_by_status(
         self,
-        executor: Executor,
+        executor: ExecutorProtocol,
         run: Run,
         user_message: UserMessage,
         run_id: UUID,
@@ -336,7 +373,7 @@ class Worker:
 
     async def _execute_run(
         self,
-        executor: Executor,
+        executor: ExecutorProtocol,
         user_message: UserMessage | dict,
         run_id: UUID,
         workspace_id: str,

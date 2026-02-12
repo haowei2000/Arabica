@@ -14,6 +14,10 @@ from aiwen.core.interfaces.protocols import (
     is_tool,
     PROTOCOL_REGISTRY,
 )
+from aiwen.core.interfaces.tool_service import (
+    ToolCaller,
+    ToolProvider,
+)
 
 __all__ = [
     # Protocols
@@ -21,6 +25,9 @@ __all__ = [
     "ToolProtocol",
     "ExecutorProtocol",
     "RegistryProtocol",
+    # Tool Service Abstractions (DIP)
+    "ToolProvider",
+    "ToolCaller",
     # Type Checkers
     "is_tool",
     "is_executor",
