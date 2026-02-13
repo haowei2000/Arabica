@@ -20,8 +20,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.core.interfaces.tool import BaseTool
-from aiwen.core.interfaces.executor import Executor
+from aiwen.interfaces.executor import Executor
+from aiwen.interfaces.tool import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +321,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
              are no longer registered.
         """
         from aiwen.models.context.tools import Tool as ToolModel
-        from aiwen.core.interfaces.tool import InnerTool
+        from aiwen.interfaces.tool import InnerTool
 
         # Collect the set of currently-registered InnerTool names
         registered_names: set[str] = set()
@@ -760,7 +760,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
             )
 
         template = executor_cls.TEMPLATE
-        required_fields = ["template_code", "template_name"]
+        required_fields = ["executor_code", "executor_name"]
         missing = [f for f in required_fields if f not in template]
         if missing:
             raise ValueError(
@@ -769,7 +769,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
     def _extract_key(self, executor_cls: Executor) -> str:  # ty:ignore[invalid-method-override]
         """Extract template code from the executor class."""
-        return executor_cls.TEMPLATE["template_code"]
+        return executor_cls.TEMPLATE["executor_code"]
 
     def _create_instance(
         self, key: str, executor_cls: type[Executor], **kwargs
@@ -806,7 +806,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
                 if not existing:
                     await crud.create_executor(
                         executor_code=executor_code,
-                        executor_name=template["template_name"],
+                        executor_name=template["executor_name"],
                         config=_normalize_config(template.get("config")),
                         enabled=template.get("enabled", True),
                         version=template.get("version", 1),
@@ -865,9 +865,9 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
     ):
         """Register executor in both memory and database."""
         if not executor_code or not executor_code.strip():
-            raise ValueError("template_code cannot be empty")
+            raise ValueError("executor_code cannot be empty")
         if not executor_name or not executor_name.strip():
-            raise ValueError("template_name cannot be empty")
+            raise ValueError("executor_name cannot be empty")
 
         # Register in memory
         self.register(executor_cls)
@@ -895,20 +895,20 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
     @staticmethod
     def discover_and_import_executors() -> None:
-        """
-        Import all executor modules to trigger @register_executor decorators.
+        """Auto-discover and register all Executor subclasses in plugins/executors/.
 
-        Auto-discovers Python files in executor_template/ directory and imports them,
-        ensuring their @register_executor decorators execute and register the classes.
-
-        This is a static method to maintain compatibility with bootstrap code.
+        Scans all Python files, imports them, then inspects every exported
+        class. Any concrete Executor subclass that defines a TEMPLATE dict
+        is automatically registered — no @register_executor decorator needed.
         """
         import importlib
+        import inspect
         from pathlib import Path
+
+        from aiwen.interfaces.executor import Executor
 
         logger.info("Auto-discovering executor modules...")
 
-        # Get plugins/executors directory
         plugins_dir = Path(__file__).parent.parent / "plugins"
         executors_dir = plugins_dir / "executors"
 
@@ -918,32 +918,46 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
             )
             return
 
+        registry = ExecutorRegistry._get_singleton_instance()
         imported_count = 0
+        registered_count = 0
         failed_count = 0
 
-        # Recursively find all Python files
         for py_file in executors_dir.rglob("*.py"):
             if "__pycache__" in str(py_file) or py_file.name == "__init__.py":
                 continue
 
             try:
-                # Convert file path to a module path
-                # e.g., plugins/executors/default/concrete.py -> aiwen.plugins.executors.default.concrete
                 relative_path = py_file.relative_to(plugins_dir)
                 module_parts = list(relative_path.parts[:-1]) + [py_file.stem]
                 module_name = f"aiwen.plugins.{'.'.join(module_parts)}"
 
-                # Import the module
-                importlib.import_module(module_name)
-                logger.debug(f"✓ Imported: {module_name}")
+                module = importlib.import_module(module_name)
+                logger.debug(f"Imported: {module_name}")
                 imported_count += 1
+
+                # Scan module for Executor subclasses and register them
+                for _name, obj in inspect.getmembers(module, inspect.isclass):
+                    if (
+                        issubclass(obj, Executor)
+                        and obj is not Executor
+                        and hasattr(obj, "TEMPLATE")
+                        and isinstance(obj.TEMPLATE, dict)
+                        and "executor_code" in obj.TEMPLATE
+                    ):
+                        code = obj.TEMPLATE["executor_code"]
+                        if registry.get(code) is None:
+                            registry.register(obj)
+                            registered_count += 1
+                            logger.debug(f"Registered executor: {code}")
 
             except Exception as e:
                 logger.error(f"Failed to import {py_file}: {e}", exc_info=True)
                 failed_count += 1
 
         logger.info(
-            f"Executor discovery: {imported_count} imported, {failed_count} failed"
+            f"Executor discovery: {imported_count} imported, "
+            f"{registered_count} registered, {failed_count} failed"
         )
 
     # ==================== Backward Compatibility ====================
@@ -980,7 +994,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
             "total_templates": len(self._registry),
             "enabled_templates": enabled_count,
             "disabled_templates": len(self._registry) - enabled_count,
-            "template_codes": self.list_templates(),
+            "executor_codes": self.list_templates(),
         }
 
 

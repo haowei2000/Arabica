@@ -7,17 +7,16 @@ Verifies that protocols are correctly defined and components satisfy them.
 import pytest
 from typing import ClassVar, Any
 
-from aiwen.core.interfaces.protocols import (
+from aiwen.interfaces import (
     ToolProtocol,
     ExecutorProtocol,
     RegistryProtocol,
-    RegistrableProtocol,
     is_tool,
     is_executor,
     is_registry,
     PROTOCOL_REGISTRY,
 )
-from aiwen.core.interfaces.tool import (
+from aiwen.interfaces.tool import (
     BaseTool,
     ToolMetadata,
     ToolInputSchema,
@@ -196,7 +195,6 @@ class TestExecutorProtocolCompliance:
 
     def test_executor_implements_protocol(self):
         """Test that Executor class satisfies ExecutorProtocol."""
-        from aiwen.core.interfaces.executor import Executor
 
         class TestExecutor:
             TEMPLATE: ClassVar[dict] = {
@@ -319,7 +317,6 @@ class TestTypeChecker:
 
     def test_is_executor_with_valid_executor(self):
         """Test is_executor() with a valid executor."""
-        from aiwen.core.interfaces.executor import Executor
 
         class ValidExecutor:
             TEMPLATE: ClassVar[dict] = {"template_code": "TEST"}

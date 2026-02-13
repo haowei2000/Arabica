@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -57,6 +58,14 @@ class Event(Base):
         ForeignKey("run.id", ondelete="CASCADE"),
         nullable=True,
         comment="关联的运行ID",
+    )
+
+    # Associated app
+    app_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="关联的应用ID",
     )
 
     # User who triggered the event
@@ -117,6 +126,70 @@ class Event(Base):
         # Index for executor code queries
         Index("ix_event_executor_code", "executor_code"),
     )
+
+    @classmethod
+    def from_redis_fields(cls, data: dict) -> Event:
+        """Construct a transient Event instance from raw Redis stream data.
+
+        Reverses the encoding done by ``to_redis_fields``: bytes are decoded,
+        JSON strings are parsed back to dicts, and UUID/datetime strings are
+        converted to their native types.
+        """
+        decoded: dict[str, Any] = {
+            k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+            for k, v in data.items()
+        }
+
+        # Parse JSON fields
+        for key in ("payload",):
+            if key in decoded and decoded[key]:
+                try:
+                    decoded[key] = json.loads(decoded[key])
+                except (json.JSONDecodeError, TypeError):
+                    decoded[key] = {}
+
+        # Convert UUID string fields
+        for key in ("id", "workspace_id", "run_id", "app_id", "user_id", "parent_event_id"):
+            if key in decoded and decoded[key]:
+                decoded[key] = UUID(decoded[key])
+
+        # Convert sequence to int
+        if "sequence" in decoded:
+            decoded["sequence"] = int(decoded["sequence"])
+
+        # Convert created_at to datetime
+        if "created_at" in decoded and decoded["created_at"]:
+            decoded["created_at"] = datetime.fromisoformat(decoded["created_at"])
+
+        return cls(**decoded)
+
+    def to_redis_fields(self) -> dict[str, str | int | float]:
+        """Convert this event to a flat dict suitable for Redis XADD.
+
+        Redis stream fields only accept str, bytes, int, or float.
+        UUIDs and datetimes are converted to strings; dicts/lists are
+        JSON-serialized.
+        """
+        fields: dict[str, str | int | float] = {}
+        for key in (
+            "id", "event_type", "workspace_id", "run_id", "app_id",
+            "user_id", "executor_code", "payload", "sequence",
+            "parent_event_id", "created_at",
+        ):
+            value = getattr(self, key, None)
+            if value is None:
+                continue
+            if isinstance(value, UUID):
+                fields[key] = str(value)
+            elif isinstance(value, datetime):
+                fields[key] = value.isoformat()
+            elif isinstance(value, (dict, list)):
+                fields[key] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, (int, float)):
+                fields[key] = value
+            else:
+                fields[key] = str(value)
+        return fields
 
     def __repr__(self) -> str:
         return f"<Event(id={self.id}, type='{self.event_type}', workspace_id='{self.workspace_id}', run_id='{self.run_id}')>"

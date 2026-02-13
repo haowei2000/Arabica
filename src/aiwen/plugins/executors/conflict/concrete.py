@@ -2,7 +2,7 @@
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from aiwen.core.interfaces.executor import AgentEvent, Executor
+from aiwen.interfaces.executor import AgentEvent, Executor
 from aiwen.registries.core import register_executor
 from aiwen.schemas.events.event_payloads import UserMessage
 
@@ -12,8 +12,8 @@ class ConflictExecutor(Executor):
     """Natural Language to SQL conversion agent."""
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
-        "template_code": "ConflictExecutor",
-        "template_name": "Conflict Detection Executor",
+        "executor_code": "ConflictExecutor",
+        "executor_name": "Conflict Detection Executor",
         "enabled": True,
         "version": 1,
         "config": {},
@@ -34,7 +34,7 @@ class ConflictExecutor(Executor):
         return {"intent": intent, "sql": sql, "data": data}
 
     async def stream(
-        self, user_message: UserMessage | dict,
+        self, user_message: UserMessage,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Stream NL2SQL progress as typed plan-step events.
 
@@ -44,7 +44,7 @@ class ConflictExecutor(Executor):
         """
         # ── step 1: parse intent ─────────────────────────────────
         yield self._emit_plan_step(1, "Parse intent", status="in_progress")
-        intent = await self.parse_intent(query)
+        intent = await self.parse_intent(user_message.message)
         yield self._emit_plan_step(
             1,
             "Parse intent",

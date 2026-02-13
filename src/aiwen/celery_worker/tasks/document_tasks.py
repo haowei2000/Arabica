@@ -132,8 +132,8 @@ def download_chunk_and_store(
         from aiwen.extensions.storage.global_storage import get_global_s3_storage
         from aiwen.models.context.knowledge.chunk import Chunk
         from aiwen.models.context.knowledge.documents import Document
-        from aiwen.services.knowledge import DocumentParser, TextChunker
-        from aiwen.services.knowledge.chunker import ChunkConfig
+        from aiwen.services.context.knowledge.parser import DocumentParser
+        from aiwen.services.context.knowledge.chunker import ChunkConfig, TextChunker
 
         chunk_ids = []
 
@@ -327,7 +327,7 @@ def embed_chunks(
         from aiwen.extensions.database import get_session
         from aiwen.models.context.knowledge.chunk import Chunk
         from aiwen.models.context.knowledge.documents import Document
-        from aiwen.services.knowledge import EmbeddingService
+        from aiwen.services.context.knowledge.embeddings import EmbeddingService
 
         # Update document status
         async with get_session("aiwen") as session:

@@ -15,25 +15,27 @@ import redis.asyncio as redis_async
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.config.factory import get_settings
+from aiwen.interfaces.executor import AgentEvent
+from aiwen.interfaces.protocols import ExecutorProtocol
 from aiwen.models.app import App
+from aiwen.models.events.event import Event
 from aiwen.models.runs.run import Run
 from aiwen.registries.core import ExecutorRegistry
-from aiwen.core.interfaces.executor import AgentEvent
-from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
-from aiwen.services.executor.runtime import AgentRuntime
+from aiwen.services.executor.runtime import ExecutorRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 
 logger = logging.getLogger(__name__)
 
-# Redis stream the worker polls for user.message events.
-RUN_STREAM = "run_tasks"
-
-# Consumer group name for reliable message processing
-CONSUMER_GROUP = "run_workers"
+_redis_cfg = get_settings().redis
+REDIS_CONSUMER_GROUP = _redis_cfg.consumer_group
+REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
+REDIS_RUN_LABEL = _redis_cfg.run_label
+REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
 
 
 class Worker:
@@ -52,7 +54,7 @@ class Worker:
         self.redis = redis_client
         self.db = db
         self.consumer_name = consumer_name
-        self.runtime = AgentRuntime()
+        self.runtime = ExecutorRuntime()
         # EventPublisher created once, shared with RunStateMachine
         self.event_publisher = EventPublisher(db, redis_client)
         self.state_machine = RunStateMachine(
@@ -61,54 +63,35 @@ class Worker:
 
         # ── Startup-initialized tool services (stateless / reusable) ──
         self._tool_caller = RegistryToolCaller()
-        self._default_tool_provider = self._build_default_tool_provider()
 
-    def _parse_redis_event(self, event_data: dict[bytes, bytes]) -> dict:
-        """Parse Redis stream event data.
-
-        Redis streams return data as bytes, and JSON fields are serialized strings.
-        This method converts them back to proper Python types.
+    @staticmethod
+    def _parse_redis_event(event_data: dict[bytes, bytes]) -> Event:
+        """Parse Redis stream event data into an Event instance.
 
         Args:
             event_data: Raw event data from Redis stream
 
         Returns:
-            Parsed event data as a dict
+            A transient Event instance (not attached to the DB session).
         """
-        # Decode bytes to strings
-        decoded = {
-            k.decode() if isinstance(k, bytes) else k:
-            v.decode() if isinstance(v, bytes) else v
-            for k, v in event_data.items()
-        }
-
-        # Parse JSON fields back to dicts
-        for key in ("payload", "input"):
-            if key in decoded and decoded[key]:
-                try:
-                    decoded[key] = json.loads(decoded[key])
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse {key} JSON: {decoded[key]}")
-                    decoded[key] = {}
-
-        return decoded
+        return Event.from_redis_fields(event_data)
 
     async def _ensure_consumer_group(self, stream_name: str) -> None:
         """Ensure consumer group exists, create if not."""
         try:
             await self.redis.xgroup_create(
                 stream_name,
-                CONSUMER_GROUP,
+                REDIS_CONSUMER_GROUP,
                 id="0",
                 mkstream=True,
             )
             logger.info(
-                f"Created consumer group '{CONSUMER_GROUP}' for stream '{stream_name}'"
+                f"Created consumer group '{REDIS_CONSUMER_GROUP}' for stream '{stream_name}'"
             )
         except Exception as e:
             if "BUSYGROUP" not in str(e):
                 raise
-            logger.debug(f"Consumer group '{CONSUMER_GROUP}' already exists")
+            logger.debug(f"Consumer group '{REDIS_CONSUMER_GROUP}' already exists")
 
     async def start(self, stream_name: str):
         """Start consuming messages from the stream using consumer groups."""
@@ -118,7 +101,7 @@ class Worker:
         while True:
             try:
                 redis_messages = await self.redis.xreadgroup(
-                    groupname=CONSUMER_GROUP,
+                    groupname=REDIS_CONSUMER_GROUP,
                     consumername=self.consumer_name,
                     streams={stream_name: ">"},
                     count=1,
@@ -135,7 +118,9 @@ class Worker:
                         parsed_event = self._parse_redis_event(event_data)
                         await self.handle_event(parsed_event)
                         # 成功处理后确认消息
-                        await self.redis.xack(stream_name, CONSUMER_GROUP, event_id)
+                        await self.redis.xack(
+                            stream_name, REDIS_CONSUMER_GROUP, event_id
+                        )
                     except Exception as e:
                         logger.error(
                             f"Failed to process message {event_id}: {e}",
@@ -148,17 +133,6 @@ class Worker:
             except Exception as e:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
-
-    @staticmethod
-    def _build_default_tool_provider() -> RegistryToolProvider:
-        """Build the default ToolProvider with browser tools at startup."""
-        extra: list = []
-        try:
-            from aiwen.plugins.tools.browser_tools import BROWSER_TOOLS
-            extra.extend(BROWSER_TOOLS)
-        except ImportError:
-            logger.warning("Browser tools module not available")
-        return RegistryToolProvider(extra_tool_classes=extra)
 
     def prepare_executor(
         self,
@@ -174,7 +148,7 @@ class Worker:
         per-run ToolProvider and ToolCaller are created that include them.
 
         Args:
-            executor_code: Executor identifier (matches TEMPLATE["template_code"]).
+            executor_code: Executor identifier (matches TEMPLATE["executor_code"]).
             app_config: App-level config that overrides the template defaults.
             user_tool_classes: Optional list of dynamic ExternalTool subclasses
                 loaded from the database for the current user.
@@ -185,7 +159,7 @@ class Worker:
         Raises:
             ValueError: When executor_code is not registered.
         """
-        executor_cls = ExecutorRegistry.get(executor_code)
+        executor_cls = ExecutorRegistry._get_singleton_instance().get(executor_code)
         if not executor_cls:
             raise ValueError(f"Executor with code '{executor_code}' not found")
 
@@ -205,9 +179,7 @@ class Worker:
         # ── Inject tool services ─────────────────────────────────
         if user_tool_classes:
             # Per-run ToolCaller that knows about user-defined tools
-            user_instances = {
-                cls.METADATA.name: cls() for cls in user_tool_classes
-            }
+            user_instances = {cls.METADATA.name: cls() for cls in user_tool_classes}
             config["tool_caller"] = RegistryToolCaller(
                 extra_instances=user_instances,
             )
@@ -222,15 +194,11 @@ class Worker:
         else:
             # No user tools — reuse startup singletons
             config["tool_caller"] = self._tool_caller
-
-            if config.get("enable_browser_tools", True):
-                config["tool_provider"] = self._default_tool_provider
-            else:
-                config["tool_provider"] = RegistryToolProvider()
+            config["tool_provider"] = RegistryToolProvider()
 
         return executor_cls(config)
 
-    async def handle_event(self, event: dict):
+    async def handle_event(self, event: Event):
         """
         处理来自 run_tasks stream 的消息。
 
@@ -244,19 +212,19 @@ class Worker:
 
         run_id = None
         try:
-            # 1. 验证事件数据
-            if not event.get("run_id"):
+            # 1. Validate event data
+            if not event.run_id:
                 logger.warning("Received message without run_id, skipping")
                 return
 
-            if not event.get("executor_code"):
+            if not event.executor_code:
                 logger.error(
                     "Received message without executor_code, cannot determine executor"
                 )
                 return
 
-            run_id = UUID(str(event["run_id"]))
-            input_data = event.get("payload") or event.get("input") or {}
+            run_id = event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+            input_data = UserMessage(**(event.payload or {}))
 
             # 2. 获取 Run 及相关数据
             run, app_config = await self._fetch_run_data(run_id)
@@ -271,12 +239,16 @@ class Worker:
             user_tool_classes = []
             if run.user_id:
                 user_tool_classes = await DynamicToolLoader.load_user_tools(
-                    self.db, run.user_id, run.workspace_id,
+                    self.db,
+                    run.user_id,
+                    run.workspace_id,
                 )
 
             # 4. Prepare Executor with user tools injected
             executor = self.prepare_executor(
-                event["executor_code"], app_config, user_tool_classes or None,
+                event.executor_code,
+                app_config,
+                user_tool_classes or None,
             )
             self.runtime.attach(run_id, executor)
 
@@ -377,7 +349,7 @@ class Worker:
             that the executor's ``stream()`` checks on entry.
         """
         # Fetch the short-lived approval decision from Redis
-        resume_key = f"run:{run_id}:resume_approval"
+        resume_key = f"{REDIS_RUN_LABEL}:{run_id}:{REDIS_RUN_RESUME_APPROVAL_SUFFIX}"
         raw_approval = await self.redis.get(resume_key)
         approval_data = json.loads(raw_approval) if raw_approval else {}
 
@@ -385,7 +357,9 @@ class Worker:
             await self.redis.delete(resume_key)
 
         # Normalise user_message to a plain dict
-        if hasattr(user_message, "model_dump"):
+        if hasattr(user_message, "model_dump") and callable(
+            getattr(user_message, "model_dump")
+        ):
             base = user_message.model_dump()
         elif isinstance(user_message, dict):
             base = dict(user_message)

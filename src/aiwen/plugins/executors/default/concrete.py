@@ -34,12 +34,11 @@ from typing import Any, ClassVar
 from langchain_core.messages import (
     AIMessage,
     ToolMessage,
-    messages_to_dict,
 )
 
-from aiwen.core.interfaces.tool_service import ToolCaller, ToolProvider
+from aiwen.interfaces.tool_service import ToolCaller, ToolProvider
 from aiwen.registries.core import register_executor
-from aiwen.core.interfaces.executor import (
+from aiwen.interfaces.executor import (
     AgentEvent,
     Executor,
     WaitingForTool,
@@ -73,8 +72,8 @@ class DefaultExecutor(Executor):
     """
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
-        "template_code": "SimpleAgent",
-        "template_name": "Default Detection Agent",
+        "executor_code": "SimpleAgent",
+        "executor_name": "Default Detection Agent",
         "enabled": True,
         "version": 1,
         "config": AppConfig(
@@ -306,7 +305,7 @@ class DefaultExecutor(Executor):
                         "arguments": tc_args,
                         "messages": self._serialize_messages(messages),
                         "remaining_tool_calls": remaining,
-                        "executor_code": self.TEMPLATE["template_code"],
+                        "executor_code": self.TEMPLATE["executor_code"],
                     }
                 )
 

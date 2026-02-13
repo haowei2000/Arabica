@@ -19,6 +19,7 @@ Agent Worker 启动脚本
 版本: v3.0.0
 
 """
+from aiwen.services.events.event_publisher import REDIS_EXECUTOR_LABEL
 
 import asyncio
 import logging
@@ -33,7 +34,7 @@ import click
 # 配置会在 aiwen.config.factory 模块导入时自动加载
 from aiwen.core.bootstrap import bootstrap_worker
 from aiwen.extensions.database import get_session
-from aiwen.services.events.event_worker import RUN_STREAM, Worker
+from aiwen.services.events.event_worker import  Worker
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ async def run_single_worker(
     try:
         async with db_factory as session:
             worker = Worker(redis_client, session, consumer_name=consumer_name)
-            await worker.start(RUN_STREAM)
+            await worker.start(REDIS_EXECUTOR_LABEL)
     except asyncio.CancelledError:
         logger.info(f"⏹️  Worker [{worker_index}] cancelled")
         raise
@@ -71,7 +72,7 @@ async def run_workers(num_workers: int, name_prefix: str) -> None:
     logger.info("=" * 60)
     logger.info("🔧 Agent Worker Starting...")
     logger.info(f"   Workers: {num_workers}")
-    logger.info(f"   Stream: {RUN_STREAM}")
+    logger.info(f"   Stream: {REDIS_EXECUTOR_LABEL}")
     logger.info("=" * 60)
 
     bootstrap = None

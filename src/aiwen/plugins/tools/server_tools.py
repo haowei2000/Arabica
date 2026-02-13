@@ -12,11 +12,8 @@ from typing import Any
 
 from pydantic import Field
 
-from aiwen.core.interfaces.tool import (
-    ClientConfig,
-    ContainerConfig,
+from aiwen.interfaces.tool import (
     InnerTool,
-    ResourceLimits,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
@@ -760,19 +757,6 @@ class SandboxExecutionInnerTool(InnerTool):
         category="execution",
         tags=["sandbox", "container", "docker", "shell", "inner"],
         timeout=120,
-        container_config=ContainerConfig(
-            image="python:3.12-slim",
-            workdir="/workspace",
-            resource_limits=ResourceLimits(
-                memory="256m",
-                cpu_quota=50000,
-                cpu_period=100000,
-                network_enabled=False,
-                read_only_rootfs=True,
-                pids_limit=100,
-            ),
-            environment={"PYTHONUNBUFFERED": "1"},
-        ),
     )
 
     class InputSchema(ToolInputSchema):

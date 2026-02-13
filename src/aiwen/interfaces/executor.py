@@ -16,12 +16,12 @@ from typing import Any, ClassVar
 
 from aiwen.schemas.context.tools import ToolClientRequestPayload
 from aiwen.schemas.events.event_payloads import (
-    AgentPlanEvent,
-    AgentTokenEvent,
+    AgentPlanEventSchema,
+    AgentTokenEventSchema,
     EventType,
-    ToolCallEvent,
-    ToolPendingEvent,
-    ToolResultEvent,
+    ToolCallEventSchema,
+    ToolPendingEventSchema,
+    ToolResultEventSchema,
     UserMessage,
 )
 
@@ -58,7 +58,7 @@ class WaitingForTool(Exception):
       * ``ai_message``     – serialised AIMessage (via ``messages_to_dict``)
                              so the resume path can reconstruct the
                              conversation without re-invoking the LLM
-      * ``executor_code``  – TEMPLATE["template_code"] so the resume
+      * ``executor_code``  – TEMPLATE["executor_code"] so the resume
                              endpoint knows which executor to re-dispatch
     """
 
@@ -142,7 +142,7 @@ class Executor(ABC):
         """``AGENT_TOKEN`` – one streaming chunk."""
         event = AgentEvent(
             event_type=EventType.AGENT_TOKEN.value,
-            payload=AgentTokenEvent(
+            payload=AgentTokenEventSchema(
                 token=token,
                 token_index=self._token_index,
                 is_final=is_final,
@@ -175,7 +175,7 @@ class Executor(ABC):
         """``AGENT_PLAN_STEP`` – one step in a multi-step plan."""
         return AgentEvent(
             event_type=EventType.AGENT_PLAN_STEP.value,
-            payload=AgentPlanEvent(
+            payload=AgentPlanEventSchema(
                 step_number=step_number,
                 step_description=description,
                 status=status,
@@ -192,7 +192,7 @@ class Executor(ABC):
         """``TOOL_CALL`` – the LLM has decided to invoke a tool."""
         return AgentEvent(
             event_type=EventType.TOOL_CALL.value,
-            payload=ToolCallEvent(
+            payload=ToolCallEventSchema(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 arguments=arguments,
@@ -210,7 +210,7 @@ class Executor(ABC):
         """``TOOL_RESULT`` – a tool completed successfully."""
         return AgentEvent(
             event_type=EventType.TOOL_RESULT.value,
-            payload=ToolResultEvent(
+            payload=ToolResultEventSchema(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 result=result,
@@ -228,7 +228,7 @@ class Executor(ABC):
         """``TOOL_ERROR`` – a tool raised an exception."""
         return AgentEvent(
             event_type=EventType.TOOL_ERROR.value,
-            payload=ToolResultEvent(
+            payload=ToolResultEventSchema(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 result=None,
@@ -247,7 +247,7 @@ class Executor(ABC):
         """``TOOL_PENDING`` – tool is blocked; waiting for human action."""
         return AgentEvent(
             event_type=EventType.TOOL_PENDING.value,
-            payload=ToolPendingEvent(
+            payload=ToolPendingEventSchema(
                 tool_name=tool_name,
                 tool_id=tool_id,
                 reason=reason,

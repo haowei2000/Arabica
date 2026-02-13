@@ -8,7 +8,7 @@ agents can call tools directly in-process.
 from pydantic import Field
 
 from aiwen.mcp_router import browser as browser_module
-from aiwen.core.interfaces.tool import (
+from aiwen.interfaces.tool import (
     InnerTool,
     ToolInputSchema,
     ToolMetadata,

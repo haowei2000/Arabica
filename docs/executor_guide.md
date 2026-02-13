@@ -35,16 +35,17 @@ Executor 是 Aiwen 中 Agent 的执行引擎。每种 Executor 代表一种 Agen
 
 ```python
 from aiwen.registries import register_executor
-from aiwen.core.interfaces.executor import Executor, AgentEvent
+from aiwen.interfaces import Executor, AgentEvent
+
 
 @register_executor
 class MyExecutor(Executor):
     TEMPLATE: ClassVar[dict[str, Any]] = {
-        "template_code": "MyExecutor",       # 唯一标识（主键）
-        "template_name": "My Executor",      # 显示名称
+        "template_code": "MyExecutor",  # 唯一标识（主键）
+        "template_name": "My Executor",  # 显示名称
         "enabled": True,
         "version": 1,
-        "config": {},                        # 默认配置
+        "config": {},  # 默认配置
     }
 ```
 
@@ -125,9 +126,9 @@ touch src/aiwen/plugins/executors/my_executor/concrete.py
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from aiwen.core.interfaces.tool_service import ToolCaller, ToolProvider
+from aiwen.interfaces.tool_service import ToolCaller, ToolProvider
 from aiwen.registries import register_executor
-from aiwen.core.interfaces.executor import AgentEvent, Executor
+from aiwen.interfaces import AgentEvent, Executor
 from aiwen.schemas.events.event_payloads import UserMessage
 
 
@@ -169,7 +170,7 @@ class MyExecutor(Executor):
         return {"answer": f"Processed: {message}"}
 
     async def stream(
-        self, user_message: UserMessage | dict,
+            self, user_message: UserMessage | dict,
     ) -> AsyncGenerator[AgentEvent, None]:
         """流式执行，yield 事件"""
         self._reset_token_index()

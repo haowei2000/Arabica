@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
+from aiwen.config.factory import get_settings
 from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
     EventConsumerDep,
@@ -16,6 +17,11 @@ from aiwen.dependencies.workspace import (
 )
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventListResponse
+
+_redis_cfg = get_settings().redis
+EVENT_TYPE_DISCONNECT = _redis_cfg.event_type_disconnect
+EVENT_TYPE_ERROR = _redis_cfg.event_type_error
+EVENT_TYPE_KEEPALIVE = _redis_cfg.event_type_keepalive
 
 router = APIRouter()
 
@@ -31,16 +37,16 @@ async def _event_stream_generator(
 
     try:
         async for event in method(entity_id, last_id=last_id):
-            if event.get("type") == "keepalive":
-                yield f": keepalive {event.get('timestamp', '')}\n\n"
-            elif event.get("type") == "error":
-                yield f"event: error\ndata: {json.dumps(event)}\n\n"
+            if event.get("type") == EVENT_TYPE_KEEPALIVE:
+                yield f": {EVENT_TYPE_KEEPALIVE} {event.get('timestamp', '')}\n\n"
+            elif event.get("type") == EVENT_TYPE_ERROR:
+                yield f"event: {EVENT_TYPE_ERROR}\ndata: {json.dumps(event)}\n\n"
             else:
                 event_type = event.get("event_type", "event")
                 yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
 
     except asyncio.CancelledError:
-        yield f"event: disconnect\ndata: {json.dumps({'reason': 'client_disconnected'})}\n\n"
+        yield f"event: {EVENT_TYPE_DISCONNECT}\ndata: {json.dumps({'reason': 'client_disconnected'})}\n\n"
 
 
 @router.get("/runs/{run_id}/events/stream", tags=["events"])

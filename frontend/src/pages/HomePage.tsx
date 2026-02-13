@@ -20,7 +20,7 @@ export default function HomePage() {
   const [contextTab, setContextTab] = useState<ContextTab>('knowledge');
   const [showCreateAppForm, setShowCreateAppForm] = useState(false);
   const [appCode, setAppCode] = useState('');
-  const [templateCode, setTemplateCode] = useState('');
+  const [executorCode, setExecutorCode] = useState('');
 
   const navigate = useNavigate();
   const { data: appsData, isLoading: appsLoading } = useApps({
@@ -38,12 +38,12 @@ export default function HomePage() {
     try {
       await createAppMutation.mutateAsync({
         app_code: appCode,
-        agent_template_code: templateCode || undefined,
+        executor_code: executorCode || undefined,
         enabled: true,
       });
       setShowCreateAppForm(false);
       setAppCode('');
-      setTemplateCode('');
+      setExecutorCode('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -129,21 +129,29 @@ export default function HomePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-secondary-600 dark:text-secondary-300 mb-1">
-                    Agent Template (optional)
+                    Executor (optional)
                   </label>
                   <select
-                    value={templateCode}
-                    onChange={(e) => setTemplateCode(e.target.value)}
+                    value={executorCode}
+                    onChange={(e) => setExecutorCode(e.target.value)}
                     className="w-full px-3 py-2 border border-secondary-200 dark:border-navy-600 rounded-md
                                bg-white dark:bg-navy-700 text-navy-900 dark:text-navy-100
                                focus:outline-none focus:ring-2 focus:ring-primary-500"
                   >
-                    <option value="">No default template</option>
-                    {templatesData?.map((template) => (
-                      <option key={template.id} value={template.template_code}>
-                        {template.template_name}
-                      </option>
-                    ))}
+                    {!templatesData ? (
+                      <option value="" disabled>Loading...</option>
+                    ) : templatesData.length === 0 ? (
+                      <option value="" disabled>No executors available</option>
+                    ) : (
+                      <>
+                        <option value="">Select an executor</option>
+                        {templatesData.map((template) => (
+                          <option key={template.id} value={template.executor_code}>
+                            {template.executor_name}
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
                 </div>
 
@@ -153,7 +161,7 @@ export default function HomePage() {
                     onClick={() => {
                       setShowCreateAppForm(false);
                       setAppCode('');
-                      setTemplateCode('');
+                      setExecutorCode('');
                     }}
                     className="flex-1 px-4 py-2 border border-secondary-200 dark:border-navy-600
                                text-secondary-600 dark:text-secondary-300 rounded-md

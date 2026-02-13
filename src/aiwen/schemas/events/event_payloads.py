@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from aiwen.enums.events import EventType
 
 
-class BaseEvent(BaseModel):
+class BaseEventSchema(BaseModel):
     """Base class for all event payloads."""
 
     event_type: EventType = Field(..., description="事件类型")
@@ -29,7 +29,7 @@ class UserMessage(BaseModel):
     message: str = Field(..., description="用户消息")
 
 
-class UserMessageEvent(BaseEvent):
+class UserMessageEventSchema(BaseEventSchema):
     """Payload for user.message events."""
 
     payload: UserMessage = Field(..., description="用户消息")
@@ -42,7 +42,7 @@ class UserMessageEvent(BaseEvent):
     workspace_id: UUID | str = Field(..., description="工作空间ID")
 
 
-class AgentTokenEvent(BaseEvent):
+class AgentTokenEventSchema(BaseEventSchema):
     """Payload for agent.token events (streaming tokens)."""
 
     token: str = Field(..., description="生成的token")
@@ -53,7 +53,7 @@ class AgentTokenEvent(BaseEvent):
     event_type: EventType = EventType.AGENT_TOKEN
 
 
-class AgentPlanEvent(BaseEvent):
+class AgentPlanEventSchema(BaseEventSchema):
     """Payload for agent.plan.step events."""
 
     step_number: int = Field(..., description="步骤编号")
@@ -67,7 +67,7 @@ class AgentPlanEvent(BaseEvent):
     event_type: EventType = EventType.AGENT_PLAN_STEP
 
 
-class ToolCallEvent(BaseEvent):
+class ToolCallEventSchema(BaseEventSchema):
     """Payload for tool.call events."""
 
     tool_name: str = Field(..., description="工具名称")
@@ -78,7 +78,7 @@ class ToolCallEvent(BaseEvent):
     event_type: EventType = EventType.TOOL_CALL
 
 
-class ToolPendingEvent(BaseEvent):
+class ToolPendingEventSchema(BaseEventSchema):
     """Payload for tool.pending events (waiting for approval or external result)."""
 
     tool_name: str = Field(..., description="工具名称")
@@ -91,7 +91,7 @@ class ToolPendingEvent(BaseEvent):
     event_type: EventType = EventType.TOOL_PENDING
 
 
-class ToolResultEvent(BaseEvent):
+class ToolResultEventSchema(BaseEventSchema):
     """Payload for tool.result events."""
 
     tool_name: str = Field(..., description="工具名称")
@@ -105,7 +105,7 @@ class ToolResultEvent(BaseEvent):
     event_type: EventType = EventType.TOOL_RESULT
 
 
-class RunStateChangeEvent(BaseEvent):
+class RunStateChangeEventSchema(BaseEventSchema):
     """Payload for run.state.change events."""
 
     previous_state: str = Field(..., description="之前的状态")
@@ -117,7 +117,7 @@ class RunStateChangeEvent(BaseEvent):
     event_type: EventType = EventType.RUN_STATE_CHANGE
 
 
-class WorkspaceMemberJoinEvent(BaseEvent):
+class WorkspaceMemberJoinEventSchema(BaseEventSchema):
     """Payload for workspace.member.join events."""
 
     member_id: str = Field(..., description="成员用户ID")

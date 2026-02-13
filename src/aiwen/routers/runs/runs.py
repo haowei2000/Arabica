@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
+from aiwen.config.factory import get_settings
 from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
     EventPublisherDep,
@@ -17,7 +18,7 @@ from aiwen.dependencies.workspace import (
 from aiwen.models.app import App
 from aiwen.models.executor.executor import Executor
 from aiwen.schemas.auth.user import UserResponse
-from aiwen.schemas.events.event_payloads import EventType, UserMessageEvent
+from aiwen.schemas.events.event_payloads import EventType, UserMessageEventSchema
 from aiwen.enums.runs import TriggerType
 from aiwen.schemas.runs.run import (
     RunListResponse,
@@ -26,12 +27,16 @@ from aiwen.schemas.runs.run import (
     RunStatus,
 )
 
+_redis_cfg = get_settings().redis
+REDIS_RUN_LABEL = _redis_cfg.run_label
+REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
+
 router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 
 
 @router.post("", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
 async def create_run(
-    user_message_event: UserMessageEvent,
+    user_message_event: UserMessageEventSchema,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     workspace_crud: WorkspaceCRUDDep,
     run_crud: RunCRUDDep,
@@ -95,6 +100,7 @@ async def create_run(
         event_type=EventType.USER_MESSAGE,
         workspace_id=workspace_id,
         run_id=str(run.id),
+        app_id=str(app_id),
         user_id=str(current_user.id),
         executor_code=executor_code,
         payload={
@@ -347,7 +353,7 @@ async def resume_run(
     # ── store approval for the worker ──────────────────────────
     if state_machine.redis:
         await state_machine.redis.set(
-            f"run:{run_id}:resume_approval",
+            f"{REDIS_RUN_LABEL}:{run_id}:{REDIS_RUN_RESUME_APPROVAL_SUFFIX}",
             json.dumps(
                 {
                     "approval": data.approval,

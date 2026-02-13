@@ -15,10 +15,19 @@ import redis.asyncio as redis_async
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.config.factory import get_settings
+from aiwen.enums.events import EventType
 from aiwen.models.events.event import Event
 from aiwen.schemas.events.event_payloads import EventResponse
 
 logger = logging.getLogger(__name__)
+
+_redis_cfg = get_settings().redis
+EVENT_TYPE_ERROR = _redis_cfg.event_type_error
+EVENT_TYPE_KEEPALIVE = _redis_cfg.event_type_keepalive
+REDIS_RUN_LABEL = _redis_cfg.run_label
+REDIS_STREAM_EVENTS_SUFFIX = _redis_cfg.stream_events_suffix
+REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 
 
 class EventConsumer:
@@ -52,7 +61,7 @@ class EventConsumer:
         Yields:
             Event data dictionaries
         """
-        stream_name = f"run:{run_id}:events"
+        stream_name = f"{REDIS_RUN_LABEL}:{run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         current_id = last_id
 
         while True:
@@ -66,7 +75,7 @@ class EventConsumer:
 
                 if not result:
                     # Timeout, yield keepalive
-                    yield {"type": "keepalive", "timestamp": datetime.now().isoformat()}
+                    yield {"type": EVENT_TYPE_KEEPALIVE, "timestamp": datetime.now().isoformat()}
                     continue
 
                 for stream, messages in result:
@@ -80,7 +89,7 @@ class EventConsumer:
                 break
             except Exception as e:
                 logger.error(f"Error reading from stream {stream_name}: {e}")
-                yield {"type": "error", "message": str(e)}
+                yield {"type": EVENT_TYPE_ERROR, "message": str(e)}
                 await asyncio.sleep(1)  # Brief pause before retry
 
     async def subscribe_workspace(
@@ -99,7 +108,7 @@ class EventConsumer:
         Yields:
             Event data dictionaries
         """
-        stream_name = f"workspace:{workspace_id}:events"
+        stream_name = f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         current_id = last_id
 
         while True:
@@ -111,7 +120,7 @@ class EventConsumer:
                 )
 
                 if not result:
-                    yield {"type": "keepalive", "timestamp": datetime.now().isoformat()}
+                    yield {"type": EVENT_TYPE_KEEPALIVE, "timestamp": datetime.now().isoformat()}
                     continue
 
                 for stream, messages in result:
@@ -125,7 +134,7 @@ class EventConsumer:
                 break
             except Exception as e:
                 logger.error(f"Error reading from stream {stream_name}: {e}")
-                yield {"type": "error", "message": str(e)}
+                yield {"type": EVENT_TYPE_ERROR, "message": str(e)}
                 await asyncio.sleep(1)
 
     def _parse_event_data(self, data: dict[bytes, bytes]) -> dict[str, Any]:
@@ -276,7 +285,7 @@ class EventReplayer:
         for event in events:
             state["last_sequence"] = event.sequence
 
-            if event.event_type == "user.message":
+            if event.event_type == EventType.USER_MESSAGE:
                 state["messages"].append(
                     {
                         "role": "user",
@@ -287,7 +296,7 @@ class EventReplayer:
                     }
                 )
 
-            elif event.event_type == "agent.message":
+            elif event.event_type == EventType.AGENT_MESSAGE:
                 state["messages"].append(
                     {
                         "role": "assistant",
@@ -298,7 +307,7 @@ class EventReplayer:
                     }
                 )
 
-            elif event.event_type == "tool.call":
+            elif event.event_type == EventType.TOOL_CALL:
                 if event.payload:
                     tool_id = event.payload.get("tool_id")
                     if tool_id:
@@ -308,7 +317,7 @@ class EventReplayer:
                             "status": "pending",
                         }
 
-            elif event.event_type == "tool.result":
+            elif event.event_type == EventType.TOOL_RESULT:
                 if event.payload:
                     tool_id = event.payload.get("tool_id")
                     if tool_id and tool_id in state["tool_calls"]:
@@ -319,7 +328,7 @@ class EventReplayer:
                             "success" if event.payload.get("success") else "error"
                         )
 
-            elif event.event_type == "run.state.change":
+            elif event.event_type == EventType.RUN_STATE_CHANGE:
                 if event.payload:
                     state["status"] = event.payload.get("new_state", state["status"])
 

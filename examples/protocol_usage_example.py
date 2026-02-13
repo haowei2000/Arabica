@@ -7,14 +7,14 @@ component registration and validation.
 
 from typing import Any, ClassVar
 
-from aiwen.core.interfaces.protocols import (
+from aiwen.interfaces import (
     ExecutorProtocol,
     ToolProtocol,
     is_executor,
     is_tool,
     PROTOCOL_REGISTRY,
 )
-from aiwen.core.interfaces.tool import (
+from aiwen.interfaces.tool import (
     BaseTool,
     ToolInputSchema,
     ToolMetadata,

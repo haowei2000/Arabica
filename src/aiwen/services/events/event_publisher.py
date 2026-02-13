@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-import json
 import logging
 from typing import Any
 from uuid import UUID
@@ -13,11 +12,18 @@ import redis.asyncio as redis_async
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.config.factory import get_settings
 from aiwen.models.events.event import Event
 from aiwen.models.runs.run import Run
 from aiwen.schemas.events.event_payloads import EventType
 
 logger = logging.getLogger(__name__)
+
+_redis_cfg = get_settings().redis
+REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
+REDIS_RUN_LABEL = _redis_cfg.run_label
+REDIS_STREAM_EVENTS_SUFFIX = _redis_cfg.stream_events_suffix
+REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -64,6 +70,7 @@ class EventPublisher:
         payload: dict[str, Any] | None = None,
         executor_code: str | None = None,
         parent_event_id: UUID | str | None = None,
+        app_id: UUID | str | None = None,
         auto_commit: bool = False,
     ) -> Event:
         """Publish an event to PostgreSQL and Redis.
@@ -85,6 +92,7 @@ class EventPublisher:
             str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
         )
         run_id_str = str(run_id) if isinstance(run_id, UUID) else run_id
+        app_id_str = str(app_id) if isinstance(app_id, UUID) else app_id
         user_id_str = str(user_id) if isinstance(user_id, UUID) else user_id
         parent_event_id_str = (
             str(parent_event_id)
@@ -95,7 +103,7 @@ class EventPublisher:
             event_type.value if isinstance(event_type, EventType) else event_type
         )
 
-        # Get next sequence number for this run (or workspace if no run)
+        # Get the next sequence number for this run (or workspace if no run)
         sequence = await self._get_next_sequence(workspace_id_str, run_id_str)
 
         # Create event in PostgreSQL
@@ -103,6 +111,7 @@ class EventPublisher:
             event_type=event_type_str,
             workspace_id=workspace_id_str,
             run_id=run_id_str,
+            app_id=app_id_str,
             user_id=user_id_str,
             payload=_to_jsonable(payload),
             sequence=sequence,
@@ -227,52 +236,40 @@ class EventPublisher:
         """
         if not self.redis:
             return
-
+        fields = event.to_redis_fields()
         try:
-            # Prepare event data for Redis
-            event_data = {
-                "id": str(event.id),
-                "event_type": event.event_type,
-                "workspace_id": str(event.workspace_id),
-                "run_id": str(event.run_id) if event.run_id else "",
-                "user_id": str(event.user_id) if event.user_id else "",
-                "payload": json.dumps(event.payload) if event.payload else "{}",
-                "sequence": str(event.sequence),
-                "created_at": event.created_at.isoformat(),
-                "executor_code": event.executor_code or "",
-            }
-
             # Publish to run stream if applicable
             if event.run_id:
-                run_stream = f"run:{event.run_id}:events"
+                run_stream = (
+                    f"{REDIS_RUN_LABEL}:{event.run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                )
                 await self.redis.xadd(
                     name=run_stream,
-                    fields=event_data,
+                    fields=fields,
                     maxlen=1000,
                     approximate=True,
                 )
-
-            # Publish to workspace stream
-            workspace_stream = f"workspace:{event.workspace_id}:events"
+            logger.info(f"Success publish to {REDIS_RUN_LABEL} an event")
+            # Publish to the workspace stream
+            workspace_stream = f"{REDIS_WORKSPACE_LABEL}:{event.workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
             await self.redis.xadd(
                 name=workspace_stream,
-                fields=event,
+                fields=fields,
                 maxlen=10000,
                 approximate=True,
             )
 
+            logger.info(f"Success publish to {REDIS_WORKSPACE_LABEL} an event")
             # Publish USER_MESSAGE events to global task queue for Worker consumption
-            if event.event_type == "user.message" and event.run_id:
+            if event.event_type == EventType.USER_MESSAGE and event.run_id:
                 await self.redis.xadd(
-                    name="run_tasks",
-                    fields=event_data,
+                    name=REDIS_EXECUTOR_LABEL,
+                    fields=fields,
                     maxlen=10000,
                     approximate=True,
                 )
-                logger.debug(
-                    f"Published user.message event to run_tasks queue for run {event.run_id}"
-                )
 
+                logger.info(f"Success publish to {REDIS_EXECUTOR_LABEL} an event")
         except Exception as e:
             logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")
-            # Don't fail the whole publish if Redis broadcast fails
+            # Don't fail the whole publication if Redis broadcast fails

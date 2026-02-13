@@ -8,7 +8,7 @@ import {authService} from '@/services/authService';
 export default function AppsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [appCode, setAppCode] = useState('');
-  const [templateCode, setTemplateCode] = useState('DEFAULT001');
+  const [executorCode, setExecutorCode] = useState('');
 
   const navigate = useNavigate();
   const { data: appsData, isLoading } = useApps();
@@ -24,7 +24,7 @@ export default function AppsPage() {
     try {
       await createAppMutation.mutateAsync({
         app_code: appCode,
-        agent_template_code: templateCode,
+        executor_code: executorCode,
         enabled: true,
       });
 
@@ -126,19 +126,27 @@ export default function AppsPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Agent 模板
+                    执行器
                   </label>
                   <select
-                    value={templateCode}
-                    onChange={(e) => setTemplateCode(e.target.value)}
+                    value={executorCode}
+                    onChange={(e) => setExecutorCode(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="DEFAULT001">默认模板</option>
-                    {templates?.map((template) => (
-                      <option key={template.id} value={template.template_code}>
-                        {template.template_name}
-                      </option>
-                    ))}
+                    {!templates ? (
+                      <option value="" disabled>加载中...</option>
+                    ) : templates.length === 0 ? (
+                      <option value="" disabled>暂无可用执行器</option>
+                    ) : (
+                      <>
+                        <option value="">请选择执行器</option>
+                        {templates.map((template) => (
+                          <option key={template.id} value={template.executor_code}>
+                            {template.executor_name}
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
                 </div>
 

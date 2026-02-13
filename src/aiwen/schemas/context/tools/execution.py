@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from aiwen.schemas.events.event_payloads import BaseEvent
+from aiwen.schemas.events.event_payloads import BaseEventSchema
 
 
 class ExecutionContext(BaseModel):
@@ -93,7 +93,7 @@ class ToolResultSubmission(BaseModel):
     )
 
 
-class ToolClientRequestPayload(BaseEvent):
+class ToolClientRequestPayload(BaseEventSchema):
     """Payload for tool.client.request events.
 
     This event is sent to the client (browser) when a tool needs to be

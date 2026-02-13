@@ -138,14 +138,14 @@ class MyTool(BaseTool):
 
 ```python
 from aiwen.registries import register_executor
-from aiwen.core.interfaces.executor import Executor
+from aiwen.interfaces import Executor
 
 
 @register_executor
 class MyExecutor(Executor):
     TEMPLATE = {
-        "template_code": "MY001",
-        "template_name": "My Agent",
+        "executor_code": "MY001",
+        "executor_name": "My Agent",
         "enabled": True,
         "version": 1,
         "config": {}

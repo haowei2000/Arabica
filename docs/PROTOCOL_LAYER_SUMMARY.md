@@ -112,7 +112,7 @@ Protocols serve as explicit documentation:
 
 ```python
 # See exactly what a tool must implement
-from aiwen.core.interfaces import ToolProtocol
+from aiwen.interfaces import ToolProtocol
 
 # Type checkers show all required methods and attributes
 reveal_type(ToolProtocol)
@@ -206,8 +206,9 @@ tool: ToolProtocol = IncompleteTool()  # Type error!
 ### Basic Tool with Protocol
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
+from aiwen.interfaces import ToolProtocol
 from aiwen.registries.base_class import BaseTool
+
 
 # Recommended: Inherit from BaseTool (implements ToolProtocol)
 class MyTool(BaseTool):
@@ -221,6 +222,7 @@ class MyTool(BaseTool):
     async def execute(self, input_data):
         return ToolOutputSchema(success=True, message="Done")
 
+
 # Verify protocol compliance
 assert isinstance(MyTool(), ToolProtocol)
 ```
@@ -228,7 +230,8 @@ assert isinstance(MyTool(), ToolProtocol)
 ### Type-Safe Function
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
+from aiwen.interfaces import ToolProtocol
+
 
 async def safe_execute(tool: ToolProtocol, params: dict) -> dict:
     """This function is type-safe - tool must have all protocol methods."""
@@ -241,7 +244,7 @@ async def safe_execute(tool: ToolProtocol, params: dict) -> dict:
 ### Runtime Validation
 
 ```python
-from aiwen.core.interfaces import is_tool, is_executor
+from aiwen.interfaces import is_tool, is_executor
 
 components = [MyTool(), MyExecutor(), SomeObject()]
 
@@ -252,7 +255,7 @@ executors = [c for c in components if is_executor(c)]
 ### Protocol Introspection
 
 ```python
-from aiwen.core.interfaces import PROTOCOL_REGISTRY
+from aiwen.interfaces import PROTOCOL_REGISTRY
 
 # Check what a tool needs to implement
 tool_requirements = PROTOCOL_REGISTRY["ToolProtocol"]
@@ -300,8 +303,11 @@ Gradually update function signatures:
 # Before
 def process(tool: BaseTool) -> dict: ...
 
+
 # After (more flexible)
-from aiwen.core.interfaces import ToolProtocol
+from aiwen.interfaces import ToolProtocol
+
+
 def process(tool: ToolProtocol) -> dict: ...
 ```
 

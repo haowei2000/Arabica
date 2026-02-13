@@ -1,8 +1,8 @@
 // Agent 模板
 export interface AgentTemplate {
   id: string;
-  template_code: string;
-  template_name: string;
+  executor_code: string;
+  executor_name: string;
   enabled: boolean;
   config?: Record<string, any>;
   version: number;
@@ -14,7 +14,7 @@ export interface AgentTemplate {
 export interface App {
   id: string;
   app_code: string;
-  agent_template_id?: string;
+  executor_id?: string;
   user_id?: string;
   enabled: boolean;
   config?: Record<string, any>;
@@ -26,8 +26,8 @@ export interface App {
 // 创建 App 请求
 export interface AppCreate {
   app_code: string;
-  agent_template_code?: string;
-  agent_template_id?: string;
+  executor_code?: string;
+  executor_id?: string;
   user_id?: string;
   enabled?: boolean;
   config?: Record<string, any>;
@@ -36,7 +36,7 @@ export interface AppCreate {
 
 // 更新 App 请求
 export interface AppUpdate {
-  agent_template_id?: string;
+  executor_id?: string;
   enabled?: boolean;
   config?: Record<string, any>;
   version?: number;
