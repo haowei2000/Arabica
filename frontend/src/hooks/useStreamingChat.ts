@@ -1,10 +1,29 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useChatStore } from '@/stores/useChatStore';
 import { streamService } from '@/services/streamService';
 import { MessageRole } from '@/types/message';
+import { ErrorCategory } from '@/types/events';
+import type { StreamError } from '@/types/events';
 import { generateUUID } from '@/utils/uuid';
 
+function categorizeError(error: Error): StreamError {
+  const msg = error.message.toLowerCase();
+
+  if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('connection lost') || msg.includes('reconnect')) {
+    return { category: ErrorCategory.NETWORK, message: 'Network connection lost. Please check your connection.', retryable: true };
+  }
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('stuck_run_timeout')) {
+    return { category: ErrorCategory.TIMEOUT, message: 'The operation timed out. The server may be under heavy load.', retryable: true };
+  }
+  if (msg.includes('run failed') || msg.includes('failed')) {
+    return { category: ErrorCategory.RUN_FAILED, message: error.message, retryable: false };
+  }
+  return { category: ErrorCategory.UNKNOWN, message: error.message, retryable: true };
+}
+
 export const useStreamingChat = (workspaceId: string, appId?: string | null) => {
+  const lastUserMessageRef = useRef<string>('');
+
   const {
     addMessage,
     appendStreamingMessage,
@@ -20,8 +39,48 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     addPendingApproval,
     clearPendingApprovals,
     removePendingApproval,
+    appendThinkingContent,
+    addContextUsage,
+    clearContextUsages,
+    addOutcome,
+    clearOutcomes,
+    setStreamError,
+    streamError,
     currentRunId,
   } = useChatStore();
+
+  /** Snapshot current streaming state into a persisted assistant message. */
+  const saveStreamingStateAsMessage = useCallback(() => {
+    const state = useChatStore.getState();
+    const hasContent = state.streamingMessage || state.thinkingContent.length > 0 ||
+      state.activeToolCalls.length > 0 || state.planSteps.length > 0 ||
+      state.contextUsages.length > 0 || state.outcomes.length > 0;
+
+    if (hasContent) {
+      addMessage({
+        id: generateUUID(),
+        role: MessageRole.ASSISTANT,
+        content: state.streamingMessage || '',
+        timestamp: new Date(),
+        thinkingContent: state.thinkingContent.length > 0 ? [...state.thinkingContent] : undefined,
+        toolCalls: state.activeToolCalls.length > 0 ? [...state.activeToolCalls] : undefined,
+        planSteps: state.planSteps.length > 0 ? [...state.planSteps] : undefined,
+        contextUsages: state.contextUsages.length > 0 ? [...state.contextUsages] : undefined,
+        outcomes: state.outcomes.length > 0 ? [...state.outcomes] : undefined,
+      });
+    }
+  }, [addMessage]);
+
+  /** Clear all live streaming state after it has been saved. */
+  const clearStreamingState = useCallback(() => {
+    clearStreamingMessage();
+    setThinkingContent(null);
+    clearToolCalls();
+    clearPlanSteps();
+    clearPendingApprovals();
+    clearContextUsages();
+    clearOutcomes();
+  }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearContextUsages, clearOutcomes]);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -29,6 +88,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         console.error('No workspace selected');
         return;
       }
+
+      lastUserMessageRef.current = content;
 
       // Optimistic user message
       addMessage({
@@ -40,11 +101,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
 
       // Reset all streaming state
       setIsStreaming(true);
-      clearStreamingMessage();
-      setThinkingContent(null);
-      clearToolCalls();
-      clearPlanSteps();
-      clearPendingApprovals();
+      clearStreamingState();
+      setStreamError(null);
 
       await streamService.sendStreamingMessage({
         workspaceId,
@@ -58,7 +116,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         onChunk: (chunk) => appendStreamingMessage(chunk),
 
         // ── thinking ────────────────────────────────────
-        onThinking: (thinkingText) => setThinkingContent(thinkingText),
+        onThinking: (thinkingText) => appendThinkingContent(thinkingText),
 
         // ── tool lifecycle ──────────────────────────────
         onToolCall: (event) => {
@@ -91,78 +149,52 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           });
         },
 
+        // ── context events ────────────────────────────
+        onUsingContext: (event) => addContextUsage(event),
+        onPutOutcome: (event) => addOutcome(event),
+
         // ── stream finished ─────────────────────────────
         onComplete: () => {
-          // Snapshot current event-stream state so it persists on the
-          // completed assistant message (visible after streaming ends).
-          const state = useChatStore.getState();
-
-          if (state.streamingMessage) {
-            addMessage({
-              id: generateUUID(),
-              role: MessageRole.ASSISTANT,
-              content: state.streamingMessage,
-              timestamp: new Date(),
-              thinkingContent: state.thinkingContent || undefined,
-              toolCalls: state.activeToolCalls.length ? [...state.activeToolCalls] : undefined,
-              planSteps: state.planSteps.length ? [...state.planSteps] : undefined,
-            });
-          }
-
-          clearStreamingMessage();
-          setThinkingContent(null);
-          clearToolCalls();
-          clearPlanSteps();
-          clearPendingApprovals();
+          saveStreamingStateAsMessage();
+          clearStreamingState();
           setIsStreaming(false);
         },
 
         // ── stream errored ──────────────────────────────
         onError: (error) => {
+          // Persist whatever intermediate events we already have
+          saveStreamingStateAsMessage();
+          clearStreamingState();
           setIsStreaming(false);
-          clearStreamingMessage();
-          setThinkingContent(null);
-          clearToolCalls();
-          clearPlanSteps();
-          clearPendingApprovals();
-
-          addMessage({
-            id: generateUUID(),
-            role: MessageRole.ASSISTANT,
-            content: `错误：${error.message}`,
-            timestamp: new Date(),
-          });
+          setStreamError(categorizeError(error));
         },
       });
     },
     [
       workspaceId,
       appId,
-      addMessage,
       appendStreamingMessage,
-      clearStreamingMessage,
       setIsStreaming,
       setCurrentRun,
-      setThinkingContent,
       addToolCall,
       updateToolCall,
-      clearToolCalls,
       addOrUpdatePlanStep,
-      clearPlanSteps,
       addPendingApproval,
-      clearPendingApprovals,
+      appendThinkingContent,
+      addContextUsage,
+      addOutcome,
+      setStreamError,
+      saveStreamingStateAsMessage,
+      clearStreamingState,
     ]
   );
 
   const stopStreaming = useCallback(async () => {
     await streamService.abort(workspaceId);
+    saveStreamingStateAsMessage();
+    clearStreamingState();
     setIsStreaming(false);
-    clearStreamingMessage();
-    setThinkingContent(null);
-    clearToolCalls();
-    clearPlanSteps();
-    clearPendingApprovals();
-  }, [workspaceId, setIsStreaming, clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals]);
+  }, [workspaceId, setIsStreaming, saveStreamingStateAsMessage, clearStreamingState]);
 
   /** Approve or deny a pending tool; POSTs to the resume endpoint. */
   const approveToolCall = useCallback(
@@ -177,5 +209,11 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     [workspaceId, currentRunId, removePendingApproval]
   );
 
-  return { sendMessage, stopStreaming, approveToolCall };
+  const retryLastMessage = useCallback(() => {
+    if (lastUserMessageRef.current) {
+      sendMessage(lastUserMessageRef.current);
+    }
+  }, [sendMessage]);
+
+  return { sendMessage, stopStreaming, approveToolCall, streamError, retryLastMessage };
 };

@@ -70,14 +70,3 @@ class ConflictExecutor(Executor):
         # ── final result ─────────────────────────────────────────
         result = {"intent": intent, "sql": sql, "data": data}
         yield self._emit_message(str(result))
-
-    # ── placeholder implementations ────────────────────────────
-
-    async def parse_intent(self, query: str) -> dict[str, Any]:
-        return {"original_query": query, "parsed_elements": {}}
-
-    async def generate_sql(self, _intent: dict[str, Any]) -> str:
-        return "SELECT * FROM table LIMIT 10;"
-
-    async def execute_sql(self, _sql: str) -> list[dict[str, Any]]:
-        return [{"placeholder": "result"}]

@@ -8,6 +8,7 @@ All tools run through the same ``execute()`` / ``__call__()`` protocol.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
+import time
 from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, Field
@@ -283,15 +284,32 @@ class BaseTool(ABC):
         Returns:
             dict: Formatted execution result
         """
+        tool_name = self.METADATA.name
+        logger.info("Tool call started: %s | args: %s", tool_name, kwargs)
+        start_time = time.monotonic()
+
         input_data = None
         try:
             input_data = await self.validate_input(kwargs)
             await self.before_execute(input_data)
             output = await self.execute(input_data)
             await self.after_execute(input_data, output)
-            return self.format_output(output)
+
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            result = self.format_output(output)
+            logger.info(
+                "Tool call succeeded: %s | %.1fms | success=%s",
+                tool_name, elapsed_ms, result.get("success"),
+            )
+            return result
 
         except Exception as e:
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            logger.error(
+                "Tool call failed: %s | %.1fms | error: %s",
+                tool_name, elapsed_ms, e,
+                exc_info=True,
+            )
             error_output = await self.on_error(input_data, e)
             return self.format_output(error_output)
 

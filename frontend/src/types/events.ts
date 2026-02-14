@@ -27,6 +27,7 @@ export const EventType = {
   AGENT_TOKEN: 'agent.token',
   AGENT_MESSAGE: 'agent.message',
   AGENT_THINKING: 'agent.thinking',
+  AGENT_HEARTBEAT: 'agent.heartbeat',
   AGENT_PLAN_STEP: 'agent.plan.step',
 
   // Tool events
@@ -34,6 +35,10 @@ export const EventType = {
   TOOL_RESULT: 'tool.result',
   TOOL_ERROR: 'tool.error',
   TOOL_PENDING: 'tool.pending',
+
+  // Context events
+  USING_CONTEXT: 'context.using',
+  PUT_OUTCOME: 'context.put_outcome',
 
   // Run lifecycle events
   RUN_STATE_CHANGE: 'run.state.change',
@@ -90,6 +95,21 @@ export interface ToolPendingPayload {
   reason: string;
   requires_approval: boolean;
   arguments: Record<string, unknown>;
+}
+
+export interface UsingContextPayload {
+  context_type: string;       // e.g. "knowledge", "memory", "skill"
+  context_name: string;       // human-readable name of the context source
+  query?: string;             // the retrieval query, if any
+  results_count?: number;     // number of results retrieved
+  details?: Record<string, unknown>;
+}
+
+export interface PutOutcomePayload {
+  outcome_type: string;       // e.g. "file", "artifact", "result"
+  outcome_name: string;       // human-readable name
+  summary?: string;           // short description of what was produced
+  details?: Record<string, unknown>;
 }
 
 export interface RunStateChangePayload {
@@ -179,4 +199,42 @@ export interface ToolPendingState {
   tool_name: string;
   arguments: Record<string, unknown>;
   reason: string;
+}
+
+/**
+ * Runtime state for a context retrieval event.
+ */
+export interface ContextUsageState {
+  context_type: string;
+  context_name: string;
+  query?: string;
+  results_count?: number;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Runtime state for an outcome produced by the agent.
+ */
+export interface OutcomeState {
+  outcome_type: string;
+  outcome_name: string;
+  summary?: string;
+  details?: Record<string, unknown>;
+}
+
+// ============================================================================
+// Error Categories (for categorized error display)
+// ============================================================================
+
+export enum ErrorCategory {
+  NETWORK = 'network',
+  TIMEOUT = 'timeout',
+  RUN_FAILED = 'run_failed',
+  UNKNOWN = 'unknown',
+}
+
+export interface StreamError {
+  category: ErrorCategory;
+  message: string;
+  retryable: boolean;
 }

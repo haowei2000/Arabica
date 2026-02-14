@@ -1,5 +1,6 @@
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
-import type { AgentPlanStepPayload, ToolCallPayload, ToolPendingPayload, ToolResultPayload } from '@/types/events';
+import type { AgentPlanStepPayload, ToolCallPayload, ToolPendingPayload, ToolResultPayload, UsingContextPayload, PutOutcomePayload } from '@/types/events';
+import { useChatStore } from '@/stores/useChatStore';
 
 export interface StreamOptions {
   workspaceId: string;
@@ -20,6 +21,10 @@ export interface StreamOptions {
   onPlanStep?: (event: AgentPlanStepPayload) => void;
   /** A tool requires human approval before it can execute. */
   onToolPending?: (event: ToolPendingPayload) => void;
+  /** The agent is retrieving context (knowledge, memory, etc.). */
+  onUsingContext?: (event: UsingContextPayload) => void;
+  /** The agent produced an outcome (file, artifact, result). */
+  onPutOutcome?: (event: PutOutcomePayload) => void;
 }
 
 interface StreamEventPayload {
@@ -28,9 +33,14 @@ interface StreamEventPayload {
   sequence?: number;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 30000;
+
 class StreamService {
   private controller: AbortController | null = null;
   private currentRunId: string | null = null;
+  private lastEventId: string | null = null;
 
   async sendStreamingMessage(options: StreamOptions): Promise<void> {
     const { workspaceId, appId, message, onChunk, onComplete, onError } = options;
@@ -62,24 +72,106 @@ class StreamService {
 
       const runInfo = await startResponse.json();
       this.currentRunId = runInfo.id;
+      this.lastEventId = null;
       options.onRunStart(runInfo.id);
 
-      // 2. Open SSE stream
-      this.controller = new AbortController();
-      const streamResponse = await fetch(
-        `${API_BASE_URL}${API_ENDPOINTS.EVENTS.RUN_STREAM(runInfo.id)}`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}` },
-          signal: this.controller.signal,
-        }
+      // 2. Open SSE stream with reconnect
+      const result = await this.readSSEStreamWithReconnect(runInfo.id, options);
+      if (result === 'completed') {
+        // stream ended normally via terminal event — already called onComplete/onError
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') {
+        onError(error);
+      }
+    } finally {
+      this.controller = null;
+      this.currentRunId = null;
+    }
+  }
+
+  /**
+   * Open the SSE stream, read events, and reconnect on abnormal disconnects.
+   * Returns 'completed' when a terminal event was received, 'exhausted' when
+   * all reconnect attempts are used up.
+   */
+  private async readSSEStreamWithReconnect(
+    runId: string,
+    options: StreamOptions,
+  ): Promise<'completed' | 'exhausted'> {
+    let reconnectAttempts = 0;
+
+    while (true) {
+      const lastId = this.lastEventId ?? '$';
+      const result = await this.readSSEStream(runId, lastId, options);
+
+      if (result === 'terminal') {
+        return 'completed';
+      }
+
+      // Stream ended abnormally (reader done without terminal event)
+      reconnectAttempts++;
+      if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+        options.onError(new Error('Connection lost after multiple reconnect attempts'));
+        return 'exhausted';
+      }
+
+      // Exponential backoff
+      const delay = Math.min(
+        RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts - 1),
+        RECONNECT_MAX_DELAY_MS,
       );
+
+      const store = useChatStore.getState();
+      store.setReconnecting(true);
+      store.setReconnectAttempt(reconnectAttempts);
+
+      console.warn(`SSE disconnected, reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+
+      // Check if we were aborted during the delay
+      if (this.controller?.signal.aborted) {
+        return 'completed';
+      }
+    }
+  }
+
+  /**
+   * Read a single SSE stream connection. Returns 'terminal' if a terminal event
+   * was received, or 'disconnected' if the stream ended without a terminal event.
+   */
+  private async readSSEStream(
+    runId: string,
+    lastId: string,
+    options: StreamOptions,
+  ): Promise<'terminal' | 'disconnected'> {
+    const { onChunk, onComplete, onError } = options;
+    const token = localStorage.getItem('access_token');
+
+    this.controller = new AbortController();
+    const store = useChatStore.getState();
+
+    try {
+      let streamUrl = `${API_BASE_URL}${API_ENDPOINTS.EVENTS.RUN_STREAM(runId)}`;
+      if (lastId && lastId !== '$') {
+        const separator = streamUrl.includes('?') ? '&' : '?';
+        streamUrl += `${separator}last_event_id=${encodeURIComponent(lastId)}`;
+      }
+
+      const streamResponse = await fetch(streamUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: this.controller.signal,
+      });
 
       if (!streamResponse.ok || !streamResponse.body) {
         throw new Error(`Failed to stream events: ${streamResponse.status}`);
       }
 
-      // 3. Read & dispatch
+      // Successfully connected — clear reconnecting state
+      store.setReconnecting(false);
+      store.setReconnectAttempt(0);
+
       const reader = streamResponse.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -102,6 +194,14 @@ class StreamService {
           return;
         }
 
+        // Track last event sequence for reconnect
+        if (payload?.sequence != null) {
+          this.lastEventId = String(payload.sequence);
+        }
+
+        // Update last event timestamp in store
+        useChatStore.getState().setLastEventTimestamp(Date.now());
+
         const eventType = payload?.event_type || eventName;
         const eventPayload = payload?.payload || {};
         const internalType = (payload as any)?.type as string | undefined;
@@ -113,6 +213,11 @@ class StreamService {
           return;
         }
         if (internalType === 'keepalive') return;
+
+        // ── agent heartbeat (timestamp update only) ───────
+        if (eventType === 'agent.heartbeat') {
+          return;
+        }
 
         // ── agent text events ─────────────────────────────
         if (eventType === 'agent.token') {
@@ -186,6 +291,28 @@ class StreamService {
           return;
         }
 
+        // ── context events ─────────────────────────────────
+        if (eventType === 'context.using') {
+          options.onUsingContext?.({
+            context_type: eventPayload?.context_type as string,
+            context_name: eventPayload?.context_name as string,
+            query: eventPayload?.query as string | undefined,
+            results_count: eventPayload?.results_count as number | undefined,
+            details: eventPayload?.details as Record<string, unknown> | undefined,
+          });
+          return;
+        }
+
+        if (eventType === 'context.put_outcome') {
+          options.onPutOutcome?.({
+            outcome_type: eventPayload?.outcome_type as string,
+            outcome_name: eventPayload?.outcome_name as string,
+            summary: eventPayload?.summary as string | undefined,
+            details: eventPayload?.details as Record<string, unknown> | undefined,
+          });
+          return;
+        }
+
         // ── run lifecycle ─────────────────────────────────
         if (eventType === 'run.state.change') {
           const nextState = eventPayload?.new_state as string | undefined;
@@ -216,14 +343,13 @@ class StreamService {
         }
       };
 
-      // 4. SSE line parser loop
+      // SSE line parser loop
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
-          this.currentRunId = null;
-          if (!finished) onComplete();
-          break;
+          if (finished) return 'terminal';
+          return 'disconnected';
         }
 
         buffer += decoder.decode(value, { stream: true });
@@ -250,11 +376,12 @@ class StreamService {
         }
       }
     } catch (error) {
-      if (error instanceof Error && error.name !== 'AbortError') {
-        onError(error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        return 'terminal';
       }
-    } finally {
-      this.controller = null;
+      // Network error — try to reconnect
+      console.warn('SSE stream error:', error);
+      return 'disconnected';
     }
   }
 

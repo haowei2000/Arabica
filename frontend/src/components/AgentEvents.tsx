@@ -8,7 +8,9 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { ToolCallState, ToolPendingState, AgentPlanStepPayload } from '@/types/events';
+import { BookOpen, Package } from 'lucide-react';
+import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState } from '@/types/events';
+import { ErrorCategory } from '@/types/events';
 
 // ── ThinkingBlock ────────────────────────────────────────────────────────────
 
@@ -327,6 +329,167 @@ export function ApprovalCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── ContextUsageCard ─────────────────────────────────────────────────────────
+
+export function ContextUsageCard({ usage }: { usage: ContextUsageState }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-blue-200 dark:border-blue-800 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left
+                   bg-blue-50 dark:bg-blue-900/20
+                   hover:bg-blue-100 dark:hover:bg-blue-900/40
+                   transition-colors"
+      >
+        <BookOpen className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0" />
+        <span className="text-sm font-medium text-blue-800 dark:text-blue-200 flex-1 truncate">
+          Using {usage.context_type}: {usage.context_name}
+        </span>
+        {usage.results_count != null && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+                           bg-blue-100 dark:bg-blue-800/40 text-blue-700 dark:text-blue-300">
+            {usage.results_count} results
+          </span>
+        )}
+        {open ? (
+          <ChevronDown className="w-4 h-4 text-blue-400 shrink-0" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-blue-400 shrink-0" />
+        )}
+      </button>
+
+      {open && (
+        <div className="px-3 py-2 space-y-2 border-t border-blue-200 dark:border-blue-800">
+          {usage.query && (
+            <div>
+              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+                Query
+              </p>
+              <p className="mt-1 text-xs text-blue-700 dark:text-blue-300">
+                {usage.query}
+              </p>
+            </div>
+          )}
+          {usage.details && Object.keys(usage.details).length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+                Details
+              </p>
+              <pre className="mt-1 text-xs text-blue-700 dark:text-blue-300
+                              bg-blue-50 dark:bg-blue-900/30 rounded px-2 py-1
+                              overflow-x-auto whitespace-pre-wrap">
+                {JSON.stringify(usage.details, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── OutcomeCard ──────────────────────────────────────────────────────────────
+
+export function OutcomeCard({ outcome }: { outcome: OutcomeState }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left
+                   bg-emerald-50 dark:bg-emerald-900/20
+                   hover:bg-emerald-100 dark:hover:bg-emerald-900/40
+                   transition-colors"
+      >
+        <Package className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+        <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200 flex-1 truncate">
+          Produced {outcome.outcome_type}: {outcome.outcome_name}
+        </span>
+        {open ? (
+          <ChevronDown className="w-4 h-4 text-emerald-400 shrink-0" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-emerald-400 shrink-0" />
+        )}
+      </button>
+
+      {open && (
+        <div className="px-3 py-2 space-y-2 border-t border-emerald-200 dark:border-emerald-800">
+          {outcome.summary && (
+            <div>
+              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                Summary
+              </p>
+              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                {outcome.summary}
+              </p>
+            </div>
+          )}
+          {outcome.details && Object.keys(outcome.details).length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                Details
+              </p>
+              <pre className="mt-1 text-xs text-emerald-700 dark:text-emerald-300
+                              bg-emerald-50 dark:bg-emerald-900/30 rounded px-2 py-1
+                              overflow-x-auto whitespace-pre-wrap">
+                {JSON.stringify(outcome.details, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ErrorMessage ─────────────────────────────────────────────────────────────
+
+const errorLabels: Record<ErrorCategory, { label: string; color: string }> = {
+  [ErrorCategory.NETWORK]: { label: 'Network Error', color: 'amber' },
+  [ErrorCategory.TIMEOUT]: { label: 'Timeout', color: 'orange' },
+  [ErrorCategory.RUN_FAILED]: { label: 'Run Failed', color: 'red' },
+  [ErrorCategory.UNKNOWN]: { label: 'Error', color: 'red' },
+};
+
+export function ErrorMessage({
+  error,
+  onRetry,
+}: {
+  error: StreamError;
+  onRetry?: () => void;
+}) {
+  const config = errorLabels[error.category];
+
+  return (
+    <div className={`rounded-lg border border-${config.color}-200 dark:border-${config.color}-800
+                     bg-${config.color}-50 dark:bg-${config.color}-900/20 px-3 py-3`}>
+      <div className="flex items-start gap-3">
+        <span className={`text-${config.color}-600 dark:text-${config.color}-400 text-sm font-semibold shrink-0`}>
+          {config.label}
+        </span>
+        <p className={`text-sm text-${config.color}-700 dark:text-${config.color}-300 flex-1`}>
+          {error.message}
+        </p>
+        {error.retryable && onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 px-3 py-1 text-xs font-medium rounded-lg
+                       bg-primary-500 hover:bg-primary-600 text-white transition-colors"
+          >
+            Retry
+          </button>
+        )}
+      </div>
     </div>
   );
 }

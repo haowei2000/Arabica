@@ -22,7 +22,7 @@ async def main():
     from aiwen.extensions.database import get_session
     from aiwen.schemas.events.event_payloads import UserMessage
     from aiwen.schemas.context.tools.user_tool import UserToolCreate
-    from aiwen.plugins.executors.default import (
+    from aiwen.plugins.executors.simple import (
         DefaultAgentTemplate,
     )
     from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader

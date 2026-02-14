@@ -23,6 +23,21 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: proxyTarget,
           changeOrigin: true,
+          // Ensure SSE (Server-Sent Events) streams are not buffered.
+          // Without this, http-proxy may hold chunks until the connection
+          // closes, causing the frontend to receive nothing until the
+          // run finishes.
+          configure: (proxy) => {
+            proxy.on('proxyRes', (proxyRes, req, res) => {
+              if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
+                // Disable any proxy-level buffering / compression
+                proxyRes.headers['cache-control'] = 'no-cache'
+                proxyRes.headers['x-accel-buffering'] = 'no'
+                delete proxyRes.headers['content-encoding']
+                delete proxyRes.headers['content-length']
+              }
+            })
+          },
         },
       },
     },

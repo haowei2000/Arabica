@@ -194,7 +194,7 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-    from aiwen.plugins.executors.default import DefaultAgentTemplate
+    from aiwen.plugins.executors.simple import DefaultAgentTemplate
     from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
 
     templates = [

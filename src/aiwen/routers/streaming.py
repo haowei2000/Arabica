@@ -13,10 +13,12 @@ from aiwen.dependencies.workspace import (
     EventConsumerDep,
     EventReplayerDep,
     RunCRUDDep,
+    RunStateMachineDep,
     WorkspaceCRUDDep,
 )
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventListResponse
+from aiwen.services.runs.stuck_run_detector import StuckRunDetector
 
 _redis_cfg = get_settings().redis
 EVENT_TYPE_DISCONNECT = _redis_cfg.event_type_disconnect
@@ -192,3 +194,18 @@ async def get_run_state(
         )
 
     return await replayer.get_latest_state(run_id)
+
+
+@router.post("/runs/cleanup-stuck", tags=["events"])
+async def cleanup_stuck_runs(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    state_machine: RunStateMachineDep,
+    run_crud: RunCRUDDep,
+):
+    """Detect and recover runs that have been silent for too long."""
+    detector = StuckRunDetector(state_machine)
+    recovered_ids = await detector.detect_and_recover(run_crud.db)
+    return {
+        "recovered_count": len(recovered_ids),
+        "recovered_run_ids": recovered_ids,
+    }

@@ -3,8 +3,9 @@
  */
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Brain, Wrench, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
-import type { ToolCallState, ToolPendingState, AgentPlanStepPayload } from '@/types/events';
+import { ChevronDown, ChevronRight, Brain, Wrench, CheckCircle2, XCircle, Clock, AlertCircle, Wifi, RefreshCw } from 'lucide-react';
+import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError } from '@/types/events';
+import { ErrorCategory } from '@/types/events';
 import { Card, CardBody, Badge, Button } from '@/components/ui';
 
 // ── ThinkingBlock ────────────────────────────────────────────────────────────
@@ -237,6 +238,76 @@ export function PlanStepList({ steps }: { steps: AgentPlanStepPayload[] }) {
             </div>
           </div>
         ))}
+      </div>
+    </Card>
+  );
+}
+
+// ── ErrorMessage ─────────────────────────────────────────────────────────────
+
+const errorConfig = {
+  [ErrorCategory.NETWORK]: {
+    icon: Wifi,
+    bg: 'from-amber-50 to-amber-100/50 dark:from-amber-950/30 dark:to-amber-900/20',
+    border: 'border-amber-200 dark:border-amber-800/50',
+    iconBg: 'from-amber-500 to-amber-600 shadow-amber-500/30',
+    textColor: 'text-amber-900 dark:text-amber-100',
+  },
+  [ErrorCategory.TIMEOUT]: {
+    icon: Clock,
+    bg: 'from-orange-50 to-orange-100/50 dark:from-orange-950/30 dark:to-orange-900/20',
+    border: 'border-orange-200 dark:border-orange-800/50',
+    iconBg: 'from-orange-500 to-orange-600 shadow-orange-500/30',
+    textColor: 'text-orange-900 dark:text-orange-100',
+  },
+  [ErrorCategory.RUN_FAILED]: {
+    icon: XCircle,
+    bg: 'from-red-50 to-red-100/50 dark:from-red-950/30 dark:to-red-900/20',
+    border: 'border-red-200 dark:border-red-800/50',
+    iconBg: 'from-red-500 to-red-600 shadow-red-500/30',
+    textColor: 'text-red-900 dark:text-red-100',
+  },
+  [ErrorCategory.UNKNOWN]: {
+    icon: AlertCircle,
+    bg: 'from-gray-50 to-gray-100/50 dark:from-gray-950/30 dark:to-gray-900/20',
+    border: 'border-gray-200 dark:border-gray-800/50',
+    iconBg: 'from-gray-500 to-gray-600 shadow-gray-500/30',
+    textColor: 'text-gray-900 dark:text-gray-100',
+  },
+};
+
+export function ErrorMessage({
+  error,
+  onRetry,
+}: {
+  error: StreamError;
+  onRetry?: () => void;
+}) {
+  const config = errorConfig[error.category];
+  const Icon = config.icon;
+
+  return (
+    <Card className={`${config.border} bg-gradient-to-r ${config.bg} animate-scale-in`}>
+      <div className="flex items-start gap-3 px-4 py-3">
+        <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${config.iconBg} flex items-center justify-center shadow-lg shrink-0`}>
+          <Icon className="w-4 h-4 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-medium ${config.textColor}`}>
+            {error.message}
+          </p>
+        </div>
+        {error.retryable && onRetry && (
+          <Button
+            type="button"
+            onClick={onRetry}
+            variant="primary"
+            size="sm"
+            icon={<RefreshCw className="w-3.5 h-3.5" />}
+          >
+            Retry
+          </Button>
+        )}
       </div>
     </Card>
   );

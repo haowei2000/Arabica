@@ -9,6 +9,7 @@ Event Worker - 事件驱动的 Agent 执行器
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 import redis.asyncio as redis_async
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.config.factory import get_settings
+from aiwen.enums.events import EventType
 from aiwen.interfaces.executor import AgentEvent
 from aiwen.interfaces.protocols import ExecutorProtocol
 from aiwen.models.app import App
@@ -28,6 +30,7 @@ from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
 from aiwen.services.executor.runtime import ExecutorRuntime
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
+from aiwen.services.runs.stuck_run_detector import StuckRunDetector
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,9 @@ class Worker:
             db, redis_client, event_publisher=self.event_publisher
         )
 
+        self._stuck_detector = StuckRunDetector(self.state_machine)
+        self._stuck_detector_task: asyncio.Task | None = None
+
         # ── Startup-initialized tool services (stateless / reusable) ──
         self._tool_caller = RegistryToolCaller()
 
@@ -93,10 +99,26 @@ class Worker:
                 raise
             logger.debug(f"Consumer group '{REDIS_CONSUMER_GROUP}' already exists")
 
+    async def _stuck_run_detector_loop(self) -> None:
+        """Periodically detect and recover stuck runs."""
+        while True:
+            try:
+                await asyncio.sleep(120)
+                recovered = await self._stuck_detector.detect_and_recover(self.db)
+                if recovered:
+                    logger.info(f"Stuck detector recovered runs: {recovered}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Stuck run detector error: {e}", exc_info=True)
+
     async def start(self, stream_name: str):
         """Start consuming messages from the stream using consumer groups."""
         await self._ensure_consumer_group(stream_name)
         logger.info(f"Worker '{self.consumer_name}' listening on stream: {stream_name}")
+
+        # Launch stuck run detector as background task
+        self._stuck_detector_task = asyncio.create_task(self._stuck_run_detector_loop())
 
         while True:
             try:
@@ -129,6 +151,8 @@ class Worker:
                         # 注意：失败的消息不会被确认，会进入 pending 队列等待重试
 
             except asyncio.CancelledError:
+                if self._stuck_detector_task:
+                    self._stuck_detector_task.cancel()
                 raise
             except Exception as e:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
@@ -389,11 +413,25 @@ class Worker:
         """
         event_count = 0
         check_interval = 10  # 每处理 10 个事件检查一次取消状态
+        heartbeat_interval = 30  # seconds between heartbeat events
+        last_heartbeat = datetime.now(UTC)
 
         try:
             async for event in executor.stream(user_message):
                 # 通过 EventPublisher 发布事件（统一格式）
                 await self._publish_agent_event(event, run_id, workspace_id)
+
+                # Publish heartbeat if enough time has elapsed
+                now = datetime.now(UTC)
+                if (now - last_heartbeat).total_seconds() >= heartbeat_interval:
+                    await self.event_publisher.publish(
+                        event_type=EventType.AGENT_HEARTBEAT,
+                        workspace_id=workspace_id,
+                        run_id=str(run_id),
+                        payload={"timestamp": now.isoformat()},
+                        auto_commit=True,
+                    )
+                    last_heartbeat = now
 
                 # 定期检查是否被取消（减少数据库查询频率）
                 event_count += 1

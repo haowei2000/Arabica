@@ -7,7 +7,7 @@ import { useRuns } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
-import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard } from '@/components/AgentEvents';
+import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard, ErrorMessage, ContextUsageCard, OutcomeCard } from '@/components/AgentEvents';
 import { Card, CardBody, Button, Badge } from '@/components/ui';
 
 import KnowledgePage from '@/pages/context/KnowledgePage';
@@ -35,6 +35,11 @@ export default function WorkspaceConsole() {
     activeToolCalls,
     planSteps,
     pendingApprovals,
+    contextUsages,
+    outcomes,
+    lastEventTimestamp,
+    reconnecting,
+    reconnectAttempt,
     startNewRun,
     loadRun,
   } = useChatStore();
@@ -44,14 +49,30 @@ export default function WorkspaceConsole() {
     page_size: 50,
   });
 
-  const { sendMessage, stopStreaming, approveToolCall } = useStreamingChat(
+  const { sendMessage, stopStreaming, approveToolCall, streamError, retryLastMessage } = useStreamingChat(
     currentWorkspaceId || '',
     currentWorkspaceAppId
   );
 
+  // Track seconds since last event for dynamic status text
+  const [timeSinceLastEvent, setTimeSinceLastEvent] = useState(0);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setTimeSinceLastEvent(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      if (lastEventTimestamp) {
+        setTimeSinceLastEvent(Math.floor((Date.now() - lastEventTimestamp) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isStreaming, lastEventTimestamp]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, pendingApprovals]);
+  }, [messages, streamingMessage, thinkingContent.length, activeToolCalls, planSteps, pendingApprovals, contextUsages, outcomes, streamError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,8 +167,10 @@ export default function WorkspaceConsole() {
                 </div>
               ) : (
                 <div className="max-w-3xl w-full space-y-3">
-                  {message.thinkingContent && (
-                    <ThinkingBlock content={message.thinkingContent} defaultCollapsed />
+                  {message.thinkingContent && message.thinkingContent.length > 0 && (
+                    message.thinkingContent.map((tc, i) => (
+                      <ThinkingBlock key={i} content={tc} defaultCollapsed />
+                    ))
                   )}
                   {message.toolCalls && message.toolCalls.length > 0 && (
                     <div className="space-y-2">
@@ -158,6 +181,20 @@ export default function WorkspaceConsole() {
                   )}
                   {message.planSteps && message.planSteps.length > 0 && (
                     <PlanStepList steps={message.planSteps} />
+                  )}
+                  {message.contextUsages && message.contextUsages.length > 0 && (
+                    <div className="space-y-2">
+                      {message.contextUsages.map((cu, i) => (
+                        <ContextUsageCard key={i} usage={cu} />
+                      ))}
+                    </div>
+                  )}
+                  {message.outcomes && message.outcomes.length > 0 && (
+                    <div className="space-y-2">
+                      {message.outcomes.map((o, i) => (
+                        <OutcomeCard key={i} outcome={o} />
+                      ))}
+                    </div>
                   )}
                   {message.content && (
                     <Card>
@@ -186,7 +223,9 @@ export default function WorkspaceConsole() {
                 <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></span>
               </div>
               <div className="max-w-3xl w-full space-y-3">
-                {thinkingContent && <ThinkingBlock content={thinkingContent} />}
+                {thinkingContent.length > 0 && thinkingContent.map((tc, i) => (
+                  <ThinkingBlock key={i} content={tc} defaultCollapsed={i < thinkingContent.length - 1} />
+                ))}
                 {activeToolCalls.length > 0 && (
                   <div className="space-y-2">
                     {activeToolCalls.map((tc) => (
@@ -195,6 +234,20 @@ export default function WorkspaceConsole() {
                   </div>
                 )}
                 {planSteps.length > 0 && <PlanStepList steps={planSteps} />}
+                {contextUsages.length > 0 && (
+                  <div className="space-y-2">
+                    {contextUsages.map((cu, i) => (
+                      <ContextUsageCard key={i} usage={cu} />
+                    ))}
+                  </div>
+                )}
+                {outcomes.length > 0 && (
+                  <div className="space-y-2">
+                    {outcomes.map((o, i) => (
+                      <OutcomeCard key={i} outcome={o} />
+                    ))}
+                  </div>
+                )}
                 {pendingApprovals.map((pending) => (
                   <ApprovalCard
                     key={pending.tool_id}
@@ -217,14 +270,33 @@ export default function WorkspaceConsole() {
                     <span className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0.1s' }}></span>
                     <span className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0.2s' }}></span>
                   </div>
-                  <span className="text-xs text-secondary-500 dark:text-secondary-400">
-                    {pendingApprovals.length > 0
-                      ? 'Waiting for approval...'
-                      : activeToolCalls.some((tc) => tc.status === 'pending')
-                        ? 'Executing tools...'
-                        : 'Thinking...'}
+                  <span className={`text-xs ${timeSinceLastEvent > 180 ? 'text-orange-500 dark:text-orange-400' : 'text-secondary-500 dark:text-secondary-400'}`}>
+                    {reconnecting
+                      ? `Reconnecting... (attempt ${reconnectAttempt})`
+                      : pendingApprovals.length > 0
+                        ? 'Waiting for approval...'
+                        : activeToolCalls.some((tc) => tc.status === 'pending')
+                          ? 'Executing tools...'
+                          : timeSinceLastEvent > 180
+                            ? 'This is taking unusually long...'
+                            : timeSinceLastEvent > 60
+                              ? 'Taking longer than expected...'
+                              : timeSinceLastEvent > 30
+                                ? 'Still working...'
+                                : 'Thinking...'}
                   </span>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {streamError && (
+            <div className="flex gap-4 justify-start animate-fade-in">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center text-white font-bold shadow-lg shadow-red-500/30 shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="max-w-3xl w-full">
+                <ErrorMessage error={streamError} onRetry={streamError.retryable ? retryLastMessage : undefined} />
               </div>
             </div>
           )}

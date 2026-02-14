@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { MessageRoleType, SimpleMessage } from '@/types/message';
-import type { ToolCallState, ToolPendingState, AgentPlanStepPayload } from '@/types/events';
+import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState } from '@/types/events';
 import { runService } from '@/services/runService';
 
 interface ChatState {
@@ -11,10 +11,18 @@ interface ChatState {
   isLoadingConversation: boolean;
 
   // ── live event-stream state (cleared on stream end) ──────
-  thinkingContent: string | null;
+  thinkingContent: string[];
   activeToolCalls: ToolCallState[];
   planSteps: AgentPlanStepPayload[];
   pendingApprovals: ToolPendingState[];
+  contextUsages: ContextUsageState[];
+  outcomes: OutcomeState[];
+
+  // ── reconnect & error state ─────────────────────────────
+  lastEventTimestamp: number | null;
+  reconnecting: boolean;
+  reconnectAttempt: number;
+  streamError: StreamError | null;
 
   // ── actions ───────────────────────────────────────────────
   setCurrentRun: (id: string | null) => void;
@@ -30,16 +38,27 @@ interface ChatState {
 
   // ── event-stream actions ──────────────────────────────────
   setThinkingContent: (content: string | null) => void;
+  appendThinkingContent: (content: string) => void;
   addToolCall: (call: ToolCallState) => void;
   updateToolCall: (toolId: string, updates: Partial<ToolCallState>) => void;
   clearToolCalls: () => void;
   addOrUpdatePlanStep: (step: AgentPlanStepPayload) => void;
   clearPlanSteps: () => void;
+  addContextUsage: (usage: ContextUsageState) => void;
+  clearContextUsages: () => void;
+  addOutcome: (outcome: OutcomeState) => void;
+  clearOutcomes: () => void;
 
   // ── approval actions ──────────────────────────────────────
   addPendingApproval: (approval: ToolPendingState) => void;
   removePendingApproval: (toolId: string) => void;
   clearPendingApprovals: () => void;
+
+  // ── reconnect & error actions ───────────────────────────
+  setLastEventTimestamp: (ts: number | null) => void;
+  setReconnecting: (reconnecting: boolean) => void;
+  setReconnectAttempt: (attempt: number) => void;
+  setStreamError: (error: StreamError | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -49,10 +68,17 @@ export const useChatStore = create<ChatState>((set) => ({
   isStreaming: false,
   isLoadingConversation: false,
 
-  thinkingContent: null,
+  thinkingContent: [],
   activeToolCalls: [],
   planSteps: [],
   pendingApprovals: [],
+  contextUsages: [],
+  outcomes: [],
+
+  lastEventTimestamp: null,
+  reconnecting: false,
+  reconnectAttempt: 0,
+  streamError: null,
 
   // ── base actions ────────────────────────────────────────
   setCurrentRun: (id) => set({ currentRunId: id }),
@@ -92,10 +118,16 @@ export const useChatStore = create<ChatState>((set) => ({
         messages,
         streamingMessage: '',
         isLoadingConversation: false,
-        thinkingContent: null,
+        thinkingContent: [],
         activeToolCalls: [],
         planSteps: [],
         pendingApprovals: [],
+        contextUsages: [],
+        outcomes: [],
+        lastEventTimestamp: null,
+        reconnecting: false,
+        reconnectAttempt: 0,
+        streamError: null,
       });
     } catch (error) {
       console.error('Failed to load conversation:', error);
@@ -108,10 +140,16 @@ export const useChatStore = create<ChatState>((set) => ({
       currentRunId: null,
       messages: [],
       streamingMessage: '',
-      thinkingContent: null,
+      thinkingContent: [],
       activeToolCalls: [],
       planSteps: [],
       pendingApprovals: [],
+      contextUsages: [],
+      outcomes: [],
+      lastEventTimestamp: null,
+      reconnecting: false,
+      reconnectAttempt: 0,
+      streamError: null,
     }),
 
   reset: () =>
@@ -121,14 +159,25 @@ export const useChatStore = create<ChatState>((set) => ({
       streamingMessage: '',
       isStreaming: false,
       isLoadingConversation: false,
-      thinkingContent: null,
+      thinkingContent: [],
       activeToolCalls: [],
       planSteps: [],
       pendingApprovals: [],
+      contextUsages: [],
+      outcomes: [],
+      lastEventTimestamp: null,
+      reconnecting: false,
+      reconnectAttempt: 0,
+      streamError: null,
     }),
 
   // ── event-stream actions ──────────────────────────────────
-  setThinkingContent: (content) => set({ thinkingContent: content }),
+  setThinkingContent: (content) => set({ thinkingContent: content ? [content] : [] }),
+
+  appendThinkingContent: (content) =>
+    set((state) => ({
+      thinkingContent: [...state.thinkingContent, content],
+    })),
 
   addToolCall: (call) =>
     set((state) => ({
@@ -157,6 +206,20 @@ export const useChatStore = create<ChatState>((set) => ({
 
   clearPlanSteps: () => set({ planSteps: [] }),
 
+  addContextUsage: (usage) =>
+    set((state) => ({
+      contextUsages: [...state.contextUsages, usage],
+    })),
+
+  clearContextUsages: () => set({ contextUsages: [] }),
+
+  addOutcome: (outcome) =>
+    set((state) => ({
+      outcomes: [...state.outcomes, outcome],
+    })),
+
+  clearOutcomes: () => set({ outcomes: [] }),
+
   // ── approval actions ──────────────────────────────────────
   addPendingApproval: (approval) =>
     set((state) => ({
@@ -169,4 +232,10 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
 
   clearPendingApprovals: () => set({ pendingApprovals: [] }),
+
+  // ── reconnect & error actions ───────────────────────────
+  setLastEventTimestamp: (ts) => set({ lastEventTimestamp: ts }),
+  setReconnecting: (reconnecting) => set({ reconnecting }),
+  setReconnectAttempt: (attempt) => set({ reconnectAttempt: attempt }),
+  setStreamError: (error) => set({ streamError: error }),
 }));

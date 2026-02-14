@@ -18,6 +18,7 @@ class EventType(StrEnum):
     AGENT_MESSAGE = "agent.message"
     AGENT_PLAN_STEP = "agent.plan.step"
     AGENT_THINKING = "agent.thinking"
+    AGENT_HEARTBEAT = "agent.heartbeat"
 
     # Tool events
     TOOL_CALL = "tool.call"
@@ -25,6 +26,10 @@ class EventType(StrEnum):
     TOOL_RESULT = "tool.result"
     TOOL_ERROR = "tool.error"
     TOOL_CLIENT_REQUEST = "tool.client.request"
+
+    # Context events
+    USING_CONTEXT = "context.using"
+    PUT_OUTCOME = "context.put_outcome"
 
     # Run lifecycle events
     RUN_CREATED = "run.created"

@@ -66,10 +66,14 @@ export interface SimpleMessage {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
-  /** Reasoning trace captured from AGENT_THINKING (assistant only). */
-  thinkingContent?: string;
+  /** Reasoning traces captured from AGENT_THINKING (assistant only). */
+  thinkingContent?: string[];
   /** Tool calls captured from TOOL_CALL / TOOL_RESULT (assistant only). */
   toolCalls?: import('@/types/events').ToolCallState[];
   /** Plan steps captured from AGENT_PLAN_STEP (assistant only). */
   planSteps?: import('@/types/events').AgentPlanStepPayload[];
+  /** Context usages captured from USING_CONTEXT (assistant only). */
+  contextUsages?: import('@/types/events').ContextUsageState[];
+  /** Outcomes captured from PUT_OUTCOME (assistant only). */
+  outcomes?: import('@/types/events').OutcomeState[];
 }
