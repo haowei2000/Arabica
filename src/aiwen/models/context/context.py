@@ -16,7 +16,6 @@ from sqlalchemy.dialects.postgresql import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aiwen.enums.context import ContextType
-
 from aiwen.extensions.database import get_base
 
 Base = get_base("aiwen")
