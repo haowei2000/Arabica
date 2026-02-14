@@ -36,6 +36,15 @@ class Context(Base):  # ty:ignore[unsupported-base]
     source_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="关联的源ID"
     )
+    # Virtual folder path for organizing contexts (e.g. "/projects/demo/docs")
+    path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="虚拟文件夹路径，用于按层级管理上下文"
+    )
+    # S3 object key for retrieving the actual content
+    s3_key: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="S3对象键，用于获取上下文的实际内容"
+    )
+
     # ContextSchema type
     context_type: Mapped[str] = mapped_column(
         String(50),
@@ -102,6 +111,7 @@ class Context(Base):  # ty:ignore[unsupported-base]
     __table_args__ = (
         Index("ix_context_user_id", "user_id"),
         Index("ix_context_type", "context_type"),
+        Index("ix_context_path", "path"),
         # Vector index using HNSW for fast similarity search
         Index(
             "ix_context_embedding_384_hnsw",
