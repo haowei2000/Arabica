@@ -221,6 +221,7 @@ class UserToolCRUD:
         enabled_only: bool = True,
         include_public: bool = True,
         tool_type: str | None = None,
+        tags: list[str] | None = None,
     ) -> list[Tool]:
         """
         List tools for a user
@@ -231,6 +232,7 @@ class UserToolCRUD:
             enabled_only: Whether to return only enabled tools
             include_public: Whether to include public tools from other users
             tool_type: Optional filter by tool_type ("inner", "external", or None for both)
+            tags: Optional filter by tags (tool must contain ALL specified tags)
 
         Returns:
             list[Tool]: List of tools
@@ -259,6 +261,11 @@ class UserToolCRUD:
 
         if enabled_only:
             query = query.where(Tool.enabled == True)  # noqa: E712
+
+        # Filter by tags (tool must contain ALL specified tags)
+        if tags:
+            for tag in tags:
+                query = query.where(Tool.tags.contains([tag]))
 
         query = query.order_by(
             Tool.tool_type.asc(), Tool.last_used_at.desc().nulls_last()

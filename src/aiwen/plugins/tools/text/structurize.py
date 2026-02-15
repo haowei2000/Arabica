@@ -11,7 +11,12 @@ from typing import Any
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import InnerTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
+from aiwen.interfaces.tool import (
+    InnerTool,
+    ToolInputSchema,
+    ToolMetadata,
+    ToolOutputSchema,
+)
 
 MAX_TEXT_SIZE = 500_000  # 500 KB
 

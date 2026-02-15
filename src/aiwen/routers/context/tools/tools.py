@@ -179,6 +179,7 @@ async def list_tools(
     enabled_only: bool = True,
     include_public: bool = True,
     tool_type: str | None = None,
+    tags: str | None = None,
 ):
     """
     List all tools accessible to the current user.
@@ -193,6 +194,7 @@ async def list_tools(
         enabled_only: If True, only return enabled tools
         include_public: If True, include public tools from other users
         tool_type: Optional filter - "inner" for built-in, "external" for user-defined
+        tags: Optional comma-separated tags filter (e.g., "api,search")
         current_user: Current authenticated user
         db: Database session
 
@@ -201,12 +203,16 @@ async def list_tools(
     """
     crud = UserToolCRUD(db)
 
+    # Parse tags from comma-separated string
+    tag_list = [tag.strip() for tag in tags.split(",")] if tags else None
+
     tools = await crud.list_user_tools(
         user_id=current_user.id,
         workspace_id=workspace_id,
         enabled_only=enabled_only,
         include_public=include_public,
         tool_type=tool_type,
+        tags=tag_list,
     )
 
     tool_responses = [_build_user_tool_response(tool) for tool in tools]

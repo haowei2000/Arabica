@@ -25,6 +25,7 @@ export const toolService = {
     enabled_only?: boolean;
     include_public?: boolean;
     tool_type?: string;
+    tags?: string;
   }): Promise<UserToolListResponse> {
     return apiClient.get(API_ENDPOINTS.TOOLS.LIST, { params });
   },

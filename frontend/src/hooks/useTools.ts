@@ -17,6 +17,7 @@ export const useToolList = (params?: {
   enabled_only?: boolean;
   include_public?: boolean;
   tool_type?: string;
+  tags?: string;
 }) => {
   return useQuery({
     queryKey: ['tools', 'list', params],

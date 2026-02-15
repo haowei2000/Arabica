@@ -31,9 +31,13 @@ export default function ToolPage() {
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [httpMethod, setHttpMethod] = useState('GET');
   const [httpUrl, setHttpUrl] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   const { data: templateData, isLoading: templatesLoading } = useTemplates();
-  const { data: toolData, isLoading: toolsLoading } = useToolList({ enabled_only: false });
+  const { data: toolData, isLoading: toolsLoading } = useToolList({
+    enabled_only: false,
+    tags: selectedTags.length > 0 ? selectedTags.join(',') : undefined
+  });
   const createMutation = useCreateTool();
   const deleteMutation = useDeleteTool();
   const toggleMutation = useToggleTool();
@@ -164,6 +168,21 @@ export default function ToolPage() {
   const tools = toolData?.tools ?? [];
   const isInnerTool = (toolType: string) => toolType === 'inner';
 
+  // Extract all unique tags from tools
+  const allTags = Array.from(
+    new Set(
+      tools.flatMap((tool) => tool.tags ?? [])
+    )
+  ).sort();
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const clearTags = () => setSelectedTags([]);
+
   return (
     <div>
       {/* Header */}
@@ -181,6 +200,49 @@ export default function ToolPage() {
           + Create Tool
         </button>
       </div>
+
+      {/* Tag Filter */}
+      {allTags.length > 0 && (
+        <div className="mb-6 bg-white dark:bg-navy-800 rounded-lg border border-secondary-200 dark:border-navy-700 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-navy-900 dark:text-navy-100">
+              Filter by Tags
+            </h3>
+            {selectedTags.length > 0 && (
+              <button
+                onClick={clearTags}
+                className="text-xs text-primary-500 hover:text-primary-600 font-medium"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {allTags.map((tag) => {
+              const isSelected = selectedTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => toggleTag(tag)}
+                  className={`px-3 py-1.5 text-sm rounded-full font-medium transition-colors ${
+                    isSelected
+                      ? 'bg-primary-500 text-white hover:bg-primary-600'
+                      : 'bg-secondary-100 dark:bg-navy-700 text-secondary-700 dark:text-secondary-300 hover:bg-secondary-200 dark:hover:bg-navy-600'
+                  }`}
+                >
+                  {tag}
+                  {isSelected && ' ✓'}
+                </button>
+              );
+            })}
+          </div>
+          {selectedTags.length > 0 && (
+            <div className="mt-3 text-xs text-secondary-500 dark:text-secondary-400">
+              Showing tools with: {selectedTags.join(', ')}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Create Modal */}
       {showCreateModal && (
@@ -478,9 +540,23 @@ export default function ToolPage() {
                   </div>
                 </div>
 
-                <p className="text-sm text-secondary-600 dark:text-secondary-400 mb-4 line-clamp-2">
+                <p className="text-sm text-secondary-600 dark:text-secondary-400 mb-3 line-clamp-2">
                   {tool.description}
                 </p>
+
+                {/* Tags */}
+                {tool.tags && tool.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {tool.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-2 py-0.5 text-xs rounded-full bg-secondary-100 dark:bg-navy-700 text-secondary-600 dark:text-secondary-300"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 <div className="text-xs text-secondary-500 dark:text-secondary-400 mb-4 space-y-1">
                   {tool.category && <p>Category: {tool.category}</p>}

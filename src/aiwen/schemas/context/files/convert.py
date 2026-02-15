@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 from aiwen.enums.files import InputFormat, OutputFormat
 
+
 class ConvertRequest(BaseModel):
     """文件转换请求模型"""
 

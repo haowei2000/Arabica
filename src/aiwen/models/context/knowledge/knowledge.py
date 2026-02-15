@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 Base = get_base("aiwen")
 
 
-class Knowledge(Base):
+class Knowledge(Base):  # ty:ignore[unsupported-base]
     """Knowledge table for storing knowledge base information."""
 
     __tablename__ = "knowledge"

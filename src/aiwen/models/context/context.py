@@ -53,13 +53,28 @@ class Context(Base):  # ty:ignore[unsupported-base]
         comment="上下文类型: history, tool, knowledge",
     )
 
-    # ContextSchema content
-    content: Mapped[str] = mapped_column(Text, nullable=False, comment="上下文内容")
-    summary: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="上下文摘要"
+    # Progressive disclosure layers (aligned with ContextLayer framework)
+    # Layer 1: Glance - one-line summary for quick scanning
+    glance: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="一句话摘要（扫描层，快速浏览用）"
     )
+
+    # Layer 2: Overview - structured summary
+    summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="概览摘要（概览层，结构化数据）"
+    )
+
+    # Layer 3: Detail - full content
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="完整内容（详情层）")
+
+    # Tags for filtering and categorization
+    tags: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True, comment="标签列表，用于分类和过滤"
+    )
+
+    # Keywords for search (deprecated in favor of tags, kept for backward compatibility)
     keywords: Mapped[list[str] | None] = mapped_column(
-        JSONB, nullable=True, comment="关键词"
+        JSONB, nullable=True, comment="关键词（已弃用，请使用 tags）"
     )
     # Vector embedding_1536 for similarity search
     embedding_384: Mapped[list[float] | None] = mapped_column(
@@ -107,11 +122,13 @@ class Context(Base):  # ty:ignore[unsupported-base]
         comment="更新时间",
     )
 
-    # Indexes for vector similarity search
+    # Indexes for vector similarity search and path queries
     __table_args__ = (
         Index("ix_context_user_id", "user_id"),
         Index("ix_context_type", "context_type"),
-        Index("ix_context_path", "path"),
+        Index("ix_context_path", "path"),  # For prefix queries (e.g., path LIKE 'prefix%')
+        Index("ix_context_user_path", "user_id", "path"),  # Composite for user-scoped queries
+        Index("ix_context_glance", "glance"),  # For quick scanning queries
         # Vector index using HNSW for fast similarity search
         Index(
             "ix_context_embedding_384_hnsw",
@@ -144,4 +161,124 @@ class Context(Base):  # ty:ignore[unsupported-base]
     )
 
     def __repr__(self) -> str:
-        return f"<ContextSchema(id={self.id}, type='{self.context_type}', user_id='{self.user_id}')>"
+        return f"<Context(id={self.id}, type='{self.context_type}', path='{self.path}')>"
+
+    # ──── ContextLayer Framework Methods ────
+
+    def disclose(self, level: str = "overview") -> dict[str, Any]:
+        """Progressive disclosure aligned with ContextLayer framework.
+
+        Args:
+            level: Disclosure level - "glance", "overview", or "detail"
+
+        Returns:
+            Dictionary with appropriate level of information
+        """
+        result: dict[str, Any] = {"path": self.path}
+
+        # Level 1: Glance - quick scan
+        if self.glance:
+            result["glance"] = self.glance
+        elif self.summary:
+            result["glance"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
+        else:
+            result["glance"] = self.content[:50] + "..." if len(self.content) > 50 else self.content
+
+        if level == "glance":
+            return result
+
+        # Level 2: Overview - structured summary
+        if level in ("overview", "detail"):
+            if self.summary:
+                result["overview"] = self.summary
+            if self.tags:
+                result["tags"] = self.tags
+
+        if level == "overview":
+            return result
+
+        # Level 3: Detail - full content
+        if level == "detail":
+            result["content"] = self.content
+            result["meta"] = self.meta or {}
+            result["context_type"] = self.context_type
+            result["importance"] = self.importance
+            if self.s3_key:
+                result["s3_key"] = self.s3_key
+            if self.keywords:
+                result["keywords"] = self.keywords
+
+        return result
+
+    def get_path_depth(self) -> int:
+        """Get the depth of this context's path.
+
+        Returns:
+            Number of path segments (0 if no path)
+        """
+        if not self.path:
+            return 0
+        return len(self.path.strip("/").split("/"))
+
+    def get_parent_path(self) -> str | None:
+        """Get the parent path of this context.
+
+        Returns:
+            Parent path or None if this is a root path
+        """
+        if not self.path:
+            return None
+        parts = self.path.strip("/").rsplit("/", 1)
+        return f"/{parts[0]}" if len(parts) > 1 else None
+
+    def matches_prefix(self, prefix: str) -> bool:
+        """Check if this context's path starts with the given prefix.
+
+        Args:
+            prefix: Path prefix to match
+
+        Returns:
+            True if path matches prefix
+        """
+        if not self.path or not prefix:
+            return False
+        normalized_path = self.path.strip("/")
+        normalized_prefix = prefix.strip("/")
+        return normalized_path.startswith(normalized_prefix)
+
+    def has_tag(self, tag: str) -> bool:
+        """Check if this context has a specific tag.
+
+        Args:
+            tag: Tag to check
+
+        Returns:
+            True if tag exists
+        """
+        return self.tags is not None and tag in self.tags
+
+    def has_any_tag(self, tags: list[str]) -> bool:
+        """Check if this context has any of the given tags.
+
+        Args:
+            tags: List of tags to check
+
+        Returns:
+            True if any tag exists
+        """
+        if not self.tags:
+            return False
+        return any(tag in self.tags for tag in tags)
+
+    def has_all_tags(self, tags: list[str]) -> bool:
+        """Check if this context has all of the given tags.
+
+        Args:
+            tags: List of tags to check
+
+        Returns:
+            True if all tags exist
+        """
+        if not self.tags:
+            return False
+        return all(tag in self.tags for tag in tags)

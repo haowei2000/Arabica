@@ -36,9 +36,26 @@ class ContextCreate(BaseModel):
     path: ContextPath | None = Field(
         None, description="Virtual folder path (e.g. '/projects/demo/docs')"
     )
-    content: str = Field(..., min_length=1, description="ContextSchema content")
-    summary: str | None = Field(None, description="ContextSchema summary")
-    keywords: list[str] | None = Field(None, description="Keywords for search")
+    s3_key: str | None = Field(
+        None, description="S3 object key for storing large content"
+    )
+    # Progressive disclosure layers
+    glance: str | None = Field(
+        None, max_length=512, description="One-line summary for quick scanning (Layer 1)"
+    )
+    summary: str | None = Field(
+        None, description="Structured overview summary (Layer 2)"
+    )
+    content: str = Field(
+        ..., min_length=1, description="Full content detail (Layer 3)"
+    )
+    # Tags and keywords
+    tags: list[str] | None = Field(
+        None, description="Tags for filtering and categorization"
+    )
+    keywords: list[str] | None = Field(
+        None, description="Keywords for search (deprecated, use tags instead)"
+    )
     embedding_384: list[float] | None = Field(None, description="384-dim embedding")
     embedding_768: list[float] | None = Field(None, description="768-dim embedding")
     embedding_1024: list[float] | None = Field(None, description="1024-dim embedding")
@@ -48,6 +65,41 @@ class ContextCreate(BaseModel):
         default=0, ge=0, le=100, description="Importance score 0-100"
     )
 
+    @model_validator(mode="after")
+    def validate_embeddings(self) -> "ContextCreate":
+        """Validate that embedding dimensions match their expected sizes."""
+        embeddings = [
+            (self.embedding_384, 384),
+            (self.embedding_768, 768),
+            (self.embedding_1024, 1024),
+            (self.embedding_1536, 1536),
+        ]
+        for embedding, expected_dim in embeddings:
+            if embedding is not None and len(embedding) != expected_dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {expected_dim}, got {len(embedding)}"
+                )
+        return self
+
+    def get_embedding_by_dimension(
+        self, dimension: Literal[384, 768, 1024, 1536]
+    ) -> list[float] | None:
+        """Get embedding by dimension size.
+
+        Args:
+            dimension: The embedding dimension (384, 768, 1024, or 1536)
+
+        Returns:
+            The embedding vector or None if not available
+        """
+        mapping = {
+            384: self.embedding_384,
+            768: self.embedding_768,
+            1024: self.embedding_1024,
+            1536: self.embedding_1536,
+        }
+        return mapping.get(dimension)
+
 
 class ContextUpdate(BaseModel):
     """Schema for updating a context entry."""
@@ -55,9 +107,14 @@ class ContextUpdate(BaseModel):
     context_type: ContextType | None = Field(None, description="ContextSchema type")
     source_id: str | UUID | None = Field(None, description="Related source ID")
     path: ContextPath | None = Field(None, description="Virtual folder path")
-    content: str | None = Field(None, min_length=1, description="ContextSchema content")
-    summary: str | None = Field(None, description="ContextSchema summary")
-    keywords: list[str] | None = Field(None, description="Keywords for search")
+    s3_key: str | None = Field(None, description="S3 object key for storing large content")
+    # Progressive disclosure layers
+    glance: str | None = Field(None, max_length=512, description="One-line summary")
+    summary: str | None = Field(None, description="Structured overview summary")
+    content: str | None = Field(None, min_length=1, description="Full content detail")
+    # Tags and keywords
+    tags: list[str] | None = Field(None, description="Tags for filtering")
+    keywords: list[str] | None = Field(None, description="Keywords (deprecated)")
     embedding_384: list[float] | None = Field(None, description="384-dim embedding")
     embedding_768: list[float] | None = Field(None, description="768-dim embedding")
     embedding_1024: list[float] | None = Field(None, description="1024-dim embedding")
@@ -65,21 +122,150 @@ class ContextUpdate(BaseModel):
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
     importance: int | None = Field(None, ge=0, le=100, description="Importance score")
 
+    @model_validator(mode="after")
+    def validate_embeddings(self) -> "ContextUpdate":
+        """Validate that embedding dimensions match their expected sizes."""
+        embeddings = [
+            (self.embedding_384, 384),
+            (self.embedding_768, 768),
+            (self.embedding_1024, 1024),
+            (self.embedding_1536, 1536),
+        ]
+        for embedding, expected_dim in embeddings:
+            if embedding is not None and len(embedding) != expected_dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {expected_dim}, got {len(embedding)}"
+                )
+        return self
+
 
 class ContextResponse(ResponseMixin, BaseModel):
-    """Schema for context response."""
+    """Schema for context response (without embeddings for efficiency)."""
 
     id: str
     user_id: str
     source_id: str | None = None
     path: str | None = None
+    s3_key: str | None = Field(
+        None, description="S3 object key for retrieving actual content"
+    )
     context_type: str
-    content: str
-    summary: str | None = None
-    keywords: list[str] | None = None
+    # Progressive disclosure layers
+    glance: str | None = Field(None, description="One-line summary (Layer 1)")
+    summary: str | None = Field(None, description="Overview summary (Layer 2)")
+    content: str = Field(..., description="Full content (Layer 3)")
+    # Tags and metadata
+    tags: list[str] | None = Field(None, description="Tags for categorization")
+    keywords: list[str] | None = Field(None, description="Keywords (deprecated)")
     meta: dict[str, Any] | None = None
     importance: int | None = None
     # created_at, updated_at, UUID conversion, ORM config inherited from ResponseMixin
+
+    @property
+    def has_s3_content(self) -> bool:
+        """Check if this context has content stored in S3."""
+        return self.s3_key is not None and len(self.s3_key) > 0
+
+    @property
+    def content_preview(self) -> str:
+        """Get a preview of the content (first 200 characters)."""
+        if len(self.content) <= 200:
+            return self.content
+        return self.content[:200] + "..."
+
+    def disclose(self, level: Literal["glance", "overview", "detail"] = "overview") -> dict[str, Any]:
+        """Progressive disclosure of information.
+
+        Args:
+            level: Disclosure level - "glance", "overview", or "detail"
+
+        Returns:
+            Dictionary with appropriate level of information
+        """
+        result: dict[str, Any] = {"path": self.path}
+
+        # Layer 1: Glance
+        if self.glance:
+            result["glance"] = self.glance
+        elif self.summary:
+            result["glance"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
+        else:
+            result["glance"] = self.content_preview
+
+        if level == "glance":
+            return result
+
+        # Layer 2: Overview
+        if level in ("overview", "detail"):
+            if self.summary:
+                result["overview"] = self.summary
+            if self.tags:
+                result["tags"] = self.tags
+
+        if level == "overview":
+            return result
+
+        # Layer 3: Detail
+        if level == "detail":
+            result["content"] = self.content
+            result["meta"] = self.meta or {}
+            result["context_type"] = self.context_type
+            result["importance"] = self.importance
+            if self.s3_key:
+                result["s3_key"] = self.s3_key
+            if self.keywords:
+                result["keywords"] = self.keywords
+
+        return result
+
+
+class ContextWithEmbeddingsResponse(ContextResponse):
+    """Schema for context response including all embedding vectors.
+
+    Use this when you need the full context data including embeddings,
+    such as for reindexing or migration purposes. For normal API responses,
+    use ContextResponse to save bandwidth.
+
+    Note: Inherits glance, summary, content, tags fields from ContextResponse.
+    """
+
+    embedding_384: list[float] | None = Field(None, description="384-dim embedding")
+    embedding_768: list[float] | None = Field(None, description="768-dim embedding")
+    embedding_1024: list[float] | None = Field(None, description="1024-dim embedding")
+    embedding_1536: list[float] | None = Field(None, description="1536-dim embedding")
+
+    def get_embedding_by_dimension(
+        self, dimension: Literal[384, 768, 1024, 1536]
+    ) -> list[float] | None:
+        """Get embedding by dimension size.
+
+        Args:
+            dimension: The embedding dimension (384, 768, 1024, or 1536)
+
+        Returns:
+            The embedding vector or None if not available
+        """
+        mapping = {
+            384: self.embedding_384,
+            768: self.embedding_768,
+            1024: self.embedding_1024,
+            1536: self.embedding_1536,
+        }
+        return mapping.get(dimension)
+
+    @property
+    def available_embeddings(self) -> list[int]:
+        """Get list of available embedding dimensions."""
+        return [
+            dim
+            for dim, embedding in [
+                (384, self.embedding_384),
+                (768, self.embedding_768),
+                (1024, self.embedding_1024),
+                (1536, self.embedding_1536),
+            ]
+            if embedding is not None
+        ]
 
 
 class ToolContextInput(BaseModel):

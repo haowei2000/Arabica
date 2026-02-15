@@ -7,13 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.middleware.cache_middleware import get_redis_client
-from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.app.app_crud import AppCRUD
+from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.knowledge.document_crud import DocumentCRUD
 from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
+from aiwen.services.context.tools.tool_crud import UserToolCRUD
 from aiwen.services.executor.executor_template_crud import ExecutorCRUD
-from aiwen.services.executor.tool_crud import ToolCRUD
-
 
 
 async def get_app_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]) -> AppCRUD:
@@ -85,16 +84,16 @@ async def get_document_crud(
 
 async def get_tool_crud(
     db: Annotated[AsyncSession, Depends(get_aiwen_db)],
-) -> ToolCRUD:
-    """Dependency to get ToolCRUD instance.
+) -> UserToolCRUD:
+    """Dependency to get UserToolCRUD instance.
 
     Args:
         db: Database session from dependency injection
 
     Returns:
-        ToolCRUD instance
+        UserToolCRUD instance
     """
-    return ToolCRUD(db)
+    return UserToolCRUD(db)
 
 
 async def get_redis_client_dep():

@@ -2,8 +2,8 @@
 from typing import Any, ClassVar
 
 from aiwen.interfaces.executor import Executor
-from aiwen.registries.core import register_executor
 from aiwen.plugins.executors.conflict import prompts
+from aiwen.registries.core import register_executor
 
 
 @register_executor
