@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from aiwen.enums.context import ContextType
 from aiwen.schemas.context.knowledge.knowledge import KnowledgeResponse
 from aiwen.schemas.context.tools.tool import ToolResponse
+from aiwen.types import ContextPath
 from aiwen.utils.schema_mixins import ResponseMixin
 
 
@@ -32,6 +33,9 @@ class ContextCreate(BaseModel):
     source_id: str | UUID | None = Field(
         None, description="Related source ID (e.g., knowledge_id, conversation_id)"
     )
+    path: ContextPath | None = Field(
+        None, description="Virtual folder path (e.g. '/projects/demo/docs')"
+    )
     content: str = Field(..., min_length=1, description="ContextSchema content")
     summary: str | None = Field(None, description="ContextSchema summary")
     keywords: list[str] | None = Field(None, description="Keywords for search")
@@ -50,6 +54,7 @@ class ContextUpdate(BaseModel):
 
     context_type: ContextType | None = Field(None, description="ContextSchema type")
     source_id: str | UUID | None = Field(None, description="Related source ID")
+    path: ContextPath | None = Field(None, description="Virtual folder path")
     content: str | None = Field(None, min_length=1, description="ContextSchema content")
     summary: str | None = Field(None, description="ContextSchema summary")
     keywords: list[str] | None = Field(None, description="Keywords for search")
@@ -67,6 +72,7 @@ class ContextResponse(ResponseMixin, BaseModel):
     id: str
     user_id: str
     source_id: str | None = None
+    path: str | None = None
     context_type: str
     content: str
     summary: str | None = None

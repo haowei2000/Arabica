@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aiwen.types import ContextPath
 from aiwen.utils.schema_mixins import ResponseMixin
 
 
@@ -35,7 +36,7 @@ class CopyContextsRequest(BaseModel):
     """Schema for copying user contexts into a workspace."""
 
     context_ids: list[str] = Field(..., min_length=1, description="IDs of contexts to copy")
-    path_prefix: str | None = Field(None, description="Optional path prefix for copied entries")
+    path_prefix: ContextPath | None = Field(None, description="Optional path prefix for copied entries")
 
 
 class CopyContextsResponse(BaseModel):

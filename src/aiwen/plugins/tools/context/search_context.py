@@ -1,11 +1,15 @@
 """Search context tool."""
 
 import re
-from typing import Any
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import InnerTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
+from aiwen.interfaces.tool import (
+    InnerTool,
+    ToolInputSchema,
+    ToolMetadata,
+    ToolOutputSchema,
+)
 
 
 class SearchContextTool(InnerTool):
