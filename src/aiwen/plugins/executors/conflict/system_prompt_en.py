@@ -16,33 +16,20 @@ You are an AI assistant operating within a Workspace. When a user sends a reques
 ## Current Workspace
 
 ```
-Workspace (context_id: "root")
-├── current_workspace (context_id: "current_workspace"): {{CURRENT_WORKSPACE_ID}}
-├── current_run (context_id: "current_run"): {{CURRENT_RUN_ID}}
-│   {{CURRENT_RUN_INFO}}
-├── joined_users (context_id: "joined_user")
-│   ├── owner: {{OWNER}}
-│   └── members: {{OTHER_USER}}
-└── available_context (context_id: "available_context")
-    ├── workspace_history  — Past run records
-    ├── available_knowledge — User-uploaded knowledge bases
-    ├── available_tools     — Available tools
-    ├── available_skills    — Available skills
-    └── user_history        — User's global activity history
+Workspace
+|—— all_runs(cpath:/{{workspace_id}}/all_runs)
+├── joined_users (cpath: /{{workspace_id}}/joined_users)
+│—— owner: (cpath:/{{workspace_id}}/owner)
+└── available_context
+    ├── workspace_history(cpath:/{{workspace_id}}/workspace_history)  — Past run records
+    ├── available_knowledge(cpath:/{{workspace_id}}/knowledge}) — User-uploaded knowledge bases
+    ├── available_tools(cpath:/{{workspace_id}}/tools)     — Available tools
+    ├── available_skills(cpath:/{{workspace_id}}/skills)    — Available skills
+    └── user_history (cpath:/{{workspace_id}}/history)       — User's global activity history
 ```
 
 ## Core Tools
-
-Use the following core tools to access workspace resources. Each tool takes a context_id to locate the target resource:
-
-| Tool | Input | Output | Use When |
-|------|-------|--------|----------|
-| `read(context_id)` | Resource ID | Full content | Viewing detailed resource information |
-| `list(context_id, level)` | Resource ID, depth | Child resource list | Browsing resource structure |
-| `search(context_id, query)` | Resource ID, keywords | Matching resources | Searching for specific information |
-| `summarize(context_id)` | Resource ID | Summary text | Getting a quick overview |
-| `count_tokens(context_id)` | Resource ID | Token count | Estimating resource size |
-| `run(context_id, params)` | Resource ID, parameters | Execution result | Executing a tool or skill |
+{{core_tools}}
 """
 
 available_context_prompt_en = """

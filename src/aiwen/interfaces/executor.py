@@ -117,7 +117,7 @@ class Executor(ABC):
         self._cancelled = True
 
     async def stream(
-        self, user_message: UserMessage | dict,
+        self, user_message: UserMessage,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Yield typed events while processing input.
 
@@ -150,93 +150,119 @@ class Executor(ABC):
 
     async def _process_user_message(self, payload: dict[str, Any]) -> None:
         """Handle an incoming USER_MESSAGE event."""
+        ...
 
     async def _process_user_feedback(self, payload: dict[str, Any]) -> None:
         """Handle an incoming USER_FEEDBACK event."""
+        ...
 
     # -- Agent event handlers --
 
     async def _process_token(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_TOKEN event."""
+        ...
 
     async def _process_message(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_MESSAGE event."""
+        ...
 
     async def _process_thinking(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_THINKING event."""
+        ...
 
     async def _process_plan_step(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_PLAN_STEP event."""
+        ...
 
     async def _process_heartbeat(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_HEARTBEAT event."""
+        ...
 
     # -- Tool event handlers --
 
     async def _process_tool_call(self, payload: dict[str, Any]) -> None:
         """Handle an incoming TOOL_CALL event."""
+        ...
 
     async def _process_tool_result(self, payload: dict[str, Any]) -> None:
         """Handle an incoming TOOL_RESULT event."""
+        ...
 
     async def _process_tool_error(self, payload: dict[str, Any]) -> None:
         """Handle an incoming TOOL_ERROR event."""
+        ...
 
     async def _process_tool_pending(self, payload: dict[str, Any]) -> None:
         """Handle an incoming TOOL_PENDING event."""
+        ...
 
     async def _process_tool_client_request(self, payload: dict[str, Any]) -> None:
         """Handle an incoming TOOL_CLIENT_REQUEST event."""
+        ...
 
     # -- Context event handlers --
 
     async def _process_using_context(self, payload: dict[str, Any]) -> None:
         """Handle an incoming USING_CONTEXT event."""
+        ...
 
     async def _process_put_outcome(self, payload: dict[str, Any]) -> None:
         """Handle an incoming PUT_OUTCOME event."""
+        ...
 
     # -- Run lifecycle event handlers --
 
     async def _process_run_created(self, payload: dict[str, Any]) -> None:
         """Handle an incoming RUN_CREATED event."""
+        ...
 
     async def _process_run_state_change(self, payload: dict[str, Any]) -> None:
         """Handle an incoming RUN_STATE_CHANGE event."""
+        ...
 
     async def _process_run_completed(self, payload: dict[str, Any]) -> None:
         """Handle an incoming RUN_COMPLETED event."""
+        ...
 
     async def _process_run_failed(self, payload: dict[str, Any]) -> None:
         """Handle an incoming RUN_FAILED event."""
+        ...
 
     async def _process_run_cancelled(self, payload: dict[str, Any]) -> None:
         """Handle an incoming RUN_CANCELLED event."""
+        ...
 
     # -- Workspace event handlers --
 
     async def _process_workspace_created(self, payload: dict[str, Any]) -> None:
         """Handle an incoming WORKSPACE_CREATED event."""
+        ...
 
     async def _process_workspace_updated(self, payload: dict[str, Any]) -> None:
         """Handle an incoming WORKSPACE_UPDATED event."""
+        ...
 
     async def _process_workspace_member_join(self, payload: dict[str, Any]) -> None:
         """Handle an incoming WORKSPACE_MEMBER_JOIN event."""
+        ...
 
     async def _process_workspace_member_leave(self, payload: dict[str, Any]) -> None:
         """Handle an incoming WORKSPACE_MEMBER_LEAVE event."""
+        ...
 
     async def _process_workspace_member_role_change(self, payload: dict[str, Any]) -> None:
         """Handle an incoming WORKSPACE_MEMBER_ROLE_CHANGE event."""
+        ...
 
     # -- System event handlers --
 
     async def _process_system_error(self, payload: dict[str, Any]) -> None:
         """Handle an incoming SYSTEM_ERROR event."""
+        ...
 
     async def _process_system_notification(self, payload: dict[str, Any]) -> None:
         """Handle an incoming SYSTEM_NOTIFICATION event."""
+        ...
 
     # -- Dispatch table (event_type.value -> handler method) --
 
