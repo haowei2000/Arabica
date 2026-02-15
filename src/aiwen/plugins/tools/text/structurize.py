@@ -1,25 +1,17 @@
-"""
-Text analysis tools using BaseTool class system.
+"""Text structurize tool.
 
-Provides tools for structurizing arbitrary text (plain prose, Markdown,
-source code) into structured representations.
+Analyzes arbitrary text (plain prose, Markdown, source code) and returns
+a structured representation with elements like paragraphs, headings,
+functions, classes, imports, etc.
 """
 
 import ast
-import logging
 import re
 from typing import Any
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import (
-    InnerTool,
-    ToolInputSchema,
-    ToolMetadata,
-    ToolOutputSchema,
-)
-
-logger = logging.getLogger(__name__)
+from aiwen.interfaces.tool import InnerTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 
 MAX_TEXT_SIZE = 500_000  # 500 KB
 
@@ -117,7 +109,6 @@ _LANGUAGE_SIGNALS: dict[str, list[tuple[re.Pattern[str], int]]] = {
     ],
 }
 
-# Priority for tie-breaking: prefer more common languages
 _LANGUAGE_PRIORITY = [
     "python", "javascript", "typescript", "java",
     "go", "rust", "markdown", "c", "cpp",
@@ -139,11 +130,9 @@ def _detect_language(text: str) -> str:
         return "plain"
 
     max_score = max(scores.values())
-    # Gather all languages with the max score
     top = [lang for lang, s in scores.items() if s == max_score]
     if len(top) == 1:
         return top[0]
-    # Tie-break by priority order
     for lang in _LANGUAGE_PRIORITY:
         if lang in top:
             return lang
@@ -198,8 +187,8 @@ def _parse_plain_text(
                     ],
                 }
                 if include_line_ranges:
-                    para["line_start"] = para_start + 1  # 1-indexed
-                    para["line_end"] = i  # last non-empty line (1-indexed)
+                    para["line_start"] = para_start + 1
+                    para["line_end"] = i
                 paragraphs.append(para)
                 current_lines = []
         else:
@@ -207,7 +196,6 @@ def _parse_plain_text(
                 para_start = i
             current_lines.append(line)
 
-    # Last paragraph
     if current_lines:
         para_text = "\n".join(current_lines)
         para = {
@@ -263,7 +251,6 @@ def _parse_markdown(
         if not para_lines:
             return
         para_text = "\n".join(para_lines)
-        # Extract inline links and images from paragraph
         links = [{"text": m[0], "url": m[1]} for m in _MD_LINK_RE.findall(para_text)]
         images = [{"alt": m[0], "url": m[1]} for m in _MD_IMAGE_RE.findall(para_text)]
 
@@ -281,7 +268,6 @@ def _parse_markdown(
     while i < len(lines):
         line = lines[i]
 
-        # Heading
         m = _MD_HEADING_RE.match(line)
         if m:
             _flush_paragraph()
@@ -296,7 +282,6 @@ def _parse_markdown(
             i += 1
             continue
 
-        # Code block
         cm = _MD_CODE_BLOCK_START_RE.match(line)
         if cm and line.strip().startswith("```"):
             _flush_paragraph()
@@ -321,7 +306,6 @@ def _parse_markdown(
             elements.append(el)
             continue
 
-        # Blockquote
         bm = _MD_BLOCKQUOTE_RE.match(line)
         if bm:
             _flush_paragraph()
@@ -342,7 +326,6 @@ def _parse_markdown(
             elements.append(el)
             continue
 
-        # List item
         lm = _MD_LIST_RE.match(line)
         if lm:
             _flush_paragraph()
@@ -362,7 +345,6 @@ def _parse_markdown(
                     list_items.append(item)
                     i += 1
                 elif lines[i].strip() == "":
-                    # Blank line might end list or separate items
                     break
                 else:
                     break
@@ -373,13 +355,11 @@ def _parse_markdown(
             elements.append(el)
             continue
 
-        # Blank line -> flush paragraph
         if line.strip() == "":
             _flush_paragraph()
             i += 1
             continue
 
-        # Accumulate paragraph lines
         if not para_lines:
             para_start = i
         para_lines.append(line)
@@ -514,7 +494,6 @@ def _parse_python_code(
                         var["line_end"] = node.end_lineno or node.lineno
                     top_level_variables.append(var)
 
-    # Extract comments via regex (ast doesn't capture them)
     comments = _extract_comments_hash(lines, include_line_ranges)
 
     result: dict[str, Any] = {
@@ -711,7 +690,6 @@ _LANG_PATTERNS: dict[str, dict[str, re.Pattern[str] | None]] = {
     },
 }
 
-# Map aliases
 _LANG_PATTERNS["js"] = _LANG_PATTERNS["javascript"]
 _LANG_PATTERNS["ts"] = _LANG_PATTERNS["typescript"]
 
@@ -736,14 +714,12 @@ def _parse_generic_code(
 
     if not patterns:
         language_note = f"Unknown language '{language}'. Using basic pattern matching."
-        # Fall back to very basic patterns
         patterns = {
             "single_comment": re.compile(r"^\s*(?://|#)(.*)$", re.MULTILINE),
             "multi_comment_start": re.compile(r"/\*"),
             "multi_comment_end": re.compile(r"\*/"),
         }
 
-    # Extract imports
     import_pat = patterns.get("import")
     if import_pat:
         for m in import_pat.finditer(text):
@@ -752,7 +728,6 @@ def _parse_generic_code(
                 entry["line"] = text[:m.start()].count("\n") + 1
             imports.append(entry)
 
-    # Extract classes/structs/interfaces/enums/traits/impls
     for kind in ("class", "struct", "interface", "enum", "trait", "impl", "namespace"):
         pat = patterns.get(kind)
         if not pat:
@@ -767,7 +742,6 @@ def _parse_generic_code(
                 cls_entry["line_end"] = end_line
             classes.append(cls_entry)
 
-    # Extract functions
     for kind in ("function", "arrow_function"):
         pat = patterns.get(kind)
         if not pat:
@@ -788,7 +762,6 @@ def _parse_generic_code(
                 fn_entry["line_end"] = end_line
             functions.append(fn_entry)
 
-    # Extract type aliases
     type_pat = patterns.get("type_alias")
     if type_pat:
         for m in type_pat.finditer(text):
@@ -798,7 +771,6 @@ def _parse_generic_code(
                 cls_entry["line"] = text[:m.start()].count("\n") + 1
             classes.append(cls_entry)
 
-    # Extract comments
     single_pat = patterns.get("single_comment")
     if single_pat:
         for m in single_pat.finditer(text):
@@ -807,7 +779,6 @@ def _parse_generic_code(
                 entry["line"] = text[:m.start()].count("\n") + 1
             comments.append(entry)
 
-    # Multi-line comments
     multi_start_pat = patterns.get("multi_comment_start")
     multi_end_pat = patterns.get("multi_comment_end")
     if multi_start_pat and multi_end_pat:
@@ -821,7 +792,6 @@ def _parse_generic_code(
                     entry["line_end"] = text[:end_m.end()].count("\n") + 1
                 comments.append(entry)
 
-    # Extract variables
     var_pat = patterns.get("variable")
     if var_pat:
         for m in var_pat.finditer(text):
@@ -831,7 +801,6 @@ def _parse_generic_code(
                 var_entry["line"] = text[:m.start()].count("\n") + 1
             top_level_variables.append(var_entry)
 
-    # Extract defines (C/C++)
     define_pat = patterns.get("define")
     if define_pat:
         for m in define_pat.finditer(text):
@@ -841,7 +810,6 @@ def _parse_generic_code(
                 var_entry["line"] = text[:m.start()].count("\n") + 1
             top_level_variables.append(var_entry)
 
-    # Extract package declarations
     pkg_pat = patterns.get("package")
     if pkg_pat:
         m = pkg_pat.search(text)
@@ -870,11 +838,7 @@ def _parse_generic_code(
 
 
 def _find_block_end(lines: list[str], start_idx: int) -> int:
-    """Find the end of a brace-delimited block starting at start_idx.
-
-    Uses brace-depth tracking. Returns 1-indexed line number.
-    If no opening brace is found on or after start_idx, returns start_idx + 1.
-    """
+    """Find the end of a brace-delimited block starting at start_idx."""
     depth = 0
     found_open = False
 
@@ -886,9 +850,8 @@ def _find_block_end(lines: list[str], start_idx: int) -> int:
             elif ch == "}":
                 depth -= 1
                 if found_open and depth == 0:
-                    return i + 1  # 1-indexed
+                    return i + 1
 
-    # If no block found, return the start line
     return start_idx + 1
 
 
@@ -942,7 +905,6 @@ class StructurizeTextTool(InnerTool):
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         text = input_data.text
 
-        # Validate input
         if not text or not text.strip():
             return ToolOutputSchema(
                 success=False,
@@ -957,7 +919,6 @@ class StructurizeTextTool(InnerTool):
                 error="text_too_large",
             )
 
-        # Determine language
         language = input_data.language.lower().strip() if input_data.language else None
         if not language:
             language = _detect_language(text)
@@ -965,7 +926,6 @@ class StructurizeTextTool(InnerTool):
         include_stats = input_data.include_statistics
         include_lines = input_data.include_line_ranges
 
-        # Route to appropriate parser
         if language == "plain":
             data = _parse_plain_text(text, include_stats, include_lines)
         elif language == "markdown":
@@ -975,7 +935,6 @@ class StructurizeTextTool(InnerTool):
         elif language in _CODE_LANGUAGES:
             data = _parse_generic_code(text, language, include_stats, include_lines)
         else:
-            # Unknown language hint — try generic parser
             data = _parse_generic_code(text, language, include_stats, include_lines)
 
         return ToolOutputSchema(

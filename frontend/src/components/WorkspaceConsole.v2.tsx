@@ -14,6 +14,15 @@ import ContextSelectModal from '@/components/ContextSelectModal';
 
 type PanelTab = 'runs' | 'context' | 'tasks' | 'results';
 
+const RUN_STATUS_CONFIG: Record<string, { variant: 'success' | 'warning' | 'error' | 'info' | 'neutral'; label: string }> = {
+  pending: { variant: 'neutral', label: 'Pending' },
+  running: { variant: 'info', label: 'Running' },
+  waiting: { variant: 'warning', label: 'Waiting' },
+  finished: { variant: 'success', label: 'Finished' },
+  cancelled: { variant: 'neutral', label: 'Cancelled' },
+  failed: { variant: 'error', label: 'Failed' },
+};
+
 export default function WorkspaceConsole() {
   const [input, setInput] = useState('');
   const [panelTab, setPanelTab] = useState<PanelTab>('runs');
@@ -391,8 +400,12 @@ export default function WorkspaceConsole() {
                           <p className="text-sm font-medium text-navy-900 dark:text-navy-100 line-clamp-2 flex-1">
                             {run.input_data?.message || 'New run'}
                           </p>
-                          <Badge variant="neutral" size="sm">
-                            {run.status}
+                          <Badge
+                            variant={RUN_STATUS_CONFIG[run.status]?.variant ?? 'neutral'}
+                            size="sm"
+                            dot
+                          >
+                            {RUN_STATUS_CONFIG[run.status]?.label ?? run.status}
                           </Badge>
                         </div>
                         <p className="text-xs text-secondary-400 dark:text-secondary-500">

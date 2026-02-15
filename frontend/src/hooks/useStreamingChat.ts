@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useChatStore } from '@/stores/useChatStore';
 import { streamService } from '@/services/streamService';
 import { MessageRole } from '@/types/message';
@@ -23,6 +24,7 @@ function categorizeError(error: Error): StreamError {
 
 export const useStreamingChat = (workspaceId: string, appId?: string | null) => {
   const lastUserMessageRef = useRef<string>('');
+  const queryClient = useQueryClient();
 
   const {
     addMessage,
@@ -149,6 +151,11 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           });
         },
 
+        // ── run status ─────────────────────────────────
+        onStatus: () => {
+          queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+        },
+
         // ── context events ────────────────────────────
         onUsingContext: (event) => addContextUsage(event),
         onPutOutcome: (event) => addOutcome(event),
@@ -186,6 +193,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
       setStreamError,
       saveStreamingStateAsMessage,
       clearStreamingState,
+      queryClient,
     ]
   );
 

@@ -22,9 +22,6 @@ from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-
-# ============================================================================
-# Base Registrable Protocol
 # ============================================================================
 
 
@@ -264,18 +261,145 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Request graceful cancellation of a running executor."""
         ...
 
+    # ── Event Processing Hooks ────────────────────────────────────────
+    # Override these to react to incoming events of each type.
+
+    async def process_event(self, event: Any) -> None:
+        """Dispatch an incoming event to the matching _process_* handler."""
+        ...
+
+    # User event handlers
+
+    async def _process_user_message(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming USER_MESSAGE event."""
+        ...
+
+    async def _process_user_feedback(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming USER_FEEDBACK event."""
+        ...
+
+    # Agent event handlers
+
+    async def _process_token(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming AGENT_TOKEN event."""
+        ...
+
+    async def _process_message(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming AGENT_MESSAGE event."""
+        ...
+
+    async def _process_thinking(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming AGENT_THINKING event."""
+        ...
+
+    async def _process_plan_step(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming AGENT_PLAN_STEP event."""
+        ...
+
+    async def _process_heartbeat(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming AGENT_HEARTBEAT event."""
+        ...
+
+    # Tool event handlers
+
+    async def _process_tool_call(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TOOL_CALL event."""
+        ...
+
+    async def _process_tool_result(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TOOL_RESULT event."""
+        ...
+
+    async def _process_tool_error(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TOOL_ERROR event."""
+        ...
+
+    async def _process_tool_pending(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TOOL_PENDING event."""
+        ...
+
+    async def _process_tool_client_request(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TOOL_CLIENT_REQUEST event."""
+        ...
+
+    # Context event handlers
+
+    async def _process_using_context(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming USING_CONTEXT event."""
+        ...
+
+    async def _process_put_outcome(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming PUT_OUTCOME event."""
+        ...
+
+    # Run lifecycle event handlers
+
+    async def _process_run_created(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming RUN_CREATED event."""
+        ...
+
+    async def _process_run_state_change(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming RUN_STATE_CHANGE event."""
+        ...
+
+    async def _process_run_completed(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming RUN_COMPLETED event."""
+        ...
+
+    async def _process_run_failed(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming RUN_FAILED event."""
+        ...
+
+    async def _process_run_cancelled(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming RUN_CANCELLED event."""
+        ...
+
+    # Workspace event handlers
+
+    async def _process_workspace_created(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming WORKSPACE_CREATED event."""
+        ...
+
+    async def _process_workspace_updated(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming WORKSPACE_UPDATED event."""
+        ...
+
+    async def _process_workspace_member_join(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming WORKSPACE_MEMBER_JOIN event."""
+        ...
+
+    async def _process_workspace_member_leave(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming WORKSPACE_MEMBER_LEAVE event."""
+        ...
+
+    async def _process_workspace_member_role_change(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming WORKSPACE_MEMBER_ROLE_CHANGE event."""
+        ...
+
+    # System event handlers
+
+    async def _process_system_error(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming SYSTEM_ERROR event."""
+        ...
+
+    async def _process_system_notification(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming SYSTEM_NOTIFICATION event."""
+        ...
+
     # ── Event Emission Helpers ───────────────────────────────────────
 
+    # Agent events
+
     def _emit_token(self, token: str, *, is_final: bool = False) -> Any:
-        """Emit a streaming token event."""
+        """Emit a streaming token event (AGENT_TOKEN)."""
         ...
 
     def _emit_message(self, content: str) -> Any:
-        """Emit a complete message event."""
+        """Emit a complete message event (AGENT_MESSAGE)."""
         ...
 
     def _emit_thinking(self, content: str) -> Any:
-        """Emit a reasoning/thinking trace event."""
+        """Emit a reasoning/thinking trace event (AGENT_THINKING)."""
         ...
 
     def _emit_plan_step(
@@ -285,13 +409,19 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         status: str = "pending",
         output: str | None = None,
     ) -> Any:
-        """Emit a plan step event."""
+        """Emit a plan step event (AGENT_PLAN_STEP)."""
         ...
+
+    def _emit_heartbeat(self, *, status: str = "alive", detail: str | None = None) -> Any:
+        """Emit a periodic liveness signal (AGENT_HEARTBEAT)."""
+        ...
+
+    # Tool events
 
     def _emit_tool_call(
         self, tool_name: str, tool_id: str, arguments: dict[str, Any]
     ) -> Any:
-        """Emit a tool call event."""
+        """Emit a tool call event (TOOL_CALL)."""
         ...
 
     def _emit_tool_result(
@@ -302,13 +432,13 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         *,
         execution_time_ms: int | None = None,
     ) -> Any:
-        """Emit a tool result event."""
+        """Emit a tool result event (TOOL_RESULT)."""
         ...
 
     def _emit_tool_error(
         self, tool_name: str, tool_id: str, error_message: str
     ) -> Any:
-        """Emit a tool error event."""
+        """Emit a tool error event (TOOL_ERROR)."""
         ...
 
     def _emit_tool_pending(
@@ -318,7 +448,142 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         arguments: dict[str, Any],
         reason: str = "requires_approval",
     ) -> Any:
-        """Emit a tool pending (waiting for approval) event."""
+        """Emit a tool pending (waiting for approval) event (TOOL_PENDING)."""
+        ...
+
+    def _emit_tool_client_request(
+        self,
+        tool_name: str,
+        tool_id: str,
+        handler: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: int = 120,
+        config: dict[str, Any] | None = None,
+    ) -> Any:
+        """Emit a client-side tool execution request (TOOL_CLIENT_REQUEST)."""
+        ...
+
+    # User events
+
+    def _emit_user_message(self, message: str, *, user_id: str | None = None) -> Any:
+        """Emit a user message echo event (USER_MESSAGE)."""
+        ...
+
+    def _emit_user_feedback(
+        self, feedback: str, *, rating: int | None = None, user_id: str | None = None
+    ) -> Any:
+        """Emit a user feedback event (USER_FEEDBACK)."""
+        ...
+
+    # Context events
+
+    def _emit_using_context(
+        self,
+        context_id: str,
+        context_type: str,
+        name: str,
+        *,
+        snippet: str | None = None,
+    ) -> Any:
+        """Emit a context reference event (USING_CONTEXT)."""
+        ...
+
+    def _emit_put_outcome(
+        self,
+        context_type: str,
+        name: str,
+        content: str,
+        *,
+        context_id: str | None = None,
+    ) -> Any:
+        """Emit a context write-back event (PUT_OUTCOME)."""
+        ...
+
+    # Run lifecycle events
+
+    def _emit_run_created(self, run_id: str, *, executor_code: str | None = None) -> Any:
+        """Emit a run-created event (RUN_CREATED)."""
+        ...
+
+    def _emit_run_state_change(
+        self,
+        previous_state: str,
+        new_state: str,
+        *,
+        reason: str | None = None,
+        triggered_by: str | None = None,
+    ) -> Any:
+        """Emit a run state change event (RUN_STATE_CHANGE)."""
+        ...
+
+    def _emit_run_completed(
+        self, run_id: str, *, result: dict[str, Any] | None = None
+    ) -> Any:
+        """Emit a run completed event (RUN_COMPLETED)."""
+        ...
+
+    def _emit_run_failed(
+        self, run_id: str, error: str, *, error_type: str | None = None
+    ) -> Any:
+        """Emit a run failed event (RUN_FAILED)."""
+        ...
+
+    def _emit_run_cancelled(self, run_id: str, *, reason: str | None = None) -> Any:
+        """Emit a run cancelled event (RUN_CANCELLED)."""
+        ...
+
+    # Workspace events
+
+    def _emit_workspace_created(self, workspace_id: str, name: str) -> Any:
+        """Emit a workspace-created event (WORKSPACE_CREATED)."""
+        ...
+
+    def _emit_workspace_updated(
+        self, workspace_id: str, *, changes: dict[str, Any] | None = None
+    ) -> Any:
+        """Emit a workspace updated event (WORKSPACE_UPDATED)."""
+        ...
+
+    def _emit_workspace_member_join(
+        self,
+        workspace_id: str,
+        member_id: str,
+        role: str,
+        *,
+        invited_by: str | None = None,
+    ) -> Any:
+        """Emit a workspace member join event (WORKSPACE_MEMBER_JOIN)."""
+        ...
+
+    def _emit_workspace_member_leave(
+        self, workspace_id: str, member_id: str
+    ) -> Any:
+        """Emit a workspace member leave event (WORKSPACE_MEMBER_LEAVE)."""
+        ...
+
+    def _emit_workspace_member_role_change(
+        self,
+        workspace_id: str,
+        member_id: str,
+        old_role: str,
+        new_role: str,
+    ) -> Any:
+        """Emit a workspace member role change event (WORKSPACE_MEMBER_ROLE_CHANGE)."""
+        ...
+
+    # System events
+
+    def _emit_system_error(
+        self, error: str, *, error_type: str | None = None, details: dict[str, Any] | None = None
+    ) -> Any:
+        """Emit a system error event (SYSTEM_ERROR)."""
+        ...
+
+    def _emit_system_notification(
+        self, message: str, *, level: str = "info", category: str | None = None
+    ) -> Any:
+        """Emit a system notification event (SYSTEM_NOTIFICATION)."""
         ...
 
 
@@ -379,13 +644,13 @@ class RegistryProtocol[K, T](Protocol):
             The registered component (for decorator chaining)
 
         Raises:
-            ValueError: If component is invalid or already registered
+            ValueError: If the component is invalid or already registered
         """
         ...
 
     def get(self, key: K) -> T | None:
         """
-        Get registered component by key.
+        Get a registered component by key.
 
         Args:
             key: Component key
@@ -397,7 +662,7 @@ class RegistryProtocol[K, T](Protocol):
 
     def get_instance(self, key: K, **kwargs: Any) -> Any:
         """
-        Get or create instance of component.
+        Get or create instance of a component.
 
         Args:
             key: Component key
@@ -407,7 +672,7 @@ class RegistryProtocol[K, T](Protocol):
             Component instance
 
         Raises:
-            KeyError: If component not found
+            KeyError: If a component is not found
         """
         ...
 
@@ -444,18 +709,18 @@ class RegistryProtocol[K, T](Protocol):
     # ── Lifecycle ────────────────────────────────────────────────────
 
     def add_on_register_hook(self, hook: Any) -> None:
-        """Add hook called when component is registered."""
+        """Add a hook called when the component is registered."""
         ...
 
     def add_on_retrieve_hook(self, hook: Any) -> None:
-        """Add hook called when instance is retrieved."""
+        """Add a hook called when the instance is retrieved."""
         ...
 
     # ── Database Sync ────────────────────────────────────────────────
 
     async def sync_to_database(self, db: Any) -> None:
         """
-        Sync registry contents to database.
+        Sync registry contents to a database.
 
         Args:
             db: AsyncSession instance
@@ -482,12 +747,12 @@ class RegistryProtocol[K, T](Protocol):
 
     @abstractmethod
     def _create_instance(self, key: K, component: T, **kwargs: Any) -> Any:
-        """Create instance from component."""
+        """Create instance from a component."""
         ...
 
     @abstractmethod
     async def _sync_to_database(self, db: Any) -> None:
-        """Sync registry to database (implementation-specific)."""
+        """Sync registry to a database (implementation-specific)."""
         ...
 
     # ── Magic Methods ────────────────────────────────────────────────
@@ -531,7 +796,7 @@ def is_executor(obj: Any) -> bool:
         obj: Object to check
 
     Returns:
-        True if object is a valid executor
+        True if an object is a valid executor
     """
     return isinstance(obj, ExecutorProtocol)
 
@@ -594,16 +859,16 @@ PROTOCOL_REGISTRY = {
 
 
 __all__ = [
-    # Base
-    "RegistrableProtocol",
-    # Specific Protocols
-    "ToolProtocol",
-    "ExecutorProtocol",
-    "RegistryProtocol",
-    # Type Checkers
-    "is_tool",
-    "is_executor",
-    "is_registry",
     # Metadata
     "PROTOCOL_REGISTRY",
+    "ExecutorProtocol",
+    # Base
+    "RegistrableProtocol",
+    "RegistryProtocol",
+    # Specific Protocols
+    "ToolProtocol",
+    "is_executor",
+    "is_registry",
+    # Type Checkers
+    "is_tool",
 ]
