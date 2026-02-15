@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, ArrowLeft, LogOut, Plus, History, X, Menu } from 'lucide-react';
+import { Moon, Sun, ArrowLeft, LogOut, Plus, History, X, Menu, Trash2 } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useUIStore } from '@/stores/useUIStore';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useAppStore } from '@/stores/useAppStore';
 import { useApp } from '@/hooks/useApps';
-import { useWorkspaces, useCreateWorkspace } from '@/hooks/useWorkspaces';
+import { useWorkspaces, useCreateWorkspace, useDeleteWorkspace } from '@/hooks/useWorkspaces';
 import { Card, CardBody, Button, Input, Badge } from '@/components/ui';
 import WorkspaceConsole from '@/components/WorkspaceConsole.v2';
 
@@ -23,8 +23,10 @@ export default function AppWorkspacePage() {
   const { data: workspacesData, isLoading: workspacesLoading } = useWorkspaces({
     page: 1,
     page_size: 50,
+    app_id: currentAppId || undefined,
   });
   const createWorkspaceMutation = useCreateWorkspace();
+  const deleteWorkspaceMutation = useDeleteWorkspace();
   const { currentWorkspaceId, setCurrentWorkspace, clearCurrentWorkspace } = useWorkspaceStore();
   const { reset: resetChat } = useChatStore();
   const { toggleTheme, theme } = useUIStore();
@@ -53,6 +55,20 @@ export default function AppWorkspacePage() {
       setWorkspaceDescription('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteWorkspace = async (e: React.MouseEvent, workspaceId: string, name: string) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to delete workspace "${name}"?`)) return;
+    try {
+      await deleteWorkspaceMutation.mutateAsync(workspaceId);
+      if (currentWorkspaceId === workspaceId) {
+        resetChat();
+        clearCurrentWorkspace();
+      }
+    } catch (error) {
+      alert(`Deletion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -223,9 +239,19 @@ export default function AppWorkspacePage() {
                         <p className="text-sm font-medium text-navy-900 dark:text-navy-100 line-clamp-2 flex-1">
                           {workspace.name}
                         </p>
-                        <Badge variant="neutral" size="sm">
-                          {workspace.status}
-                        </Badge>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Badge variant="neutral" size="sm">
+                            {workspace.status}
+                          </Badge>
+                          <button
+                            onClick={(e) => handleDeleteWorkspace(e, workspace.id, workspace.name)}
+                            disabled={deleteWorkspaceMutation.isPending}
+                            className="p-1 rounded-md text-secondary-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            title="Delete workspace"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-secondary-500 dark:text-secondary-400">
                         <span>Runs: {workspace.run_count}</span>

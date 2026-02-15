@@ -8,6 +8,7 @@ export const useWorkspaces = (params?: {
   page?: number;
   page_size?: number;
   status?: string;
+  app_id?: string;
 }) => {
   return useQuery({
     queryKey: ['workspaces', params],
@@ -20,6 +21,17 @@ export const useCreateWorkspace = () => {
 
   return useMutation({
     mutationFn: (data: WorkspaceCreate) => workspaceService.createWorkspace(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    },
+  });
+};
+
+export const useDeleteWorkspace = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (workspaceId: string) => workspaceService.deleteWorkspace(workspaceId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workspaces'] });
     },

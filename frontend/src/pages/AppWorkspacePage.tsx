@@ -7,7 +7,7 @@ import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useAppStore } from '@/stores/useAppStore';
 import { useApp } from '@/hooks/useApps';
-import { useWorkspaces, useCreateWorkspace } from '@/hooks/useWorkspaces';
+import { useWorkspaces, useCreateWorkspace, useDeleteWorkspace } from '@/hooks/useWorkspaces';
 import WorkspaceConsole from '@/components/WorkspaceConsole';
 
 export default function AppWorkspacePage() {
@@ -22,8 +22,10 @@ export default function AppWorkspacePage() {
   const { data: workspacesData, isLoading: workspacesLoading } = useWorkspaces({
     page: 1,
     page_size: 50,
+    app_id: currentAppId || undefined,
   });
   const createWorkspaceMutation = useCreateWorkspace();
+  const deleteWorkspaceMutation = useDeleteWorkspace();
   const { currentWorkspaceId, setCurrentWorkspace, clearCurrentWorkspace } = useWorkspaceStore();
   const { reset: resetChat } = useChatStore();
   const { toggleTheme, theme } = useUIStore();
@@ -52,6 +54,20 @@ export default function AppWorkspacePage() {
       setWorkspaceDescription('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteWorkspace = async (e: React.MouseEvent, workspaceId: string, name: string) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to delete workspace "${name}"?`)) return;
+    try {
+      await deleteWorkspaceMutation.mutateAsync(workspaceId);
+      if (currentWorkspaceId === workspaceId) {
+        resetChat();
+        clearCurrentWorkspace();
+      }
+    } catch (error) {
+      alert(`Deletion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -162,7 +178,7 @@ export default function AppWorkspacePage() {
               ) : workspacesData?.items && workspacesData.items.length > 0 ? (
                 <div className="space-y-2">
                   {workspacesData.items.map((workspace) => (
-                    <button
+                    <div
                       key={workspace.id}
                       onClick={() =>
                         handleOpenWorkspace(
@@ -171,7 +187,7 @@ export default function AppWorkspacePage() {
                           workspace.app_id
                         )
                       }
-                      className={`w-full text-left px-3 py-3 rounded-lg border transition-colors ${
+                      className={`w-full text-left px-3 py-3 rounded-lg border transition-colors cursor-pointer ${
                         currentWorkspaceId === workspace.id
                           ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-800'
                           : 'border-transparent hover:bg-navy-100 dark:hover:bg-navy-800'
@@ -181,14 +197,24 @@ export default function AppWorkspacePage() {
                         <p className="text-sm font-medium text-navy-900 dark:text-navy-100 truncate">
                           {workspace.name}
                         </p>
-                        <span className="text-xs text-secondary-400 dark:text-secondary-500">
-                          {workspace.status}
-                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-xs text-secondary-400 dark:text-secondary-500">
+                            {workspace.status}
+                          </span>
+                          <button
+                            onClick={(e) => handleDeleteWorkspace(e, workspace.id, workspace.name)}
+                            disabled={deleteWorkspaceMutation.isPending}
+                            className="p-1 rounded-md text-secondary-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            title="Delete workspace"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
                         Runs: {workspace.run_count}
                       </p>
-                    </button>
+                    </div>
                   ))}
                 </div>
               ) : (

@@ -15,7 +15,7 @@ export default function AppsPage() {
   const { data: templates } = useTemplates();
   const createAppMutation = useCreateApp();
   const deleteAppMutation = useDeleteApp();
-  const { setCurrentApp } = useAppStore();
+  const { currentAppId, setCurrentApp, clearCurrentApp } = useAppStore();
   const { reset: resetChat } = useChatStore();
 
   const handleCreateApp = async (e: React.FormEvent) => {
@@ -41,6 +41,9 @@ export default function AppsPage() {
 
     try {
         await deleteAppMutation.mutateAsync(appId);
+        if (currentAppId === appId) {
+          clearCurrentApp();
+        }
       alert('App 删除成功！');
     } catch (error) {
       alert(`删除失败: ${error instanceof Error ? error.message : '未知错误'}`);

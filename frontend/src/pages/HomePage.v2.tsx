@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Plus, Zap, Box, ArrowRight, LogOut } from 'lucide-react';
+import { Moon, Sun, Plus, Zap, Box, ArrowRight, LogOut, Trash2 } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useApps, useCreateApp, useTemplates } from '@/hooks/useApps';
+import { useApps, useCreateApp, useDeleteApp, useTemplates } from '@/hooks/useApps';
 import { useAppStore } from '@/stores/useAppStore';
 import { Card, CardHeader, CardBody, Button, Input, Badge } from '@/components/ui';
 
@@ -30,7 +30,8 @@ export default function HomePage() {
   });
   const { data: templatesData } = useTemplates();
   const createAppMutation = useCreateApp();
-  const { setCurrentApp } = useAppStore();
+  const deleteAppMutation = useDeleteApp();
+  const { currentAppId, setCurrentApp, clearCurrentApp } = useAppStore();
   const { reset: resetChat } = useChatStore();
   const { toggleTheme, theme } = useUIStore();
 
@@ -47,6 +48,19 @@ export default function HomePage() {
       setExecutorCode('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteApp = async (e: React.MouseEvent, appId: string, appCode: string) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to delete app "${appCode}"?`)) return;
+    try {
+      await deleteAppMutation.mutateAsync(appId);
+      if (currentAppId === appId) {
+        clearCurrentApp();
+      }
+    } catch (error) {
+      alert(`Deletion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -125,15 +139,25 @@ export default function HomePage() {
                     <span>Created {new Date(app.created_at).toLocaleDateString()}</span>
                   </div>
 
-                  <Button
-                    onClick={() => handleOpenApp(app.id, app.app_code)}
-                    variant="primary"
-                    size="md"
-                    className="w-full group-hover:shadow-2xl"
-                    icon={<ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />}
-                  >
-                    Open Workspace
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleOpenApp(app.id, app.app_code)}
+                      variant="primary"
+                      size="md"
+                      className="flex-1 group-hover:shadow-2xl"
+                      icon={<ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />}
+                    >
+                      Open Workspace
+                    </Button>
+                    <button
+                      onClick={(e) => handleDeleteApp(e, app.id, app.app_code)}
+                      disabled={deleteAppMutation.isPending}
+                      className="px-3 py-2.5 rounded-lg border border-red-300 dark:border-red-700 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                      title="Delete app"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </CardBody>
               </Card>
             ))}

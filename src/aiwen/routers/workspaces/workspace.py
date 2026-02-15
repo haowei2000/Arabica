@@ -41,6 +41,7 @@ async def create_workspace(
     data: WorkspaceCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
 ):
     """
     Create a new workspace.
@@ -49,10 +50,23 @@ async def create_workspace(
         data: Workspace creation data
         current_user: Current authenticated user
         crud: Workspace CRUD service
+        db: Database session
 
     Returns:
         Created workspace
     """
+    # Validate app_id exists if provided
+    if data.app_id:
+        from aiwen.models.app.app import App
+
+        app_stmt = select(App).where(App.id == UUID(data.app_id))
+        app_result = await db.execute(app_stmt)
+        if not app_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"App {data.app_id} not found",
+            )
+
     workspace = await crud.create(
         owner_id=current_user.id,
         name=data.name,
@@ -172,6 +186,7 @@ async def list_workspaces(
     status_filter: str | None = Query(
         None, alias="status", description="Filter by status"
     ),
+    app_id: str | None = Query(None, description="Filter by app ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
 ):
@@ -182,6 +197,7 @@ async def list_workspaces(
         current_user: Current authenticated user
         crud: Workspace CRUD service
         status_filter: Filter by status
+        app_id: Filter by app ID
         page: Page number
         page_size: Items per page
 
@@ -194,6 +210,7 @@ async def list_workspaces(
         skip=skip,
         limit=page_size,
         status=status_filter,
+        app_id=app_id,
     )
     return WorkspaceListResponse(
         total=total,

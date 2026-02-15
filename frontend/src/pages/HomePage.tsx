@@ -4,7 +4,7 @@ import { Moon, Sun } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useApps, useCreateApp, useTemplates } from '@/hooks/useApps';
+import { useApps, useCreateApp, useDeleteApp, useTemplates } from '@/hooks/useApps';
 import { useAppStore } from '@/stores/useAppStore';
 
 import KnowledgePage from './context/KnowledgePage';
@@ -29,7 +29,8 @@ export default function HomePage() {
   });
   const { data: templatesData } = useTemplates();
   const createAppMutation = useCreateApp();
-  const { setCurrentApp } = useAppStore();
+  const deleteAppMutation = useDeleteApp();
+  const { currentAppId, setCurrentApp, clearCurrentApp } = useAppStore();
   const { reset: resetChat } = useChatStore();
   const { toggleTheme, theme } = useUIStore();
 
@@ -46,6 +47,18 @@ export default function HomePage() {
       setExecutorCode('');
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteApp = async (appId: string, appCode: string) => {
+    if (!confirm(`Are you sure you want to delete app "${appCode}"?`)) return;
+    try {
+      await deleteAppMutation.mutateAsync(appId);
+      if (currentAppId === appId) {
+        clearCurrentApp();
+      }
+    } catch (error) {
+      alert(`Deletion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -219,6 +232,16 @@ export default function HomePage() {
                     className="flex-1 px-4 py-2 bg-primary-500 text-white text-sm rounded-md hover:bg-primary-600"
                   >
                     Open App
+                  </button>
+                  <button
+                    onClick={() => handleDeleteApp(app.id, app.app_code)}
+                    disabled={deleteAppMutation.isPending}
+                    className="px-3 py-2 border border-red-300 dark:border-red-700
+                               text-red-600 dark:text-red-400 text-sm rounded-md
+                               hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                    title="Delete app"
+                  >
+                    Delete
                   </button>
                 </div>
               </div>

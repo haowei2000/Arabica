@@ -172,6 +172,7 @@ class WorkspaceCRUD:
         skip: int = 0,
         limit: int = 100,
         status: str | None = None,
+        app_id: str | UUID | None = None,
     ) -> tuple[list[Workspace], int]:
         """List workspaces accessible to a user.
 
@@ -180,6 +181,7 @@ class WorkspaceCRUD:
             skip: Number of records to skip
             limit: Maximum number of records to return
             status: Filter by status (optional)
+            app_id: Filter by app ID (optional)
 
         Returns:
             Tuple of (list of workspaces, total count)
@@ -204,6 +206,9 @@ class WorkspaceCRUD:
 
         if status:
             conditions.append(Workspace.status == status)
+
+        if app_id:
+            conditions.append(Workspace.app_id == normalize_uuid_to_str(app_id))
 
         # Count query
         count_stmt = select(func.count(Workspace.id)).where(and_(*conditions))
