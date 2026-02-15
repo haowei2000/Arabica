@@ -34,6 +34,10 @@ export const API_ENDPOINTS = {
           `/workspaces/${workspaceId}/runs/${runId}/cancel`,
       RUN_RESUME: (workspaceId: string, runId: string) =>
           `/workspaces/${workspaceId}/runs/${runId}/resume`,
+      CONTEXTS: (workspaceId: string) => `/workspaces/${workspaceId}/contexts`,
+      CONTEXTS_COPY: (workspaceId: string) => `/workspaces/${workspaceId}/contexts/copy`,
+      CONTEXT_DELETE: (workspaceId: string, contextId: string) =>
+          `/workspaces/${workspaceId}/contexts/${contextId}`,
   },
   EVENTS: {
       RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
@@ -103,6 +107,7 @@ export const API_ENDPOINTS = {
 
     // ContextSchema/Chunk 管理
     CONTEXT: {
+        LIST: '/agent/context/query',
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/context/knowledge/${knowledgeId}/chunks`,
         LIST_BY_DOCUMENT: (documentId: string) => `/agent/context/document/${documentId}/chunks`,
     },

@@ -14,11 +14,21 @@ from aiwen.schemas.workspaces.workspace import (
     WorkspaceUpdate,
     WorkspaceVisibility,
 )
+from aiwen.schemas.workspaces.workspace_context import (
+    CopyContextsRequest,
+    CopyContextsResponse,
+    WorkspaceContextListResponse,
+    WorkspaceContextResponse,
+)
 
 __all__ = [
+    "CopyContextsRequest",
+    "CopyContextsResponse",
     "InvitationStatus",
     "MemberRole",
     "WorkspaceCreate",
+    "WorkspaceContextListResponse",
+    "WorkspaceContextResponse",
     "WorkspaceListResponse",
     "WorkspaceMemberCreate",
     "WorkspaceMemberResponse",

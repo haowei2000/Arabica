@@ -2,14 +2,19 @@
 """REST API endpoints for workspace management."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.dependencies.auth import get_current_user
 from aiwen.dependencies.workspace import (
     WorkspaceCRUDDep,
     WorkspaceMemberCRUDDep,
 )
+from aiwen.extensions.database import get_aiwen_db
+from aiwen.models.context.workspace_context import WorkspaceContext
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.workspaces.workspace import (
     MemberRole,
@@ -20,6 +25,13 @@ from aiwen.schemas.workspaces.workspace import (
     WorkspaceResponse,
     WorkspaceUpdate,
 )
+from aiwen.schemas.workspaces.workspace_context import (
+    CopyContextsRequest,
+    CopyContextsResponse,
+    WorkspaceContextListResponse,
+    WorkspaceContextResponse,
+)
+from aiwen.services.context.process import copy_contexts_to_workspace
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -391,3 +403,127 @@ async def remove_member(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Member not found or cannot remove owner",
         )
+
+
+# Workspace context endpoints
+
+
+@router.get(
+    "/{workspace_id}/contexts",
+    response_model=WorkspaceContextListResponse,
+)
+async def list_workspace_contexts(
+    workspace_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+):
+    """List workspace contexts (paginated)."""
+    workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace {workspace_id} not found or access denied",
+        )
+
+    ws_id = UUID(workspace_id)
+    base_filter = and_(
+        WorkspaceContext.workspace_id == ws_id,
+        WorkspaceContext.is_deleted == False,  # noqa: E712
+    )
+
+    count_stmt = select(func.count()).select_from(WorkspaceContext).where(base_filter)
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    skip = (page - 1) * page_size
+    items_stmt = (
+        select(WorkspaceContext)
+        .where(base_filter)
+        .order_by(WorkspaceContext.created_at.desc())
+        .offset(skip)
+        .limit(page_size)
+    )
+    items = list((await db.execute(items_stmt)).scalars().all())
+
+    return WorkspaceContextListResponse(
+        total=total,
+        items=items,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/{workspace_id}/contexts/copy",
+    response_model=CopyContextsResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def copy_contexts_to_workspace_endpoint(
+    workspace_id: str,
+    body: CopyContextsRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """Copy selected user contexts into the workspace."""
+    workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace {workspace_id} not found or access denied",
+        )
+
+    context_uuids = [UUID(cid) for cid in body.context_ids]
+    created = await copy_contexts_to_workspace(
+        db,
+        workspace_id=UUID(workspace_id),
+        context_ids=context_uuids,
+        created_by=UUID(current_user.id),
+        path_prefix=body.path_prefix,
+        auto_commit=True,
+    )
+
+    return CopyContextsResponse(
+        copied_count=len(created),
+        items=created,
+    )
+
+
+@router.delete(
+    "/{workspace_id}/contexts/{context_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_workspace_context(
+    workspace_id: str,
+    context_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """Remove a context entry from the workspace (soft delete)."""
+    workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace {workspace_id} not found or access denied",
+        )
+
+    stmt = select(WorkspaceContext).where(
+        and_(
+            WorkspaceContext.id == UUID(context_id),
+            WorkspaceContext.workspace_id == UUID(workspace_id),
+            WorkspaceContext.is_deleted == False,  # noqa: E712
+        )
+    )
+    result = await db.execute(stmt)
+    ws_ctx = result.scalar_one_or_none()
+    if not ws_ctx:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace context {context_id} not found",
+        )
+
+    ws_ctx.is_deleted = True
+    await db.commit()

@@ -29,3 +29,23 @@ export interface WorkspaceCreate {
   visibility?: 'private' | 'team' | 'public';
   settings?: Record<string, unknown>;
 }
+
+export interface WorkspaceContext {
+  id: string;
+  workspace_id: string;
+  name: string;
+  path?: string | null;
+  content_type?: string | null;
+  s3_key?: string | null;
+  size_bytes?: number | null;
+  meta?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface WorkspaceContextList {
+  total: number;
+  items: WorkspaceContext[];
+  page: number;
+  page_size: number;
+}

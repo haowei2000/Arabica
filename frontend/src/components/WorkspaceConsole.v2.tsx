@@ -1,27 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Send, StopCircle, Sparkles, User, History, Layers, CheckSquare, FileText } from 'lucide-react';
+import { Send, StopCircle, Sparkles, User, History, Layers, CheckSquare, FileText, Plus, Trash2 } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
+import { useWorkspaceContexts, useRemoveWorkspaceContext } from '@/hooks/useWorkspaces';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
 import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard, ErrorMessage, ContextUsageCard, OutcomeCard } from '@/components/AgentEvents';
 import { Card, CardBody, Button, Badge } from '@/components/ui';
-
-import KnowledgePage from '@/pages/context/KnowledgePage';
-import ToolPage from '@/pages/context/ToolPage';
-import MemoryPage from '@/pages/context/MemoryPage';
-import SkillPage from '@/pages/context/SkillPage';
+import ContextSelectModal from '@/components/ContextSelectModal';
 
 type PanelTab = 'runs' | 'context' | 'tasks' | 'results';
-type ContextTab = 'knowledge' | 'tool' | 'memory' | 'skill';
 
 export default function WorkspaceConsole() {
   const [input, setInput] = useState('');
   const [panelTab, setPanelTab] = useState<PanelTab>('runs');
-  const [contextTab, setContextTab] = useState<ContextTab>('knowledge');
+  const [showContextModal, setShowContextModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { currentWorkspaceId, currentWorkspaceAppId } = useWorkspaceStore();
@@ -86,18 +82,14 @@ export default function WorkspaceConsole() {
     await sendMessage(message);
   };
 
-  const renderContextContent = () => {
-    switch (contextTab) {
-      case 'knowledge':
-        return <KnowledgePage />;
-      case 'tool':
-        return <ToolPage />;
-      case 'memory':
-        return <MemoryPage />;
-      case 'skill':
-        return <SkillPage />;
-      default:
-        return <KnowledgePage />;
+  const { data: wsContextsData, isLoading: wsContextsLoading } = useWorkspaceContexts(currentWorkspaceId || '');
+  const removeMutation = useRemoveWorkspaceContext(currentWorkspaceId || '');
+
+  const handleRemoveContext = async (contextId: string) => {
+    try {
+      await removeMutation.mutateAsync(contextId);
+    } catch {
+      // error available via removeMutation.error
     }
   };
 
@@ -428,22 +420,79 @@ export default function WorkspaceConsole() {
 
           {panelTab === 'context' && (
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {(['knowledge', 'tool', 'memory', 'skill'] as ContextTab[]).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setContextTab(tab)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      contextTab === tab
-                        ? 'bg-primary-500 text-white shadow-md'
-                        : 'bg-secondary-100 dark:bg-navy-800 text-secondary-600 dark:text-secondary-400 hover:bg-secondary-200 dark:hover:bg-navy-700'
-                    }`}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-navy-900 dark:text-navy-100">Workspace Context</h2>
+                <Button
+                  onClick={() => setShowContextModal(true)}
+                  variant="primary"
+                  size="sm"
+                  icon={<Plus className="w-4 h-4" />}
+                >
+                  Add Context
+                </Button>
               </div>
-              {renderContextContent()}
+
+              {wsContextsLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-8 h-8 rounded-full border-4 border-primary-200 dark:border-primary-900/30 border-t-primary-500 animate-spin" />
+                </div>
+              ) : wsContextsData?.items && wsContextsData.items.length > 0 ? (
+                <div className="space-y-2">
+                  {wsContextsData.items.map((ctx) => (
+                    <Card key={ctx.id}>
+                      <CardBody className="py-3 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-navy-900 dark:text-navy-100 truncate">
+                              {ctx.name}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1">
+                              {ctx.content_type && (
+                                <Badge variant="info" size="sm">{ctx.content_type}</Badge>
+                              )}
+                              {ctx.path && (
+                                <span className="text-xs text-secondary-400 dark:text-secondary-500 truncate">
+                                  {ctx.path}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveContext(ctx.id)}
+                            disabled={removeMutation.isPending}
+                            className="p-1 rounded-md text-secondary-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <p className="text-xs text-secondary-400 dark:text-secondary-500">
+                          {formatRelativeTime(ctx.created_at)}
+                          {ctx.size_bytes != null && ` \u00b7 ${(ctx.size_bytes / 1024).toFixed(1)} KB`}
+                        </p>
+                      </CardBody>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-secondary-100 dark:bg-secondary-900/30 flex items-center justify-center mx-auto">
+                    <Layers className="w-6 h-6 text-secondary-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-navy-900 dark:text-navy-100">No context added</p>
+                    <p className="text-xs text-secondary-500 dark:text-secondary-400 mt-1">
+                      Add context from your library to use in this workspace
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {showContextModal && currentWorkspaceId && (
+                <ContextSelectModal
+                  workspaceId={currentWorkspaceId}
+                  onClose={() => setShowContextModal(false)}
+                />
+              )}
             </div>
           )}
 
