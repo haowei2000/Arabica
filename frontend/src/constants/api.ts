@@ -39,10 +39,6 @@ export const API_ENDPOINTS = {
       CONTEXT_DELETE: (workspaceId: string, contextId: string) =>
           `/workspaces/${workspaceId}/contexts/${contextId}`,
   },
-  EVENTS: {
-      RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
-      RUN_STATE: (runId: string) => `/runs/${runId}/state`,
-  },
 
   // 对话管理
   CONVERSATIONS: {
@@ -105,10 +101,30 @@ export const API_ENDPOINTS = {
         TOGGLE: (id: string) => `/tools/${id}/toggle`,
     },
 
+    // Skills 管理
+    SKILLS: {
+        LIST: '/agent/skills',
+        CREATE: '/agent/skills',
+        GET: (id: string) => `/agent/skills/${id}`,
+        UPDATE: (id: string) => `/agent/skills/${id}`,
+        DELETE: (id: string) => `/agent/skills/${id}`,
+        SEARCH: '/agent/skills/search/query',
+        PROCESS: (id: string) => `/agent/skills/${id}/process`,
+    },
+
     // ContextSchema/Chunk 管理
     CONTEXT: {
         LIST: '/agent/context/query',
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/context/knowledge/${knowledgeId}/chunks`,
         LIST_BY_DOCUMENT: (documentId: string) => `/agent/context/document/${documentId}/chunks`,
+    },
+
+    // Events 管理
+    EVENTS: {
+        GET: (id: string) => `/events/${id}`,
+        LIST_BY_WORKSPACE: (workspaceId: string) => `/events/workspace/${workspaceId}/list`,
+        LIST_BY_RUN: (runId: string) => `/events/run/${runId}/list`,
+        RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
+        RUN_STATE: (runId: string) => `/runs/${runId}/state`,
     },
 } as const;

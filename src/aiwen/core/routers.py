@@ -24,6 +24,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from aiwen.routers.context.context import router as context_router
     from aiwen.routers.context.document import router as document_router
     from aiwen.routers.context.knowledge import router as knowledge_router
+    from aiwen.routers.context.skills import router as skills_router
 
     # Unified tool management (inner + external tools + templates)
     from aiwen.routers.context.tools.tools import router as tools_router
@@ -52,6 +53,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (knowledge_router, "/api/agent"),
         (context_router, "/api/agent"),
         (document_router, "/api/agent"),
+        (skills_router, "/api/agent"),
         # Workspace System (event-sourced)
         (workspace_router, "/api"),
         (runs_router, "/api"),
