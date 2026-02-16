@@ -18,7 +18,7 @@
     - aiwen.interfaces.protocols.ExecutorProtocol
 
 使用示例:
-    runtime = ExecutorRuntime()
+    runtime = ExecutorInstanceManager()
     runtime.attach(task_id, executor)
     executor = runtime.get(task_id)
 """
@@ -30,8 +30,16 @@ from uuid import UUID
 from aiwen.core.interfaces.protocols import ExecutorProtocol
 
 
-class ExecutorRuntime:
-    """执行器运行时管理类，负责管理执行器实例的生命周期"""
+class ExecutorInstanceManager:
+    """Manages running executor instances lifecycle.
+
+    This class maintains a mapping between task IDs and their associated
+    executor instances during task execution. It handles attachment,
+    retrieval, and cleanup of executor instances.
+
+    Note: This is different from ExecutorTemplate (the ORM model) and
+    ExecutorCRUD (database operations for templates).
+    """
 
     def __init__(self):
         """初始化执行器实例存储字典"""

@@ -17,7 +17,7 @@ from aiwen.core.dependencies.workspace import (
 )
 from aiwen.core.enums.runs import TriggerType
 from aiwen.models.app import App
-from aiwen.models.executor.executor import Executor
+from aiwen.models.executor.executor import ExecutorTemplate
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventType, UserMessageEventSchema
 from aiwen.schemas.runs.run import (
@@ -89,7 +89,7 @@ async def create_run(
     executor_code = "DEFAULT001"
     if app_row and app_row.executor_id:
         tmpl_result = await state_machine.db.execute(
-            select(Executor).where(Executor.id == app_row.executor_id)
+            select(ExecutorTemplate).where(Executor.id == app_row.executor_id)
         )
         tmpl = tmpl_result.scalar_one_or_none()
         if tmpl:

@@ -28,14 +28,13 @@ ContextLayer - 基于路径寻址的上下文结构化与渐进式披露框架
 
 from __future__ import annotations
 
-import fnmatch
-import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum
+import fnmatch
+import re
 from typing import Any
-
 
 # ─────────────────────────────────────────────
 # 1. 层级枚举
@@ -83,8 +82,19 @@ def path_segments(path: str) -> list[str]:
 
 @dataclass
 class ContextEntry:
-    """
-    单个上下文条目，承载三层数据。
+    """Path-addressable node in the context framework (in-memory only).
+
+    IMPORTANT: This is the FRAMEWORK layer class for the context layer system.
+    Do not confuse with:
+    - Context (aiwen.models.context.context.Context) - ORM model for database
+    - ContextSchema (aiwen.schemas.context.context_schema) - Pydantic API schema
+    - ContextStore (this module) - In-memory hierarchical storage
+
+    This class represents a single node in the path-based hierarchy, carrying
+    three levels of progressive disclosure:
+    - glance: One-line summary
+    - overview: Structured summary
+    - detail: Full data
 
     与树形版的 ContextNode 不同：
     - 不持有 children 引用（由 Store 管理拓扑）
@@ -369,7 +379,23 @@ class QueryResult:
 # ─────────────────────────────────────────────
 
 class ContextStore:
-    """基于路径寻址的上下文存储。"""
+    """In-memory hierarchical storage with path-based addressing (FRAMEWORK LAYER).
+
+    IMPORTANT: This is a FRAMEWORK component for in-memory context management.
+    Do not confuse with:
+    - Context (aiwen.models.context.context.Context) - Database ORM model
+    - ContextCRUD (aiwen.services.context.context_crud) - Database operations
+    - WorkspaceContextService (aiwen.services.workspace_context) - Persistence + cache layer
+
+    This class provides:
+    - Path-based addressing (e.g., "cluster/web-01/nginx")
+    - Trie indexing for efficient prefix queries
+    - Glob pattern matching (*, **)
+    - Progressive disclosure (glance/overview/detail)
+    - Pure in-memory storage (no database)
+
+    Use WorkspaceContextService for persistent storage backed by database.
+    """
 
     def __init__(self, title: str = "Context", description: str = ""):
         self.title = title

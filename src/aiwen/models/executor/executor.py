@@ -17,7 +17,12 @@ from aiwen.extensions.database import get_base
 Base = get_base("aiwen")
 
 
-class Executor(Base):
+class ExecutorTemplate(Base):
+    """Executor configuration template stored in database.
+
+    Note: This is the ORM model for persisting executor templates.
+    For the abstract executor interface, see aiwen.core.interfaces.executor.Executor
+    """
     __tablename__ = "executor"
 
     # Primary key
@@ -57,4 +62,4 @@ class Executor(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Executor(id={self.id}, executor_code='{self.executor_code}', executor_name='{self.executor_name}', enabled={self.enabled})>"
+        return f"<ExecutorTemplate(id={self.id}, executor_code='{self.executor_code}', executor_name='{self.executor_name}', enabled={self.enabled})>"

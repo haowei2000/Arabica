@@ -10,7 +10,7 @@ from aiwen.schemas.app.app import AppCreate, AppListResponse, AppResponse, AppUp
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.executor.executor import ExecutorResponse
 from aiwen.services.app.app_crud import AppCRUD
-from aiwen.services.executor.executor_template_crud import ExecutorCRUD
+from aiwen.services.executor.executor_crud import ExecutorCRUD
 from aiwen.utils.model_converters import models_to_schemas
 
 router = APIRouter(prefix="/apps", tags=["apps"])

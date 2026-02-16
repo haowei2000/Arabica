@@ -72,6 +72,11 @@ class WaitingForTool(Exception):
 class Executor(ABC):
     """Abstract base class for every agent in the system.
 
+    This is the INTERFACE/ABC for executor implementations. Do not confuse with:
+    - ExecutorTemplate (aiwen.models.executor.executor) - ORM model for DB persistence
+    - ExecutorInstanceManager (aiwen.services.executor.runtime) - manages running instances
+    - ExecutorCRUD (aiwen.services.executor.executor_crud) - database operations
+
     Concrete executors (DefaultExecutor, ConflictExecutor, …) inherit from
     this class and get the ``_emit_*`` event-factory helpers for free.
 

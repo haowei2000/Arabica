@@ -21,7 +21,21 @@ from aiwen.extensions.database import get_base
 Base = get_base("aiwen")
 
 class Context(Base):  # ty:ignore[unsupported-base]
-    """ContextSchema table for storing agent context with vector embeddings."""
+    """Database ORM model for agent context with vector embeddings (PERSISTENCE LAYER).
+
+    IMPORTANT: This is the DATABASE model for persistent context storage.
+    Do not confuse with:
+    - ContextStore (aiwen.frameworks.context.layer) - In-memory hierarchical storage
+    - ContextEntry (aiwen.frameworks.context.layer) - Framework node class
+    - ContextSchema (aiwen.schemas.context.context_schema) - Pydantic API schema
+    - WorkspaceContext (aiwen.models.context.workspace_context) - Workspace-specific contexts
+
+    This model stores:
+    - Content with vector embeddings for semantic search
+    - Metadata and tags
+    - User and source associations
+    - Virtual folder paths for organization
+    """
 
     __tablename__ = "context"
 

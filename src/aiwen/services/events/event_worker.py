@@ -28,7 +28,7 @@ from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
-from aiwen.services.executor.runtime import ExecutorRuntime
+from aiwen.services.executor.runtime import ExecutorInstanceManager
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
 
@@ -57,7 +57,7 @@ class Worker:
         self.redis = redis_client
         self.db = db
         self.consumer_name = consumer_name
-        self.runtime = ExecutorRuntime()
+        self.runtime = ExecutorInstanceManager()
         # EventPublisher created once, shared with RunStateMachine
         self.event_publisher = EventPublisher(db, redis_client)
         self.state_machine = RunStateMachine(

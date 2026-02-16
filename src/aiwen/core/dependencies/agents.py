@@ -12,7 +12,7 @@ from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.knowledge.document_crud import DocumentCRUD
 from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 from aiwen.services.context.tools.tool_crud import UserToolCRUD
-from aiwen.services.executor.executor_template_crud import ExecutorCRUD
+from aiwen.services.executor.executor_crud import ExecutorCRUD
 
 
 async def get_app_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]) -> AppCRUD:

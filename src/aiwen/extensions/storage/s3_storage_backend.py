@@ -1,64 +1,11 @@
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass
-from datetime import datetime
 from typing import BinaryIO
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-
-@dataclass(frozen=True)
-class ObjectInfo:
-    key: str
-    size: int
-    etag: str | None = None
-    content_type: str | None = None
-    last_modified: datetime | None = None
-    metadata: dict | None = None
-
-
-class StorageBackend(ABC):
-    @abstractmethod
-    def put_bytes(
-        self,
-        key: str,
-        data: bytes,
-        *,
-        content_type: str | None = None,
-        metadata: dict | None = None,
-        overwrite: bool = True,
-    ) -> ObjectInfo: ...
-
-    @abstractmethod
-    def put_file(
-        self,
-        key: str,
-        file: BinaryIO,
-        *,
-        content_type: str | None = None,
-        metadata: dict | None = None,
-        overwrite: bool = True,
-    ) -> ObjectInfo: ...
-
-    @abstractmethod
-    def get_bytes(self, key: str) -> bytes: ...
-
-    @abstractmethod
-    def delete(self, key: str) -> None: ...
-
-    @abstractmethod
-    def exists(self, key: str) -> bool: ...
-
-    @abstractmethod
-    def stat(self, key: str) -> ObjectInfo: ...
-
-    @abstractmethod
-    def list(self, prefix: str = "") -> Iterable[ObjectInfo]: ...
-
-    def get_url(self, key: str, expires_seconds: int = 3600) -> str:
-        raise NotImplementedError
+from aiwen.extensions.storage.base import ObjectInfo, StorageBackend
 
 
 def _normalize_key(key: str) -> str:

@@ -779,7 +779,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
     async def _sync_to_database(self, db: AsyncSession) -> None:
         """Sync executor templates to database."""
-        from aiwen.services.executor.executor_template_crud import ExecutorCRUD
+        from aiwen.services.executor.executor_crud import ExecutorCRUD
 
         def _normalize_config(config):
             if config is None:
@@ -873,7 +873,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         self.register(executor_cls)
 
         # Register in database
-        from aiwen.services.executor.executor_template_crud import ExecutorCRUD
+        from aiwen.services.executor.executor_crud import ExecutorCRUD
 
         crud = ExecutorCRUD(db)
         existing = await crud.get_executor_by_code(executor_code)
