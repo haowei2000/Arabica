@@ -56,9 +56,11 @@ class DeleteContextTool(InnerTool):
                 )
 
             async with get_session("aiwen") as db:
-                # Initialize service
-                service = WorkspaceContextService(db, input_data.workspace_id)
-                await service.load()
+                # Initialize service with caching
+                from aiwen.utils.workspace_context_cache import (
+                    get_cached_workspace_context,
+                )
+                service = await get_cached_workspace_context(db, input_data.workspace_id)
 
                 # Check if context exists
                 existing = await service.get(input_data.path, level="glance")

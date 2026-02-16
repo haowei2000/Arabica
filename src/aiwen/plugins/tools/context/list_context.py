@@ -47,15 +47,12 @@ class ListContextTool(InnerTool):
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from aiwen.extensions.database import get_session
         from aiwen.frameworks.context import DetailLevel
-        from aiwen.services.workspace_context.workspace_context_service import (
-            WorkspaceContextService,
-        )
+        from aiwen.utils.workspace_context_cache import get_cached_workspace_context
 
         try:
             async with get_session("aiwen") as db:
-                # Initialize service
-                service = WorkspaceContextService(db, input_data.workspace_id)
-                await service.load()
+                # Initialize service with caching
+                service = await get_cached_workspace_context(db, input_data.workspace_id)
 
                 # Query based on mode
                 if input_data.mode == "children":
