@@ -5,13 +5,10 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
-from aiwen.enums.runs import RunStatus, TriggerType
+from aiwen.core.enums.runs import RunStatus, TriggerType
 from aiwen.utils.schema_mixins import ResponseMixin
-
-
-
 
 
 class RunCreate(BaseModel):

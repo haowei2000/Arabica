@@ -8,18 +8,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
 from aiwen.config.factory import get_settings
-from aiwen.dependencies.auth import get_current_user
-from aiwen.dependencies.workspace import (
+from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.dependencies.workspace import (
     EventPublisherDep,
     RunCRUDDep,
     RunStateMachineDep,
     WorkspaceCRUDDep,
 )
+from aiwen.core.enums.runs import TriggerType
 from aiwen.models.app import App
 from aiwen.models.executor.executor import Executor
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventType, UserMessageEventSchema
-from aiwen.enums.runs import TriggerType
 from aiwen.schemas.runs.run import (
     RunListResponse,
     RunResponse,

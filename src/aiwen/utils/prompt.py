@@ -53,15 +53,14 @@ def get_jinja_env(*, strict: bool = False) -> Environment:
                 lstrip_blocks=True,
             )
         return _default_env_strict
-    else:
-        if _default_env_safe is None:
-            _default_env_safe = Environment(
-                undefined=SilentUndefined,
-                autoescape=False,
-                trim_blocks=True,
-                lstrip_blocks=True,
-            )
-        return _default_env_safe
+    if _default_env_safe is None:
+        _default_env_safe = Environment(
+            undefined=SilentUndefined,
+            autoescape=False,
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+    return _default_env_safe
 
 
 def render_template(template_str: str, /, **context: Any) -> str:

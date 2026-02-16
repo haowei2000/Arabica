@@ -56,7 +56,7 @@
 ### 创建 Workspace Context Service
 
 ```python
-from aiwen.services.workspace_context_service import WorkspaceContextService
+from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
 from aiwen.extensions.database import get_session
 
 async with get_session("aiwen") as session:

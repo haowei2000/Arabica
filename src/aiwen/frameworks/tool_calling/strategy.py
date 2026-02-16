@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from aiwen.core.tool_calling.models import ChatMessage, LLMResponse
+from aiwen.frameworks.tool_calling.models import ChatMessage, LLMResponse
 
 
 class ToolCallingStrategy(ABC):

@@ -9,7 +9,7 @@ sys.path.insert(0, "/Users/wanghaowei/PycharmProjects/agent_chat/src")
 
 async def test_skill_feature():
     """Test skill CRUD operations and Markdown processing."""
-    from aiwen.enums.context import ContextType
+    from aiwen.core.enums import ContextType
     from aiwen.extensions.database import get_session
     from aiwen.schemas.context.skill import SkillCreate, SkillUpdate
     from aiwen.services.context.skill_crud import SkillCRUD
@@ -96,7 +96,7 @@ def process_data(data: dict) -> dict:
 
         # Parse and display structure
         parsed = processor.parse_markdown(markdown_content)
-        print(f"\n  Parsed Markdown Structure:")
+        print("\n  Parsed Markdown Structure:")
         print(f"  - Sections: {len(parsed['sections'])}")
         for section in parsed["sections"]:
             indent = "  " * section["level"]
@@ -134,7 +134,7 @@ def process_data(data: dict) -> dict:
         updated = await crud.update(
             skill.id, update_data, user_id=user_id, auto_commit=False
         )
-        print(f"  ✓ Updated skill")
+        print("  ✓ Updated skill")
         print(f"  - New description: {updated.meta.get('description')}")
         print(f"  - New tags: {updated.tags}")
         assert updated is not None

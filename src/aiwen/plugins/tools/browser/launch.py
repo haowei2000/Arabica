@@ -1,9 +1,14 @@
 """Browser launch tool."""
 
+from aiwen.mcp_router import browser as browser_module
 from pydantic import Field
 
-from aiwen.interfaces.tool import InnerTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
-from aiwen.mcp_router import browser as browser_module
+from aiwen.core.interfaces.tool import (
+    InnerTool,
+    ToolInputSchema,
+    ToolMetadata,
+    ToolOutputSchema,
+)
 
 
 class BrowserLaunchTool(InnerTool):

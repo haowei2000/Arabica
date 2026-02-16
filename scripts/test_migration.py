@@ -13,7 +13,7 @@ async def test_framework():
     print("1. Testing ContextLayer Framework")
     print("=" * 60)
 
-    from aiwen.frameworks.context_layer import (
+    from aiwen.core.frameworks.context_layer import (
         ContextStore,
         DetailLevel,
         count_aggregator,
@@ -70,10 +70,9 @@ async def test_models():
     print("2. Testing Database Models")
     print("=" * 60)
 
+    from aiwen.core.enums import ContextType
     from aiwen.extensions.database import get_session
     from aiwen.models.context.context import Context
-    from aiwen.models.context.workspace_context import WorkspaceContext
-    from aiwen.enums.context import ContextType
 
     async with get_session("aiwen") as session:
         # Create a test context
@@ -91,14 +90,14 @@ async def test_models():
         session.add(test_ctx)
         await session.commit()
 
-        print(f"\n✓ Created test Context:")
+        print("\n✓ Created test Context:")
         print(f"  ID: {test_ctx.id}")
         print(f"  Path: {test_ctx.path}")
         print(f"  Glance: {test_ctx.glance}")
         print(f"  Tags: {test_ctx.tags}")
 
         # Test progressive disclosure
-        print(f"\n✓ Progressive disclosure:")
+        print("\n✓ Progressive disclosure:")
         glance_data = test_ctx.disclose("glance")
         print(f"  Glance: {glance_data}")
 
@@ -106,19 +105,19 @@ async def test_models():
         print(f"  Overview: {overview_data}")
 
         # Test path methods
-        print(f"\n✓ Path methods:")
+        print("\n✓ Path methods:")
         print(f"  Depth: {test_ctx.get_path_depth()}")
         print(f"  Parent: {test_ctx.get_parent_path()}")
         print(f"  Has tag 'tool': {test_ctx.has_tag('tool')}")
 
         # Test WorkspaceContext requires real workspace, skip for now
-        print(f"\n✓ Skipping WorkspaceContext test (requires real workspace)")
+        print("\n✓ Skipping WorkspaceContext test (requires real workspace)")
 
         # Cleanup
         await session.delete(test_ctx)
         await session.commit()
 
-        print(f"\n✅ Database models test passed!\n")
+        print("\n✅ Database models test passed!\n")
 
 
 async def test_service():
@@ -128,8 +127,10 @@ async def test_service():
     print("=" * 60)
 
     from aiwen.extensions.database import get_session
-    from aiwen.services.workspace_context_service import WorkspaceContextService
     from aiwen.models.workspaces.workspace import Workspace
+    from aiwen.services.workspace_context.workspace_context_service import (
+        WorkspaceContextService,
+    )
 
     workspace_id = uuid4()
 
@@ -172,7 +173,7 @@ async def test_service():
             content_type="application/json"
         )
 
-        print(f"\n✓ Added 2 contexts to database")
+        print("\n✓ Added 2 contexts to database")
 
         # Query using ContextStore API
         tools = await service.glob(f"{workspace_id}/tools/**")
@@ -181,12 +182,12 @@ async def test_service():
             print(f"  {path} → {entry.glance}")
 
         # Test glance scan
-        print(f"\n✓ Glance scan:")
+        print("\n✓ Glance scan:")
         for line in await service.glance(f"{workspace_id}/tools"):
             print(f"  {line}")
 
         # Simulate server restart
-        print(f"\n✓ Simulating server restart...")
+        print("\n✓ Simulating server restart...")
         service2 = WorkspaceContextService(session, workspace_id)
         await service2.load()  # Load from DB
 
@@ -198,9 +199,9 @@ async def test_service():
         await service.delete(f"{workspace_id}", recursive=True)
         await session.delete(test_workspace)
         await session.commit()
-        print(f"\n✓ Cleaned up test data and workspace")
+        print("\n✓ Cleaned up test data and workspace")
 
-        print(f"\n✅ WorkspaceContextService test passed!\n")
+        print("\n✅ WorkspaceContextService test passed!\n")
 
 
 async def main():

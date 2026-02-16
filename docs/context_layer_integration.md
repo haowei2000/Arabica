@@ -155,7 +155,7 @@ detail_view = response.disclose("detail")
 
 ```python
 from aiwen.models.context.context import Context
-from aiwen.enums.context import ContextType
+from aiwen.core.enums import ContextType
 
 # Create a tool context
 tool_ctx = Context(

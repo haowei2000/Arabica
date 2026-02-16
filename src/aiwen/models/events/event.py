@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
+import json
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -15,8 +15,7 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from aiwen.enums.events import EventType
-
+from aiwen.core.enums import EventType
 from aiwen.extensions.database import get_base
 
 if TYPE_CHECKING:
@@ -142,7 +141,7 @@ class Event(Base):
 
         # Parse JSON fields
         for key in ("payload",):
-            if key in decoded and decoded[key]:
+            if decoded.get(key):
                 try:
                     decoded[key] = json.loads(decoded[key])
                 except (json.JSONDecodeError, TypeError):
@@ -150,7 +149,7 @@ class Event(Base):
 
         # Convert UUID string fields
         for key in ("id", "workspace_id", "run_id", "app_id", "user_id", "parent_event_id"):
-            if key in decoded and decoded[key]:
+            if decoded.get(key):
                 decoded[key] = UUID(decoded[key])
 
         # Convert sequence to int
@@ -158,7 +157,7 @@ class Event(Base):
             decoded["sequence"] = int(decoded["sequence"])
 
         # Convert created_at to datetime
-        if "created_at" in decoded and decoded["created_at"]:
+        if decoded.get("created_at"):
             decoded["created_at"] = datetime.fromisoformat(decoded["created_at"])
 
         return cls(**decoded)

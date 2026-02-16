@@ -5,8 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from aiwen.dependencies.auth import get_current_user
-from aiwen.dependencies.workspace import (
+from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.dependencies.workspace import (
     EventCRUDDep,
     RunCRUDDep,
     WorkspaceCRUDDep,

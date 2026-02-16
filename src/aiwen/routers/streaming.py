@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from aiwen.config.factory import get_settings
-from aiwen.dependencies.auth import get_current_user
-from aiwen.dependencies.workspace import (
+from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.dependencies.workspace import (
     EventConsumerDep,
     EventReplayerDep,
     RunCRUDDep,

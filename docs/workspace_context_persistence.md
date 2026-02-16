@@ -31,8 +31,9 @@
 ### 1. 创建 Workspace 时
 
 ```python
-from aiwen.services.workspace_context_service import WorkspaceContextService
+from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
 from aiwen.extensions.database import get_session
+
 
 async def create_workspace(workspace_id: str, user_id: str):
     async with get_session("aiwen") as session:
@@ -144,7 +145,8 @@ async def delete_workspace_context(workspace_id: str):
 ## 🔄 完整生命周期示例
 
 ```python
-from aiwen.services.workspace_context_service import WorkspaceContextService
+from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
+
 
 class WorkspaceManager:
     """Workspace 管理器（简化示例）"""
@@ -185,6 +187,7 @@ class WorkspaceManager:
         """关闭 workspace"""
         # 不需要特殊操作，所有修改已自动同步到数据库
         print(f"✓ Workspace {self.workspace_id} 已关闭（数据已保存）")
+
 
 # 使用示例
 async def main():

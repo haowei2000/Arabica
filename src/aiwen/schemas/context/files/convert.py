@@ -1,7 +1,7 @@
 
 from pydantic import BaseModel, Field
 
-from aiwen.enums.files import InputFormat, OutputFormat
+from aiwen.core.enums import InputFormat, OutputFormat
 
 
 class ConvertRequest(BaseModel):

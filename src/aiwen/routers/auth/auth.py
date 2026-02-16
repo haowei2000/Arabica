@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.dependencies.auth import get_current_user
+from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.schemas.auth.auth import Token, TokenRefresh
 from aiwen.schemas.auth.user import UserCreate, UserResponse

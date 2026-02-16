@@ -4,9 +4,9 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from aiwen.dependencies.agents import get_context_crud
-from aiwen.dependencies.auth import get_current_user
-from aiwen.enums.context import ContextType
+from aiwen.core.dependencies.agents import get_context_crud
+from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.enums import ContextType
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.context.context_schema import (
     ContextCreate,

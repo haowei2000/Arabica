@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.dependencies.auth import get_admin_user, get_current_user
+from aiwen.core.dependencies.auth import get_admin_user, get_current_user
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.schemas.auth.user import UserCreate, UserResponse
 from aiwen.services.auth.auth_service import AuthService

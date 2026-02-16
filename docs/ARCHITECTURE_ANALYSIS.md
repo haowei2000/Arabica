@@ -126,10 +126,11 @@ from .get_current_user import get_current_user  # 依赖注入
 ```
 
 **好的设计** (当前):
+
 ```python
-from aiwen.extensions.database import get_db_session      # 基础设施
+from aiwen.extensions.database import get_db_session  # 基础设施
 from aiwen.middleware.cache_middleware import CacheMiddleware  # 中间件
-from aiwen.dependencies.auth import get_current_user     # 依赖注入
+from aiwen.core.dependencies.auth import get_current_user  # 依赖注入
 
 # 清晰的层次和职责
 ```
@@ -165,16 +166,19 @@ from infrastructure import get_db_session  # ImportError: fastapi not found
 ### 3. **降低可测试性**
 
 **当前设计** - 可以独立测试每一层:
+
 ```python
 # ✅ 测试 extensions - 不需要 FastAPI
 def test_database_connection():
     from aiwen.extensions.database import get_db_session
     # 测试数据库连接...
 
+
 # ✅ 测试 dependencies - 只需要 FastAPI
 def test_get_current_user():
-    from aiwen.dependencies.auth import get_current_user
+    from aiwen.core.dependencies.auth import get_current_user
     # Mock token 测试...
+
 
 # ✅ 测试 middleware - 需要完整请求上下文
 def test_cache_middleware():
@@ -344,9 +348,9 @@ from infrastructure import (
 
 ```python
 # app.py - 清晰的层次结构
-from aiwen.extensions.database import get_db_session      # 基础设施层
-from aiwen.middleware.cache import CacheMiddleware        # 中间件层
-from aiwen.dependencies.auth import get_current_user     # 依赖注入层
+from aiwen.extensions.database import get_db_session  # 基础设施层
+from aiwen.middleware.cache import CacheMiddleware  # 中间件层
+from aiwen.core.dependencies.auth import get_current_user  # 依赖注入层
 
 # 一眼就能看出每个导入的用途和层次
 ```

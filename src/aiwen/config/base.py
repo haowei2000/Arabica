@@ -11,7 +11,7 @@ from aiwen.config.components.openai import OpenAIConfig
 from aiwen.config.components.postgres import PostgresConfig
 from aiwen.config.components.redis import RedisConfig
 from aiwen.config.components.rustfs import RustfsConfig
-from aiwen.constants.path import PROJECT_ROOT
+from aiwen.core.constants import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 

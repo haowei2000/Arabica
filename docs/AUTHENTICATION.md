@@ -39,12 +39,13 @@ FastAPI 官方推荐使用依赖注入而不是全局中间件，因为：
 ```python
 from typing import Annotated
 from fastapi import Depends
-from aiwen.dependencies.auth import get_current_user
+from aiwen.core.dependencies.auth import get_current_user
 from aiwen.schemas.auth.user import UserResponse
+
 
 @router.get("/profile")
 async def get_profile(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+        current_user: Annotated[UserResponse, Depends(get_current_user)]
 ):
     return {
         "username": current_user.username,
@@ -58,11 +59,12 @@ async def get_profile(
 确保用户不仅已认证，而且账户状态为激活。
 
 ```python
-from aiwen.dependencies.auth import get_current_active_user
+from aiwen.core.dependencies.auth import get_current_active_user
+
 
 @router.get("/admin")
 async def admin_panel(
-    current_user: Annotated[UserResponse, Depends(get_current_active_user)]
+        current_user: Annotated[UserResponse, Depends(get_current_active_user)]
 ):
     # 只有激活的用户才能访问
     return {"input": "Admin panel"}
@@ -73,12 +75,13 @@ async def admin_panel(
 仅获取 token 中的声明数据，不进行数据库查询（更高效）。
 
 ```python
-from aiwen.dependencies.auth import get_token_data
+from aiwen.core.dependencies.auth import get_token_data
 from aiwen.schemas.auth.auth import TokenData
+
 
 @router.get("/quick-check")
 async def quick_check(
-    token_data: Annotated[TokenData, Depends(get_token_data)]
+        token_data: Annotated[TokenData, Depends(get_token_data)]
 ):
     # 只包含: user_id, role, tenant_id
     return {"user_id": token_data.user_id}
@@ -91,20 +94,22 @@ async def quick_check(
 ```python
 from typing import Annotated
 from fastapi import APIRouter, Depends
-from aiwen.dependencies.auth import get_current_user
+from aiwen.core.dependencies.auth import get_current_user
 from aiwen.schemas.auth.user import UserResponse
 
 router = APIRouter()
 
+
 @router.get("/protected")
 async def protected_route(
-    current_user: Annotated[UserResponse, Depends(get_current_user)]
+        current_user: Annotated[UserResponse, Depends(get_current_user)]
 ):
     """需要认证才能访问的端点"""
     return {
         "input": "You are authenticated!",
         "user": current_user.username
     }
+
 
 @router.get("/public")
 async def public_route():
@@ -154,11 +159,12 @@ async def moderator_area(
 当你只需要 token 中的信息而不需要完整用户数据时：
 
 ```python
-from aiwen.dependencies.auth import get_token_data
+from aiwen.core.dependencies.auth import get_token_data
+
 
 @router.get("/fast-check")
 async def fast_check(
-    token_data: Annotated[TokenData, Depends(get_token_data)]
+        token_data: Annotated[TokenData, Depends(get_token_data)]
 ):
     # 不查询数据库，直接从 token 获取
     return {
@@ -359,12 +365,14 @@ A:
 ### Q: 如何创建自定义的角色依赖？
 
 ```python
-from aiwen.dependencies.auth import get_current_user
+from aiwen.core.dependencies.auth import get_current_user
+
 
 def require_role(required_role: str):
     """依赖工厂：创建特定角色检查依赖"""
+
     async def role_checker(
-        current_user: Annotated[UserResponse, Depends(get_current_user)]
+            current_user: Annotated[UserResponse, Depends(get_current_user)]
     ):
         if current_user.role != required_role:
             raise HTTPException(
@@ -372,12 +380,14 @@ def require_role(required_role: str):
                 detail=f"Role '{required_role}' required"
             )
         return current_user
+
     return role_checker
+
 
 # 使用
 @router.get("/premium")
 async def premium_content(
-    current_user: Annotated[UserResponse, Depends(require_role("premium"))]
+        current_user: Annotated[UserResponse, Depends(require_role("premium"))]
 ):
     return {"input": "Premium content"}
 ```

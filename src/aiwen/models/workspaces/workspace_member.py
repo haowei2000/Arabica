@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -17,7 +16,7 @@ from aiwen.extensions.database import get_base
 if TYPE_CHECKING:
     from aiwen.models.workspaces.workspace import Workspace
 
-from aiwen.enums.workspaces import InvitationStatus, MemberRole
+from aiwen.core.enums.workspaces import InvitationStatus, MemberRole
 
 Base = get_base("aiwen")
 

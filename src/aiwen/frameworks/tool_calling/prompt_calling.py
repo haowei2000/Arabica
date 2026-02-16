@@ -5,18 +5,22 @@ outputs tool calls using ``<tool_call>`` XML markers.  This works with
 any LLM, including those that don't support native function calling.
 """
 
+from collections.abc import AsyncGenerator
 import json
 import logging
 import re
-import uuid
-from collections.abc import AsyncGenerator
 from typing import Any
+import uuid
 
 from openai import AsyncOpenAI
 
-from aiwen.core.tool_calling.models import ChatMessage, LLMResponse, ToolCallRequest
-from aiwen.core.tool_calling.prompt_template import build_tools_system_prompt
-from aiwen.core.tool_calling.strategy import ToolCallingStrategy
+from aiwen.frameworks.tool_calling.models import (
+    ChatMessage,
+    LLMResponse,
+    ToolCallRequest,
+)
+from aiwen.frameworks.tool_calling.prompt_template import build_tools_system_prompt
+from aiwen.frameworks.tool_calling.strategy import ToolCallingStrategy
 
 logger = logging.getLogger(__name__)
 

@@ -132,8 +132,8 @@ def download_chunk_and_store(
         from aiwen.extensions.storage.global_storage import get_global_s3_storage
         from aiwen.models.context.knowledge.chunk import Chunk
         from aiwen.models.context.knowledge.documents import Document
-        from aiwen.services.context.knowledge.parser import DocumentParser
         from aiwen.services.context.knowledge.chunker import ChunkConfig, TextChunker
+        from aiwen.services.context.knowledge.parser import DocumentParser
 
         chunk_ids = []
 
@@ -550,7 +550,7 @@ def link_chunks_to_context(
     async def _execute():
         from sqlalchemy import select, update
 
-        from aiwen.enums.context import ContextType
+        from aiwen.core.enums import ContextType
         from aiwen.extensions.database import get_session
         from aiwen.models.context.context import Context
         from aiwen.models.context.knowledge.chunk import Chunk

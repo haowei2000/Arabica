@@ -14,13 +14,10 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from aiwen.enums.workspaces import (
-    InvitationStatus,
-    MemberRole,
+from aiwen.core.enums.workspaces import (
     WorkspaceStatus,
     WorkspaceVisibility,
 )
-
 from aiwen.extensions.database import get_base
 
 if TYPE_CHECKING:
@@ -113,13 +110,13 @@ class Workspace(Base):
     )
 
     # Relationships
-    runs: Mapped[list["Run"]] = relationship(
+    runs: Mapped[list[Run]] = relationship(
         "Run", back_populates="workspace", cascade="all, delete-orphan"
     )
-    members: Mapped[list["WorkspaceMember"]] = relationship(
+    members: Mapped[list[WorkspaceMember]] = relationship(
         "WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan"
     )
-    events: Mapped[list["Event"]] = relationship(
+    events: Mapped[list[Event]] = relationship(
         "Event", back_populates="workspace", cascade="all, delete-orphan"
     )
 

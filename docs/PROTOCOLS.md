@@ -31,7 +31,7 @@ registries/base_class/
 Base protocol for all components that can be registered in a registry.
 
 ```python
-from aiwen.interfaces import RegistrableProtocol
+from aiwen.core.interfaces import RegistrableProtocol
 
 
 class MyComponent(RegistrableProtocol):
@@ -47,7 +47,7 @@ class MyComponent(RegistrableProtocol):
 Protocol for tool components registered in `ToolRegistry`.
 
 ```python
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 from aiwen.registries.base_class import (
     ToolMetadata,
     ToolInputSchema,
@@ -115,7 +115,7 @@ class MyTool(BaseTool):
 Protocol for executor (agent) components registered in `ExecutorRegistry`.
 
 ```python
-from aiwen.interfaces import ExecutorProtocol
+from aiwen.core.interfaces import ExecutorProtocol
 from typing import ClassVar
 
 
@@ -163,7 +163,7 @@ class MyExecutor(ExecutorProtocol):
 **Note**: The actual `Executor` in `core/interfaces/executor.py` is already defined as a Protocol, so you should use it directly:
 
 ```python
-from aiwen.interfaces import Executor
+from aiwen.core.interfaces import Executor
 
 
 class MyExecutor:
@@ -181,7 +181,7 @@ class MyExecutor:
 Protocol for registry implementations.
 
 ```python
-from aiwen.interfaces import RegistryProtocol
+from aiwen.core.interfaces import RegistryProtocol
 
 
 class MyRegistry(RegistryProtocol[str, MyComponentType]):
@@ -238,7 +238,7 @@ class MyRegistry(BaseRegistry[str, MyType]):
 Use runtime type checking to verify protocol compliance:
 
 ```python
-from aiwen.interfaces import is_tool, is_executor, is_registry
+from aiwen.core.interfaces import is_tool, is_executor, is_registry
 
 # Check if an object implements a protocol
 if is_tool(my_object):
@@ -256,7 +256,7 @@ if is_registry(my_registry):
 Introspect protocol requirements programmatically:
 
 ```python
-from aiwen.interfaces import PROTOCOL_REGISTRY
+from aiwen.core.interfaces import PROTOCOL_REGISTRY
 
 # Get protocol information
 tool_info = PROTOCOL_REGISTRY["ToolProtocol"]
@@ -323,7 +323,7 @@ Protocols serve as explicit interface documentation:
 
 ```python
 # Anyone can see exactly what a tool needs to implement
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 reveal_type(ToolProtocol)  # Shows all required methods and attributes
 ```
@@ -355,7 +355,7 @@ class MyTool:  # Missing helper methods, validation, etc.
 Use protocols in function signatures for maximum flexibility:
 
 ```python
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 
 # ✅ Good: Accept any tool-like object
@@ -373,7 +373,7 @@ async def execute_tool(tool: BaseTool, input: dict) -> dict:
 Use `isinstance()` checks with `@runtime_checkable` protocols:
 
 ```python
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 if isinstance(obj, ToolProtocol):
     # Safe to call tool methods
@@ -439,7 +439,7 @@ def process_tool(tool: BaseTool) -> dict:
 
 
 # After (more flexible)
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 
 def process_tool(tool: ToolProtocol) -> dict:
@@ -451,7 +451,7 @@ def process_tool(tool: ToolProtocol) -> dict:
 If you've created custom registries, consider having them implement `RegistryProtocol`:
 
 ```python
-from aiwen.interfaces import RegistryProtocol
+from aiwen.core.interfaces import RegistryProtocol
 from aiwen.registries.core import BaseRegistry
 
 
@@ -475,7 +475,7 @@ Verify that your components satisfy protocols:
 
 ```python
 import pytest
-from aiwen.interfaces import ToolProtocol, is_tool
+from aiwen.core.interfaces import ToolProtocol, is_tool
 
 
 def test_my_tool_implements_protocol():

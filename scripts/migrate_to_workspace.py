@@ -35,6 +35,7 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
+from aiwen.models.executor.agent_task import AgentTask
 from aiwen.models.executor.conversation import Conversation
 from aiwen.models.executor.event import Event
 from aiwen.models.executor.message import Message
@@ -45,7 +46,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.extensions.database import get_session
-from aiwen.models.executor.agent_task import AgentTask
 
 logging.basicConfig(
     level=logging.INFO,

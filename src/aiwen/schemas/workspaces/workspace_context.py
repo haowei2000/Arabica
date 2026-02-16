@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from aiwen.types import ContextPath
+from aiwen.core.types import ContextPath
 from aiwen.utils.schema_mixins import ResponseMixin
 
 

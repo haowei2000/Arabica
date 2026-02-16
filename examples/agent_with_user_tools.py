@@ -19,13 +19,14 @@ logger = logging.getLogger(__name__)
 
 async def main():
     """Complete integration example"""
+    from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
+
     from aiwen.extensions.database import get_session
-    from aiwen.schemas.events.event_payloads import UserMessage
-    from aiwen.schemas.context.tools.user_tool import UserToolCreate
     from aiwen.plugins.executors.simple import (
         DefaultAgentTemplate,
     )
-    from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
+    from aiwen.schemas.context.tools.user_tool import UserToolCreate
+    from aiwen.schemas.events.event_payloads import UserMessage
     from aiwen.services.context.tools.tool_crud import UserToolCRUD
 
     user_id = uuid4()

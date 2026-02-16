@@ -7,12 +7,12 @@ from any other application layers (models, schemas, services, etc.).
 This design prevents circular import issues.
 """
 
-from aiwen.enums.context import ContextType
-from aiwen.enums.events import EventType
-from aiwen.enums.files import InputFormat, OutputFormat
-from aiwen.enums.runs import RunStatus, TriggerType
-from aiwen.enums.tools import AllowedToolType
-from aiwen.enums.workspaces import (
+from aiwen.core.enums.context import ContextType
+from aiwen.core.enums.events import EventType
+from aiwen.core.enums.files import InputFormat, OutputFormat
+from aiwen.core.enums.runs import RunStatus, TriggerType
+from aiwen.core.enums.tools import AllowedToolType
+from aiwen.core.enums.workspaces import (
     InvitationStatus,
     MemberRole,
     WorkspaceStatus,

@@ -12,14 +12,13 @@ All tools run through the same unified ``execute()`` / ``__call__()`` protocol.
 """
 
 import logging
-import time
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.dependencies.auth import get_current_user
+from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.registries.core import ToolRegistry
 from aiwen.schemas.auth.user import UserResponse
@@ -32,8 +31,6 @@ from aiwen.schemas.context.tools.tool_template import (
 )
 from aiwen.schemas.context.tools.user_tool import (
     UserToolCreate,
-    UserToolExecutionRequest,
-    UserToolExecutionResponse,
     UserToolListResponse,
     UserToolResponse,
     UserToolUpdate,

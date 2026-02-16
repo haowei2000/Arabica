@@ -1,13 +1,13 @@
 """Detect and recover runs that have been silent for too long."""
 
-import logging
 from datetime import UTC, datetime, timedelta
+import logging
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.enums.runs import RunStatus
+from aiwen.core.enums.runs import RunStatus
 from aiwen.models.runs.run import Run
 from aiwen.services.runs.run_state_machine import RunStateMachine
 

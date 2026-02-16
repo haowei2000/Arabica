@@ -4,25 +4,26 @@ Tests for Protocol Layer
 Verifies that protocols are correctly defined and components satisfy them.
 """
 
-import pytest
-from typing import ClassVar, Any
+from typing import Any, ClassVar
 
-from aiwen.interfaces import (
-    ToolProtocol,
+import pytest
+
+from aiwen.core.interfaces import (
+    PROTOCOL_REGISTRY,
     ExecutorProtocol,
     RegistryProtocol,
-    is_tool,
+    ToolProtocol,
     is_executor,
     is_registry,
-    PROTOCOL_REGISTRY,
+    is_tool,
 )
-from aiwen.interfaces.tool import (
+from aiwen.core.interfaces.tool import (
     BaseTool,
-    ToolMetadata,
     ToolInputSchema,
+    ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.registries.core import ToolRegistry, ExecutorRegistry
+from aiwen.registries.core import ExecutorRegistry, ToolRegistry
 
 
 class TestProtocolDefinitions:
@@ -182,7 +183,7 @@ class TestToolProtocolCompliance:
                 pass
 
             def __repr__(self):
-                return f"<CustomTool>"
+                return "<CustomTool>"
 
         # Should satisfy protocol
         tool = CustomTool()

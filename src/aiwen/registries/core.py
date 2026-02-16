@@ -20,8 +20,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.interfaces.executor import Executor
-from aiwen.interfaces.tool import BaseTool
+from aiwen.core.interfaces import Executor
+from aiwen.core.interfaces.tool import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -320,8 +320,8 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
              ``inner_tool_name`` or chain steps point to tools that
              are no longer registered.
         """
+        from aiwen.core.interfaces.tool import InnerTool
         from aiwen.models.context.tools import Tool as ToolModel
-        from aiwen.interfaces.tool import InnerTool
 
         # Collect the set of currently-registered InnerTool names
         registered_names: set[str] = set()
@@ -905,7 +905,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         import inspect
         from pathlib import Path
 
-        from aiwen.interfaces.executor import Executor
+        from aiwen.core.interfaces import Executor
 
         logger.info("Auto-discovering executor modules...")
 

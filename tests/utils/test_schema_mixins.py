@@ -10,12 +10,12 @@ Tests all 6 mixins:
 - ResponseWithEnumMixin
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-import pytest
 from pydantic import BaseModel, ValidationError
+import pytest
 
 from aiwen.utils.schema_mixins import (
     CreatedAtMixin,
@@ -26,7 +26,6 @@ from aiwen.utils.schema_mixins import (
     TimestampMixin,
     UUIDConversionMixin,
 )
-
 
 # Test fixtures
 
@@ -149,7 +148,7 @@ class TestTimestampMixin:
         class TestSchema(TimestampMixin, BaseModel):
             id: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {"id": "123", "created_at": now, "updated_at": now}
         schema = TestSchema.model_validate(data)
 
@@ -162,7 +161,7 @@ class TestTimestampMixin:
         class TestSchema(TimestampMixin, BaseModel):
             id: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {"id": "123", "created_at": now}
         schema = TestSchema.model_validate(data)
 
@@ -193,7 +192,7 @@ class TestCreatedAtMixin:
         class TestSchema(CreatedAtMixin, BaseModel):
             id: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {"id": "123", "created_at": now}
         schema = TestSchema.model_validate(data)
 
@@ -320,7 +319,7 @@ class TestResponseMixin:
             id: str
             name: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             name="test",
@@ -349,7 +348,7 @@ class TestResponseMixin:
             name: str
             description: str | None = None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             user_id=uuid4(),
@@ -382,7 +381,7 @@ class TestResponseWithEnumMixin:
             status: str
             name: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             status=Status.ACTIVE,
@@ -414,7 +413,7 @@ class TestResponseWithEnumMixin:
             name: str
             status: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             name="My Workspace",
@@ -472,7 +471,7 @@ class TestEdgeCases:
             id: str
             status: str
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             status=Status.ACTIVE,

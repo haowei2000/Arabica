@@ -2,7 +2,12 @@
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import InnerTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
+from aiwen.core.interfaces.tool import (
+    InnerTool,
+    ToolInputSchema,
+    ToolMetadata,
+    ToolOutputSchema,
+)
 
 
 class CacheSetTool(InnerTool):

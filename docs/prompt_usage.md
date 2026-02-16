@@ -142,8 +142,9 @@ History: {history}
 
 ```python
 # executor.py
-from aiwen.interfaces.executor import Executor
+from aiwen.core.interfaces import Executor
 from .prompts import MyExecutorPrompts
+
 
 class MyExecutor(Executor):
     def __init__(self, config):

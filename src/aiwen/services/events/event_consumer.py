@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.config.factory import get_settings
-from aiwen.enums.events import EventType
+from aiwen.core.enums import EventType
 from aiwen.models.events.event import Event
 from aiwen.schemas.events.event_payloads import EventResponse
 

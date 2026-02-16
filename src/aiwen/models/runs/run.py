@@ -14,8 +14,7 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from aiwen.enums.runs import RunStatus, TriggerType
-
+from aiwen.core.enums.runs import RunStatus, TriggerType
 from aiwen.extensions.database import get_base
 
 if TYPE_CHECKING:

@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.dependencies.auth import get_current_user
-from aiwen.dependencies.workspace import (
+from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.dependencies.workspace import (
     WorkspaceCRUDDep,
     WorkspaceMemberCRUDDep,
 )
@@ -29,7 +29,6 @@ from aiwen.schemas.workspaces.workspace_context import (
     CopyContextsRequest,
     CopyContextsResponse,
     WorkspaceContextListResponse,
-    WorkspaceContextResponse,
 )
 from aiwen.services.context.process import copy_contexts_to_workspace
 

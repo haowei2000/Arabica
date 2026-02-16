@@ -112,7 +112,7 @@ Protocols serve as explicit documentation:
 
 ```python
 # See exactly what a tool must implement
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 # Type checkers show all required methods and attributes
 reveal_type(ToolProtocol)
@@ -206,7 +206,7 @@ tool: ToolProtocol = IncompleteTool()  # Type error!
 ### Basic Tool with Protocol
 
 ```python
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 from aiwen.registries.base_class import BaseTool
 
 
@@ -230,7 +230,7 @@ assert isinstance(MyTool(), ToolProtocol)
 ### Type-Safe Function
 
 ```python
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 
 async def safe_execute(tool: ToolProtocol, params: dict) -> dict:
@@ -244,7 +244,7 @@ async def safe_execute(tool: ToolProtocol, params: dict) -> dict:
 ### Runtime Validation
 
 ```python
-from aiwen.interfaces import is_tool, is_executor
+from aiwen.core.interfaces import is_tool, is_executor
 
 components = [MyTool(), MyExecutor(), SomeObject()]
 
@@ -255,7 +255,7 @@ executors = [c for c in components if is_executor(c)]
 ### Protocol Introspection
 
 ```python
-from aiwen.interfaces import PROTOCOL_REGISTRY
+from aiwen.core.interfaces import PROTOCOL_REGISTRY
 
 # Check what a tool needs to implement
 tool_requirements = PROTOCOL_REGISTRY["ToolProtocol"]
@@ -305,7 +305,7 @@ def process(tool: BaseTool) -> dict: ...
 
 
 # After (more flexible)
-from aiwen.interfaces import ToolProtocol
+from aiwen.core.interfaces import ToolProtocol
 
 
 def process(tool: ToolProtocol) -> dict: ...

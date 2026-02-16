@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from aiwen.dependencies.auth import (
+from aiwen.core.dependencies.auth import (
     get_current_active_user,
     get_current_user,
     get_token_data,

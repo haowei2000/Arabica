@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import (
+from aiwen.core.interfaces.tool import (
     InnerTool,
     ToolInputSchema,
     ToolMetadata,
@@ -46,8 +46,10 @@ class ListContextTool(InnerTool):
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from aiwen.extensions.database import get_session
-        from aiwen.frameworks.context_layer import DetailLevel
-        from aiwen.services.workspace_context_service import WorkspaceContextService
+        from aiwen.frameworks.context import DetailLevel
+        from aiwen.services.workspace_context.workspace_context_service import (
+            WorkspaceContextService,
+        )
 
         try:
             async with get_session("aiwen") as db:
@@ -87,7 +89,7 @@ class ListContextTool(InnerTool):
         except Exception as e:
             return ToolOutputSchema(
                 success=False,
-                message=f"List failed: {str(e)}",
+                message=f"List failed: {e!s}",
                 error=str(e),
                 data={"path": input_data.path, "mode": input_data.mode},
             )

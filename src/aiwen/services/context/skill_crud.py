@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
+import logging
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.enums.context import ContextType
+from aiwen.core.enums import ContextType
 from aiwen.models.context.context import Context
 from aiwen.schemas.context.skill import SkillCreate, SkillUpdate
 

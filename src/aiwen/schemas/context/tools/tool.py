@@ -10,7 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from aiwen.enums.tools import AllowedToolType
+from aiwen.core.enums.tools import AllowedToolType
+
 
 class ToolCreate(BaseModel):
     """Schema for creating a new tool.

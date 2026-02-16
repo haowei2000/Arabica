@@ -6,8 +6,8 @@ from aiwen.models.context.tools import UserTool
 from aiwen.models.context.workspace_context import WorkspaceContext
 
 __all__ = [
-    "Context",
     "Chunk",
+    "Context",
     "Document",
     "Knowledge",
     "Preprocess",

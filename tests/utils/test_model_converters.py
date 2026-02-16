@@ -10,12 +10,12 @@ Tests all converter functions:
 - model_to_dict
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-import pytest
 from pydantic import BaseModel, ValidationError
+import pytest
 
 from aiwen.utils.model_converters import (
     convert_uuid_fields,
@@ -26,7 +26,6 @@ from aiwen.utils.model_converters import (
     models_to_schemas,
     normalize_uuid,
 )
-
 
 # Test fixtures
 
@@ -218,7 +217,7 @@ class TestConvertUuidFields:
 
     def test_mixed_types(self):
         """Should handle mixed field types."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             name="test",
@@ -335,7 +334,7 @@ class TestModelToSchema:
 
     def test_with_timestamps(self):
         """Should handle timestamp fields."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = MockModel(
             id=uuid4(),
             name="test",
@@ -592,7 +591,7 @@ class TestIntegration:
             created_at: datetime
             updated_at: datetime | None = None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         workspace = MockModel(
             id=uuid4(),
             user_id=uuid4(),
@@ -623,7 +622,7 @@ class TestIntegration:
             score: float
             created_at: datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         contexts = [
             MockModel(
                 id=uuid4(),

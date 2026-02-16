@@ -8,10 +8,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from aiwen.enums.context import ContextType
+from aiwen.core.enums import ContextType
+from aiwen.core.types import ContextPath
 from aiwen.schemas.context.knowledge.knowledge import KnowledgeResponse
 from aiwen.schemas.context.tools.tool import ToolResponse
-from aiwen.types import ContextPath
 from aiwen.utils.schema_mixins import ResponseMixin
 
 
@@ -66,7 +66,7 @@ class ContextCreate(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_embeddings(self) -> "ContextCreate":
+    def validate_embeddings(self) -> ContextCreate:
         """Validate that embedding dimensions match their expected sizes."""
         embeddings = [
             (self.embedding_384, 384),
@@ -123,7 +123,7 @@ class ContextUpdate(BaseModel):
     importance: int | None = Field(None, ge=0, le=100, description="Importance score")
 
     @model_validator(mode="after")
-    def validate_embeddings(self) -> "ContextUpdate":
+    def validate_embeddings(self) -> ContextUpdate:
         """Validate that embedding dimensions match their expected sizes."""
         embeddings = [
             (self.embedding_384, 384),
@@ -303,7 +303,7 @@ class ToolContextInput(BaseModel):
         )
 
     @classmethod
-    def from_tool_response(cls, tool: "ToolResponse") -> "ToolContextInput":
+    def from_tool_response(cls, tool: ToolResponse) -> ToolContextInput:
         return cls(
             tool_id=tool.id,
             tool_code=tool.tool_code,
@@ -398,8 +398,8 @@ class KnowledgeContextInput(BaseModel):
 
     @classmethod
     def from_knowledge_response(
-        cls, knowledge: "KnowledgeResponse"
-    ) -> "KnowledgeContextInput":
+        cls, knowledge: KnowledgeResponse
+    ) -> KnowledgeContextInput:
         return cls(
             knowledge_id=knowledge.id,
             name=knowledge.name,
@@ -423,7 +423,7 @@ class ContextFromSource(BaseModel):
     knowledge: KnowledgeContextInput | None = None
 
     @model_validator(mode="after")
-    def validate_single_source(self) -> "ContextFromSource":
+    def validate_single_source(self) -> ContextFromSource:
         provided = [
             self.tool,
             self.user_memory,

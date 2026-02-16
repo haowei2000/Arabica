@@ -2,7 +2,7 @@
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import (
+from aiwen.core.interfaces.tool import (
     InnerTool,
     ToolInputSchema,
     ToolMetadata,
@@ -38,7 +38,9 @@ class DeleteContextTool(InnerTool):
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from aiwen.extensions.database import get_session
-        from aiwen.services.workspace_context_service import WorkspaceContextService
+        from aiwen.services.workspace_context.workspace_context_service import (
+            WorkspaceContextService,
+        )
 
         try:
             # Safety check
@@ -90,7 +92,7 @@ class DeleteContextTool(InnerTool):
         except Exception as e:
             return ToolOutputSchema(
                 success=False,
-                message=f"Failed to delete context: {str(e)}",
+                message=f"Failed to delete context: {e!s}",
                 error=str(e),
                 data={"path": input_data.path},
             )

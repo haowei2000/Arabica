@@ -416,26 +416,6 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
     )
 
 
-def get_mcp_bootstrap_config() -> BootstrapConfig:
-    """
-    MCP service initialization configuration - minimal
-
-    Note:
-    - create_tables=False: Tables managed by Alembic
-    - init_redis=False: MCP doesn't depend on Redis
-    - init_registries=False: MCP doesn't need registries
-    """
-    return BootstrapConfig(
-        init_logging=True,
-        init_redis=False,  # MCP doesn't need Redis
-        init_database=True,
-        create_tables=False,  # Tables managed by Alembic
-        create_admin_user=False,  # MCP doesn't create users
-        init_registries=False,  # MCP doesn't need registries
-        init_storage=False,
-    )
-
-
 def get_alembic_bootstrap_config() -> BootstrapConfig:
     """
     Alembic initialization configuration
@@ -485,13 +465,6 @@ async def bootstrap_api() -> ApplicationBootstrap:
 async def bootstrap_worker() -> ApplicationBootstrap:
     """Initialize Worker service"""
     bootstrap = ApplicationBootstrap(get_worker_bootstrap_config())
-    await bootstrap.initialize()
-    return bootstrap
-
-
-async def bootstrap_mcp() -> ApplicationBootstrap:
-    """Initialize MCP service"""
-    bootstrap = ApplicationBootstrap(get_mcp_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap
 

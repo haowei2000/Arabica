@@ -138,7 +138,7 @@ class MyTool(BaseTool):
 
 ```python
 from aiwen.registries import register_executor
-from aiwen.interfaces import Executor
+from aiwen.core.interfaces import Executor
 
 
 @register_executor

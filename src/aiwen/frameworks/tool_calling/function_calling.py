@@ -4,16 +4,20 @@ Works with any provider exposing an OpenAI-compatible chat completions
 endpoint (DashScope / Tongyi, Ollama, vLLM, etc.).
 """
 
+from collections.abc import AsyncGenerator
 import json
 import logging
-import uuid
-from collections.abc import AsyncGenerator
 from typing import Any
+import uuid
 
 from openai import AsyncOpenAI
 
-from aiwen.core.tool_calling.models import ChatMessage, LLMResponse, ToolCallRequest
-from aiwen.core.tool_calling.strategy import ToolCallingStrategy
+from aiwen.frameworks.tool_calling.models import (
+    ChatMessage,
+    LLMResponse,
+    ToolCallRequest,
+)
+from aiwen.frameworks.tool_calling.strategy import ToolCallingStrategy
 
 logger = logging.getLogger(__name__)
 

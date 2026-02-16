@@ -1,8 +1,7 @@
 # tests/test_agents/test_agent_factory.py
 from aiwen.services.executor.concrete import AnomalyAgent, NL2SQLAgent
-import pytest
-
 from aiwen.services.executor.executor_factory import AppFactory
+import pytest
 
 
 def test_agent_factory_registration():

@@ -6,7 +6,8 @@ Architecture:
     - ContextStore: Fast in-memory queries (glob, tree, etc.)
     - Auto-sync: Changes to ContextStore sync back to DB
 """
-
+import contextlib
+import json
 from typing import Any
 from uuid import UUID
 
@@ -69,9 +70,8 @@ class WorkspaceContextService:
         Returns:
             ContextStore instance
         """
-        from aiwen.frameworks.context_layer import (
+        from aiwen.frameworks.context import (
             ContextStore,
-            count_aggregator,
         )
 
         if self._store is None:
@@ -101,7 +101,7 @@ class WorkspaceContextService:
 
     async def _register_schemas(self):
         """Register schema nodes for workspace structure."""
-        from aiwen.frameworks.context_layer import count_aggregator
+        from aiwen.frameworks.context import count_aggregator
 
         # Root workspace
         self._store.schema(
@@ -135,11 +135,8 @@ class WorkspaceContextService:
         # Parse overview
         overview = ctx.summary
         if overview and overview.startswith("{"):
-            try:
-                import json
+            with contextlib.suppress(json.JSONDecodeError, ValueError):
                 overview = json.loads(overview)
-            except (json.JSONDecodeError, ValueError):
-                pass
 
         # Build meta
         meta = ctx.meta or {}
@@ -320,7 +317,7 @@ class WorkspaceContextService:
             Context data dict
         """
         await self._ensure_loaded()
-        from aiwen.frameworks.context_layer import DetailLevel
+        from aiwen.frameworks.context import DetailLevel
 
         level_enum = DetailLevel.from_str(level)
         return self._store.get(path, level_enum)
@@ -372,7 +369,7 @@ class WorkspaceContextService:
             Tree dict
         """
         await self._ensure_loaded()
-        from aiwen.frameworks.context_layer import DetailLevel
+        from aiwen.frameworks.context import DetailLevel
 
         level_enum = DetailLevel.from_str(level)
         return self._store.tree(root, level_enum)

@@ -4,10 +4,14 @@ Provides a strategy-based abstraction over how tools are presented to
 the LLM and how tool calls are parsed from its responses.
 """
 
-from aiwen.core.tool_calling.function_calling import FunctionCallingStrategy
-from aiwen.core.tool_calling.models import ChatMessage, LLMResponse, ToolCallRequest
-from aiwen.core.tool_calling.prompt_calling import PromptCallingStrategy
-from aiwen.core.tool_calling.strategy import ToolCallingStrategy
+from aiwen.frameworks.tool_calling.function_calling import FunctionCallingStrategy
+from aiwen.frameworks.tool_calling.models import (
+    ChatMessage,
+    LLMResponse,
+    ToolCallRequest,
+)
+from aiwen.frameworks.tool_calling.prompt_calling import PromptCallingStrategy
+from aiwen.frameworks.tool_calling.strategy import ToolCallingStrategy
 
 __all__ = [
     "ChatMessage",

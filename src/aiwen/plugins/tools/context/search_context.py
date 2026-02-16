@@ -4,7 +4,7 @@ import re
 
 from pydantic import Field
 
-from aiwen.interfaces.tool import (
+from aiwen.core.interfaces.tool import (
     InnerTool,
     ToolInputSchema,
     ToolMetadata,

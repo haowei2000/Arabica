@@ -23,9 +23,9 @@ Cache entries are keyed by ``(user_id, workspace_id)``.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -33,7 +33,7 @@ from pydantic import Field, create_model
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.interfaces.tool import (
+from aiwen.core.interfaces.tool import (
     ChainStep,
     ExternalTool,
     ToolInputSchema,

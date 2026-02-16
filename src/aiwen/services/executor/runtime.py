@@ -24,15 +24,15 @@
 """
 
 # aiwen/services/executor/runtime.py
-from uuid import UUID
 from typing import Optional
+from uuid import UUID
 
-from aiwen.interfaces.protocols import ExecutorProtocol
+from aiwen.core.interfaces.protocols import ExecutorProtocol
 
 
 class ExecutorRuntime:
     """执行器运行时管理类，负责管理执行器实例的生命周期"""
-    
+
     def __init__(self):
         """初始化执行器实例存储字典"""
         self._instances: dict[UUID, ExecutorProtocol] = {}
@@ -46,7 +46,7 @@ class ExecutorRuntime:
         """
         self._instances[task_id] = executor
 
-    def get(self, task_id: UUID) -> Optional[ExecutorProtocol]:
+    def get(self, task_id: UUID) -> ExecutorProtocol | None:
         """根据任务ID获取对应的执行器实例
         
         Args:
@@ -64,7 +64,7 @@ class ExecutorRuntime:
             task_id (UUID): 任务唯一标识符
         """
         self._instances.pop(task_id, None)
-        
+
     def exists(self, task_id: UUID) -> bool:
         """检查指定任务ID是否存在对应的执行器实例
         

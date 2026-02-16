@@ -1,7 +1,7 @@
 # aiwen/services/agent/concrete.py
 from typing import Any, ClassVar
 
-from aiwen.interfaces.executor import Executor
+from aiwen.core.interfaces import Executor
 from aiwen.plugins.executors.conflict import prompts
 from aiwen.registries.core import register_executor
 

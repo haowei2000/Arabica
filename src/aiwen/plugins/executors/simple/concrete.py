@@ -36,7 +36,14 @@ import logging
 import time
 from typing import Any, ClassVar
 
-from aiwen.core.tool_calling import (
+from aiwen.core.interfaces import (
+    AgentEvent,
+    Executor,
+    ToolCaller,
+    ToolProvider,
+    WaitingForTool,
+)
+from aiwen.frameworks.tool_calling import (
     ChatMessage,
     FunctionCallingStrategy,
     LLMResponse,
@@ -44,12 +51,6 @@ from aiwen.core.tool_calling import (
     ToolCallingStrategy,
     ToolCallRequest,
 )
-from aiwen.interfaces.executor import (
-    AgentEvent,
-    Executor,
-    WaitingForTool,
-)
-from aiwen.interfaces.tool_service import ToolCaller, ToolProvider
 from aiwen.registries.core import register_executor
 from aiwen.schemas.app import AppConfig
 from aiwen.schemas.events.event_payloads import UserMessage

@@ -13,13 +13,13 @@ async def test_context_tools():
     from aiwen.models.workspaces.workspace import Workspace
     from aiwen.plugins.tools.context import (
         CreateContextTool,
-        ReadContextTool,
+        DeleteContextTool,
+        GlanceContextTool,
         GlobContextTool,
         ListContextTool,
+        ReadContextTool,
         TreeContextTool,
-        GlanceContextTool,
         UpdateContextTool,
-        DeleteContextTool,
     )
 
     print("=" * 60)
@@ -79,7 +79,7 @@ async def test_context_tools():
             tags=["knowledge", "python", "programming"],
         ))
         assert result.success, "Create knowledge failed"
-        print(f"  ✅ Created 3 contexts\n")
+        print("  ✅ Created 3 contexts\n")
 
         # 2. Test ReadContextTool
         print("2. Testing ReadContextTool")
@@ -94,7 +94,7 @@ async def test_context_tools():
         print(f"  Status: {result.success}")
         print(f"  Glance: {result.data.get('context', {}).get('glance')}")
         assert result.success, "Read failed"
-        print(f"  ✅ Read context successfully\n")
+        print("  ✅ Read context successfully\n")
 
         # 3. Test GlanceContextTool
         print("3. Testing GlanceContextTool")
@@ -110,7 +110,7 @@ async def test_context_tools():
         for glance in result.data.get('glances', []):
             print(f"    - {glance.get('glance')}")
         assert result.success, "Glance failed"
-        print(f"  ✅ Glance scan successful\n")
+        print("  ✅ Glance scan successful\n")
 
         # 4. Test GlobContextTool
         print("4. Testing GlobContextTool")
@@ -128,7 +128,7 @@ async def test_context_tools():
         for path in result.data.get('paths', []):
             print(f"    - {path}")
         assert result.success, "Glob failed"
-        print(f"  ✅ Glob query successful\n")
+        print("  ✅ Glob query successful\n")
 
         # 5. Test ListContextTool
         print("5. Testing ListContextTool")
@@ -145,7 +145,7 @@ async def test_context_tools():
         print(f"  Mode: {result.data.get('mode')}")
         print(f"  Children: {result.data.get('count')}")
         assert result.success, "List failed"
-        print(f"  ✅ List successful\n")
+        print("  ✅ List successful\n")
 
         # 6. Test TreeContextTool
         print("6. Testing TreeContextTool")
@@ -160,7 +160,7 @@ async def test_context_tools():
         print(f"  Status: {result.success}")
         print(f"  Total nodes: {result.data.get('total_nodes')}")
         assert result.success, "Tree failed"
-        print(f"  ✅ Tree query successful\n")
+        print("  ✅ Tree query successful\n")
 
         # 7. Test UpdateContextTool
         print("7. Testing UpdateContextTool")
@@ -176,7 +176,7 @@ async def test_context_tools():
         print(f"  Status: {result.success}")
         print(f"  Updated fields: {result.data.get('updated_fields')}")
         assert result.success, "Update failed"
-        print(f"  ✅ Update successful\n")
+        print("  ✅ Update successful\n")
 
         # 8. Test DeleteContextTool
         print("8. Testing DeleteContextTool")
@@ -201,7 +201,7 @@ async def test_context_tools():
         print(f"  With confirm: {result.success}")
         print(f"  Deleted: {result.data.get('deleted_count')} context(s)")
         assert result.success, "Delete failed"
-        print(f"  ✅ Delete successful\n")
+        print("  ✅ Delete successful\n")
 
         # Cleanup
         await delete_tool.execute(DeleteContextTool.InputSchema(

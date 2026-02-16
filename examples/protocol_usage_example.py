@@ -7,21 +7,20 @@ component registration and validation.
 
 from typing import Any, ClassVar
 
-from aiwen.interfaces import (
+from aiwen.core.interfaces import (
+    PROTOCOL_REGISTRY,
     ExecutorProtocol,
     ToolProtocol,
     is_executor,
     is_tool,
-    PROTOCOL_REGISTRY,
 )
-from aiwen.interfaces.tool import (
+from aiwen.core.interfaces.tool import (
     BaseTool,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
 from aiwen.registries.core import ToolRegistry, register_tool
-
 
 # ============================================================================
 # Example 1: Using ToolProtocol for Type Annotations
@@ -233,13 +232,13 @@ def inspect_protocol(protocol_name: str) -> None:
     info = PROTOCOL_REGISTRY[protocol_name]
     print(f"\n=== {protocol_name} ===")
     print(f"Description: {info['description']}")
-    print(f"\nRequired Attributes:")
+    print("\nRequired Attributes:")
     for attr in info.get("required_attributes", []):
         print(f"  - {attr}")
-    print(f"\nRequired Methods:")
+    print("\nRequired Methods:")
     for method in info.get("required_methods", []):
         print(f"  - {method}()")
-    print(f"\nOptional Methods:")
+    print("\nOptional Methods:")
     for method in info.get("optional_methods", []):
         print(f"  - {method}()")
 

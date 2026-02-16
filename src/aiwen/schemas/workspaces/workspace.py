@@ -7,7 +7,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from aiwen.enums import WorkspaceStatus, WorkspaceVisibility, MemberRole, InvitationStatus
+from aiwen.core.enums import (
+    InvitationStatus,
+    MemberRole,
+    WorkspaceStatus,
+    WorkspaceVisibility,
+)
 from aiwen.utils.schema_mixins import ResponseMixin
 
 

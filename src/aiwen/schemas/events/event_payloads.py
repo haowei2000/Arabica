@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from aiwen.enums.events import EventType
+from aiwen.core.enums import EventType
 
 
 class BaseEventSchema(BaseModel):

@@ -1,6 +1,5 @@
 """Adapter for integrating Context model with ContextLayer framework."""
 
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -11,7 +10,6 @@ from aiwen.plugins.executors.conflict.prompts import (
     ContextPathSuffix,
     build_context_path,
 )
-
 
 # Import ContextStore from the framework
 # (Assuming you'll save the ContextLayer framework code in a module)
@@ -54,7 +52,7 @@ class ContextStoreAdapter:
         Returns:
             ContextStore instance loaded with workspace contexts
         """
-        from aiwen.frameworks.context_layer import ContextStore, count_aggregator
+        from aiwen.frameworks.context import ContextStore
 
         workspace_id = str(workspace_id)
         store = ContextStore(
@@ -89,7 +87,7 @@ class ContextStoreAdapter:
             store: ContextStore instance
             workspace_id: Workspace ID
         """
-        from aiwen.frameworks.context_layer import count_aggregator
+        from aiwen.frameworks.context import count_aggregator
 
         # Register standard structure with aggregators
         base_path = workspace_id
@@ -174,7 +172,7 @@ class ContextStoreAdapter:
         Returns:
             ContextEntry instance
         """
-        from aiwen.frameworks.context_layer import ContextEntry
+        from aiwen.frameworks.context import ContextEntry
 
         # Prepare overview
         overview = ctx.summary
@@ -216,7 +214,7 @@ class ContextStoreAdapter:
         Returns:
             ContextStore with loaded contexts
         """
-        from aiwen.frameworks.context_layer import ContextStore
+        from aiwen.frameworks.context import ContextStore
 
         store = ContextStore(title=title)
 
@@ -243,7 +241,7 @@ class ContextStoreAdapter:
         Returns:
             ContextStore with matching contexts
         """
-        from aiwen.frameworks.context_layer import ContextStore
+        from aiwen.frameworks.context import ContextStore
 
         store = ContextStore(title=title)
 
@@ -298,7 +296,7 @@ async def query_and_display(
         # Show workspace overview
         await query_and_display(session, "ws_123")
     """
-    from aiwen.frameworks.context_layer import DetailLevel
+    from aiwen.frameworks.context import DetailLevel
 
     store = await load_workspace_contexts(session, workspace_id)
 

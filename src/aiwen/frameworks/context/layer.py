@@ -29,12 +29,12 @@ ContextLayer - 基于路径寻址的上下文结构化与渐进式披露框架
 from __future__ import annotations
 
 import fnmatch
-import json
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any
 
 
 # ─────────────────────────────────────────────
@@ -48,7 +48,7 @@ class DetailLevel(IntEnum):
     DETAIL   = 3   # 详情层：完整数据
 
     @classmethod
-    def from_str(cls, s: str) -> "DetailLevel":
+    def from_str(cls, s: str) -> DetailLevel:
         return {"glance": cls.GLANCE, "overview": cls.OVERVIEW, "detail": cls.DETAIL}[s.lower()]
 
 
@@ -61,7 +61,7 @@ def normalize_path(path: str) -> str:
     return re.sub(r"/+", "/", path.strip("/"))
 
 
-def parent_path(path: str) -> Optional[str]:
+def parent_path(path: str) -> str | None:
     """返回父路径，根节点返回 None。"""
     parts = normalize_path(path).rsplit("/", 1)
     return parts[0] if len(parts) > 1 else None
@@ -72,7 +72,7 @@ def path_depth(path: str) -> int:
     return len(normalize_path(path).split("/"))
 
 
-def path_segments(path: str) -> List[str]:
+def path_segments(path: str) -> list[str]:
     """拆分路径为段列表。"""
     return normalize_path(path).split("/")
 
@@ -91,18 +91,18 @@ class ContextEntry:
     - 不持有 key（路径即标识，由 Store 维护映射）
     """
     glance: str
-    overview: Union[Dict[str, Any], str, None] = None
+    overview: dict[str, Any] | str | None = None
     detail: Any = None
-    tags: List[str] = field(default_factory=list)
-    meta: Dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if "created_at" not in self.meta:
             self.meta["created_at"] = datetime.now().isoformat()
 
-    def disclose(self, level: DetailLevel = DetailLevel.OVERVIEW) -> Dict[str, Any]:
+    def disclose(self, level: DetailLevel = DetailLevel.OVERVIEW) -> dict[str, Any]:
         """按层级返回数据，每层包含上层内容，保证自足性。"""
-        result: Dict[str, Any] = {"glance": self.glance}
+        result: dict[str, Any] = {"glance": self.glance}
         if level >= DetailLevel.OVERVIEW and self.overview is not None:
             result["overview"] = self.overview
         if level >= DetailLevel.DETAIL:
@@ -123,12 +123,12 @@ class ContextEntry:
 @dataclass
 class SchemaNode:
     """骨架节点 — 只定义结构角色，不承载业务数据。"""
-    glance: Optional[str] = None
-    overview: Union[Dict[str, Any], str, None] = None
-    tags: List[str] = field(default_factory=list)
-    aggregator: Optional[Callable[[List[Tuple[str, "ContextEntry"]]], Dict[str, Any]]] = None
+    glance: str | None = None
+    overview: dict[str, Any] | str | None = None
+    tags: list[str] = field(default_factory=list)
+    aggregator: Callable[[list[tuple[str, ContextEntry]]], dict[str, Any]] | None = None
 
-    def resolve(self, children: List[Tuple[str, "ContextEntry"]]) -> ContextEntry:
+    def resolve(self, children: list[tuple[str, ContextEntry]]) -> ContextEntry:
         """将骨架节点解析为 ContextEntry。"""
         glance = self.glance or ""
         overview = self.overview
@@ -154,10 +154,10 @@ class SchemaNode:
 
 # ─── 内置聚合器 ───
 
-def count_aggregator(children: List[Tuple[str, ContextEntry]]) -> Dict[str, Any]:
+def count_aggregator(children: list[tuple[str, ContextEntry]]) -> dict[str, Any]:
     """最简单的聚合：统计子节点数量和状态。"""
     total = len(children)
-    status_counts: Dict[str, int] = {}
+    status_counts: dict[str, int] = {}
     for _, entry in children:
         g = entry.glance
         if "✅" in g:
@@ -197,9 +197,9 @@ class _TrieNode:
     __slots__ = ("children", "is_terminal", "path")
 
     def __init__(self):
-        self.children: Dict[str, _TrieNode] = {}
+        self.children: dict[str, _TrieNode] = {}
         self.is_terminal: bool = False
-        self.path: Optional[str] = None
+        self.path: str | None = None
 
 
 class _PathTrie:
@@ -219,7 +219,7 @@ class _PathTrie:
 
     def remove(self, path: str) -> bool:
         segments = path_segments(path)
-        stack: List[Tuple[_TrieNode, str]] = []
+        stack: list[tuple[_TrieNode, str]] = []
         node = self._root
         for seg in segments:
             if seg not in node.children:
@@ -238,7 +238,7 @@ class _PathTrie:
                 break
         return True
 
-    def list_children(self, prefix: str) -> List[str]:
+    def list_children(self, prefix: str) -> list[str]:
         """列出直接子路径（深度 +1）。"""
         node = self._navigate(prefix)
         if node is None:
@@ -249,7 +249,7 @@ class _PathTrie:
                 results.append(f"{normalize_path(prefix)}/{seg}")
         return results
 
-    def list_descendants(self, prefix: str) -> List[str]:
+    def list_descendants(self, prefix: str) -> list[str]:
         """列出所有后代路径（任意深度）。"""
         node = self._navigate(prefix)
         if node is None:
@@ -258,19 +258,19 @@ class _PathTrie:
         self._collect(node, results)
         return results
 
-    def glob(self, pattern: str) -> List[str]:
+    def glob(self, pattern: str) -> list[str]:
         """通配符匹配：* 匹配单层，** 匹配任意深度。"""
-        results: List[str] = []
+        results: list[str] = []
         pat_segments = path_segments(pattern)
         self._glob_recursive(self._root, pat_segments, 0, "", results)
         return results
 
-    def all_paths(self) -> List[str]:
-        results: List[str] = []
+    def all_paths(self) -> list[str]:
+        results: list[str] = []
         self._collect(self._root, results)
         return results
 
-    def _navigate(self, prefix: str) -> Optional[_TrieNode]:
+    def _navigate(self, prefix: str) -> _TrieNode | None:
         node = self._root
         if not prefix or prefix == "":
             return node
@@ -280,15 +280,15 @@ class _PathTrie:
             node = node.children[seg]
         return node
 
-    def _collect(self, node: _TrieNode, results: List[str]) -> None:
+    def _collect(self, node: _TrieNode, results: list[str]) -> None:
         if node.is_terminal and node.path:
             results.append(node.path)
         for child in node.children.values():
             self._collect(child, results)
 
     def _glob_recursive(
-        self, node: _TrieNode, patterns: List[str],
-        idx: int, current_path: str, results: List[str],
+        self, node: _TrieNode, patterns: list[str],
+        idx: int, current_path: str, results: list[str],
     ) -> None:
         if idx >= len(patterns):
             if node.is_terminal and node.path:
@@ -321,43 +321,43 @@ class _PathTrie:
 class QueryResult:
     """路径查询结果，支持链式过滤和批量披露。"""
 
-    def __init__(self, items: List[Tuple[str, ContextEntry]]):
+    def __init__(self, items: list[tuple[str, ContextEntry]]):
         self._items = items
 
-    def filter(self, predicate: Callable[[str, ContextEntry], bool]) -> "QueryResult":
+    def filter(self, predicate: Callable[[str, ContextEntry], bool]) -> QueryResult:
         return QueryResult([(p, e) for p, e in self._items if predicate(p, e)])
 
-    def filter_tags(self, tags: List[str]) -> "QueryResult":
+    def filter_tags(self, tags: list[str]) -> QueryResult:
         tag_set = set(tags)
         return QueryResult([(p, e) for p, e in self._items if tag_set.issubset(set(e.tags))])
 
-    def sort_by(self, key_fn: Callable[[Tuple[str, ContextEntry]], Any],
-                reverse: bool = False) -> "QueryResult":
+    def sort_by(self, key_fn: Callable[[tuple[str, ContextEntry]], Any],
+                reverse: bool = False) -> QueryResult:
         return QueryResult(sorted(self._items, key=key_fn, reverse=reverse))
 
-    def sort_by_path(self, reverse: bool = False) -> "QueryResult":
+    def sort_by_path(self, reverse: bool = False) -> QueryResult:
         return self.sort_by(lambda x: x[0], reverse=reverse)
 
-    def limit(self, n: int) -> "QueryResult":
+    def limit(self, n: int) -> QueryResult:
         return QueryResult(self._items[:n])
 
-    def disclose_all(self, level: DetailLevel = DetailLevel.OVERVIEW) -> List[Dict[str, Any]]:
+    def disclose_all(self, level: DetailLevel = DetailLevel.OVERVIEW) -> list[dict[str, Any]]:
         return [{"path": p, **e.disclose(level)} for p, e in self._items]
 
-    def paths(self) -> List[str]:
+    def paths(self) -> list[str]:
         return [p for p, _ in self._items]
 
-    def entries(self) -> List[ContextEntry]:
+    def entries(self) -> list[ContextEntry]:
         return [e for _, e in self._items]
 
     @property
-    def items(self) -> List[Tuple[str, ContextEntry]]:
+    def items(self) -> list[tuple[str, ContextEntry]]:
         return list(self._items)
 
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self) -> Iterator[Tuple[str, ContextEntry]]:
+    def __iter__(self) -> Iterator[tuple[str, ContextEntry]]:
         return iter(self._items)
 
     def __repr__(self) -> str:
@@ -374,19 +374,19 @@ class ContextStore:
     def __init__(self, title: str = "Context", description: str = ""):
         self.title = title
         self.description = description
-        self._entries: Dict[str, ContextEntry] = {}
-        self._schemas: Dict[str, SchemaNode] = {}
+        self._entries: dict[str, ContextEntry] = {}
+        self._schemas: dict[str, SchemaNode] = {}
         self._trie = _PathTrie()
 
     def set(
         self,
         path: str,
         glance: str,
-        overview: Union[Dict[str, Any], str, None] = None,
+        overview: dict[str, Any] | str | None = None,
         detail: Any = None,
-        tags: Optional[List[str]] = None,
-        meta: Optional[Dict[str, Any]] = None,
-    ) -> "ContextStore":
+        tags: list[str] | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> ContextStore:
         """写入或更新一个路径节点。"""
         norm = normalize_path(path)
         entry = ContextEntry(
@@ -403,11 +403,11 @@ class ContextStore:
     def schema(
         self,
         path: str,
-        glance: Optional[str] = None,
-        overview: Union[Dict[str, Any], str, None] = None,
-        tags: Optional[List[str]] = None,
-        aggregator: Optional[Callable] = None,
-    ) -> "ContextStore":
+        glance: str | None = None,
+        overview: dict[str, Any] | str | None = None,
+        tags: list[str] | None = None,
+        aggregator: Callable | None = None,
+    ) -> ContextStore:
         """注册骨架节点。"""
         norm = normalize_path(path)
         self._schemas[norm] = SchemaNode(
@@ -419,7 +419,7 @@ class ContextStore:
         self._trie.insert(norm)
         return self
 
-    def _resolve_schema(self, path: str) -> Optional[ContextEntry]:
+    def _resolve_schema(self, path: str) -> ContextEntry | None:
         """解析骨架节点为 ContextEntry。"""
         norm = normalize_path(path)
         sn = self._schemas.get(norm)
@@ -453,7 +453,7 @@ class ContextStore:
                 count = 1
         return count
 
-    def get(self, path: str, level: DetailLevel = DetailLevel.OVERVIEW) -> Optional[Dict[str, Any]]:
+    def get(self, path: str, level: DetailLevel = DetailLevel.OVERVIEW) -> dict[str, Any] | None:
         """获取单个路径的数据。"""
         norm = normalize_path(path)
         entry = self._entries.get(norm)
@@ -463,7 +463,7 @@ class ContextStore:
             return None
         return {"path": norm, **entry.disclose(level)}
 
-    def get_entry(self, path: str) -> Optional[ContextEntry]:
+    def get_entry(self, path: str) -> ContextEntry | None:
         """获取原始 ContextEntry 对象。"""
         norm = normalize_path(path)
         entry = self._entries.get(norm)
@@ -496,7 +496,7 @@ class ContextStore:
                 unique.append(p)
         return self._to_query_result(unique)
 
-    def glance(self, prefix: Optional[str] = None) -> List[str]:
+    def glance(self, prefix: str | None = None) -> list[str]:
         """快速扫描。"""
         if prefix:
             norm = normalize_path(prefix)
@@ -519,9 +519,9 @@ class ContextStore:
 
     def tree(
         self,
-        root: Optional[str] = None,
+        root: str | None = None,
         level: DetailLevel = DetailLevel.OVERVIEW,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """以嵌套字典形式返回树状结构。"""
         if root:
             norm = normalize_path(root)
@@ -538,8 +538,8 @@ class ContextStore:
         if not all_paths:
             return {}
 
-        nodes_by_path: Dict[str, Dict[str, Any]] = {}
-        roots: List[Dict[str, Any]] = []
+        nodes_by_path: dict[str, dict[str, Any]] = {}
+        roots: list[dict[str, Any]] = []
 
         for p in all_paths:
             entry = self._entries.get(p) or self._resolve_schema(p)
@@ -569,17 +569,17 @@ class ContextStore:
     def __contains__(self, path: str) -> bool:
         return self.exists(path)
 
-    def _to_query_result(self, paths: List[str]) -> QueryResult:
+    def _to_query_result(self, paths: list[str]) -> QueryResult:
         items = [(p, self._entries[p]) for p in paths if p in self._entries]
         return QueryResult(items)
 
 
 __all__ = [
-    "ContextStore",
     "ContextEntry",
-    "SchemaNode",
+    "ContextStore",
     "DetailLevel",
     "QueryResult",
+    "SchemaNode",
     "count_aggregator",
     "normalize_path",
     "parent_path",

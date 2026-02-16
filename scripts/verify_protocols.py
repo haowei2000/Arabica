@@ -14,15 +14,15 @@ def verify_protocol_imports():
     """Verify that protocols can be imported."""
     print("1. Verifying protocol imports...")
     try:
-        from aiwen.interfaces import (
-            RegistrableProtocol,
-            ToolProtocol,
+        from aiwen.core.interfaces import (
+            PROTOCOL_REGISTRY,
             ExecutorProtocol,
+            RegistrableProtocol,
             RegistryProtocol,
-            is_tool,
+            ToolProtocol,
             is_executor,
             is_registry,
-            PROTOCOL_REGISTRY,
+            is_tool,
         )
         print("   ✓ All protocols imported successfully")
         return True
@@ -35,7 +35,7 @@ def verify_protocol_metadata():
     """Verify that protocol metadata is available."""
     print("\n2. Verifying protocol metadata...")
     try:
-        from aiwen.interfaces import PROTOCOL_REGISTRY
+        from aiwen.core.interfaces import PROTOCOL_REGISTRY
 
         expected_protocols = [
             "RegistrableProtocol",
@@ -60,8 +60,8 @@ def verify_tool_protocol():
     """Verify that BaseTool implements ToolProtocol."""
     print("\n3. Verifying BaseTool implements ToolProtocol...")
     try:
-        from aiwen.interfaces.tool import BaseTool, ToolMetadata, ToolOutputSchema
-        from aiwen.interfaces import ToolProtocol, is_tool
+        from aiwen.core.interfaces import ToolProtocol, is_tool
+        from aiwen.core.interfaces.tool import BaseTool, ToolMetadata, ToolOutputSchema
 
         class TestTool(BaseTool):
             METADATA: ClassVar[ToolMetadata] = ToolMetadata(
@@ -113,8 +113,8 @@ def verify_registry_protocol():
     """Verify that registries implement RegistryProtocol."""
     print("\n4. Verifying registries implement RegistryProtocol...")
     try:
-        from aiwen.registries.core import ToolRegistry, ExecutorRegistry
-        from aiwen.interfaces import RegistryProtocol, is_registry
+        from aiwen.core.interfaces import RegistryProtocol, is_registry
+        from aiwen.registries.core import ExecutorRegistry, ToolRegistry
 
         # Test ToolRegistry
         tool_registry = ToolRegistry()
@@ -147,7 +147,7 @@ def verify_type_checkers():
     """Verify that type checker functions work."""
     print("\n5. Verifying type checker functions...")
     try:
-        from aiwen.interfaces import is_tool, is_executor, is_registry
+        from aiwen.core.interfaces import is_executor, is_registry, is_tool
         from aiwen.registries.core import ToolRegistry
 
         # Test with valid objects
@@ -177,10 +177,21 @@ def verify_direct_imports():
     """Verify that all source modules are directly importable."""
     print("\n6. Verifying direct source module imports...")
     try:
-        from aiwen.interfaces import ToolProtocol, ExecutorProtocol, RegistryProtocol
-        from aiwen.interfaces.tool import BaseTool, InnerTool, ToolMetadata
-        from aiwen.interfaces import Executor, AgentEvent, WaitingForTool
-        from aiwen.registries.core import ToolRegistry, ExecutorRegistry, register_tool, register_executor
+        from aiwen.core.interfaces import (
+            AgentEvent,
+            Executor,
+            ExecutorProtocol,
+            RegistryProtocol,
+            ToolProtocol,
+            WaitingForTool,
+        )
+        from aiwen.core.interfaces.tool import BaseTool, InnerTool, ToolMetadata
+        from aiwen.registries.core import (
+            ExecutorRegistry,
+            ToolRegistry,
+            register_executor,
+            register_tool,
+        )
         from aiwen.registries.manager import RegistryManager, get_registry
         print("   ✓ All source modules importable directly")
         return True
@@ -229,10 +240,9 @@ def main():
         print("\n✓ All verifications passed!")
         print("\nThe protocol layer is correctly implemented and working.")
         return 0
-    else:
-        print("\n✗ Some verifications failed!")
-        print("\nPlease review the errors above and fix the issues.")
-        return 1
+    print("\n✗ Some verifications failed!")
+    print("\nPlease review the errors above and fix the issues.")
+    return 1
 
 
 if __name__ == "__main__":

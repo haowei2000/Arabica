@@ -19,8 +19,6 @@ Agent Worker 启动脚本
 版本: v3.0.0
 
 """
-from aiwen.services.events.event_publisher import REDIS_EXECUTOR_LABEL
-
 import asyncio
 import logging
 import os
@@ -34,7 +32,8 @@ import click
 # 配置会在 aiwen.config.factory 模块导入时自动加载
 from aiwen.core.bootstrap import bootstrap_worker
 from aiwen.extensions.database import get_session
-from aiwen.services.events.event_worker import  Worker
+from aiwen.services.events.event_publisher import REDIS_EXECUTOR_LABEL
+from aiwen.services.events.event_worker import Worker
 
 logger = logging.getLogger(__name__)
 

@@ -7,9 +7,9 @@ Event Worker - 事件驱动的 Agent 执行器
 """
 
 import asyncio
+from datetime import UTC, datetime
 import json
 import logging
-from datetime import UTC, datetime
 from uuid import UUID
 
 import redis.asyncio as redis_async
@@ -17,9 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.config.factory import get_settings
-from aiwen.enums.events import EventType
-from aiwen.interfaces.executor import AgentEvent
-from aiwen.interfaces.protocols import ExecutorProtocol
+from aiwen.core.enums import EventType
+from aiwen.core.interfaces import AgentEvent
+from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.models.app import App
 from aiwen.models.events.event import Event
 from aiwen.models.runs.run import Run
@@ -382,7 +382,7 @@ class Worker:
 
         # Normalise user_message to a plain dict
         if hasattr(user_message, "model_dump") and callable(
-            getattr(user_message, "model_dump")
+            user_message.model_dump
         ):
             base = user_message.model_dump()
         elif isinstance(user_message, dict):

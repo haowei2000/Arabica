@@ -35,7 +35,7 @@ Executor 是 Aiwen 中 Agent 的执行引擎。每种 Executor 代表一种 Agen
 
 ```python
 from aiwen.registries import register_executor
-from aiwen.interfaces import Executor, AgentEvent
+from aiwen.core.interfaces import Executor, AgentEvent
 
 
 @register_executor
@@ -126,9 +126,9 @@ touch src/aiwen/plugins/executors/my_executor/concrete.py
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from aiwen.interfaces.tool_service import ToolCaller, ToolProvider
+from aiwen.core.interfaces import ToolCaller, ToolProvider
 from aiwen.registries import register_executor
-from aiwen.interfaces import AgentEvent, Executor
+from aiwen.core.interfaces import AgentEvent, Executor
 from aiwen.schemas.events.event_payloads import UserMessage
 
 

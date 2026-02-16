@@ -5,13 +5,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.dependencies.auth import get_current_user
+from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.context.skill import (
     SkillCreate,
     SkillListResponse,
-    SkillProcessRequest,
     SkillResponse,
     SkillUpdate,
 )
@@ -101,7 +100,7 @@ async def create_skill(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process skill: {str(e)}",
+            detail=f"Failed to process skill: {e!s}",
         )
 
     return _build_skill_response(skill)
@@ -192,7 +191,7 @@ async def update_skill(
             await db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to process skill: {str(e)}",
+                detail=f"Failed to process skill: {e!s}",
             )
     else:
         await db.commit()
@@ -371,7 +370,7 @@ async def process_skill(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process skill: {str(e)}",
+            detail=f"Failed to process skill: {e!s}",
         )
 
     return _build_skill_response(skill)

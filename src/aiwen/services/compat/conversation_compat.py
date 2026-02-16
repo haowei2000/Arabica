@@ -17,12 +17,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from aiwen.models.conversations.conversation import Conversation
+from aiwen.models.conversations.message import Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.conversations.conversation import Conversation
-from aiwen.models.conversations.message import Message
-from aiwen.enums.runs import TriggerType
+from aiwen.core.enums.runs import TriggerType
 from aiwen.models.runs.run import Run
 from aiwen.models.workspaces.workspace import Workspace
 from aiwen.models.workspaces.workspace_member import WorkspaceMember
