@@ -1,5 +1,6 @@
 # aiwen/config/base.py
 import logging
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,7 +12,10 @@ from aiwen.config.components.openai import OpenAIConfig
 from aiwen.config.components.postgres import PostgresConfig
 from aiwen.config.components.redis import RedisConfig
 from aiwen.config.components.rustfs import RustfsConfig
-from aiwen.core.constants import PROJECT_ROOT
+
+# Calculate PROJECT_ROOT directly to avoid circular import via core/__init__.py
+# src/aiwen/config/base.py -> src/aiwen/config -> src/aiwen (PROJECT_ROOT)
+PROJECT_ROOT = Path(__file__).parent.parent
 
 logger = logging.getLogger(__name__)
 

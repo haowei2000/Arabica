@@ -138,6 +138,11 @@ class S3StorageBackend(StorageBackend):
         resp = self.s3.get_object(Bucket=self.bucket, Key=key)
         return resp["Body"].read()
 
+    def open(self, key: str) -> BinaryIO:
+        key = _normalize_key(key)
+        resp = self.s3.get_object(Bucket=self.bucket, Key=key)
+        return resp["Body"]
+
     def delete(self, key: str) -> None:
         key = _normalize_key(key)
         self.s3.delete_object(Bucket=self.bucket, Key=key)

@@ -7,7 +7,6 @@ from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from aiwen.config.factory import get_settings
 from aiwen.schemas.common import error
 
 logger = logging.getLogger(__name__)
@@ -37,6 +36,8 @@ async def sqlalchemy_exception_handler(
     request: Request, exc: SQLAlchemyError
 ) -> JSONResponse:
     """Handle SQLAlchemy database errors."""
+    from aiwen.config.factory import get_settings
+
     settings = get_settings()
     logger.error("Database error: %s", exc, exc_info=True)
     return JSONResponse(
@@ -53,6 +54,8 @@ async def response_validation_exception_handler(
     request: Request, exc: ResponseValidationError
 ) -> JSONResponse:
     """Handle response validation errors."""
+    from aiwen.config.factory import get_settings
+
     settings = get_settings()
     logger.error("Response validation error: %s", exc, exc_info=True)
     return JSONResponse(
@@ -67,6 +70,8 @@ async def response_validation_exception_handler(
 
 async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
     """Handle ValueError exceptions."""
+    from aiwen.config.factory import get_settings
+
     settings = get_settings()
     logger.exception("ValueError occurred: %s", exc)
     return JSONResponse(
@@ -81,6 +86,8 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle all uncaught exceptions."""
+    from aiwen.config.factory import get_settings
+
     settings = get_settings()
     logger.exception("Unhandled exception occurred: %s", exc)
     return JSONResponse(

@@ -22,7 +22,6 @@ import logging
 from sqlalchemy import select
 
 from aiwen.config.components.redis import RedisConfig
-from aiwen.config.factory import get_settings
 from aiwen.extensions.database import _engines, _ensure_registered, get_session
 from aiwen.extensions.logger import setup_logging
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
@@ -192,6 +191,8 @@ class ApplicationBootstrap:
         Args:
             config: Initialization configuration, uses default if None
         """
+        from aiwen.config.factory import get_settings
+
         self.config = config or BootstrapConfig()
         self.settings = get_settings()
         self.redis_client = None

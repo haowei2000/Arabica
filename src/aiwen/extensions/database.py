@@ -16,8 +16,6 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-from aiwen.config.factory import get_settings  # 延迟加载配置
-
 logger = logging.getLogger(__name__)
 
 
@@ -85,6 +83,8 @@ DB_SPECIFIC_CONFIG = {
 
 def _ensure_registered():
     """确保所有数据库已注册（懒加载）"""
+    from aiwen.config.factory import get_settings
+
     global _initialized
     if _initialized:
         return  # 已初始化
@@ -135,6 +135,8 @@ def register_database(bind_name: str, url: str, pool_config: dict | None = None)
     connect_args = final_config.pop("connect_args", {})
 
     try:
+        from aiwen.config.factory import get_settings
+
         engine = create_async_engine(
             url,
             echo=get_settings().DEBUG,

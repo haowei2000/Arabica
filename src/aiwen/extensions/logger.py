@@ -3,8 +3,6 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
-from aiwen.config.factory import get_settings
-
 # 获取项目根目录（假设 logger.py 在 aiwen/core/ 下）
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 LOG_DIR = BASE_DIR / "logs"
@@ -14,6 +12,8 @@ LOG_DIR.mkdir(exist_ok=True)
 
 
 def setup_logging():
+    from aiwen.config.factory import get_settings
+
     settings = get_settings()
     log_level = logging.DEBUG if settings.DEBUG else logging.INFO
 
