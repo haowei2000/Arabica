@@ -13,3 +13,10 @@ class ContextType(StrEnum):
     SKILL = "SKILL"
     TOOL = "tool"
     KNOWLEDGE = "knowledge"
+
+class ContextPathSuffix:
+    TOOLS = "tools"
+    SKILLS = "skills"
+    KNOWLEDGE = "knowledge"
+    WORKSPACE_HISTORY = "history"
+

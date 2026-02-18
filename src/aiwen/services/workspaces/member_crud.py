@@ -65,7 +65,7 @@ class WorkspaceMemberCRUD:
             normalize_uuid_to_str(invited_by) if invited_by else None
         )
 
-        # Check if member already exists
+        # Check if a member already exists
         existing = await self.get_member(workspace_id, user_id)
         if existing:
             return None
@@ -129,7 +129,7 @@ class WorkspaceMemberCRUD:
         Args:
             workspace_id: The workspace ID
             skip: Number of records to skip
-            limit: Maximum number of records
+            limit: Maximum amount of records
             status: Filter by invitation status (optional)
 
         Returns:

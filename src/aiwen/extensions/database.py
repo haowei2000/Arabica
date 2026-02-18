@@ -213,9 +213,13 @@ def _create_session_dependency(bind_name: str):
                 await session.commit()
             except Exception as e:
                 await session.rollback()
-                logger.error(
-                    f"Database session error in '{bind_name}': {e}", exc_info=True
-                )
+                # HTTPException is normal FastAPI flow control (4xx/5xx responses),
+                # not a database error — skip noisy error logging for it.
+                from fastapi import HTTPException as _HTTPException
+                if not isinstance(e, _HTTPException):
+                    logger.error(
+                        f"Database session error in '{bind_name}': {e}", exc_info=True
+                    )
                 raise
             finally:
                 await session.close()

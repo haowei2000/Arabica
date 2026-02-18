@@ -14,14 +14,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.core.enums.context import ContextPathSuffix
 from aiwen.models.context.workspace_context import WorkspaceContext
-
-
-class ContextPathSuffix:
-    TOOLS = "tools"
-    SKILLS = "skills"
-    KNOWLEDGE = "knowledge"
-    WORKSPACE_HISTORY = "history"
 
 
 def build_context_path(_workspace_id: str, suffix: str) -> str:
@@ -45,13 +39,13 @@ class WorkspaceContextService:
 
         # Fast queries using ContextStore API
         tools = service.glob("tools/**")
-        tree = service.tree("tools")
+        a tree = service.tree("tools")
 
         # Modifications auto-sync to DB
         await service.set("tools/new_tool", glance="New Tool", ...)
 
         # Restore after restart
-        await service.load()  # Loads from DB
+        await service.load() # Loads from DB
     """
 
     def __init__(self, session: AsyncSession, workspace_id: str | UUID):
@@ -218,7 +212,7 @@ class WorkspaceContextService:
         meta: dict[str, Any] | None,
         **kwargs,
     ):
-        """Sync ContextStore entry to WorkspaceContext table."""
+        """Sync ContextStore entry to the WorkspaceContext table."""
         import json
 
         normalized_path = "/" + path.lstrip("/")
@@ -231,7 +225,7 @@ class WorkspaceContextService:
         result = await self.session.execute(stmt)
         ctx = result.scalar_one_or_none()
 
-        # Prepare overview as string
+        # Prepare overview as a string
         summary_str = overview
         if isinstance(overview, dict):
             summary_str = json.dumps(overview, ensure_ascii=False)
@@ -369,7 +363,7 @@ class WorkspaceContextService:
         """Get tree structure.
 
         Args:
-            root: Root path (None for full tree)
+            root: Root path (None for a full tree)
             level: Detail level
 
         Returns:
@@ -400,7 +394,7 @@ class WorkspaceContextService:
         context_ids: list[str | UUID],
         created_by: UUID | None = None,
     ):
-        """Copy contexts from global Context table to this workspace.
+        """Copy contexts from the global Context table to this workspace.
 
         Args:
             context_ids: List of Context IDs to copy
@@ -430,7 +424,7 @@ class WorkspaceContextService:
 
     @property
     def store(self):
-        """Get ContextStore instance (for advanced usage).
+        """Get a ContextStore instance (for advanced usage).
 
         Warning: Direct modifications won't sync to DB.
         Use service methods (set, delete) for auto-sync.

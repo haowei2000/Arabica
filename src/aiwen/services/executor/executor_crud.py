@@ -20,7 +20,7 @@ class ExecutorCRUD:
         self,
         executor_code: str,
         executor_name: str,
-        config: dict = None,
+        config: dict = None,  # ty:ignore[invalid-parameter-default]
         enabled: bool = True,
         version: int = 1,
         auto_commit: bool = True,

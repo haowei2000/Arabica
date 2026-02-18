@@ -56,8 +56,12 @@ class DetailLevel(IntEnum):
 # ─────────────────────────────────────────────
 
 def normalize_path(path: str) -> str:
-    """规范化路径：去除首尾斜杠、合并连续斜杠。"""
-    return re.sub(r"/+", "/", path.strip("/"))
+    """规范化路径：去除首尾斜杠、合并连续斜杠、剥离 ./ 前缀。"""
+    p = re.sub(r"/+", "/", path.strip("/"))
+    # Strip leading "./" so agents can use "./skills" and "skills" interchangeably
+    while p.startswith("./"):
+        p = p[2:]
+    return p
 
 
 def parent_path(path: str) -> str | None:

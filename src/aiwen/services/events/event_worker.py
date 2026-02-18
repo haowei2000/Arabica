@@ -83,7 +83,7 @@ class Worker:
         return Event.from_redis_fields(event_data)
 
     async def _ensure_consumer_group(self, stream_name: str) -> None:
-        """Ensure consumer group exists, create if not."""
+        """Ensure a consumer group exists, create if not."""
         try:
             await self.redis.xgroup_create(
                 stream_name,
@@ -265,6 +265,17 @@ class Worker:
                 logger.warning(f"Run {run_id} is terminal, skipping execution")
                 return
 
+            # 2.5 Evaluate workspace triggers and enrich payload
+            workspace_id_str = str(run.workspace_id)
+            try:
+                from aiwen.services.triggers.trigger_processor import process_event_triggers
+                trigger_results = await process_event_triggers(self.db, workspace_id_str, event)
+                if trigger_results:
+                    event.payload = {**(event.payload or {}), "_trigger_context": trigger_results}
+                    input_data = UserMessage(**(event.payload or {}))
+            except Exception as _trigger_err:
+                logger.warning(f"Trigger processing failed for run {run_id}: {_trigger_err}")
+
             # 3. Load user-defined external tools (incl. chain/pipeline tools)
             user_tool_classes = []
             if run.user_id:
@@ -351,11 +362,11 @@ class Worker:
             await self._execute_run(executor, user_message, run_id, workspace_id)
 
         elif run_status == RunStatus.WAITING.value:
-            user_message = await self._prepare_resume_data(
+            resume_data = await self._prepare_resume_data(
                 run_id, run.waiting_for, user_message
             )
             await self.state_machine.resume_from_tool(run_id, auto_commit=True)
-            await self._execute_run(executor, user_message, run_id, workspace_id)
+            await self._execute_run(executor, resume_data, run_id, workspace_id)
 
         elif run_status == RunStatus.RUNNING.value:
             await self._execute_run(executor, user_message, run_id, workspace_id)

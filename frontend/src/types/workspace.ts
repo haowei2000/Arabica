@@ -28,6 +28,7 @@ export interface WorkspaceContextConfig {
   skill_ids: string[];
   source_workspace_ids: string[];
   memory_ids: string[];
+  trigger_ids: string[];
 }
 
 export interface WorkspaceCreate {

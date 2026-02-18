@@ -136,7 +136,7 @@ async def _store_embedding(session, ctx_id: str, vector: list[float], field: str
     queue="default",
 )
 def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
-    """Upsert Knowledge into Context table, embed, and update WorkspaceContext entries."""
+    """Upsert Knowledge into the Context table, embed, and update WorkspaceContext entries."""
     async def _execute():
         from aiwen.extensions.database import get_session
         from aiwen.models.context.knowledge.knowledge import Knowledge

@@ -7,9 +7,9 @@ Structured pipeline (recommended):
 2. embed_context_sections: Generate embeddings for the created Context rows
 
 Legacy chunked pipeline:
-1. download_chunk_and_store: Download file from MinIO, parse, chunk, and store to Chunk table
+1. download_chunk_and_store: Download a file from MinIO, parse, chunk, and store to Chunk table
 2. embed_chunks: Generate embeddings for stored chunks
-3. link_chunks_to_context: Link chunks to ContextSchema table for knowledge base
+3. link_chunks_to_context: Link chunks to the ContextSchema table for knowledge base
 """
 
 import asyncio
@@ -1136,7 +1136,7 @@ def process_document_async(
     chunk_size: int = 1024,
     chunk_overlap: int = 50,
 ) -> str:
-    """Create and execute 2-task document processing chain (without ContextSchema linking).
+    """Create and execute a 2-task document processing chain (without ContextSchema linking).
 
     Task chain:
     1. download_chunk_and_store: Download, parse, chunk, store to Chunk table

@@ -29,6 +29,7 @@ import KnowledgePage from './context/KnowledgePage';
 import ToolPage from './context/ToolPage';
 import MemoryPage from './context/MemoryPage';
 import SkillPage from './context/SkillPage';
+import TriggerPage from './TriggerPage';
 
 export default function HomePage() {
   const [showCreateAppForm, setShowCreateAppForm] = useState(false);
@@ -178,11 +179,16 @@ export default function HomePage() {
         <Tabs defaultValue="app" className="space-y-6">
           <TabsList>
             <TabsTrigger value="app">App</TabsTrigger>
+            <TabsTrigger value="trigger">Trigger</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
           </TabsList>
 
           <TabsContent value="app">
             {renderAppContent()}
+          </TabsContent>
+
+          <TabsContent value="trigger">
+            <TriggerPage />
           </TabsContent>
 
           <TabsContent value="context">

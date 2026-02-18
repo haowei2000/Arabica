@@ -2,18 +2,10 @@
 
 from uuid import UUID
 
-from aiwen.plugins.executors.conflict.prompts import (
-    ContextPathSuffix,
-    build_context_path,
-)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.context import Context
-
-# Import ContextStore from the framework
-# (Assuming you'll save the ContextLayer framework code in a module)
-# from aiwen.frameworks.context_layer import ContextStore, ContextEntry, DetailLevel
 
 
 class ContextStoreAdapter:
@@ -26,12 +18,12 @@ class ContextStoreAdapter:
 
         # Use ContextStore features
         tools = store.children("tools")
-        result = store.glob("tools/**")
+        a result = store.glob("tools/**")
         data = store.get("tools/web_search", DetailLevel.OVERVIEW)
     """
 
     def __init__(self, session: AsyncSession):
-        """Initialize adapter with database session.
+        """Initialize the adapter with a database session.
 
         Args:
             session: SQLAlchemy async session
@@ -81,7 +73,7 @@ class ContextStoreAdapter:
         return store
 
     async def _register_schemas(self, store, workspace_id: str):
-        """Register schema nodes for standard workspace structure.
+        """Register schema nodes for the standard workspace structure.
 
         Args:
             store: ContextStore instance
@@ -89,7 +81,7 @@ class ContextStoreAdapter:
         """
         from aiwen.frameworks.context import count_aggregator
 
-        # Register standard structure with aggregators
+        # Register a standard structure with aggregators
         base_path = workspace_id
 
         # Root workspace node

@@ -1,4 +1,4 @@
-"""Celery task: persist run conversation history to WorkspaceContext after completion."""
+"""Celery task: persist run the conversation history to WorkspaceContext after completion."""
 
 import asyncio
 import json

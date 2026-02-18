@@ -120,6 +120,15 @@ export const API_ENDPOINTS = {
         LIST_BY_DOCUMENT: (documentId: string) => `/agent/context/document/${documentId}/chunks`,
     },
 
+    // Triggers 管理
+    TRIGGERS: {
+        LIST: '/triggers',
+        CREATE: '/triggers',
+        GET: (id: string) => `/triggers/${id}`,
+        UPDATE: (id: string) => `/triggers/${id}`,
+        DELETE: (id: string) => `/triggers/${id}`,
+    },
+
     // Events 管理
     EVENTS: {
         GET: (id: string) => `/events/${id}`,

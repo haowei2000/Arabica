@@ -242,12 +242,12 @@ class DefaultExecutor(Executor):
 
     @staticmethod
     def _serialize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
-        """Serialize ChatMessage list to JSON-compatible format."""
+        """Serialize the ChatMessage list to JSON-compatible format."""
         return [msg.to_dict() for msg in messages]
 
     @staticmethod
     def _deserialize_messages(serialized: list[dict[str, Any]]) -> list[ChatMessage]:
-        """Reconstruct ChatMessage list from serialized format."""
+        """Reconstruct the ChatMessage list from a serialized format."""
         return [ChatMessage.from_dict(d) for d in serialized]
 
     # ── tool call processing (shared by stream & resume) ─────────
@@ -491,7 +491,7 @@ class DefaultExecutor(Executor):
                     llm_response = item
                     continue
 
-                # item is a text token (str)
+                # this item is a text token (str)
                 token: str = item
                 if not token:
                     continue

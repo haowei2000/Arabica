@@ -38,6 +38,8 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         runs_standalone_router,
     )
     from aiwen.routers.streaming import router as streaming_router
+    from aiwen.routers.triggers import router as triggers_router
+    from aiwen.routers.user_triggers import router as user_triggers_router
     from aiwen.routers.workspaces.workspace import router as workspace_router
 
     return [
@@ -56,6 +58,8 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (skills_router, "/api/agent"),
         # Workspace System (event-sourced)
         (workspace_router, "/api"),
+        (triggers_router, "/api"),
+        (user_triggers_router, "/api"),
         (runs_router, "/api"),
         (runs_standalone_router, "/api"),
         # Event CRUD & Search

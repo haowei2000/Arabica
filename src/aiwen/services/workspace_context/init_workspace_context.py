@@ -1,4 +1,4 @@
-"""Initialize workspace context with user-selected resources.
+"""Initialize the workspace context with user-selected resources.
 
 Called after workspace creation to pre-populate WorkspaceContext with
 tools, knowledge bases, and skills chosen by the user.
@@ -37,7 +37,7 @@ async def init_workspace_context(
     workspace_id = str(workspace_id)
     user_id_str = str(user_id)
     service = WorkspaceContextService(db, workspace_id)
-    counts = {"tools": 0, "knowledge": 0, "skills": 0, "history": 0, "memories": 0}
+    counts = {"tools": 0, "knowledge": 0, "skills": 0, "history": 0, "memories": 0, "triggers": 0}
 
     if config.tool_ids:
         counts["tools"] = await _populate_tools(
@@ -64,10 +64,15 @@ async def init_workspace_context(
             db, service, user_id_str, config.memory_ids
         )
 
+    if config.trigger_ids:
+        counts["triggers"] = await _populate_triggers(
+            db, UUID(workspace_id), UUID(user_id_str), config.trigger_ids
+        )
+
     logger.info(
-        "init_workspace_context: workspace=%s tools=%d knowledge=%d skills=%d history=%d memories=%d",
+        "init_workspace_context: workspace=%s tools=%d knowledge=%d skills=%d history=%d memories=%d triggers=%d",
         workspace_id, counts["tools"], counts["knowledge"], counts["skills"],
-        counts["history"], counts["memories"],
+        counts["history"], counts["memories"], counts["triggers"],
     )
     return counts
 
@@ -215,6 +220,49 @@ async def _populate_memories(
             content_type="text/plain",
         )
         count += 1
+    return count
+
+
+async def _populate_triggers(
+    db: AsyncSession,
+    workspace_id: UUID,
+    user_id: UUID,
+    trigger_ids: list[UUID],
+) -> int:
+    from sqlalchemy import select
+
+    from aiwen.models.workspaces.workspace_trigger import WorkspaceTrigger
+
+    result = await db.execute(
+        select(WorkspaceTrigger).where(
+            WorkspaceTrigger.id.in_(trigger_ids),
+            WorkspaceTrigger.workspace_id.is_(None),
+        )
+    )
+    templates = result.scalars().all()
+
+    count = 0
+    for tmpl in templates:
+        copy = WorkspaceTrigger(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            name=tmpl.name,
+            description=tmpl.description,
+            event_type=tmpl.event_type,
+            condition_type=tmpl.condition_type,
+            condition_value=tmpl.condition_value,
+            condition_field=tmpl.condition_field,
+            action_type=tmpl.action_type,
+            action_params=tmpl.action_params,
+            priority=tmpl.priority,
+            enabled=tmpl.enabled,
+            created_by=user_id,
+        )
+        db.add(copy)
+        count += 1
+
+    if count:
+        await db.flush()
     return count
 
 

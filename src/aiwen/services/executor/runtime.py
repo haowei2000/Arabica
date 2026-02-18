@@ -47,7 +47,7 @@ class ExecutorInstanceManager:
 
     def attach(self, task_id: UUID, executor: ExecutorProtocol):
         """将执行器实例绑定到指定的任务ID
-        
+
         Args:
             task_id (UUID): 任务唯一标识符
             executor (ExecutorProtocol): 执行器实例
@@ -56,7 +56,7 @@ class ExecutorInstanceManager:
 
     def get(self, task_id: UUID) -> ExecutorProtocol | None:
         """根据任务ID获取对应的执行器实例
-        
+
         Args:
             task_id (UUID): 任务唯一标识符
 

@@ -47,6 +47,10 @@ async def _event_stream_generator(
                 event_type = event.get("event_type", "event")
                 yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
 
+        # subscribe_run returned naturally (run reached terminal state) — tell the
+        # client the stream is done so it does not attempt to reconnect.
+        yield f"event: {EVENT_TYPE_DISCONNECT}\ndata: {json.dumps({'reason': 'run_finished'})}\n\n"
+
     except asyncio.CancelledError:
         yield f"event: {EVENT_TYPE_DISCONNECT}\ndata: {json.dumps({'reason': 'client_disconnected'})}\n\n"
 

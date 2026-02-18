@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, GitBranch, Loader2 } from 'lucide-react';
 
 const ADJECTIVES = ['swift', 'bright', 'calm', 'clever', 'bold', 'sharp', 'keen', 'agile', 'vivid', 'crisp', 'brisk', 'lofty'];
 const NOUNS = ['falcon', 'river', 'cloud', 'spark', 'wave', 'peak', 'grove', 'forge', 'dawn', 'crest', 'prism', 'vault'];
@@ -15,6 +15,7 @@ import { useToolList } from '@/hooks/useTools';
 import { useKnowledgeList } from '@/hooks/useKnowledge';
 import { useSkills } from '@/hooks/useSkills';
 import { useWorkspaces, useUserContexts } from '@/hooks/useWorkspaces';
+import { useTriggers } from '@/hooks/useTriggers';
 import type { WorkspaceCreate, WorkspaceContextConfig } from '@/types/workspace';
 import {
   Dialog,
@@ -118,6 +119,7 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
   const [selectedSourceWorkspaces, setSelectedSourceWorkspaces] = useState<Set<string>>(new Set());
   const [selectedMemories, setSelectedMemories] = useState<Set<string>>(new Set());
+  const [selectedTriggers, setSelectedTriggers] = useState<Set<string>>(new Set());
   const autoSelected = useRef(false);
 
   const { data: toolsData } = useToolList({ enabled_only: true, include_public: true });
@@ -125,18 +127,20 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
   const { data: skillsData } = useSkills({ page: 1, page_size: 50 });
   const { data: workspacesData } = useWorkspaces({ page: 1, page_size: 50 });
   const { data: memoriesData } = useUserContexts({ context_type: 'user_memory', page: 1, page_size: 50 });
+  const { data: triggersData } = useTriggers({ page: 1, page_size: 50 });
 
   // Auto-select all resources once data is loaded
   useEffect(() => {
     if (autoSelected.current) return;
-    if ([toolsData, knowledgeData, skillsData, workspacesData, memoriesData].some(d => d === undefined)) return;
+    if ([toolsData, knowledgeData, skillsData, workspacesData, memoriesData, triggersData].some(d => d === undefined)) return;
     autoSelected.current = true;
     setSelectedTools(new Set((toolsData!.tools ?? []).map((t: any) => t.id)));
     setSelectedKnowledge(new Set((knowledgeData!.items ?? []).map((k: any) => k.id)));
     setSelectedSkills(new Set((skillsData!.items ?? []).map((s: any) => s.id)));
     setSelectedSourceWorkspaces(new Set((workspacesData!.items ?? []).map((w: any) => w.id)));
     setSelectedMemories(new Set(((memoriesData as any)?.items ?? []).map((m: any) => m.id)));
-  }, [toolsData, knowledgeData, skillsData, workspacesData, memoriesData]);
+    setSelectedTriggers(new Set((triggersData!.items ?? []).filter((t: any) => t.enabled).map((t: any) => t.id)));
+  }, [toolsData, knowledgeData, skillsData, workspacesData, memoriesData, triggersData]);
 
   const tools: ResourceItem[] = (toolsData?.tools ?? []).map((t: any) => ({
     id: t.id,
@@ -168,6 +172,12 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
     description: m.summary || m.content?.slice(0, 80),
   }));
 
+  const triggerItems: ResourceItem[] = (triggersData?.items ?? []).map((t: any) => ({
+    id: t.id,
+    name: t.name,
+    description: `${t.event_type} → ${t.action_type}`,
+  }));
+
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void) => (id: string) => {
     const next = new Set(set);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -176,11 +186,11 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
 
   const totalSelected =
     selectedTools.size + selectedKnowledge.size + selectedSkills.size +
-    selectedSourceWorkspaces.size + selectedMemories.size;
+    selectedSourceWorkspaces.size + selectedMemories.size + selectedTriggers.size;
 
   const totalItems =
     tools.length + knowledge.length + skills.length +
-    sourceWorkspaces.length + memories.length;
+    sourceWorkspaces.length + memories.length + triggerItems.length;
 
   const allSelected = totalItems > 0 && totalSelected === totalItems;
 
@@ -191,12 +201,14 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
       setSelectedSkills(new Set());
       setSelectedSourceWorkspaces(new Set());
       setSelectedMemories(new Set());
+      setSelectedTriggers(new Set());
     } else {
       setSelectedTools(new Set(tools.map(t => t.id)));
       setSelectedKnowledge(new Set(knowledge.map(k => k.id)));
       setSelectedSkills(new Set(skills.map(s => s.id)));
       setSelectedSourceWorkspaces(new Set(sourceWorkspaces.map(w => w.id)));
       setSelectedMemories(new Set(memories.map(m => m.id)));
+      setSelectedTriggers(new Set(triggerItems.map(t => t.id)));
     }
   };
 
@@ -207,12 +219,14 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
       skill_ids: [...selectedSkills],
       source_workspace_ids: [...selectedSourceWorkspaces],
       memory_ids: [...selectedMemories],
+      trigger_ids: [...selectedTriggers],
     };
     const hasResources = context_config.tool_ids.length > 0
       || context_config.knowledge_ids.length > 0
       || context_config.skill_ids.length > 0
       || context_config.source_workspace_ids.length > 0
-      || context_config.memory_ids.length > 0;
+      || context_config.memory_ids.length > 0
+      || context_config.trigger_ids.length > 0;
 
     await onConfirm({
       name,
@@ -224,7 +238,7 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
 
   const hasNoResources =
     tools.length === 0 && knowledge.length === 0 && skills.length === 0 &&
-    sourceWorkspaces.length === 0 && memories.length === 0;
+    sourceWorkspaces.length === 0 && memories.length === 0 && triggerItems.length === 0;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -357,6 +371,14 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
                     items={memories}
                     selectedIds={selectedMemories}
                     onToggle={toggle(selectedMemories, setSelectedMemories)}
+                  />
+                  {triggerItems.length > 0 && <Separator />}
+                  <ResourceSection
+                    title="Triggers"
+                    icon={<GitBranch size={14} className="text-amber-500" />}
+                    items={triggerItems}
+                    selectedIds={selectedTriggers}
+                    onToggle={toggle(selectedTriggers, setSelectedTriggers)}
                   />
                 </div>
               )}

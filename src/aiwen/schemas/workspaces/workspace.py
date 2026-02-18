@@ -30,6 +30,10 @@ class WorkspaceContextConfig(BaseModel):
         default_factory=list,
         description="加载到 workspace context 的用户记忆 ID 列表",
     )
+    trigger_ids: list[UUID] = Field(
+        default_factory=list,
+        description="从用户级触发器模板复制到 workspace 的触发器 ID 列表",
+    )
 
 
 class WorkspaceCreate(BaseModel):

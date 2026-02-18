@@ -12,6 +12,8 @@ from typing import Any
 from uuid import UUID
 
 import redis.asyncio as redis_async
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,9 @@ from aiwen.config.factory import get_settings
 from aiwen.core.enums import EventType
 from aiwen.models.events.event import Event
 from aiwen.schemas.events.event_payloads import EventResponse
+
+# Run states after which there will be no more events on the stream.
+_TERMINAL_RUN_STATES = frozenset({"finished", "failed", "cancelled"})
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +83,34 @@ class EventConsumer:
                     yield {"type": EVENT_TYPE_KEEPALIVE, "timestamp": datetime.now().isoformat()}
                     continue
 
+                done = False
                 for stream, messages in result:
                     for message_id, data in messages:
                         current_id = message_id
                         event = self._parse_event_data(data)
                         yield event
 
+                        # Stop streaming once the run reaches a terminal state so
+                        # the loop does not keep blocking on a dead Redis stream.
+                        event_type = event.get("event_type", "")
+                        if event_type == EventType.RUN_STATE_CHANGE:
+                            new_state = (event.get("payload") or {}).get("new_state", "")
+                            if new_state in _TERMINAL_RUN_STATES:
+                                done = True
+                        elif event_type in (EventType.RUN_FAILED, EventType.RUN_CANCELLED):
+                            done = True
+
+                if done:
+                    logger.debug(f"Run {run_id} reached terminal state, closing stream")
+                    return
+
             except asyncio.CancelledError:
                 logger.debug(f"Run subscription cancelled for {run_id}")
                 break
+            except (RedisTimeoutError, RedisConnectionError, TimeoutError) as e:
+                # Socket-level timeout or transient connection drop — retry silently.
+                logger.debug(f"Transient Redis error on run stream {stream_name}: {e}")
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Error reading from stream {stream_name}: {e}")
                 yield {"type": EVENT_TYPE_ERROR, "message": str(e)}
@@ -132,6 +156,10 @@ class EventConsumer:
             except asyncio.CancelledError:
                 logger.debug(f"Workspace subscription cancelled for {workspace_id}")
                 break
+            except (RedisTimeoutError, RedisConnectionError, TimeoutError) as e:
+                # Socket-level timeout or transient connection drop — retry silently.
+                logger.debug(f"Transient Redis error on workspace stream {stream_name}: {e}")
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Error reading from stream {stream_name}: {e}")
                 yield {"type": EVENT_TYPE_ERROR, "message": str(e)}
