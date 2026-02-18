@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Loader2, Trash2, FolderOpen } from 'lucide-react';
+import { Library, FileText, Loader2, Trash2, FolderOpen } from 'lucide-react';
 import { useKnowledgeList, useCreateKnowledge, useDeleteKnowledge } from '@/hooks/useKnowledge';
 import { generateKnowledgeDocumentsRoute } from '@/constants/routes';
 import { Button } from '@/components/ui/button';
@@ -82,7 +82,10 @@ export default function KnowledgePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold">Knowledge</h2>
+          <div className="flex items-center gap-1.5">
+            <Library className="size-3.5 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Knowledge</h2>
+          </div>
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
             {items.length}{knowledgeData && knowledgeData.total > items.length ? `/${knowledgeData.total}` : ''}
           </span>
@@ -114,7 +117,7 @@ export default function KnowledgePage() {
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 capitalize">{kb.status}</span>
                 </div>
                 <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                  <span className="tabular-nums">{kb.document_count} docs</span>
+                  <span className="inline-flex items-center gap-0.5 tabular-nums"><FileText className="size-2.5" />{kb.document_count}</span>
                   <span className="tabular-nums">{kb.chunk_count} chunks</span>
                   <span className="ml-auto">{formatRelativeTime(kb.created_at)}</span>
                 </div>
@@ -151,7 +154,7 @@ export default function KnowledgePage() {
                 <span className={cn('size-2 rounded-full shrink-0', statusDotCls)} />
                 <span className="text-sm font-medium flex-1 min-w-0 truncate">{kb.name}</span>
                 {permissionChip}
-                <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{kb.document_count} docs</span>
+                <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 tabular-nums shrink-0"><FileText className="size-2.5" />{kb.document_count}</span>
               </>
             );
 
@@ -165,7 +168,7 @@ export default function KnowledgePage() {
                   <span className={cn('size-2 rounded-full shrink-0', statusDotCls)} />
                   <span className="text-sm font-medium flex-1 min-w-0 truncate">{kb.name}</span>
                   {permissionChip}
-                  <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{kb.document_count} docs</span>
+                  <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 tabular-nums shrink-0"><FileText className="size-2.5" />{kb.document_count}</span>
                   <FolderOpen className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors shrink-0" />
                   <button
                     type="button"
@@ -248,7 +251,7 @@ export default function KnowledgePage() {
         </div>
       ) : (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
-          <BookOpen className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+          <Library className="mx-auto size-8 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3">No knowledge bases yet</p>
           <Button size="sm" onClick={() => setShowCreateForm(true)}>Create Knowledge Base</Button>
         </div>

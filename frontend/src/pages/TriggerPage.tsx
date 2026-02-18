@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GitBranch, Loader2, Trash2, Pencil, X } from 'lucide-react';
+import { Zap, Loader2, Trash2, Pencil, X, Activity, Filter, GitBranch } from 'lucide-react';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
 import { formatRelativeTime } from '@/utils/formatDate';
@@ -398,7 +398,10 @@ export default function TriggerPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold">Triggers</h2>
+          <div className="flex items-center gap-1.5">
+            <Zap className="size-3.5 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Triggers</h2>
+          </div>
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
             {triggers.length}
           </span>
@@ -423,16 +426,16 @@ export default function TriggerPage() {
                 </div>
                 {trigger.description && <p className="text-xs text-muted-foreground line-clamp-2">{trigger.description}</p>}
                 <div className="flex flex-wrap gap-1.5">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
-                    {trigger.event_type}
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
+                    <Activity className="size-2.5" />{trigger.event_type}
                   </span>
                   {trigger.condition_type !== 'always' && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50">
-                      {trigger.condition_type}
+                    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50">
+                      <Filter className="size-2.5" />{trigger.condition_type}
                     </span>
                   )}
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50">
-                    {trigger.action_type}
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50">
+                    <Zap className="size-2.5" />{trigger.action_type}
                   </span>
                 </div>
                 {paramVal && (
@@ -473,16 +476,16 @@ export default function TriggerPage() {
             );
             const chips = (
               <>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0 font-mono">
-                  {trigger.event_type}
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0 font-mono">
+                  <Activity className="size-2.5" />{trigger.event_type}
                 </span>
                 {trigger.condition_type !== 'always' && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50 shrink-0">
-                    {trigger.condition_type}
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50 shrink-0">
+                    <Filter className="size-2.5" />{trigger.condition_type}
                   </span>
                 )}
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50 shrink-0">
-                  {trigger.action_type}
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50 shrink-0">
+                  <Zap className="size-2.5" />{trigger.action_type}
                 </span>
                 {paramVal && (
                   <span className={cn(
@@ -575,7 +578,7 @@ export default function TriggerPage() {
         </div>
       ) : (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
-          <GitBranch className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+          <Zap className="mx-auto size-8 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3">No triggers yet</p>
           <Button size="sm" onClick={openCreateModal}>Create Trigger</Button>
         </div>

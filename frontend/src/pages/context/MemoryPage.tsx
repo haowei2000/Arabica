@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, Cpu, Loader2 } from 'lucide-react';
+import { ChevronRight, Brain, Loader2, Play } from 'lucide-react';
 import { useWorkspaces, useWorkspaceRuns, useRunEvents } from '@/hooks/useMemory';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
@@ -107,7 +107,10 @@ export default function MemoryPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold">Memory</h2>
+          <div className="flex items-center gap-1.5">
+            <Brain className="size-3.5 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Memory</h2>
+          </div>
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
             {workspaces.length}
           </span>
@@ -119,7 +122,7 @@ export default function MemoryPage() {
 
       {workspaces.length === 0 ? (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
-          <Cpu className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+          <Brain className="mx-auto size-8 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground">No workspaces yet</p>
         </div>
       ) : viewMode === 'card' ? (
@@ -138,7 +141,7 @@ export default function MemoryPage() {
                 </span>
               </div>
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
-                <span className="tabular-nums">{workspace.run_count} runs</span>
+                <span className="inline-flex items-center gap-0.5 tabular-nums"><Play className="size-2.5" />{workspace.run_count}</span>
                 <span className="ml-auto">{formatRelativeTime(workspace.created_at)}</span>
               </div>
             </div>
@@ -160,7 +163,7 @@ export default function MemoryPage() {
                   {workspace.description && (
                     <span className="text-[10px] text-muted-foreground truncate hidden sm:block max-w-48">{workspace.description}</span>
                   )}
-                  <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">{workspace.run_count} runs</span>
+                  <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 tabular-nums shrink-0"><Play className="size-2.5" />{workspace.run_count}</span>
                   <span className="text-[10px] text-muted-foreground/50 shrink-0">{formatRelativeTime(workspace.created_at)}</span>
                 </button>
 

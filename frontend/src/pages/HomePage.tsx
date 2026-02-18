@@ -10,7 +10,7 @@ function randomAppCode() {
   return `${adj}-${noun}-${num}`;
 }
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Trash2, Package, ExternalLink, Loader2 } from 'lucide-react';
+import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Zap, Layers, Library, Wrench, Brain, Sparkles } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -104,7 +104,10 @@ export default function HomePage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-foreground">Apps</h2>
+            <div className="flex items-center gap-1.5">
+              <Bot className="size-3.5 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">Apps</h2>
+            </div>
             <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
               {apps.length}
             </span>
@@ -244,7 +247,7 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="text-center py-16 border border-dashed border-border rounded-xl">
-            <Package className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+            <Bot className="mx-auto size-8 text-muted-foreground/30 mb-3" />
             <p className="text-sm text-muted-foreground mb-3">No apps yet</p>
             <Button size="sm" onClick={() => { setShowCreateAppForm(true); setAppCode(randomAppCode()); }}>
               Create App
@@ -285,9 +288,9 @@ export default function HomePage() {
       <div className="max-w-5xl mx-auto px-6 py-6">
         <Tabs defaultValue="app" className="space-y-5">
           <TabsList className="h-8">
-            <TabsTrigger value="app" className="text-xs px-3">App</TabsTrigger>
-            <TabsTrigger value="trigger" className="text-xs px-3">Trigger</TabsTrigger>
-            <TabsTrigger value="context" className="text-xs px-3">Context</TabsTrigger>
+            <TabsTrigger value="app" className="text-xs px-3 gap-1.5"><Bot className="size-3" />App</TabsTrigger>
+            <TabsTrigger value="trigger" className="text-xs px-3 gap-1.5"><Zap className="size-3" />Trigger</TabsTrigger>
+            <TabsTrigger value="context" className="text-xs px-3 gap-1.5"><Layers className="size-3" />Context</TabsTrigger>
           </TabsList>
 
           <TabsContent value="app">
@@ -301,10 +304,10 @@ export default function HomePage() {
           <TabsContent value="context">
             <Tabs defaultValue="knowledge">
               <TabsList className="h-7 mb-4">
-                <TabsTrigger value="knowledge" className="text-xs px-3">Knowledge</TabsTrigger>
-                <TabsTrigger value="tool" className="text-xs px-3">Tool</TabsTrigger>
-                <TabsTrigger value="memory" className="text-xs px-3">Memory</TabsTrigger>
-                <TabsTrigger value="skill" className="text-xs px-3">Skill</TabsTrigger>
+                <TabsTrigger value="knowledge" className="text-xs px-3 gap-1.5"><Library className="size-3" />Knowledge</TabsTrigger>
+                <TabsTrigger value="tool" className="text-xs px-3 gap-1.5"><Wrench className="size-3" />Tool</TabsTrigger>
+                <TabsTrigger value="memory" className="text-xs px-3 gap-1.5"><Brain className="size-3" />Memory</TabsTrigger>
+                <TabsTrigger value="skill" className="text-xs px-3 gap-1.5"><Sparkles className="size-3" />Skill</TabsTrigger>
               </TabsList>
               <TabsContent value="knowledge"><KnowledgePage /></TabsContent>
               <TabsContent value="tool"><ToolPage /></TabsContent>

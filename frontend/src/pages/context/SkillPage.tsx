@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Zap, Loader2, Trash2, Pencil } from 'lucide-react';
+import { Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle } from 'lucide-react';
 import { useSkills, useCreateSkill, useUpdateSkill, useDeleteSkill } from '@/hooks/useSkills';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -89,7 +89,10 @@ export default function SkillPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold">Skills</h2>
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="size-3.5 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Skills</h2>
+          </div>
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">{skills.length}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -144,7 +147,9 @@ export default function SkillPage() {
               )}
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
                 <span className="tabular-nums">{skill.content.length}c</span>
-                <span className={cn(skill.has_embedding ? 'text-violet-500' : '')}>{skill.has_embedding ? 'indexed' : 'not indexed'}</span>
+                <span className={cn('inline-flex items-center gap-0.5', skill.has_embedding ? 'text-violet-500' : 'text-muted-foreground/50')}>
+                  {skill.has_embedding ? <CheckCircle2 className="size-3" /> : <Circle className="size-3" />}
+                </span>
                 <span className="ml-auto">{formatRelativeTime(skill.created_at)}</span>
               </div>
               <div className="flex gap-2 pt-2 border-t border-border/40">
@@ -261,7 +266,7 @@ export default function SkillPage() {
         </div>
       ) : (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
-          <Zap className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+          <Sparkles className="mx-auto size-8 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3">No skills yet</p>
           <Button size="sm" onClick={openCreateModal}>Create Skill</Button>
         </div>

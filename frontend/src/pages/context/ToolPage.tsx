@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Loader2, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Wrench, Loader2, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useTemplates, useToolList, useCreateTool, useDeleteTool, useToggleTool } from '@/hooks/useTools';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -125,7 +125,10 @@ export default function ToolPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold">Tools</h2>
+          <div className="flex items-center gap-1.5">
+            <Wrench className="size-3.5 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Tools</h2>
+          </div>
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">{tools.length}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -348,7 +351,7 @@ export default function ToolPage() {
         </div>
       ) : (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
-          <Settings className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+          <Wrench className="mx-auto size-8 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3">No tools yet</p>
           <Button size="sm" onClick={openCreateModal}>Create Tool</Button>
         </div>
