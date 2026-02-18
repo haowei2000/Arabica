@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
+import logging
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -103,7 +103,7 @@ class SkillCRUD:
         if "tags" in update_data:
             skill.tags = update_data["tags"]
 
-        if "meta" in update_data and update_data["meta"]:
+        if update_data.get("meta"):
             skill.meta = {**(skill.meta or {}), **update_data["meta"]}
 
         skill.updated_at = datetime.now(UTC)

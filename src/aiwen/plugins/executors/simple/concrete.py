@@ -647,9 +647,8 @@ class DefaultExecutor(Executor):
 
         try:
             from aiwen.extensions.database import get_session
-            from aiwen.utils.workspace_context_cache import get_cached_workspace_context
-
             from aiwen.frameworks.context import DetailLevel
+            from aiwen.utils.workspace_context_cache import get_cached_workspace_context
 
             async with get_session("aiwen") as db:
                 service = await get_cached_workspace_context(db, self.workspace_id)

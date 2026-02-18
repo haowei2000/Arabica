@@ -5,7 +5,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, select, update as sql_update
+from sqlalchemy import (
+    and_,
+    func,
+    select,
+    update as sql_update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.dependencies.auth import get_current_user
@@ -600,7 +605,9 @@ async def reinit_workspace_context(
     await db.commit()
 
     # Re-populate with new config
-    from aiwen.services.workspace_context.init_workspace_context import init_workspace_context
+    from aiwen.services.workspace_context.init_workspace_context import (
+        init_workspace_context,
+    )
 
     counts = await init_workspace_context(
         db=db,

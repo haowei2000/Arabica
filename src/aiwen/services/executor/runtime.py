@@ -59,7 +59,7 @@ class ExecutorInstanceManager:
         
         Args:
             task_id (UUID): 任务唯一标识符
-            
+
         Returns:
             Optional[ExecutorProtocol]: 执行器实例，如果不存在则返回None
         """

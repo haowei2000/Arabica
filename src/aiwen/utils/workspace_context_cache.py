@@ -41,6 +41,29 @@ _WORKSPACE_CONTEXT_CACHE = TTLCache(maxsize=_CACHE_MAXSIZE, ttl=_CACHE_TTL)
 _CACHE_LOCKS: dict[str, asyncio.Lock] = {}
 
 
+async def _is_workspace_dirty(workspace_id: str) -> bool:
+    """Check Redis for a dirty flag written by Celery after updating WorkspaceContext.
+
+    Uses GETDEL so the flag is atomically consumed on first read — only the
+    first concurrent caller triggers a reload; subsequent callers see a clean cache.
+    """
+    try:
+        import redis.asyncio as redis_async
+
+        from aiwen.config.factory import get_settings
+        cfg = get_settings().redis
+        auth = f":{cfg.password}@" if cfg.password else ""
+        r = redis_async.from_url(
+            f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
+            decode_responses=True,
+        )
+        dirty = await r.getdel(f"workspace_context_dirty:{workspace_id}")
+        await r.aclose()
+        return dirty is not None
+    except Exception:
+        return False
+
+
 async def get_cached_workspace_context(
     session: AsyncSession,
     workspace_id: str,
@@ -68,10 +91,15 @@ async def get_cached_workspace_context(
             session, workspace_id, force_reload=True
         )
     """
-    # Fast path: cache hit (unless force_reload)
+    # Check Redis dirty flag — set by Celery workers after modifying WorkspaceContext.
+    # Use getdel so only the first reader triggers the reload (atomic clear + check).
     if not force_reload and workspace_id in _WORKSPACE_CONTEXT_CACHE:
-        logger.debug(f"WorkspaceContext cache hit: {workspace_id}")
-        return _WORKSPACE_CONTEXT_CACHE[workspace_id]
+        if await _is_workspace_dirty(workspace_id):
+            logger.debug(f"WorkspaceContext dirty flag detected, reloading: {workspace_id}")
+            force_reload = True
+        else:
+            logger.debug(f"WorkspaceContext cache hit: {workspace_id}")
+            return _WORKSPACE_CONTEXT_CACHE[workspace_id]
 
     # Ensure lock exists
     if workspace_id not in _CACHE_LOCKS:

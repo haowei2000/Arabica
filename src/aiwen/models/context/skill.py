@@ -6,7 +6,10 @@ from typing import Any  # kept for JSONB columns
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Index, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import (
+    JSONB,
+    UUID as PGUUID,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aiwen.extensions.database import get_base

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aiwen.core.interfaces.structurer import BaseStructurer
 
-_REGISTRY: dict[str, "BaseStructurer"] = {}
+_REGISTRY: dict[str, BaseStructurer] = {}
 
 
 def register_structurer(cls):
@@ -15,7 +15,7 @@ def register_structurer(cls):
     return cls
 
 
-def get_structurer(name: str) -> "BaseStructurer":
+def get_structurer(name: str) -> BaseStructurer:
     """Return the named structurer; raises KeyError if not registered."""
     return _REGISTRY[name]
 
@@ -28,4 +28,4 @@ def dispatch_structure(text: str, mime_type: str, structure_type: str) -> list[d
 
 # Auto-register built-in plugins (import order matters: document first so
 # table/code can reference DocumentStructurer in their fallback paths)
-from . import document, table, code  # noqa: E402, F401
+from . import code, document, table  # noqa: E402

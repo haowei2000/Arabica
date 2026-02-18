@@ -204,12 +204,15 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
     queue="default",
 )
 def sync_skill_to_contexts(self, skill_id: str, user_id: str):
-    """Upsert Skill into Context table, embed, and update WorkspaceContext entries."""
+    """Upsert Skill into Context table, embed, and sync to all user workspaces."""
     async def _execute():
+        from sqlalchemy import select
+
         from aiwen.extensions.database import get_session
         from aiwen.models.context.skill import Skill
+        from aiwen.models.workspaces.workspace import Workspace
 
-        # ── 1. Read skill and upsert Context row ──────────────────────────
+        # ── 1. Read skill and upsert global Context row ───────────────────
         async with get_session("aiwen") as session:
             skill = await session.get(Skill, skill_id)
             if not skill:
@@ -231,6 +234,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
                 meta={"skill_id": skill_id},
             )
 
+            # Update any existing WorkspaceContext entries that reference this skill
             count = await _update_workspace_contexts(
                 session,
                 meta_key="skill_id",
@@ -240,17 +244,82 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
                 content=skill.content,
             )
 
+            # ── 2. Upsert into WorkspaceContext for ALL user workspaces ────
+            # Query all active workspaces owned by this user
+            from aiwen.core.enums.workspaces import WorkspaceStatus
+            ws_result = await session.execute(
+                select(Workspace).where(
+                    Workspace.owner_id == UUID(user_id),
+                    Workspace.status == WorkspaceStatus.ACTIVE,
+                    Workspace.is_deleted.is_(False),
+                )
+            )
+            workspaces = ws_result.scalars().all()
+
             await session.flush()
             ctx_id = str(ctx.id)
-            embed_text = skill.content or glance or ""
+            # Capture values before session closes to avoid detached-instance errors
+            skill_summary = skill.summary
+            skill_content = skill.content
+            skill_tags = list(skill.tags or [])
+            embed_text = skill_content or glance or ""
+            workspace_ids = [str(ws.id) for ws in workspaces]
             await session.commit()
 
+        # Write WorkspaceContext entries outside the first session to avoid
+        # holding a long transaction while iterating workspaces.
+        # Note: svc.set() → _sync_to_db() already commits internally; no outer commit needed.
+        ws_count = 0
+        dirty_ws_ids: list[str] = []
+        for ws_id in workspace_ids:
+            try:
+                async with get_session("aiwen") as session:
+                    from aiwen.services.workspace_context.workspace_context_service import (
+                        WorkspaceContextService,
+                    )
+                    svc = WorkspaceContextService(session, ws_id)
+                    await svc.set(
+                        path=f"skills/{skill_id}",
+                        glance=glance,
+                        overview=skill_summary,
+                        detail=skill_content,
+                        tags=["skills"] + skill_tags,
+                        meta={"skill_id": skill_id},
+                        created_by=user_id,
+                        content_type="text/plain",
+                    )
+                    # _sync_to_db already committed; no extra commit here
+                ws_count += 1
+                dirty_ws_ids.append(ws_id)
+            except Exception as e:
+                logger.warning(f"sync_skill: failed to sync to workspace {ws_id}: {e}")
+
+        # Invalidate API-process in-memory cache via Redis dirty-flag
+        if dirty_ws_ids:
+            try:
+                import redis.asyncio as redis_async
+
+                from aiwen.config.factory import get_settings
+                cfg = get_settings().redis
+                auth = f":{cfg.password}@" if cfg.password else ""
+                r = redis_async.from_url(
+                    f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
+                    decode_responses=True,
+                )
+                async with r.pipeline(transaction=False) as pipe:
+                    for ws_id in dirty_ws_ids:
+                        pipe.setex(f"workspace_context_dirty:{ws_id}", 600, "1")
+                    await pipe.execute()
+                await r.aclose()
+            except Exception as e:
+                logger.warning(f"sync_skill: failed to set Redis dirty flags: {e}")
+
         logger.info(
-            f"sync_skill: upserted Context + updated {count} WorkspaceContext(s) "
-            f"for skill {skill_id}"
+            f"sync_skill: upserted Context + updated {count} WorkspaceContext row(s) "
+            f"+ synced to {ws_count} workspace(s) for skill {skill_id}"
         )
 
-        # ── 2. Generate embedding (outside session, blocking HTTP) ─────────
+        # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
         if embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:

@@ -34,7 +34,8 @@ class TableStructurer(BaseStructurer):
 
         # ── CSV ──────────────────────────────────────────────────────────────
         if mime_type == "text/csv":
-            import csv, io
+            import csv
+            import io
             reader = csv.reader(io.StringIO(text))
             rows = [row for row in reader if any(c.strip() for c in row)]
             if len(rows) >= 2:

@@ -7,9 +7,9 @@ Create Date: 2026-02-18 16:00:00.000000
 """
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
+import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'a1e2f3b4c5d6'
