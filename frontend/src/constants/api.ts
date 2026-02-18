@@ -38,6 +38,7 @@ export const API_ENDPOINTS = {
       CONTEXTS_COPY: (workspaceId: string) => `/workspaces/${workspaceId}/contexts/copy`,
       CONTEXT_DELETE: (workspaceId: string, contextId: string) =>
           `/workspaces/${workspaceId}/contexts/${contextId}`,
+      CONTEXT_REINIT: (workspaceId: string) => `/workspaces/${workspaceId}/context/reinit`,
   },
 
   // 对话管理
@@ -126,5 +127,6 @@ export const API_ENDPOINTS = {
         LIST_BY_RUN: (runId: string) => `/events/run/${runId}/list`,
         RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
         RUN_STATE: (runId: string) => `/runs/${runId}/state`,
+        WORKSPACE_STREAM: (workspaceId: string) => `/workspaces/${workspaceId}/events/stream`,
     },
 } as const;

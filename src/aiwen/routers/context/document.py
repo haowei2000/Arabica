@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from aiwen.celery_worker.celery_app import celery_app, example_task
-from aiwen.celery_worker.tasks.document_tasks import process_document_to_context
+from aiwen.celery_worker.tasks.document_tasks import process_document_structured
 from aiwen.core.dependencies.agents import get_document_crud, get_knowledge_crud
 from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
@@ -86,31 +86,22 @@ async def upload_document(
     knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
     file: UploadFile = File(..., description="File to upload"),
     knowledge_id: str = Form(..., description="Knowledge base ID"),
-    chunk_size: int = Form(
-        default=500, ge=100, le=2000, description="Chunk size for splitting"
-    ),
-    chunk_overlap: int = Form(
-        default=50, ge=0, le=500, description="Overlap between chunks"
-    ),
     embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
-    embedding_model: str = Form(
-        default="text-embedding-v3", description="Embedding model"
-    ),
+    embedding_model: str = Form(default="text-embedding-v3", description="Embedding model"),
     embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
+    structure_type: str = Form(default="document", description="Structuring strategy: document | table | code"),
 ):
     """
     Upload a document to a knowledge base.
 
     The document will be:
     1. Uploaded to S3 storage
-    2. Processed asynchronously via Celery
-    3. Chunked and embedded into the ContextSchema table
+    2. Parsed and structured into semantic sections via Celery
+    3. Each section stored directly in the Context table with embeddings
 
     Args:
         file: The file to upload
         knowledge_id: ID of the knowledge base
-        chunk_size: Size of text chunks for splitting
-        chunk_overlap: Overlap between chunks
         embedding_provider: Provider for embeddings
         embedding_model: ChatLLM for embeddings
         embedding_dimension: Dimension of embeddings
@@ -190,7 +181,7 @@ async def upload_document(
     logger = logging.getLogger(__name__)
     logger.info(f"Triggering document processing for document_id={document.id}")
 
-    task_id = process_document_to_context(
+    task_id = process_document_structured(
         document_id=str(document.id),
         knowledge_id=knowledge_id,
         bucket=bucket_name,
@@ -200,8 +191,7 @@ async def upload_document(
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
         embedding_dimension=embedding_dimension,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
+        structure_type=structure_type,
     )
 
     return DocumentUploadResponse(

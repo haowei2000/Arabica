@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useUserContexts, useCopyContexts } from '@/hooks/useWorkspaces';
-import { Button, Badge } from '@/components/ui';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 
 type ContextTypeFilter = 'all' | 'knowledge' | 'tool' | 'user_memory' | 'skill';
 
@@ -10,13 +16,14 @@ interface ContextSelectModalProps {
   onClose: () => void;
 }
 
-const TYPE_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'error' | 'info' | 'neutral'> = {
-  knowledge: 'info',
-  tool: 'warning',
-  user_memory: 'success',
-  skill: 'neutral',
-  conversation: 'neutral',
-  chunk: 'neutral',
+// Map context_type to available shadcn Badge variants
+const TYPE_BADGE_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  knowledge: 'default',
+  tool: 'outline',
+  user_memory: 'secondary',
+  skill: 'secondary',
+  conversation: 'secondary',
+  chunk: 'secondary',
 };
 
 export default function ContextSelectModal({ workspaceId, onClose }: ContextSelectModalProps) {
@@ -40,11 +47,8 @@ export default function ContextSelectModal({ workspaceId, onClose }: ContextSele
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -55,7 +59,7 @@ export default function ContextSelectModal({ workspaceId, onClose }: ContextSele
       await copyMutation.mutateAsync({ context_ids: Array.from(selectedIds) });
       onClose();
     } catch {
-      // error is available via copyMutation.error
+      // error available via copyMutation.error
     }
   };
 
@@ -68,117 +72,90 @@ export default function ContextSelectModal({ workspaceId, onClose }: ContextSele
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-navy-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[80vh] border border-secondary-200 dark:border-navy-700">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-200 dark:border-navy-700">
-          <h3 className="text-lg font-semibold text-navy-900 dark:text-navy-100">
-            Add Context to Workspace
-          </h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md hover:bg-secondary-100 dark:hover:bg-navy-700 text-secondary-500"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg flex flex-col max-h-[80vh] p-0 gap-0">
+        <DialogHeader className="px-5 py-4 border-b border-border shrink-0">
+          <DialogTitle>Add Context to Workspace</DialogTitle>
+        </DialogHeader>
 
         {/* Type filter tabs */}
-        <div className="px-5 py-3 border-b border-secondary-200 dark:border-navy-700 flex flex-wrap gap-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => { setTypeFilter(tab.id); setPage(1); setSelectedIds(new Set()); }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                typeFilter === tab.id
-                  ? 'bg-primary-500 text-white shadow-md'
-                  : 'bg-secondary-100 dark:bg-navy-700 text-secondary-600 dark:text-secondary-400 hover:bg-secondary-200 dark:hover:bg-navy-600'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="px-5 py-3 border-b border-border shrink-0">
+          <Tabs value={typeFilter} onValueChange={(v) => { setTypeFilter(v as ContextTypeFilter); setPage(1); setSelectedIds(new Set()); }}>
+            <TabsList className="w-full">
+              {tabs.map((tab) => (
+                <TabsTrigger key={tab.id} value={tab.id} className="flex-1">{tab.label}</TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
+        <ScrollArea className="flex-1 px-5 py-3">
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
-              <div className="w-8 h-8 rounded-full border-4 border-primary-200 dark:border-primary-900/30 border-t-primary-500 animate-spin" />
+              <Loader2 className="size-8 animate-spin text-muted-foreground" />
             </div>
           ) : items.length === 0 ? (
-            <div className="text-center py-12 text-sm text-secondary-500 dark:text-secondary-400">
+            <div className="text-center py-12 text-sm text-muted-foreground">
               No contexts found
             </div>
           ) : (
-            items.map((ctx: any) => (
-              <label
-                key={ctx.id}
-                className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer border transition-all ${
-                  selectedIds.has(ctx.id)
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-secondary-200 dark:border-navy-700 hover:border-secondary-300 dark:hover:border-navy-600'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(ctx.id)}
-                  onChange={() => toggleSelect(ctx.id)}
-                  className="mt-1 h-4 w-4 rounded border-secondary-300 text-primary-500 focus:ring-primary-500"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Badge variant={TYPE_BADGE_VARIANT[ctx.context_type] ?? 'neutral'} size="sm">
-                      {ctx.context_type}
-                    </Badge>
-                    <span className="text-xs text-secondary-400 dark:text-secondary-500">
-                      {new Date(ctx.created_at).toLocaleDateString()}
-                    </span>
+            <div className="space-y-2">
+              {items.map((ctx: any) => (
+                <label
+                  key={ctx.id}
+                  className={cn(
+                    'flex items-start gap-3 p-3 rounded-lg cursor-pointer border transition-all',
+                    selectedIds.has(ctx.id)
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-border/80 hover:bg-muted/40'
+                  )}
+                >
+                  <Checkbox
+                    checked={selectedIds.has(ctx.id)}
+                    onCheckedChange={() => toggleSelect(ctx.id)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant={TYPE_BADGE_VARIANT[ctx.context_type] ?? 'secondary'}>
+                        {ctx.context_type}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(ctx.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <p className="text-sm text-foreground line-clamp-2 break-all">
+                      {ctx.summary || ctx.content?.slice(0, 120) || `context-${ctx.id}`}
+                    </p>
                   </div>
-                  <p className="text-sm text-navy-900 dark:text-navy-100 line-clamp-2 break-all">
-                    {ctx.summary || ctx.content?.slice(0, 120) || `context-${ctx.id}`}
-                  </p>
-                </div>
-              </label>
-            ))
+                </label>
+              ))}
+            </div>
           )}
-        </div>
+        </ScrollArea>
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="px-5 py-2 border-t border-secondary-200 dark:border-navy-700 flex items-center justify-between text-xs text-secondary-500">
+          <div className="px-5 py-2 border-t border-border flex items-center justify-between text-xs text-muted-foreground shrink-0">
             <span>{total} total</span>
-            <div className="flex gap-2">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-                className="px-2 py-1 rounded hover:bg-secondary-100 dark:hover:bg-navy-700 disabled:opacity-40"
-              >
+            <div className="flex gap-2 items-center">
+              <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
                 Prev
-              </button>
-              <span className="px-2 py-1">{page} / {totalPages}</span>
-              <button
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
-                className="px-2 py-1 rounded hover:bg-secondary-100 dark:hover:bg-navy-700 disabled:opacity-40"
-              >
+              </Button>
+              <span>{page} / {totalPages}</span>
+              <Button variant="ghost" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
                 Next
-              </button>
+              </Button>
             </div>
           </div>
         )}
 
-        {/* Footer */}
-        <div className="px-5 py-4 border-t border-secondary-200 dark:border-navy-700 flex items-center justify-between">
-          <span className="text-sm text-secondary-500 dark:text-secondary-400">
-            {selectedIds.size} selected
-          </span>
+        <DialogFooter className="px-5 py-4 border-t border-border flex items-center justify-between shrink-0">
+          <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
           <div className="flex gap-3">
-            <Button variant="secondary" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
             <Button
-              variant="primary"
               size="sm"
               disabled={selectedIds.size === 0 || copyMutation.isPending}
               onClick={handleCopy}
@@ -186,8 +163,8 @@ export default function ContextSelectModal({ workspaceId, onClose }: ContextSele
               {copyMutation.isPending ? 'Adding...' : 'Add Selected'}
             </Button>
           </div>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

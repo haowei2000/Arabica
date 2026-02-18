@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspaceService';
 import { apiClient } from '@/services/api';
 import { API_ENDPOINTS } from '@/constants/api';
-import type { WorkspaceCreate } from '@/types/workspace';
+import type { WorkspaceCreate, WorkspaceContextConfig } from '@/types/workspace';
 
 export const useWorkspaces = (params?: {
   page?: number;
@@ -64,6 +64,30 @@ export const useRemoveWorkspaceContext = (workspaceId: string) => {
   return useMutation({
     mutationFn: (contextId: string) =>
       workspaceService.removeWorkspaceContext(workspaceId, contextId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-contexts', workspaceId] });
+    },
+  });
+};
+
+export const useUpdateWorkspace = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ workspaceId, data }: { workspaceId: string; data: { name?: string; description?: string } }) =>
+      workspaceService.updateWorkspace(workspaceId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    },
+  });
+};
+
+export const useReinitWorkspaceContext = (workspaceId: string) => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (config: WorkspaceContextConfig) =>
+      workspaceService.reinitWorkspaceContext(workspaceId, config),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workspace-contexts', workspaceId] });
     },

@@ -53,7 +53,6 @@ class GlanceContextTool(InnerTool):
                 # Parse glances into structured format
                 structured_glances = []
                 for glance_line in glances:
-                    # Format: "path → glance text"
                     if " → " in glance_line:
                         path, glance_text = glance_line.split(" → ", 1)
                         structured_glances.append({

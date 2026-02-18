@@ -22,12 +22,21 @@ export interface WorkspaceListResponse {
   page_size: number;
 }
 
+export interface WorkspaceContextConfig {
+  tool_ids: string[];
+  knowledge_ids: string[];
+  skill_ids: string[];
+  source_workspace_ids: string[];
+  memory_ids: string[];
+}
+
 export interface WorkspaceCreate {
   name: string;
   description?: string;
   app_id?: string;
   visibility?: 'private' | 'team' | 'public';
   settings?: Record<string, unknown>;
+  context_config?: WorkspaceContextConfig;
 }
 
 export interface WorkspaceContext {
@@ -39,6 +48,8 @@ export interface WorkspaceContext {
   s3_key?: string | null;
   size_bytes?: number | null;
   meta?: Record<string, unknown> | null;
+  glance?: string | null;
+  tags?: string[] | null;
   created_at: string;
   updated_at?: string | null;
 }

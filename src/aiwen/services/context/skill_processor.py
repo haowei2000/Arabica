@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.models.context.context import Context
+from aiwen.models.context.skill import Skill
 from aiwen.services.context.skill_crud import SkillCRUD
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ class SkillProcessor:
         skill_id: str | UUID,
         embedding_model: str | None = None,
         auto_commit: bool = True,
-    ) -> Context | None:
+    ) -> Skill | None:
         """
         Process a skill: parse Markdown, generate summary, and create embeddings.
 
@@ -165,16 +165,8 @@ class SkillProcessor:
                 meta["frontmatter"] = parsed_data["metadata"]
             skill.meta = meta
 
-            # TODO: Generate embeddings using embedding service
-            # For now, we'll leave embeddings as None
-            # This should be implemented when the embedding service is available
-            #
-            # if embedding_model:
-            #     from aiwen.services.embedding import EmbeddingService
-            #     embedding_service = EmbeddingService()
-            #     embeddings = await embedding_service.generate(skill.content, model=embedding_model)
-            #     skill.embedding_768 = embeddings.get('768')
-            #     # etc...
+            # Embeddings are generated in the Context table via sync_skill_to_contexts
+            # Celery task — not on the Skill row itself.
 
             if auto_commit:
                 await self.db.commit()

@@ -163,6 +163,8 @@ class Worker:
         executor_code: str,
         app_config: dict | None = None,
         user_tool_classes: list | None = None,
+        workspace_id: str = "",
+        run_id: str = "",
     ) -> ExecutorProtocol:
         """Build an Executor with startup-initialized tool services.
 
@@ -199,6 +201,10 @@ class Worker:
         # App-level config overrides template defaults
         if app_config:
             config.update(app_config)
+
+        # ── Inject run context ────────────────────────────────────
+        config["workspace_id"] = workspace_id
+        config["run_id"] = run_id
 
         # ── Inject tool services ─────────────────────────────────
         if user_tool_classes:
@@ -269,15 +275,15 @@ class Worker:
                 )
 
             # 4. Prepare Executor with user tools injected
+            workspace_id = str(run.workspace_id)
             executor = self.prepare_executor(
                 event.executor_code,
                 app_config,
                 user_tool_classes or None,
+                workspace_id=workspace_id,
+                run_id=str(run_id),
             )
             self.runtime.attach(run_id, executor)
-
-            # 5. 根据 Run 状态执行相应操作
-            workspace_id = str(run.workspace_id)
             await self._handle_run_by_status(
                 executor, run, input_data, run_id, workspace_id
             )
@@ -448,6 +454,13 @@ class Worker:
                 run_id, output_data={"output": "Run completed"}, auto_commit=True
             )
             logger.info(f"Run {run_id} completed")
+
+            # Async: persist conversation history to WorkspaceContext via Celery
+            try:
+                from aiwen.celery_worker.tasks.run_history_tasks import save_run_history
+                save_run_history.delay(str(run_id), workspace_id)
+            except Exception as e:
+                logger.warning(f"Failed to enqueue save_run_history for run {run_id}: {e}")
 
         except executor.WaitingForTool as e:
             await self.state_machine.pause_for_tool(

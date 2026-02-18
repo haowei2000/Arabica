@@ -159,6 +159,8 @@ async def create_tool(
 
     try:
         tool = await crud.create_tool(current_user.id, tool_data)
+        from aiwen.celery_worker.tasks.context_sync_tasks import sync_tool_to_contexts
+        sync_tool_to_contexts.delay(str(tool.id), str(current_user.id))
         return _build_user_tool_response(tool)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

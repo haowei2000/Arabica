@@ -116,8 +116,11 @@ class EmbeddingService:
         Returns:
             list[float]: Embedding vector.
         """
-        embedding = self._client.embed_query(text)
-        return embedding
+        text = self._sanitize_text(text)
+        # Tongyi/DashScope rejects tokenized input from LangChain — use direct path.
+        if self.provider == "tongyi":
+            return self._embed_tongyi_direct([text])[0]
+        return self._client.embed_query(text)
 
     @staticmethod
     def _sanitize_text(text: str) -> str:

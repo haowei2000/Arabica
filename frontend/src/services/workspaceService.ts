@@ -1,6 +1,6 @@
 import { apiClient } from '@/services/api';
 import { API_ENDPOINTS } from '@/constants/api';
-import type { WorkspaceCreate, WorkspaceListResponse, Workspace, WorkspaceContextList } from '@/types/workspace';
+import type { WorkspaceCreate, WorkspaceListResponse, Workspace, WorkspaceContextList, WorkspaceContextConfig } from '@/types/workspace';
 
 export const workspaceService = {
   async listWorkspaces(params?: { page?: number; page_size?: number; status?: string; app_id?: string }) {
@@ -29,5 +29,13 @@ export const workspaceService = {
 
   async deleteWorkspace(workspaceId: string) {
     return apiClient.delete(API_ENDPOINTS.WORKSPACES.DELETE(workspaceId));
+  },
+
+  async updateWorkspace(workspaceId: string, data: { name?: string; description?: string }) {
+    return apiClient.patch<Workspace>(API_ENDPOINTS.WORKSPACES.UPDATE(workspaceId), data);
+  },
+
+  async reinitWorkspaceContext(workspaceId: string, config: WorkspaceContextConfig) {
+    return apiClient.post(API_ENDPOINTS.WORKSPACES.CONTEXT_REINIT(workspaceId), config);
   },
 };

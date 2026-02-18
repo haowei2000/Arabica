@@ -21,6 +21,8 @@ class WorkspaceContextResponse(ResponseMixin, BaseModel):
     s3_key: str | None = None
     size_bytes: int | None = None
     meta: dict[str, Any] | None = None
+    glance: str | None = None
+    tags: list[str] | None = None
 
 
 class WorkspaceContextListResponse(BaseModel):

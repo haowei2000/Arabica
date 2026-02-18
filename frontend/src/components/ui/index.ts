@@ -1,4 +1,11 @@
-export { Card, CardHeader, CardBody, CardFooter } from './Card';
-export { Button } from './Button';
-export { Input } from './Input';
-export { Badge } from './Badge';
+export { Button, buttonVariants } from './button';
+export { Input } from './input';
+export { Textarea } from './textarea';
+export { Label } from './label';
+export { Badge, badgeVariants } from './badge';
+export { Checkbox } from './checkbox';
+export { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogOverlay, DialogPortal, DialogTitle, DialogTrigger } from './dialog';
+export { ScrollArea, ScrollBar } from './scroll-area';
+export { Separator } from './separator';
+export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
+export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator, SelectTrigger, SelectValue } from './select';

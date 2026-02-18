@@ -16,6 +16,22 @@ from aiwen.core.enums import (
 from aiwen.utils.schema_mixins import ResponseMixin
 
 
+class WorkspaceContextConfig(BaseModel):
+    """Resources to pre-populate into workspace context on creation."""
+
+    tool_ids: list[UUID] = Field(default_factory=list, description="工具 ID 列表")
+    knowledge_ids: list[UUID] = Field(default_factory=list, description="知识库 ID 列表")
+    skill_ids: list[UUID] = Field(default_factory=list, description="技能 ID 列表")
+    source_workspace_ids: list[UUID] = Field(
+        default_factory=list,
+        description="从这些工作区复制历史对话记录到新工作区 context",
+    )
+    memory_ids: list[UUID] = Field(
+        default_factory=list,
+        description="加载到 workspace context 的用户记忆 ID 列表",
+    )
+
+
 class WorkspaceCreate(BaseModel):
     """Schema for creating a new workspace."""
 
@@ -26,6 +42,9 @@ class WorkspaceCreate(BaseModel):
         WorkspaceVisibility.PRIVATE, description="可见性"
     )
     settings: dict[str, Any] | None = Field(None, description="工作空间配置")
+    context_config: WorkspaceContextConfig | None = Field(
+        None, description="创建时预置到 workspace context 的资源"
+    )
 
 
 class WorkspaceUpdate(BaseModel):

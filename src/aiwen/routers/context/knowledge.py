@@ -37,7 +37,10 @@ async def create_knowledge(
     Returns:
         Created knowledge base
     """
-    return await crud.create(data, user_id=current_user.id)
+    knowledge = await crud.create(data, user_id=current_user.id)
+    from aiwen.celery_worker.tasks.context_sync_tasks import sync_knowledge_to_contexts
+    sync_knowledge_to_contexts.delay(str(knowledge.id), str(current_user.id))
+    return knowledge
 
 
 @router.get("/{knowledge_id}/get", response_model=KnowledgeResponse)

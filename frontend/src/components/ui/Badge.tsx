@@ -1,48 +1,30 @@
-import { ReactNode } from 'react';
-import { clsx } from 'clsx';
+import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "@/lib/utils";
 
-interface BadgeProps {
-  children: ReactNode;
-  variant?: 'success' | 'warning' | 'error' | 'info' | 'neutral';
-  size?: 'sm' | 'md';
-  dot?: boolean;
-  className?: string;
+const badgeVariants = cva(
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  {
+    variants: {
+      variant: {
+        default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
+        outline: "text-foreground",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+);
+
+export interface BadgeProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof badgeVariants> {}
+
+function Badge({ className, variant, ...props }: BadgeProps) {
+  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
 }
 
-export function Badge({ children, variant = 'neutral', size = 'md', dot = false, className }: BadgeProps) {
-  const variants = {
-    success:
-      'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-500/20',
-    warning: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/20',
-    error: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 ring-1 ring-red-500/20',
-    info: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 ring-1 ring-blue-500/20',
-    neutral: 'bg-secondary-100 dark:bg-secondary-900/30 text-secondary-700 dark:text-secondary-400 ring-1 ring-secondary-500/20',
-  };
-
-  const sizes = {
-    sm: 'px-2 py-0.5 text-xs',
-    md: 'px-2.5 py-1 text-sm',
-  };
-
-  const dotColors = {
-    success: 'bg-emerald-500',
-    warning: 'bg-amber-500',
-    error: 'bg-red-500',
-    info: 'bg-blue-500',
-    neutral: 'bg-secondary-500',
-  };
-
-  return (
-    <span
-      className={clsx(
-        'inline-flex items-center gap-1.5 font-medium rounded-full',
-        variants[variant],
-        sizes[size],
-        className
-      )}
-    >
-      {dot && <span className={clsx('w-1.5 h-1.5 rounded-full', dotColors[variant])} />}
-      {children}
-    </span>
-  );
-}
+export { Badge, badgeVariants };

@@ -58,6 +58,44 @@ from aiwen.schemas.llm.chat_llm import ChatLLM
 
 logger = logging.getLogger(__name__)
 
+SYSTEM_PROMPT_TEMPLATE = """\
+You are a helpful AI assistant.
+
+## Session
+
+- workspace_id: {workspace_id}
+- run_id: {run_id}
+
+## MANDATORY First Step
+
+**Before responding to any user request**, you MUST call the following tool first:
+
+```
+list_context(workspace_id="{workspace_id}", path="./skills", mode="descendants", level="glance")
+```
+
+This retrieves all skills defined for this workspace. Read them carefully — they contain \
+domain knowledge, instructions, and behavioural rules you must follow throughout the conversation. \
+Do not skip this step even if the user's request seems straightforward.
+
+## Context Tool
+
+You have access to a workspace context store via the following operations.
+All operations belong to the same **Context Tool** and require `workspace_id`.
+
+```
+glance_context | read_context | list_context | tree_context
+glob_context   | search_context
+create_context | update_context | delete_context
+```
+
+Each context entry has three disclosure levels: `glance` → `overview` → `detail`.
+Start with `glance`, go deeper only when needed.
+
+> To see everything available in this workspace, call:
+> `list_context(workspace_id="{workspace_id}", path="./", mode="descendants", level="glance")`
+"""
+
 # Characters needed to rule out a ``<think>`` opening tag.
 _THINK_TAG = "<think>"
 _THINK_TAG_LEN = len(_THINK_TAG)  # 7
@@ -117,7 +155,9 @@ class DefaultExecutor(Executor):
         tool_classes = self._collect_tool_classes()
         self.tools_info: Any = self.strategy.format_tools(tool_classes)
 
-        self.system_prompt = "You are a helpful Assistant "
+        self.workspace_id: str = config.get("workspace_id", "")
+        run_id: str = config.get("run_id", "")
+        self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(workspace_id=self.workspace_id, run_id=run_id)
 
     # ── setup ────────────────────────────────────────────────────
 
@@ -592,6 +632,53 @@ class DefaultExecutor(Executor):
 
         return {"answer": "Maximum tool-calling iterations reached."}
 
+    # ── history loading ──────────────────────────────────────────
+
+    async def _load_history(self) -> list[ChatMessage]:
+        """Load previous conversation turns from WorkspaceContext.
+
+        Reads ``{workspace_id}/history/*`` entries ordered by creation time
+        and reconstructs them as ChatMessage pairs (user + assistant).
+
+        Returns an empty list if workspace_id is unset or no history exists.
+        """
+        if not self.workspace_id:
+            return []
+
+        try:
+            from aiwen.extensions.database import get_session
+            from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+
+            from aiwen.frameworks.context import DetailLevel
+
+            async with get_session("aiwen") as db:
+                service = await get_cached_workspace_context(db, self.workspace_id)
+                results = await service.descendants(f"{self.workspace_id}/history")
+                history_entries = results.disclose_all(DetailLevel.DETAIL)
+
+            messages: list[ChatMessage] = []
+            for entry in history_entries:
+                detail = entry.get("detail")
+                if not detail:
+                    continue
+                try:
+                    turns = json.loads(detail) if isinstance(detail, str) else detail
+                    if not isinstance(turns, list):
+                        continue
+                    for turn in turns:
+                        role = turn.get("role")
+                        content = turn.get("content", "")
+                        if role in ("user", "assistant") and content:
+                            messages.append(ChatMessage(role=role, content=content))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+            return messages
+
+        except Exception as e:
+            logger.warning(f"Failed to load history for workspace {self.workspace_id}: {e}")
+            return []
+
     # ── stream ───────────────────────────────────────────────────
 
     async def stream(
@@ -619,6 +706,7 @@ class DefaultExecutor(Executor):
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=self.system_prompt),
         ]
+        messages.extend(await self._load_history())
         messages.extend(self._prepare_messages(user_message))
 
         async for event in self._agentic_loop(messages):

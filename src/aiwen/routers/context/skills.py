@@ -21,32 +21,23 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 
 
 def _build_skill_response(skill) -> SkillResponse:
-    """Build SkillResponse from Context model."""
-    # Extract name from meta
-    name = skill.meta.get("name", "Unnamed Skill") if skill.meta else "Unnamed Skill"
-    description = skill.meta.get("description") if skill.meta else None
+    """Build SkillResponse from Skill model.
 
-    # Check if embeddings exist
-    has_embedding = any([
-        skill.embedding_384,
-        skill.embedding_768,
-        skill.embedding_1024,
-        skill.embedding_1536,
-    ])
-
+    Embeddings are stored in the Context table (via sync_skill_to_contexts),
+    not on the Skill row itself, so has_embedding is always False here.
+    """
     return SkillResponse(
         id=skill.id,
         user_id=skill.user_id,
         source_id=skill.source_id,
-        workspace_id=getattr(skill, 'workspace_id', None),
         path=skill.path,
-        name=name,
-        description=description,
+        name=skill.name,
+        description=skill.description,
         content=skill.content,
         glance=skill.glance,
         summary=skill.summary,
         tags=skill.tags,
-        has_embedding=has_embedding,
+        has_embedding=False,
         created_at=skill.created_at,
         updated_at=skill.updated_at,
     )
@@ -103,6 +94,8 @@ async def create_skill(
             detail=f"Failed to process skill: {e!s}",
         )
 
+    from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+    sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)
 
 
@@ -197,6 +190,8 @@ async def update_skill(
         await db.commit()
         await db.refresh(skill)
 
+    from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+    sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)
 
 
@@ -373,4 +368,6 @@ async def process_skill(
             detail=f"Failed to process skill: {e!s}",
         )
 
+    from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+    sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)

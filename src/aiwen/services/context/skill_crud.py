@@ -1,39 +1,24 @@
-"""CRUD operations for Skill (Context with type=SKILL)."""
+"""CRUD operations for Skill (dedicated skill table)."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.core.enums import ContextType
-from aiwen.models.context.context import Context
+from aiwen.models.context.skill import Skill
 from aiwen.schemas.context.skill import SkillCreate, SkillUpdate
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_uuid_to_str(val: str | UUID) -> str:
-    """Normalize a UUID value to string."""
-    if isinstance(val, UUID):
-        return str(val)
-    if isinstance(val, str):
-        try:
-            UUID(val)
-            return val
-        except ValueError as e:
-            raise ValueError(f"Invalid UUID string: {val}") from e
-    raise TypeError(f"Expected UUID or str, got {type(val)}")
-
-
 class SkillCRUD:
-    """CRUD operations for Skills (Context entries with type=SKILL)."""
+    """CRUD operations for the Skill table."""
 
     def __init__(self, db_session: AsyncSession):
-        """Initialize SkillCRUD with database session."""
         self.db = db_session
 
     async def create(
@@ -41,39 +26,21 @@ class SkillCRUD:
         data: SkillCreate,
         user_id: str | UUID,
         auto_commit: bool = True,
-    ) -> Context:
-        """
-        Create a new skill.
-
-        Args:
-            data: Skill creation data
-            user_id: ID of the user creating the skill
-            auto_commit: If True, immediately commit the transaction
-
-        Returns:
-            Created Context instance (with type=SKILL)
-        """
-        # Generate glance from name
+    ) -> Skill:
         glance = f"Skill: {data.name}"
         if data.description:
             glance = f"{data.name} — {data.description[:50]}"
 
-        # Build metadata
-        meta = data.meta or {}
-        meta["name"] = data.name
-        if data.description:
-            meta["description"] = data.description
-
-        skill = Context(
-            user_id=normalize_uuid_to_str(user_id),
-            source_id=data.source_id,
-            path=data.path,
-            context_type=ContextType.SKILL.value,
-            glance=glance,
-            summary=data.description,
+        skill = Skill(
+            user_id=UUID(str(user_id)),
+            name=data.name,
+            description=data.description,
             content=data.content,
+            glance=glance,
             tags=data.tags or [],
-            meta=meta,
+            path=data.path,
+            source_id=data.source_id,
+            meta=data.meta or {},
         )
 
         self.db.add(skill)
@@ -88,50 +55,22 @@ class SkillCRUD:
         logger.info(f"Created skill: {data.name} (id={skill.id}, user={user_id})")
         return skill
 
-    async def get_by_id(self, skill_id: str | UUID, user_id: str | UUID | None = None) -> Context | None:
-        """
-        Get skill by ID.
-
-        Args:
-            skill_id: Skill ID
-            user_id: Optional user ID for ownership check
-
-        Returns:
-            Context instance or None
-        """
-        normalized_id = normalize_uuid_to_str(skill_id)
-        query = select(Context).where(
-            Context.id == normalized_id,
-            Context.context_type == ContextType.SKILL.value,
-        )
-
+    async def get_by_id(
+        self, skill_id: str | UUID, user_id: str | UUID | None = None
+    ) -> Skill | None:
+        query = select(Skill).where(Skill.id == UUID(str(skill_id)))
         if user_id:
-            query = query.where(Context.user_id == normalize_uuid_to_str(user_id))
-
+            query = query.where(Skill.user_id == UUID(str(user_id)))
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_name(self, name: str, user_id: str | UUID) -> Context | None:
-        """
-        Get skill by name for a specific user.
-
-        Args:
-            name: Skill name
-            user_id: User ID
-
-        Returns:
-            Context instance or None
-        """
-        normalized_user_id = normalize_uuid_to_str(user_id)
-
-        # Name is stored in meta.name
-        query = select(Context).where(
-            Context.user_id == normalized_user_id,
-            Context.context_type == ContextType.SKILL.value,
-            Context.meta["name"].astext == name,
+    async def get_by_name(self, name: str, user_id: str | UUID) -> Skill | None:
+        result = await self.db.execute(
+            select(Skill).where(
+                Skill.user_id == UUID(str(user_id)),
+                Skill.name == name,
+            )
         )
-
-        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
     async def update(
@@ -140,50 +79,32 @@ class SkillCRUD:
         data: SkillUpdate,
         user_id: str | UUID,
         auto_commit: bool = True,
-    ) -> Context | None:
-        """
-        Update an existing skill.
-
-        Args:
-            skill_id: Skill ID to update
-            data: Update data
-            user_id: User ID for ownership check
-            auto_commit: If True, immediately commit the transaction
-
-        Returns:
-            Updated Context instance or None if not found
-        """
+    ) -> Skill | None:
         skill = await self.get_by_id(skill_id, user_id)
         if not skill:
             return None
 
         update_data = data.model_dump(exclude_unset=True)
 
-        # Update meta with name/description if provided
-        if "name" in update_data or "description" in update_data:
-            meta = skill.meta or {}
-            if "name" in update_data:
-                meta["name"] = update_data["name"]
-                # Update glance
-                skill.glance = f"Skill: {update_data['name']}"
-                if update_data.get("description") or skill.summary:
-                    desc = update_data.get("description") or skill.summary
-                    skill.glance = f"{update_data['name']} — {desc[:50]}"
-            if "description" in update_data:
-                meta["description"] = update_data["description"]
-                skill.summary = update_data["description"]
-            skill.meta = meta
+        if "name" in update_data:
+            skill.name = update_data["name"]
+            skill.glance = f"Skill: {update_data['name']}"
+            desc = update_data.get("description") or skill.description
+            if desc:
+                skill.glance = f"{update_data['name']} — {desc[:50]}"
+
+        if "description" in update_data:
+            skill.description = update_data["description"]
+            skill.summary = update_data["description"]
 
         if "content" in update_data:
             skill.content = update_data["content"]
-            # Clear embeddings when content changes
-            skill.embedding_384 = None
-            skill.embedding_768 = None
-            skill.embedding_1024 = None
-            skill.embedding_1536 = None
 
         if "tags" in update_data:
             skill.tags = update_data["tags"]
+
+        if "meta" in update_data and update_data["meta"]:
+            skill.meta = {**(skill.meta or {}), **update_data["meta"]}
 
         skill.updated_at = datetime.now(UTC)
 
@@ -203,17 +124,6 @@ class SkillCRUD:
         user_id: str | UUID,
         auto_commit: bool = True,
     ) -> bool:
-        """
-        Delete a skill (hard delete).
-
-        Args:
-            skill_id: Skill ID to delete
-            user_id: User ID for ownership check
-            auto_commit: If True, immediately commit the transaction
-
-        Returns:
-            True if deleted, False if not found
-        """
         skill = await self.get_by_id(skill_id, user_id)
         if not skill:
             return False
@@ -234,41 +144,18 @@ class SkillCRUD:
         tags: list[str] | None = None,
         skip: int = 0,
         limit: int = 20,
-    ) -> tuple[list[Context], int]:
-        """
-        List skills for a user with pagination.
+    ) -> tuple[list[Skill], int]:
+        query = select(Skill).where(Skill.user_id == UUID(str(user_id)))
 
-        Args:
-            user_id: User ID
-            tags: Optional tag filter
-            skip: Number of items to skip
-            limit: Maximum number of items to return
-
-        Returns:
-            Tuple of (list of skills, total count)
-        """
-        normalized_user_id = normalize_uuid_to_str(user_id)
-
-        query = select(Context).where(
-            Context.user_id == normalized_user_id,
-            Context.context_type == ContextType.SKILL.value,
-        )
-
-        # Filter by tags if provided
         if tags:
             for tag in tags:
-                query = query.where(Context.tags.contains([tag]))
+                query = query.where(Skill.tags.contains([tag]))
 
-        # Get total count
         count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
+        total = (await self.db.execute(count_query)).scalar_one()
 
-        # Apply pagination and ordering
-        query = query.order_by(Context.updated_at.desc()).offset(skip).limit(limit)
-
-        result = await self.db.execute(query)
-        items = list(result.scalars().all())
+        query = query.order_by(Skill.updated_at.desc()).offset(skip).limit(limit)
+        items = list((await self.db.execute(query)).scalars().all())
 
         return items, total
 
@@ -278,40 +165,20 @@ class SkillCRUD:
         query_text: str,
         skip: int = 0,
         limit: int = 20,
-    ) -> tuple[list[Context], int]:
-        """
-        Search skills by name or content.
-
-        Args:
-            user_id: User ID
-            query_text: Search query
-            skip: Number of items to skip
-            limit: Maximum number of items to return
-
-        Returns:
-            Tuple of (list of matching skills, total count)
-        """
-        normalized_user_id = normalize_uuid_to_str(user_id)
-
-        query = select(Context).where(
-            Context.user_id == normalized_user_id,
-            Context.context_type == ContextType.SKILL.value,
+    ) -> tuple[list[Skill], int]:
+        query = select(Skill).where(
+            Skill.user_id == UUID(str(user_id)),
             or_(
-                Context.meta["name"].astext.ilike(f"%{query_text}%"),
-                Context.content.ilike(f"%{query_text}%"),
-                Context.summary.ilike(f"%{query_text}%"),
+                Skill.name.ilike(f"%{query_text}%"),
+                Skill.content.ilike(f"%{query_text}%"),
+                Skill.description.ilike(f"%{query_text}%"),
             ),
         )
 
-        # Get total count
         count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar_one()
+        total = (await self.db.execute(count_query)).scalar_one()
 
-        # Apply pagination and ordering
-        query = query.order_by(Context.updated_at.desc()).offset(skip).limit(limit)
-
-        result = await self.db.execute(query)
-        items = list(result.scalars().all())
+        query = query.order_by(Skill.updated_at.desc()).offset(skip).limit(limit)
+        items = list((await self.db.execute(query)).scalars().all())
 
         return items, total

@@ -49,35 +49,9 @@ async def create_context(
         Created context
     """
     context = await crud.create(data, user_id=current_user.id)
-    return context
-
-
-@router.get("/{context_id}", response_model=ContextResponse)
-async def get_context(
-    context_id: str,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    crud: Annotated[ContextCRUD, Depends(get_context_crud)],
-):
-    """
-    Get context by ID.
-
-    Args:
-        context_id: The context ID
-        current_user: Current authenticated user
-        crud: ContextSchema CRUD service
-
-    Returns:
-        ContextSchema details
-
-    Raises:
-        HTTPException: If context not found or not authorized
-    """
-    context = await crud.get_by_id(context_id, user_id=current_user.id)
-    if not context:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"ContextSchema {context_id} not found",
-        )
+    if data.context_type == "user_memory":
+        from aiwen.celery_worker.tasks.context_sync_tasks import sync_memory_to_contexts
+        sync_memory_to_contexts.delay(str(context.id), str(current_user.id))
     return context
 
 
@@ -248,6 +222,35 @@ async def grep_contexts(
         limit=page_size,
     )
     return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
+
+
+@router.get("/{context_id}", response_model=ContextResponse)
+async def get_context(
+    context_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+):
+    """
+    Get context by ID.
+
+    Args:
+        context_id: The context ID
+        current_user: Current authenticated user
+        crud: ContextSchema CRUD service
+
+    Returns:
+        ContextSchema details
+
+    Raises:
+        HTTPException: If context not found or not authorized
+    """
+    context = await crud.get_by_id(context_id, user_id=current_user.id)
+    if not context:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"ContextSchema {context_id} not found",
+        )
+    return context
 
 
 @router.post("/grep", response_model=ContextListResponse)
@@ -502,7 +505,7 @@ async def list_chunks_by_document(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: Annotated[ContextCRUD, Depends(get_context_crud)],
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    page_size: int = Query(20, ge=1, le=1000, description="Number of items per page"),
 ):
     """
     List all chunks for a specific document.

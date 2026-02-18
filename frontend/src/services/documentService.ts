@@ -10,11 +10,35 @@ export interface DocumentPreviewResponse {
     content_length: number;
 }
 
+export type StructureType = 'document' | 'table' | 'code';
+
+const CODE_EXTENSIONS = new Set([
+  'py', 'js', 'ts', 'tsx', 'jsx', 'java', 'go', 'rb', 'cpp', 'c', 'h', 'cs',
+  'php', 'swift', 'rs', 'kt', 'scala', 'sh', 'bash', 'lua', 'r', 'sql',
+  'vue', 'svelte', 'dart', 'ex', 'exs', 'ml', 'hs', 'clj', 'elm',
+]);
+
+/**
+ * Infer the best structuring strategy from the file name and MIME type.
+ * Returns 'table' for CSV, 'code' for source-code files, 'document' otherwise.
+ */
+export function detectStructureType(file: File): StructureType {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const mime = file.type.toLowerCase();
+
+  if (mime === 'text/csv' || ext === 'csv') return 'table';
+
+  if (CODE_EXTENSIONS.has(ext)) return 'code';
+  if (mime.startsWith('text/x-') || mime.startsWith('application/x-')
+      || mime === 'application/javascript' || mime === 'text/javascript') return 'code';
+
+  return 'document';
+}
+
 export interface UploadDocumentParams {
     file: File;
     knowledge_id: string;
-    chunk_size?: number;
-    chunk_overlap?: number;
+    structure_type?: StructureType;
     embedding_provider?: string;
     embedding_model?: string;
     embedding_dimension?: number;
@@ -29,11 +53,8 @@ export const documentService = {
         formData.append('file', params.file);
         formData.append('knowledge_id', params.knowledge_id);
 
-        if (params.chunk_size) {
-            formData.append('chunk_size', params.chunk_size.toString());
-        }
-        if (params.chunk_overlap !== undefined) {
-            formData.append('chunk_overlap', params.chunk_overlap.toString());
+        if (params.structure_type) {
+            formData.append('structure_type', params.structure_type);
         }
         if (params.embedding_provider) {
             formData.append('embedding_provider', params.embedding_provider);

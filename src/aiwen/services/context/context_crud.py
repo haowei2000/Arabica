@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import Integer, and_, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.core.enums import ContextType
 from aiwen.models.context.context import Context
 from aiwen.schemas.context.context_schema import ContextCreate, ContextUpdate
 

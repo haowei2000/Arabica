@@ -15,10 +15,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.workspace_context import WorkspaceContext
-from aiwen.plugins.executors.conflict.prompts import (
-    ContextPathSuffix,
-    build_context_path,
-)
+
+
+class ContextPathSuffix:
+    TOOLS = "tools"
+    SKILLS = "skills"
+    KNOWLEDGE = "knowledge"
+    WORKSPACE_HISTORY = "history"
+
+
+def build_context_path(_workspace_id: str, suffix: str) -> str:
+    return suffix
 
 
 class WorkspaceContextService:

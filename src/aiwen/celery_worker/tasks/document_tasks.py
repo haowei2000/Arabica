@@ -1,6 +1,12 @@
 """Celery tasks for document processing.
 
-This module contains three chained tasks:
+This module contains two pipeline variants:
+
+Structured pipeline (recommended):
+1. download_and_structure: Download, parse, split into semantic sections, write to Context table
+2. embed_context_sections: Generate embeddings for the created Context rows
+
+Legacy chunked pipeline:
 1. download_chunk_and_store: Download file from MinIO, parse, chunk, and store to Chunk table
 2. embed_chunks: Generate embeddings for stored chunks
 3. link_chunks_to_context: Link chunks to ContextSchema table for knowledge base
@@ -87,6 +93,397 @@ def run_async(coro):
 
     return _worker_loop.run_until_complete(coro)
 
+
+# ─── Structured pipeline ──────────────────────────────────────────────────────
+
+
+@celery_app.task(
+    bind=True,
+    name="knowledge.download_and_structure",
+    max_retries=3,
+    default_retry_delay=60,
+    queue="knowledge",
+)
+def download_and_structure(
+    self,
+    document_id: str,
+    user_id: str,
+    knowledge_id: str,
+    bucket: str,
+    object_key: str,
+    mime_type: str,
+    structure_type: str = "document",
+) -> dict:
+    """Download, parse and structure a document directly into the Context table.
+
+    structure_type:
+      "document" – heading/paragraph split (default)
+      "table"    – table-row extraction
+      "code"     – function/class / fenced-code-block extraction
+
+    Skips the Chunk table entirely.  Each section becomes one Context row.
+    Returns a dict with document_id, user_id, knowledge_id, context_ids.
+    """
+
+    async def _execute():
+        from sqlalchemy import update
+
+        from aiwen.core.enums import ContextType
+        from aiwen.extensions.database import get_session
+        from aiwen.extensions.storage.global_storage import get_global_s3_storage
+        from aiwen.models.context.context import Context
+        from aiwen.models.context.knowledge.documents import Document
+        from aiwen.services.context.knowledge.parser import DocumentParser
+
+        # 1. Mark downloading
+        async with get_session("aiwen") as session:
+            await session.execute(
+                update(Document)
+                .where(Document.id == UUID(document_id))
+                .values(status="downloading")
+            )
+            await session.commit()
+
+        # 2. Download from storage (sync)
+        storage = get_global_s3_storage()
+        file_data = storage.get_bytes(object_key)
+
+        # 3. Parse to text (sync)
+        async with get_session("aiwen") as session:
+            await session.execute(
+                update(Document)
+                .where(Document.id == UUID(document_id))
+                .values(status="parsing")
+            )
+            await session.commit()
+
+        parser = DocumentParser()
+        text_content = parser.parse(file_data, mime_type)
+
+        if not text_content.strip():
+            logger.warning(f"download_and_structure: document {document_id} has no text")
+            async with get_session("aiwen") as session:
+                await session.execute(
+                    update(Document)
+                    .where(Document.id == UUID(document_id))
+                    .values(status="completed", chunk_count=0)
+                )
+                await session.commit()
+            return {
+                "document_id": document_id,
+                "user_id": user_id,
+                "knowledge_id": knowledge_id,
+                "context_ids": [],
+                "total_sections": 0,
+                "status": "empty",
+            }
+
+        # 4. Structure into sections (sync)
+        async with get_session("aiwen") as session:
+            await session.execute(
+                update(Document)
+                .where(Document.id == UUID(document_id))
+                .values(status="structuring")
+            )
+            await session.commit()
+
+        from aiwen.plugins.structurers import dispatch_structure
+        sections = dispatch_structure(text_content, mime_type, structure_type)
+
+        # 5. Write each section as a Context row
+        _RESERVED = {"title", "level", "content", "position"}
+        context_ids: list[str] = []
+        async with get_session("aiwen") as session:
+            doc_result = await session.get(Document, UUID(document_id))
+            doc_name = doc_result.original_name if doc_result else document_id
+
+            context_records = []
+            for sec in sections:
+                glance = sec["title"] or sec["content"][:80]
+                # Merge any extra keys from the structurer (structure_type, code_language, etc.)
+                extra = {k: v for k, v in sec.items() if k not in _RESERVED}
+                record = Context(
+                    user_id=UUID(user_id),
+                    source_id=UUID(knowledge_id),
+                    context_type=ContextType.CHUNK.value,
+                    glance=glance,
+                    content=sec["content"],
+                    tags=["knowledge", "document", structure_type],
+                    meta={
+                        "document_id": document_id,
+                        "document_name": doc_name,
+                        "knowledge_id": knowledge_id,
+                        "section_title": sec["title"],
+                        "section_level": sec["level"],
+                        "position": sec["position"],
+                        **extra,
+                    },
+                )
+                context_records.append(record)
+
+            session.add_all(context_records)
+            await session.flush()
+
+            for rec in context_records:
+                context_ids.append(str(rec.id))
+
+            await session.execute(
+                update(Document)
+                .where(Document.id == UUID(document_id))
+                .values(
+                    content=text_content[:1000],
+                    status="structured",
+                    chunk_count=len(context_records),
+                )
+            )
+            await session.commit()
+
+        logger.info(
+            f"download_and_structure: document {document_id} → {len(context_ids)} sections"
+        )
+        return {
+            "document_id": document_id,
+            "user_id": user_id,
+            "knowledge_id": knowledge_id,
+            "context_ids": context_ids,
+            "total_sections": len(context_ids),
+            "status": "structured",
+        }
+
+    try:
+        return run_async(_execute())
+    except Exception as e:
+        logger.error(f"download_and_structure failed for {document_id}: {e}")
+
+        async def _mark_failed():
+            from sqlalchemy import update
+
+            from aiwen.extensions.database import get_session
+            from aiwen.models.context.knowledge.documents import Document
+
+            if self.request.retries >= self.max_retries - 1:
+                async with get_session("aiwen") as session:
+                    await session.execute(
+                        update(Document)
+                        .where(Document.id == UUID(document_id))
+                        .values(status="failed", error_message=str(e))
+                    )
+                    await session.commit()
+
+        run_async(_mark_failed())
+        self.retry(exc=e)
+
+
+@celery_app.task(
+    bind=True,
+    name="knowledge.embed_context_sections",
+    max_retries=3,
+    default_retry_delay=60,
+    queue="knowledge",
+)
+def embed_context_sections(
+    self,
+    prev_result: dict,
+    embedding_provider: str = "tongyi",
+    embedding_model: str = "text-embedding-v3",
+    embedding_dimension: int = 1024,
+) -> dict:
+    """Generate embeddings for Context rows created by download_and_structure.
+
+    Receives the output of download_and_structure via Celery chain.
+    """
+    document_id = prev_result.get("document_id")
+    user_id = prev_result.get("user_id")
+    knowledge_id = prev_result.get("knowledge_id")
+    context_ids: list[str] = prev_result.get("context_ids", [])
+
+    logger.info(
+        f"embed_context_sections: document_id={document_id}, sections={len(context_ids)}, "
+        f"provider={embedding_provider}, model={embedding_model}"
+    )
+
+    if not context_ids:
+        return {
+            "document_id": document_id,
+            "knowledge_id": knowledge_id,
+            "status": "completed",
+            "embedded_count": 0,
+        }
+
+    async def _execute():
+        from sqlalchemy import select, update
+
+        from aiwen.extensions.database import get_session
+        from aiwen.models.context.context import Context
+        from aiwen.models.context.knowledge.documents import Document
+        from aiwen.services.context.knowledge.embeddings import EmbeddingService
+
+        async with get_session("aiwen") as session:
+            await session.execute(
+                update(Document)
+                .where(Document.id == UUID(document_id))
+                .values(status="embedding")
+            )
+            await session.commit()
+
+        embedding_service = EmbeddingService(
+            provider=embedding_provider,
+            model=embedding_model,
+            dimension=embedding_dimension,
+        )
+        embedding_field = embedding_service.get_embedding_field_name()
+
+        # Fetch Context rows
+        async with get_session("aiwen") as session:
+            stmt = select(Context).where(
+                Context.id.in_([UUID(cid) for cid in context_ids])
+            )
+            result = await session.execute(stmt)
+            records = list(result.scalars().all())
+
+        valid_ids: list[str] = []
+        texts: list[str] = []
+        for rec in records:
+            if rec.content and rec.content.strip():
+                valid_ids.append(str(rec.id))
+                texts.append(rec.content)
+
+        if not texts:
+            async with get_session("aiwen") as session:
+                await session.execute(
+                    update(Document)
+                    .where(Document.id == UUID(document_id))
+                    .values(status="completed")
+                )
+                await session.commit()
+            return {
+                "document_id": document_id,
+                "knowledge_id": knowledge_id,
+                "status": "completed",
+                "embedded_count": 0,
+            }
+
+        # Generate embeddings (sync)
+        logger.info(f"embed_context_sections: generating embeddings for {len(texts)} sections")
+        embeddings = embedding_service.embed_texts_batch(texts, batch_size=10)
+
+        if len(embeddings) != len(valid_ids):
+            raise ValueError(
+                f"Embedding count mismatch: got {len(embeddings)}, expected {len(valid_ids)}"
+            )
+
+        id_to_embedding = dict(zip(valid_ids, embeddings))
+
+        # Update Context rows with embeddings
+        async with get_session("aiwen") as session:
+            stmt = select(Context).where(
+                Context.id.in_([UUID(cid) for cid in valid_ids])
+            )
+            result = await session.execute(stmt)
+            for rec in result.scalars().all():
+                emb = id_to_embedding.get(str(rec.id))
+                if emb is not None:
+                    setattr(rec, embedding_field, emb)
+                    rec.meta = {
+                        **(rec.meta or {}),
+                        "embedding_model": embedding_model,
+                        "embedding_provider": embedding_provider,
+                    }
+            await session.commit()
+
+        async with get_session("aiwen") as session:
+            await session.execute(
+                update(Document)
+                .where(Document.id == UUID(document_id))
+                .values(status="completed")
+            )
+            await session.commit()
+
+        logger.info(
+            f"embed_context_sections: embedded {len(valid_ids)} sections for document {document_id}"
+        )
+        return {
+            "document_id": document_id,
+            "knowledge_id": knowledge_id,
+            "status": "completed",
+            "embedded_count": len(valid_ids),
+            "embedding_model": embedding_model,
+            "embedding_provider": embedding_provider,
+            "embedding_dimension": embedding_dimension,
+        }
+
+    try:
+        return run_async(_execute())
+    except Exception as e:
+        logger.error(f"embed_context_sections failed for {document_id}: {e}")
+
+        async def _mark_failed():
+            from sqlalchemy import update
+
+            from aiwen.extensions.database import get_session
+            from aiwen.models.context.knowledge.documents import Document
+
+            if self.request.retries >= self.max_retries - 1:
+                async with get_session("aiwen") as session:
+                    await session.execute(
+                        update(Document)
+                        .where(Document.id == UUID(document_id))
+                        .values(status="failed", error_message=str(e))
+                    )
+                    await session.commit()
+
+        run_async(_mark_failed())
+        self.retry(exc=e)
+
+
+def process_document_structured(
+    document_id: str,
+    knowledge_id: str,
+    bucket: str,
+    object_key: str,
+    mime_type: str,
+    user_id: str,
+    embedding_provider: str = "tongyi",
+    embedding_model: str = "text-embedding-v3",
+    embedding_dimension: int = 1024,
+    structure_type: str = "document",
+) -> str:
+    """Submit the 2-task structured document processing pipeline.
+
+    structure_type: "document" | "table" | "code"
+
+    Task chain:
+    1. download_and_structure  – parse + split into sections → Context rows
+    2. embed_context_sections  – generate embeddings for those Context rows
+
+    Returns the Celery task-chain ID.
+    """
+    task_chain = chain(
+        download_and_structure.s(
+            document_id=document_id,
+            user_id=user_id,
+            knowledge_id=knowledge_id,
+            bucket=bucket,
+            object_key=object_key,
+            mime_type=mime_type,
+            structure_type=structure_type,
+        ),
+        embed_context_sections.s(
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_dimension=embedding_dimension,
+        ),
+    )
+    try:
+        result = task_chain.apply_async(queue="knowledge")
+        logger.info(f"process_document_structured: submitted chain {result.id} for document {document_id}")
+        return result.id
+    except Exception as e:
+        logger.error(f"process_document_structured: failed to submit chain: {e}")
+        raise
+
+
+# ─── Legacy chunked pipeline ──────────────────────────────────────────────────
 
 @celery_app.task(
     bind=True,
