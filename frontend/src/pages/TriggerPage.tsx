@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import { GitBranch, Loader2, Trash2, Pencil, X } from 'lucide-react';
+import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
+import { AccordionItem } from '@/components/AccordionItem';
+import { formatRelativeTime } from '@/utils/formatDate';
 import { useTriggers, useCreateTrigger, useUpdateTrigger, useDeleteTrigger } from '@/hooks/useTriggers';
 import { useToolList } from '@/hooks/useTools';
 import { useKnowledgeList } from '@/hooks/useKnowledge';
@@ -9,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -243,6 +245,13 @@ const INITIAL_FORM: TriggerCreate = {
 export default function TriggerPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
+
+  const handleModeToggle = (m: ViewMode) => {
+    setViewMode(m);
+    if (m === 'list') setOpenItemId(null);
+  };
   const [editingTrigger, setEditingTrigger] = useState<Trigger | null>(null);
   const [formData, setFormData] = useState<TriggerCreate>(INITIAL_FORM);
   const [contextParam, setContextParam] = useState('');
@@ -387,93 +396,65 @@ export default function TriggerPage() {
 
   return (
     <div>
-      <div className="mb-6 flex justify-between items-center">
-        <div>
-          <h2 className="text-xl font-bold">Triggers</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage reusable trigger templates that auto-inject context on events
-          </p>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold">Triggers</h2>
+          <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
+            {triggers.length}
+          </span>
         </div>
-        <Button onClick={openCreateModal}>+ Create Trigger</Button>
+        <div className="flex items-center gap-2">
+          <ViewToggle mode={viewMode} onToggle={handleModeToggle} />
+          <Button size="sm" onClick={openCreateModal}>+ New</Button>
+        </div>
       </div>
 
-      {/* Card grid */}
-      {triggers.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {triggers.length > 0 ? viewMode === 'card' ? (
+        /* ── Card grid ── */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {triggers.map((trigger) => {
             const paramVal = extractParam(trigger.action_params, trigger.action_type);
             const cat = getCategoryFromParam(paramVal) as ContextCategory | null;
             return (
-              <div
-                key={trigger.id}
-                className="bg-card rounded-lg border border-border p-6 hover:shadow-lg transition-shadow"
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-semibold truncate">{trigger.name}</h3>
-                    {trigger.description && (
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{trigger.description}</p>
-                    )}
-                  </div>
-                  <Badge variant={trigger.enabled ? 'default' : 'secondary'} className="ml-2 shrink-0">
-                    {trigger.enabled ? 'Enabled' : 'Disabled'}
-                  </Badge>
+              <div key={trigger.id} className="rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors">
+                <div className="flex items-start gap-2.5">
+                  <span className={cn('size-2 rounded-full mt-1 shrink-0', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
+                  <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">{trigger.name}</p>
                 </div>
-
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  <Badge variant="outline" className="text-xs">{trigger.event_type}</Badge>
-                  <Badge variant="secondary" className="text-xs">{trigger.condition_type}</Badge>
-                  <Badge
-                    className="text-xs bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800"
-                    variant="outline"
-                  >
-                    {trigger.action_type}
-                  </Badge>
-                </div>
-
-                {paramVal && (
-                  <div className="flex items-center gap-1.5 mb-3">
-                    <span className="text-xs text-muted-foreground">{ACTION_PARAM_KEY[trigger.action_type]}:</span>
-                    <span
-                      className={cn(
-                        'text-xs font-mono px-2 py-0.5 rounded-md border font-medium',
-                        cat ? CATEGORY_COLOR[cat] : 'bg-muted text-foreground border-border'
-                      )}
-                    >
-                      {paramVal}
+                {trigger.description && <p className="text-xs text-muted-foreground line-clamp-2">{trigger.description}</p>}
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
+                    {trigger.event_type}
+                  </span>
+                  {trigger.condition_type !== 'always' && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50">
+                      {trigger.condition_type}
                     </span>
-                  </div>
-                )}
-
-                {trigger.condition_value && (
-                  <p className="text-xs text-muted-foreground mb-3 font-mono truncate">
-                    when: {trigger.condition_value}
-                  </p>
-                )}
-
-                <div className="text-xs text-muted-foreground mb-4">
-                  <p>Priority: {trigger.priority}</p>
-                  <p>Created: {new Date(trigger.created_at).toLocaleDateString()}</p>
+                  )}
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50">
+                    {trigger.action_type}
+                  </span>
                 </div>
-
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 gap-1.5"
-                    onClick={() => openEditModal(trigger)}
-                  >
-                    <Pencil className="size-3.5" />
-                    Edit
+                {paramVal && (
+                  <span className={cn(
+                    'text-[10px] px-2 py-0.5 rounded-full border font-mono self-start max-w-full truncate',
+                    cat ? CATEGORY_COLOR[cat] : 'bg-muted text-muted-foreground border-border/50'
+                  )}>
+                    {paramVal}
+                  </span>
+                )}
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
+                  <span className="tabular-nums">p:{trigger.priority}</span>
+                  <span className={cn(trigger.enabled ? 'text-green-600' : '')}>{trigger.enabled ? 'enabled' : 'disabled'}</span>
+                  <span className="ml-auto">{formatRelativeTime(trigger.created_at)}</span>
+                </div>
+                <div className="flex gap-2 pt-2 border-t border-border/40">
+                  <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(trigger)}>
+                    <Pencil className="size-3.5" />Edit
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
-                    disabled={deleteMutation.isPending}
-                    onClick={() => handleDelete(trigger)}
-                  >
-                    <Trash2 className="size-4" />
+                  <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                    disabled={deleteMutation.isPending} onClick={() => handleDelete(trigger)}>
+                    <Trash2 className="size-3.5" />
                   </Button>
                 </div>
               </div>
@@ -481,13 +462,122 @@ export default function TriggerPage() {
           })}
         </div>
       ) : (
-        <div className="text-center py-12">
-          <GitBranch className="mx-auto size-12 text-muted-foreground/40 mb-4" />
-          <h3 className="text-lg font-medium mb-1">No Triggers Yet</h3>
-          <p className="text-muted-foreground mb-4">
-            Create trigger templates to auto-inject context when events occur
-          </p>
-          <Button onClick={openCreateModal}>Create Trigger</Button>
+        /* ── List / Drawer ── */
+        <div className="rounded-xl border border-border bg-card overflow-visible divide-y divide-border/50">
+          {triggers.map((trigger) => {
+            const paramVal = extractParam(trigger.action_params, trigger.action_type);
+            const cat = getCategoryFromParam(paramVal) as ContextCategory | null;
+
+            const statusDot = (
+              <span className={cn('size-2 rounded-full shrink-0', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
+            );
+            const chips = (
+              <>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0 font-mono">
+                  {trigger.event_type}
+                </span>
+                {trigger.condition_type !== 'always' && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50 shrink-0">
+                    {trigger.condition_type}
+                  </span>
+                )}
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50 shrink-0">
+                  {trigger.action_type}
+                </span>
+                {paramVal && (
+                  <span className={cn(
+                    'text-[10px] px-2 py-0.5 rounded-full border font-mono shrink-0 max-w-32 truncate',
+                    cat ? CATEGORY_COLOR[cat] : 'bg-muted text-muted-foreground border-border/50'
+                  )}>
+                    {paramVal}
+                  </span>
+                )}
+              </>
+            );
+
+            const rowHeader = (
+              <>{statusDot}<span className="text-sm font-medium flex-1 min-w-0 truncate">{trigger.name}</span>{chips}</>
+            );
+
+            if (viewMode === 'list') {
+              return (
+                <div key={trigger.id} className="group relative flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors">
+                  {statusDot}
+                  <span className="text-sm font-medium flex-1 min-w-0 truncate">{trigger.name}</span>
+                  {chips}
+                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted transition-colors" onClick={() => openEditModal(trigger)}>
+                      <Pencil className="size-3.5 text-muted-foreground" />
+                    </button>
+                    <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-destructive/10 transition-colors" disabled={deleteMutation.isPending} onClick={() => handleDelete(trigger)}>
+                      <Trash2 className="size-3.5 text-destructive/70" />
+                    </button>
+                  </div>
+                  {/* Hover tooltip */}
+                  <div className="absolute right-2 top-full mt-1 z-50 w-72 rounded-xl border border-border bg-card shadow-lg shadow-black/10 p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
+                    <div className="space-y-2 text-xs">
+                      {trigger.description && <p className="text-foreground/80 leading-relaxed">{trigger.description}</p>}
+                      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1.5 border-t border-border/50 text-muted-foreground">
+                        <span>Event</span><span className="text-foreground font-mono">{trigger.event_type}</span>
+                        <span>Condition</span><span className="text-foreground">{trigger.condition_type}</span>
+                        {trigger.condition_value && (<><span>Match</span><span className="text-foreground font-mono truncate">{trigger.condition_value}</span></>)}
+                        <span>Action</span><span className="text-foreground">{trigger.action_type}</span>
+                        {paramVal && (<><span>{ACTION_PARAM_KEY[trigger.action_type] ?? 'param'}</span><span className="text-foreground font-mono truncate">{paramVal}</span></>)}
+                        <span>Priority</span><span className="text-foreground tabular-nums">{trigger.priority}</span>
+                        <span>Status</span><span className="text-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
+                        <span>Created</span><span className="text-foreground">{new Date(trigger.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Drawer mode
+            return (
+              <AccordionItem
+                key={trigger.id}
+                isOpen={openItemId === trigger.id}
+                onToggle={() => setOpenItemId(openItemId === trigger.id ? null : trigger.id)}
+                header={rowHeader}
+                detail={
+                  <div className="space-y-3">
+                    {trigger.description && <p className="text-xs text-foreground/80 leading-relaxed">{trigger.description}</p>}
+                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+                      <span className="text-muted-foreground">Event</span><span className="font-mono">{trigger.event_type}</span>
+                      <span className="text-muted-foreground">Condition</span><span>{trigger.condition_type}</span>
+                      {trigger.condition_value && (<><span className="text-muted-foreground">Match</span><span className="font-mono">{trigger.condition_value}</span></>)}
+                      {trigger.condition_field && trigger.condition_field !== 'message' && (<><span className="text-muted-foreground">Field</span><span className="font-mono">{trigger.condition_field}</span></>)}
+                      <span className="text-muted-foreground">Action</span><span>{trigger.action_type}</span>
+                      {paramVal && (<><span className="text-muted-foreground">{ACTION_PARAM_KEY[trigger.action_type] ?? 'param'}</span><span className="font-mono">{paramVal}</span></>)}
+                      <span className="text-muted-foreground">Priority</span><span className="tabular-nums">{trigger.priority}</span>
+                      <span className="text-muted-foreground">Status</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className={cn('size-1.5 rounded-full', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
+                        {trigger.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                      <span className="text-muted-foreground">Created</span><span>{formatRelativeTime(trigger.created_at)}</span>
+                    </div>
+                    <div className="flex gap-2 pt-2 border-t border-border/40">
+                      <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(trigger)}>
+                        <Pencil className="size-3.5" />Edit
+                      </Button>
+                      <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                        disabled={deleteMutation.isPending} onClick={() => handleDelete(trigger)}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                }
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <div className="text-center py-16 border border-dashed border-border rounded-xl">
+          <GitBranch className="mx-auto size-8 text-muted-foreground/30 mb-3" />
+          <p className="text-sm text-muted-foreground mb-3">No triggers yet</p>
+          <Button size="sm" onClick={openCreateModal}>Create Trigger</Button>
         </div>
       )}
 

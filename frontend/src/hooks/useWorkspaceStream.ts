@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
+import { useRunEventsStore } from '@/stores/useRunEventsStore';
 
 const MAX_RETRIES = 10;
 
@@ -78,6 +79,24 @@ export function useWorkspaceStream(workspaceId: string | null) {
 
           // Skip keepalives and heartbeats
           if (internal === 'keepalive' || type === 'agent.heartbeat') return;
+
+          // Store latest event per run for real-time preview in the runs panel
+          const runId = payload.run_id as string | undefined;
+          if (runId && type) {
+            useRunEventsStore.getState().setLatestEvent(runId, {
+              id: (payload.id as string) || '',
+              workspace_id: workspaceId,
+              run_id: runId,
+              app_id: (payload.app_id as string) || '',
+              user_id: (payload.user_id as string) || '',
+              sequence: (payload.sequence as number) || 0,
+              event_type: type,
+              payload: (payload.payload as Record<string, unknown>) || {},
+              created_at: (payload.created_at as string) || new Date().toISOString(),
+            });
+            // Invalidate per-run events query so expanded run lists refresh
+            queryClient.invalidateQueries({ queryKey: ['run-events', runId] });
+          }
 
           switch (type) {
             // Run list changes

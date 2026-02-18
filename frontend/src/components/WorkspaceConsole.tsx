@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
-import { useRuns } from '@/hooks/useRuns';
+import { useRuns, useRunEvents } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
@@ -13,9 +13,242 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import type { Run } from '@/types/run';
+import type { Event } from '@/types/event';
 
 import WorkspaceContextTree from '@/components/WorkspaceContextTree';
 import { useWorkspaceStream } from '@/hooks/useWorkspaceStream';
+import { useRunEventsStore } from '@/stores/useRunEventsStore';
+
+// ─── Run timeline helpers ──────────────────────────────────────────────────
+
+// Keyframe for the running-event sweep animation (injected once)
+const SHIMMER_STYLE = `
+@keyframes run-sweep {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+.event-running {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(250,204,21,0.12) 40%,
+    rgba(250,204,21,0.20) 50%,
+    rgba(250,204,21,0.12) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: run-sweep 2s linear infinite;
+}
+`;
+
+const EVENT_LABEL: Record<string, string> = {
+  'user.message':     'User',
+  'agent.thinking':   'Thinking',
+  'agent.text':       'Response',
+  'tool.called':      'Tool call',
+  'tool.result':      'Tool result',
+  'run.state.change': 'State',
+};
+
+function eventSummary(event: Event): string {
+  const p = event.payload;
+  switch (event.event_type) {
+    case 'user.message':     return String(p.message || p.content || '').slice(0, 80);
+    case 'agent.thinking':   return String(p.content || p.thinking || '').slice(0, 80);
+    case 'agent.text':       return String(p.content || p.text || '').slice(0, 80);
+    case 'tool.called':      return String(p.tool_name || p.name || '');
+    case 'tool.result':      return String(p.tool_name || p.name || '');
+    case 'run.state.change': return String(p.to_state || p.status || '');
+    default:                 return '';
+  }
+}
+
+function isFailedEvent(event: Event): boolean {
+  if (event.event_type.includes('fail') || event.event_type.includes('error')) return true;
+  if (event.event_type === 'run.state.change') {
+    return event.payload.to_state === 'failed' || event.payload.status === 'failed';
+  }
+  return false;
+}
+
+function RunEventRow({
+  event,
+  isLast,
+  isActiveEdge,   // last event of a currently-running run → sweep animation
+}: {
+  event: Event;
+  isLast: boolean;
+  isActiveEdge: boolean;
+}) {
+  const label   = EVENT_LABEL[event.event_type] ?? event.event_type;
+  const summary = eventSummary(event);
+  const failed  = isFailedEvent(event);
+
+  return (
+    <div className={cn(
+      'relative flex items-start gap-2.5 py-1.5 px-3',
+      !isLast  && 'border-b border-border/40',
+      failed   && 'bg-red-500/8',
+      isActiveEdge && 'event-running',
+    )}>
+      <span className={cn(
+        'size-1 rounded-full shrink-0 mt-2',
+        failed       ? 'bg-red-500/70' :
+        isActiveEdge ? 'bg-yellow-400/80 animate-pulse' :
+                       'bg-muted-foreground/30'
+      )} />
+      <div className="flex-1 min-w-0">
+        <span className={cn(
+          'text-xs font-medium',
+          failed       ? 'text-red-400' :
+          isActiveEdge ? 'text-yellow-400/90' :
+                         'text-foreground/70'
+        )}>
+          {label}
+        </span>
+        {summary && (
+          <p className={cn(
+            'text-[11px] truncate mt-0.5 leading-snug',
+            failed ? 'text-red-400/70' : 'text-muted-foreground'
+          )}>
+            {summary}
+          </p>
+        )}
+      </div>
+      <span className="text-[10px] text-muted-foreground/60 shrink-0 mt-0.5">
+        {formatRelativeTime(event.created_at)}
+      </span>
+    </div>
+  );
+}
+
+function RunTimelineItem({
+  run,
+  isActive,
+  latestSseEvent,
+  onSelect,
+}: {
+  run: Run;
+  isActive: boolean;
+  latestSseEvent: Event | undefined;
+  onSelect: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { data: eventsData, isLoading: eventsLoading } = useRunEvents(run.id, expanded);
+  const events = eventsData?.items ?? [];
+
+  const title = run.input_data?.message
+    ? String(run.input_data.message).slice(0, 60)
+    : 'New run';
+
+  const isRunning = run.status === 'running' || run.status === 'pending';
+  const isFailed  = run.status === 'failed';
+
+  // Latest event preview: SSE live data takes priority, else last loaded event
+  const previewEvent: Event | undefined =
+    latestSseEvent ??
+    (events.length > 0 ? events[events.length - 1] : undefined);
+  const validPreview = previewEvent && previewEvent.event_type !== 'agent.heartbeat';
+
+  return (
+    <div className={cn(
+      'rounded-lg border transition-colors',
+      isActive   ? 'border-border bg-muted/40' :
+      isFailed   ? 'border-border bg-card' :
+                   'border-border bg-card',
+    )}>
+      {/* Header */}
+      <div
+        className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer select-none hover:bg-muted/30 rounded-lg transition-colors"
+        onClick={() => { onSelect(run.id); setExpanded((v) => !v); }}
+      >
+        {/* Status indicator */}
+        <span className={cn(
+          'size-1.5 rounded-full shrink-0 mt-[5px]',
+          isRunning            ? 'bg-yellow-400 animate-pulse' :
+          isFailed             ? 'bg-red-500' :
+          run.status === 'finished' ? 'bg-green-500' :
+                                 'bg-muted-foreground/30'
+        )} />
+
+        <div className="flex-1 min-w-0">
+          {/* Title + status */}
+          <div className="flex items-baseline gap-2">
+            <p className={cn(
+              'text-sm truncate flex-1 leading-snug',
+              isActive ? 'text-foreground font-medium' : 'text-foreground/80'
+            )}>
+              {title}
+            </p>
+            <span className={cn(
+              'text-[10px] shrink-0 font-mono',
+              isRunning                 ? 'text-yellow-400' :
+              isFailed                  ? 'text-red-500' :
+              run.status === 'finished' ? 'text-green-500' :
+                                          'text-muted-foreground/60'
+            )}>
+              {run.status}
+            </span>
+          </div>
+
+          {/* Latest event preview */}
+          {validPreview && (
+            <p className="text-[11px] text-muted-foreground truncate mt-0.5 leading-snug">
+              <span className="text-foreground/50 font-medium">
+                {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
+              </span>
+              {eventSummary(previewEvent) && (
+                <span className="ml-1">{eventSummary(previewEvent)}</span>
+              )}
+            </p>
+          )}
+
+          <p className="text-[10px] text-muted-foreground/50 mt-0.5">
+            {formatRelativeTime(run.created_at)}
+          </p>
+        </div>
+
+        <span className="text-muted-foreground/40 mt-0.5 shrink-0">
+          {expanded
+            ? <ChevronDown className="size-3" />
+            : <ChevronRight className="size-3" />}
+        </span>
+      </div>
+
+      {/* Expanded events */}
+      {expanded && (
+        <div className="border-t border-border/50 mx-1 mb-1 rounded-b-md overflow-hidden bg-muted/20">
+          {eventsLoading ? (
+            <div className="flex justify-center py-3">
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground/50" />
+            </div>
+          ) : events.length === 0 ? (
+            <p className="text-xs text-muted-foreground/50 px-3 py-2">No events yet.</p>
+          ) : (() => {
+            const visible = events.filter((e) => e.event_type !== 'agent.heartbeat');
+            return (
+              <ScrollArea viewportClassName="max-h-56">
+                <div>
+                  {visible.map((e, i) => (
+                    <RunEventRow
+                      key={e.id}
+                      event={e}
+                      isLast={i === visible.length - 1}
+                      isActiveEdge={isRunning && i === visible.length - 1}
+                    />
+                  ))}
+                </div>
+              </ScrollArea>
+            );
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
 
 export default function WorkspaceConsole() {
   const [input, setInput] = useState('');
@@ -40,6 +273,8 @@ export default function WorkspaceConsole() {
     page: 1,
     page_size: 50,
   });
+
+  const latestRunEvents = useRunEventsStore((s) => s.latestEvents);
 
   const { sendMessage, stopStreaming, approveToolCall } = useStreamingChat(
     currentWorkspaceId || '',
@@ -70,6 +305,8 @@ export default function WorkspaceConsole() {
   }
 
   return (
+    <>
+    <style>{SHIMMER_STYLE}</style>
     <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-background">
       {/* ── Chat Column ── */}
       <div className="flex flex-col flex-1 lg:border-r border-border">
@@ -214,7 +451,7 @@ export default function WorkspaceConsole() {
           </div>
 
           <TabsContent value="runs" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold">Run History</h2>
               <Button size="sm" onClick={startNewRun}>New Run</Button>
             </div>
@@ -225,25 +462,13 @@ export default function WorkspaceConsole() {
             ) : runsData?.items && runsData.items.length > 0 ? (
               <div className="space-y-2">
                 {runsData.items.map((run) => (
-                  <button
+                  <RunTimelineItem
                     key={run.id}
-                    type="button"
-                    onClick={() => loadRun(run.id)}
-                    className={cn(
-                      'w-full text-left px-3 py-3 rounded-lg transition-colors border',
-                      currentRunId === run.id
-                        ? 'bg-primary/10 border-primary/30'
-                        : 'border-transparent hover:bg-muted'
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className={cn('text-sm font-medium truncate', currentRunId === run.id ? 'text-primary' : 'text-foreground')}>
-                        {run.input_data?.message || 'New run'}
-                      </p>
-                      <span className="text-xs text-muted-foreground shrink-0">{run.status}</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">{formatRelativeTime(run.created_at)}</div>
-                  </button>
+                    run={run}
+                    isActive={currentRunId === run.id}
+                    latestSseEvent={latestRunEvents[run.id]}
+                    onSelect={loadRun}
+                  />
                 ))}
               </div>
             ) : (
@@ -270,5 +495,6 @@ export default function WorkspaceConsole() {
         </Tabs>
       </aside>
     </div>
+    </>
   );
 }
