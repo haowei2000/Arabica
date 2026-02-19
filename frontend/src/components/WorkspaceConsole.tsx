@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns, useRunEvents } from '@/hooks/useRuns';
@@ -87,36 +87,34 @@ function RunEventRow({
 
   return (
     <div className={cn(
-      'relative flex items-start gap-2.5 py-1.5 px-3',
-      !isLast  && 'border-b border-border/40',
+      'relative flex items-center gap-2 py-1 px-3',
+      !isLast  && 'border-b border-border/30',
       failed   && 'bg-red-500/8',
       isActiveEdge && 'event-running',
     )}>
       <span className={cn(
-        'size-1 rounded-full shrink-0 mt-2',
+        'size-1 rounded-full shrink-0',
         failed       ? 'bg-red-500/70' :
         isActiveEdge ? 'bg-yellow-400/80 animate-pulse' :
-                       'bg-muted-foreground/30'
+                       'bg-muted-foreground/25'
       )} />
-      <div className="flex-1 min-w-0">
+      <span className={cn(
+        'text-[10px] font-medium shrink-0',
+        failed       ? 'text-red-400' :
+        isActiveEdge ? 'text-yellow-400/90' :
+                       'text-foreground/60'
+      )}>
+        {label}
+      </span>
+      {summary && (
         <span className={cn(
-          'text-xs font-medium',
-          failed       ? 'text-red-400' :
-          isActiveEdge ? 'text-yellow-400/90' :
-                         'text-foreground/70'
+          'text-[10px] truncate flex-1 min-w-0',
+          failed ? 'text-red-400/60' : 'text-muted-foreground/60'
         )}>
-          {label}
+          {summary}
         </span>
-        {summary && (
-          <p className={cn(
-            'text-[11px] truncate mt-0.5 leading-snug',
-            failed ? 'text-red-400/70' : 'text-muted-foreground'
-          )}>
-            {summary}
-          </p>
-        )}
-      </div>
-      <span className="text-[10px] text-muted-foreground/60 shrink-0 mt-0.5">
+      )}
+      <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums ml-auto">
         {formatRelativeTime(event.created_at)}
       </span>
     </div>
@@ -138,97 +136,105 @@ function RunTimelineItem({
   const { data: eventsData, isLoading: eventsLoading } = useRunEvents(run.id, expanded);
   const events = eventsData?.items ?? [];
 
-  const title = run.input_data?.message
-    ? String(run.input_data.message).slice(0, 60)
-    : 'New run';
+  const fullMessage = run.input_data?.message ? String(run.input_data.message) : '';
+  const title = fullMessage ? fullMessage.slice(0, 55) : 'New run';
 
   const isRunning = run.status === 'running' || run.status === 'pending';
   const isFailed  = run.status === 'failed';
 
-  // Latest event preview: SSE live data takes priority, else last loaded event
   const previewEvent: Event | undefined =
     latestSseEvent ??
     (events.length > 0 ? events[events.length - 1] : undefined);
   const validPreview = previewEvent && previewEvent.event_type !== 'agent.heartbeat';
 
+  const dotCls = isRunning
+    ? 'bg-yellow-400 animate-pulse'
+    : isFailed
+      ? 'bg-red-500'
+      : run.status === 'finished'
+        ? 'bg-green-500'
+        : 'bg-muted-foreground/30';
+
   return (
     <div className={cn(
-      'rounded-lg border transition-colors',
-      isActive   ? 'border-border bg-muted/40' :
-      isFailed   ? 'border-border bg-card' :
-                   'border-border bg-card',
+      'group relative rounded-lg border transition-colors',
+      isActive ? 'border-primary/20 bg-primary/5' : 'border-border bg-card hover:bg-muted/30',
     )}>
-      {/* Header */}
+      {/* ── Compact single-line header ── */}
       <div
-        className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer select-none hover:bg-muted/30 rounded-lg transition-colors"
+        className="flex items-center gap-2 px-2.5 py-2 cursor-pointer select-none transition-colors"
         onClick={() => { onSelect(run.id); setExpanded((v) => !v); }}
       >
-        {/* Status indicator */}
+        <span className={cn('size-1.5 rounded-full shrink-0', dotCls)} />
+
         <span className={cn(
-          'size-1.5 rounded-full shrink-0 mt-[5px]',
-          isRunning            ? 'bg-yellow-400 animate-pulse' :
-          isFailed             ? 'bg-red-500' :
-          run.status === 'finished' ? 'bg-green-500' :
-                                 'bg-muted-foreground/30'
-        )} />
+          'text-xs truncate flex-1 min-w-0',
+          isActive ? 'text-foreground font-medium' : 'text-foreground/75'
+        )}>
+          {title}
+        </span>
 
-        <div className="flex-1 min-w-0">
-          {/* Title + status */}
-          <div className="flex items-baseline gap-2">
-            <p className={cn(
-              'text-sm truncate flex-1 leading-snug',
-              isActive ? 'text-foreground font-medium' : 'text-foreground/80'
-            )}>
-              {title}
-            </p>
-            <span className={cn(
-              'text-[10px] shrink-0 font-mono',
-              isRunning                 ? 'text-yellow-400' :
-              isFailed                  ? 'text-red-500' :
-              run.status === 'finished' ? 'text-green-500' :
-                                          'text-muted-foreground/60'
-            )}>
-              {run.status}
-            </span>
-          </div>
+        {/* Live preview — only when running */}
+        {isRunning && validPreview && (
+          <span className="text-[10px] text-yellow-400/80 truncate max-w-20 shrink-0 hidden sm:block">
+            {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
+          </span>
+        )}
 
-          {/* Latest event preview */}
-          {validPreview && (
-            <p className="text-[11px] text-muted-foreground truncate mt-0.5 leading-snug">
-              <span className="text-foreground/50 font-medium">
-                {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
-              </span>
-              {eventSummary(previewEvent) && (
-                <span className="ml-1">{eventSummary(previewEvent)}</span>
-              )}
-            </p>
-          )}
+        <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums">
+          {formatRelativeTime(run.created_at)}
+        </span>
 
-          <p className="text-[10px] text-muted-foreground/50 mt-0.5">
-            {formatRelativeTime(run.created_at)}
-          </p>
-        </div>
-
-        <span className="text-muted-foreground/40 mt-0.5 shrink-0">
-          {expanded
-            ? <ChevronDown className="size-3" />
-            : <ChevronRight className="size-3" />}
+        <span className={cn(
+          'shrink-0 transition-opacity text-muted-foreground/40',
+          expanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'
+        )}>
+          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
       </div>
 
-      {/* Expanded events */}
+      {/* ── Hover tooltip ── */}
+      <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-xl border border-border bg-card shadow-lg shadow-black/10 p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
+        <div className="space-y-2 text-xs">
+          {fullMessage ? (
+            <p className="text-foreground/85 leading-relaxed line-clamp-4 break-words">{fullMessage}</p>
+          ) : (
+            <p className="text-muted-foreground italic">No message</p>
+          )}
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1.5 border-t border-border/50 text-muted-foreground">
+            <span>Status</span>
+            <span className={cn(
+              isRunning ? 'text-yellow-400' : isFailed ? 'text-red-500' : run.status === 'finished' ? 'text-green-500' : 'text-foreground'
+            )}>{run.status}</span>
+            <span>Events</span><span className="text-foreground tabular-nums">{run.last_event_sequence ?? 0}</span>
+            <span>Created</span><span className="text-foreground">{formatRelativeTime(run.created_at)}</span>
+          </div>
+          {validPreview && (
+            <div className="pt-1.5 border-t border-border/30">
+              <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide">
+                {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
+              </span>
+              {eventSummary(previewEvent) && (
+                <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">{eventSummary(previewEvent)}</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Expanded event list ── */}
       {expanded && (
-        <div className="border-t border-border/50 mx-1 mb-1 rounded-b-md overflow-hidden bg-muted/20">
+        <div className="border-t border-border/40 mx-1 mb-1 rounded-b-md overflow-hidden bg-muted/20">
           {eventsLoading ? (
             <div className="flex justify-center py-3">
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground/50" />
+              <Loader2 className="size-3 animate-spin text-muted-foreground/40" />
             </div>
-          ) : events.length === 0 ? (
-            <p className="text-xs text-muted-foreground/50 px-3 py-2">No events yet.</p>
           ) : (() => {
             const visible = events.filter((e) => e.event_type !== 'agent.heartbeat');
-            return (
-              <ScrollArea viewportClassName="max-h-56">
+            return visible.length === 0 ? (
+              <p className="text-[10px] text-muted-foreground/40 px-3 py-2">No events</p>
+            ) : (
+              <ScrollArea viewportClassName="max-h-48">
                 <div>
                   {visible.map((e, i) => (
                     <RunEventRow
@@ -299,7 +305,7 @@ export default function WorkspaceConsole() {
   if (!currentWorkspaceId) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
-        Select a workspace to start chatting.
+        <p className="text-xs text-muted-foreground/50">Select a workspace to start</p>
       </div>
     );
   }
@@ -318,8 +324,7 @@ export default function WorkspaceConsole() {
               </div>
             ) : messages.length === 0 && !streamingMessage ? (
               <div className="text-center text-muted-foreground mt-20">
-                <p className="text-lg">Start a new conversation</p>
-                <p className="text-sm mt-2">Send a message to create a new run</p>
+                <p className="text-xs text-muted-foreground/40">Send a message to start</p>
               </div>
             ) : null}
 
@@ -443,24 +448,29 @@ export default function WorkspaceConsole() {
         <Tabs defaultValue="runs" className="flex flex-col flex-1 min-h-0">
           <div className="px-4 pt-3 border-b border-border shrink-0">
             <TabsList className="w-full">
-              <TabsTrigger value="runs" className="flex-1">Runs</TabsTrigger>
-              <TabsTrigger value="context" className="flex-1">Context</TabsTrigger>
-              <TabsTrigger value="tasks" className="flex-1">Tasks</TabsTrigger>
-              <TabsTrigger value="results" className="flex-1">Results</TabsTrigger>
+              <TabsTrigger value="runs" className="flex-1 gap-1" title="Runs"><Play className="size-3" /><span className="hidden sm:inline text-xs">Runs</span></TabsTrigger>
+              <TabsTrigger value="context" className="flex-1 gap-1" title="Context"><Layers className="size-3" /><span className="hidden sm:inline text-xs">Context</span></TabsTrigger>
+              <TabsTrigger value="tasks" className="flex-1 gap-1" title="Tasks"><ListTodo className="size-3" /><span className="hidden sm:inline text-xs">Tasks</span></TabsTrigger>
+              <TabsTrigger value="results" className="flex-1 gap-1" title="Results"><FileOutput className="size-3" /><span className="hidden sm:inline text-xs">Results</span></TabsTrigger>
             </TabsList>
           </div>
 
           <TabsContent value="runs" className="flex-1 overflow-y-auto p-4 mt-0">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold">Run History</h2>
-              <Button size="sm" onClick={startNewRun}>New Run</Button>
+              <div className="flex items-center gap-1.5">
+                <Play className="size-3.5 text-muted-foreground" />
+                <h2 className="text-xs font-semibold">Runs</h2>
+              </div>
+              <Button size="icon" className="size-6" onClick={startNewRun} title="New Run">
+                <Plus className="size-3" />
+              </Button>
             </div>
             {runsLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="size-6 animate-spin text-muted-foreground" />
               </div>
             ) : runsData?.items && runsData.items.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {runsData.items.map((run) => (
                   <RunTimelineItem
                     key={run.id}
@@ -473,8 +483,8 @@ export default function WorkspaceConsole() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <p className="text-sm">No runs yet</p>
-                <p className="text-xs mt-1">Start a run to see history</p>
+                <Play className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+                <p className="text-[10px] text-muted-foreground/50">No runs yet</p>
               </div>
             )}
           </TabsContent>
@@ -484,13 +494,25 @@ export default function WorkspaceConsole() {
           </TabsContent>
 
           <TabsContent value="tasks" className="flex-1 overflow-y-auto p-4 mt-0">
-            <p className="text-sm font-semibold mb-2">Tasks</p>
-            <p className="text-sm text-muted-foreground">No tasks yet. Start a run to see task progress here.</p>
+            <div className="flex items-center gap-1.5 mb-3">
+              <ListTodo className="size-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold">Tasks</span>
+            </div>
+            <div className="text-center py-10">
+              <ListTodo className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+              <p className="text-[10px] text-muted-foreground/50">No tasks yet</p>
+            </div>
           </TabsContent>
 
           <TabsContent value="results" className="flex-1 overflow-y-auto p-4 mt-0">
-            <p className="text-sm font-semibold mb-2">Results</p>
-            <p className="text-sm text-muted-foreground">Run outputs will appear here as they complete.</p>
+            <div className="flex items-center gap-1.5 mb-3">
+              <FileOutput className="size-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold">Results</span>
+            </div>
+            <div className="text-center py-10">
+              <FileOutput className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+              <p className="text-[10px] text-muted-foreground/50">No results yet</p>
+            </div>
           </TabsContent>
         </Tabs>
       </aside>

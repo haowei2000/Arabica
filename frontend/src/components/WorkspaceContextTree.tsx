@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
 import {
-  Wrench, Database, Zap, Brain, Clock,
+  Wrench, Library, Sparkles, Brain, Clock,
   FolderOpen, Folder, FileText, Code2, File,
   ChevronRight, ChevronDown, Loader2, RefreshCw,
-  ChevronsDownUp, ChevronsUpDown,
+  ChevronsDownUp, ChevronsUpDown, Layers,
 } from 'lucide-react';
 import { useWorkspaceContexts } from '@/hooks/useWorkspaces';
 import { Button } from '@/components/ui/button';
@@ -35,8 +35,8 @@ const FOLDER_ORDER = ['tools', 'knowledge', 'skills', 'memory', 'history'];
 
 const ROOT_FOLDER_META: Record<string, { label: string; color: string; icon: typeof Wrench }> = {
   tools:     { label: 'Tools',     color: 'text-blue-500',   icon: Wrench   },
-  knowledge: { label: 'Knowledge', color: 'text-green-500',  icon: Database },
-  skills:    { label: 'Skills',    color: 'text-purple-500', icon: Zap      },
+  knowledge: { label: 'Knowledge', color: 'text-green-500',  icon: Library  },
+  skills:    { label: 'Skills',    color: 'text-purple-500', icon: Sparkles },
   memory:    { label: 'Memory',    color: 'text-pink-500',   icon: Brain    },
   history:   { label: 'History',   color: 'text-orange-500', icon: Clock    },
 };
@@ -318,13 +318,14 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
 
       {/* Header */}
       <div className="flex items-center gap-1 shrink-0">
-        <div className="flex-1 min-w-0">
-          <span className="text-xs font-semibold text-foreground">Workspace Context</span>
-          {data && (
-            <span className="text-[10px] text-muted-foreground ml-1.5">{totalLeaves} items</span>
+        <div className="flex items-center gap-1 flex-1 min-w-0" title="Workspace Context">
+          <Layers size={12} className="text-muted-foreground shrink-0" />
+          {data && totalLeaves > 0 && (
+            <span className="text-[10px] text-muted-foreground bg-muted/60 px-1.5 rounded-full leading-5 tabular-nums">
+              {totalLeaves}
+            </span>
           )}
         </div>
-
         <Button
           variant="ghost" size="icon" className="size-6"
           onClick={() => setForceOpen(v => v === true ? null : true)}
@@ -345,7 +346,7 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
           variant="ghost" size="icon" className="size-6"
           onClick={() => refetch()}
           disabled={isFetching}
-          title="Refresh"
+          title="Refresh context"
         >
           <RefreshCw size={12} className={cn(isFetching && 'animate-spin')} />
         </Button>
@@ -358,10 +359,8 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
         </div>
       ) : tree.length === 0 ? (
         <div className="text-center py-10 text-muted-foreground">
-          <p className="text-xs">No context loaded</p>
-          <p className="text-[10px] mt-1 text-muted-foreground/60">
-            Create a workspace with resources to see them here
-          </p>
+          <Layers size={20} className="mx-auto mb-2 text-muted-foreground/20" />
+          <p className="text-[10px] text-muted-foreground/50">No context loaded</p>
         </div>
       ) : (
         <ScrollArea className="flex-1 -mx-1">
