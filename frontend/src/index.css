@@ -300,3 +300,73 @@ html.dark .glass {
            focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500
            transition-all duration-200;
 }
+
+/* Smooth page transitions */
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-slide-up {
+    animation: slideUp 0.4s ease-out;
+}
+
+/* Chat message animations */
+@keyframes messageIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.animate-message-in {
+    animation: messageIn 0.25s ease-out;
+}
+
+/* Pulse ring for streaming indicator */
+@keyframes pulseRing {
+    0%, 100% {
+        box-shadow: 0 0 0 0 currentColor;
+    }
+    50% {
+        box-shadow: 0 0 0 4px transparent;
+    }
+}
+
+.animate-pulse-ring {
+    animation: pulseRing 2s ease-in-out infinite;
+}
+
+/* Improved prose styles for chat */
+.prose pre {
+    @apply bg-navy-50 dark:bg-navy-900/50 border border-border rounded-lg;
+}
+
+.prose code:not(pre code) {
+    @apply bg-primary-50 dark:bg-primary-950/30 text-primary-700 dark:text-primary-300
+           px-1.5 py-0.5 rounded text-[0.85em] font-mono;
+}
+
+/* Thin scrollbar variant */
+.scrollbar-thin {
+    scrollbar-width: thin;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-secondary-300/40 dark:bg-navy-600/40 rounded-full;
+}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns, useRunEvents } from '@/hooks/useRuns';
@@ -9,7 +9,6 @@ import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
 import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard } from '@/components/AgentEvents';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -75,7 +74,7 @@ function isFailedEvent(event: Event): boolean {
 function RunEventRow({
   event,
   isLast,
-  isActiveEdge,   // last event of a currently-running run → sweep animation
+  isActiveEdge,
 }: {
   event: Event;
   isLast: boolean;
@@ -160,31 +159,25 @@ function RunTimelineItem({
       'group relative rounded-lg border transition-colors',
       isActive ? 'border-primary/20 bg-primary/5' : 'border-border bg-card hover:bg-muted/30',
     )}>
-      {/* ── Compact single-line header ── */}
       <div
         className="flex items-center gap-2 px-2.5 py-2 cursor-pointer select-none transition-colors"
         onClick={() => { onSelect(run.id); setExpanded((v) => !v); }}
       >
         <span className={cn('size-1.5 rounded-full shrink-0', dotCls)} />
-
         <span className={cn(
           'text-xs truncate flex-1 min-w-0',
           isActive ? 'text-foreground font-medium' : 'text-foreground/75'
         )}>
           {title}
         </span>
-
-        {/* Live preview — only when running */}
         {isRunning && validPreview && (
           <span className="text-[10px] text-yellow-400/80 truncate max-w-20 shrink-0 hidden sm:block">
             {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
           </span>
         )}
-
         <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums">
           {formatRelativeTime(run.created_at)}
         </span>
-
         <span className={cn(
           'shrink-0 transition-opacity text-muted-foreground/40',
           expanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'
@@ -193,7 +186,7 @@ function RunTimelineItem({
         </span>
       </div>
 
-      {/* ── Hover tooltip ── */}
+      {/* Hover tooltip */}
       <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-xl border border-border bg-card shadow-lg shadow-black/10 p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
         <div className="space-y-2 text-xs">
           {fullMessage ? (
@@ -222,7 +215,6 @@ function RunTimelineItem({
         </div>
       </div>
 
-      {/* ── Expanded event list ── */}
       {expanded && (
         <div className="border-t border-border/40 mx-1 mb-1 rounded-b-md overflow-hidden bg-muted/20">
           {eventsLoading ? (
@@ -259,6 +251,7 @@ function RunTimelineItem({
 export default function WorkspaceConsole() {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { currentWorkspaceId, currentWorkspaceAppId } = useWorkspaceStore();
   const {
@@ -287,19 +280,34 @@ export default function WorkspaceConsole() {
     currentWorkspaceAppId
   );
 
-  // Live workspace event stream — keeps runs list and context tree up to date
   useWorkspaceStream(currentWorkspaceId);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, pendingApprovals]);
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + 'px';
+    }
+  }, [input]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming || !currentWorkspaceId) return;
     const message = input.trim();
     setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     await sendMessage(message);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
   };
 
   if (!currentWorkspaceId) {
@@ -316,32 +324,41 @@ export default function WorkspaceConsole() {
     <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-background">
       {/* ── Chat Column ── */}
       <div className="flex flex-col flex-1 lg:border-r border-border">
-        <ScrollArea className="flex-1 px-6 py-4">
-          <div className="space-y-4">
+        <ScrollArea className="flex-1 px-4 sm:px-6 py-4">
+          <div className="max-w-3xl mx-auto space-y-5">
             {isLoadingConversation ? (
               <div className="flex items-center justify-center h-40">
-                <Loader2 className="size-10 animate-spin text-muted-foreground" />
+                <Loader2 className="size-8 animate-spin text-muted-foreground/40" />
               </div>
             ) : messages.length === 0 && !streamingMessage ? (
-              <div className="text-center text-muted-foreground mt-20">
-                <p className="text-xs text-muted-foreground/40">Send a message to start</p>
+              <div className="flex flex-col items-center justify-center pt-20 pb-10 animate-fade-in">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-100 to-primary-200 dark:from-primary-900/40 dark:to-primary-800/30 flex items-center justify-center mb-5">
+                  <MessageSquare className="size-8 text-primary-500" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">Start a conversation</h3>
+                <p className="text-sm text-muted-foreground text-center max-w-sm">
+                  Type a message below to begin interacting with the AI agent.
+                </p>
               </div>
             ) : null}
 
             {messages.map((message) => (
               <div
                 key={message.id}
-                className={cn('flex gap-3', message.role === MessageRole.USER ? 'justify-end' : 'justify-start')}
+                className={cn(
+                  'flex gap-3 animate-fade-in',
+                  message.role === MessageRole.USER ? 'justify-end' : 'justify-start'
+                )}
               >
                 {message.role === MessageRole.ASSISTANT && (
-                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs shrink-0 mt-0.5 font-medium">
-                    AI
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-sm shadow-primary-500/20">
+                    <Bot className="size-4" />
                   </div>
                 )}
 
                 {message.role === MessageRole.USER ? (
-                  <div className="max-w-2xl rounded-lg px-4 py-3 bg-primary text-primary-foreground">
-                    <p className="text-sm">{message.content}</p>
+                  <div className="max-w-2xl rounded-2xl rounded-br-md px-4 py-3 bg-primary text-primary-foreground shadow-sm">
+                    <p className="text-sm leading-relaxed">{message.content}</p>
                   </div>
                 ) : (
                   <div className="max-w-2xl w-full space-y-2">
@@ -359,7 +376,7 @@ export default function WorkspaceConsole() {
                       <PlanStepList steps={message.planSteps} />
                     )}
                     {message.content && (
-                      <div className="rounded-lg px-4 py-3 bg-card border border-border">
+                      <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm">
                         <div className="prose prose-sm dark:prose-invert max-w-none">
                           <ReactMarkdown>{message.content}</ReactMarkdown>
                         </div>
@@ -369,7 +386,7 @@ export default function WorkspaceConsole() {
                 )}
 
                 {message.role === MessageRole.USER && (
-                  <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground text-xs shrink-0 font-medium">
+                  <div className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center text-secondary-foreground text-xs shrink-0 font-medium shadow-sm">
                     You
                   </div>
                 )}
@@ -377,9 +394,9 @@ export default function WorkspaceConsole() {
             ))}
 
             {isStreaming && (
-              <div className="flex gap-3 justify-start">
-                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs shrink-0 mt-0.5 font-medium">
-                  AI
+              <div className="flex gap-3 justify-start animate-fade-in">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-sm shadow-primary-500/20">
+                  <Bot className="size-4" />
                 </div>
                 <div className="max-w-2xl w-full space-y-2">
                   {thinkingContent && <ThinkingBlock content={thinkingContent} />}
@@ -395,13 +412,13 @@ export default function WorkspaceConsole() {
                     <ApprovalCard key={pending.tool_id} pending={pending} onApprove={approveToolCall} />
                   ))}
                   {streamingMessage && (
-                    <div className="rounded-lg px-4 py-3 bg-card border border-border">
+                    <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm">
                       <div className="prose prose-sm dark:prose-invert max-w-none">
                         <ReactMarkdown>{streamingMessage}</ReactMarkdown>
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center gap-1 text-muted-foreground">
+                  <div className="flex items-center gap-2 text-muted-foreground px-1">
                     <span className={cn('w-2 h-2 rounded-full animate-pulse', pendingApprovals.length > 0 ? 'bg-amber-500' : 'bg-primary')} />
                     <span className="text-xs">
                       {pendingApprovals.length > 0
@@ -421,25 +438,53 @@ export default function WorkspaceConsole() {
           </div>
         </ScrollArea>
 
-        <div className="border-t border-border bg-card px-6 py-4">
-          <form onSubmit={handleSubmit} className="flex gap-3">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
-              disabled={isStreaming}
-              className="flex-1"
-            />
-            {isStreaming ? (
-              <Button type="button" variant="destructive" onClick={stopStreaming}>
-                Stop
-              </Button>
-            ) : (
-              <Button type="submit" disabled={!input.trim()}>
-                Send
-              </Button>
-            )}
-          </form>
+        {/* ── Modern input area ── */}
+        <div className="border-t border-border/60 bg-gradient-to-t from-background to-background/80 px-4 sm:px-6 py-4">
+          <div className="max-w-3xl mx-auto">
+            <form onSubmit={handleSubmit} className="relative">
+              <div className="flex items-end gap-2 rounded-2xl border border-border/80 bg-card shadow-sm focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all duration-200">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a message... (Shift+Enter for new line)"
+                  disabled={isStreaming}
+                  rows={1}
+                  className="flex-1 resize-none bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50 max-h-40"
+                />
+                <div className="pr-2 pb-2 shrink-0">
+                  {isStreaming ? (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="destructive"
+                      onClick={stopStreaming}
+                      className="size-8 rounded-xl"
+                      title="Stop generating"
+                    >
+                      <Square className="size-3.5" />
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      size="icon"
+                      disabled={!input.trim()}
+                      className={cn(
+                        'size-8 rounded-xl transition-all duration-200',
+                        input.trim()
+                          ? 'bg-primary hover:bg-primary/90 shadow-sm shadow-primary/20'
+                          : 'bg-muted text-muted-foreground'
+                      )}
+                      title="Send message"
+                    >
+                      <Send className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
 

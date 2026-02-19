@@ -11,17 +11,17 @@ export function ThinkingBlock({ content, defaultCollapsed = false }: { content: 
   const [expanded, setExpanded] = useState(!defaultCollapsed);
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
+    <div className="rounded-xl border border-border/60 overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left bg-muted hover:bg-muted/80 text-muted-foreground text-sm font-medium transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left bg-muted/50 hover:bg-muted/70 text-muted-foreground text-xs font-medium transition-colors"
       >
-        {expanded ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
-        <span>Thinking</span>
-        {!expanded && <span className="ml-auto text-xs opacity-60">click to expand</span>}
+        {expanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+        <span className="text-muted-foreground/70">Thinking...</span>
+        {!expanded && <span className="ml-auto text-[10px] opacity-50">expand</span>}
       </button>
-      {expanded && <div className="px-3 py-2 text-sm text-muted-foreground whitespace-pre-wrap">{content}</div>}
+      {expanded && <div className="px-3 py-2 text-xs text-muted-foreground/80 whitespace-pre-wrap leading-relaxed border-t border-border/40">{content}</div>}
     </div>
   );
 }

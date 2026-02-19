@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, ArrowLeft } from 'lucide-react';
+import { Moon, Sun, ArrowLeft, Bot } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -26,15 +26,21 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      <header className="bg-card border-b border-border px-6 py-3 shrink-0">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={handleBackToWorkspaces} title="Back to workspaces">
-              <ArrowLeft className="size-5" />
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" className="size-7" onClick={handleBackToWorkspaces} title="Back to workspaces">
+              <ArrowLeft className="size-3.5" />
             </Button>
+            <div className="h-4 w-px bg-border" />
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
+              <Bot className="size-3.5 text-white" />
+            </div>
             <div>
-              <h1 className="text-base font-semibold">Workspace</h1>
-              <p className="text-sm text-muted-foreground">{currentWorkspaceName || currentWorkspaceId}</p>
+              <h1 className="text-sm font-semibold leading-tight">{currentWorkspaceName || 'Workspace'}</h1>
+              {currentWorkspaceName && (
+                <p className="text-[10px] text-muted-foreground font-mono">{currentWorkspaceId?.slice(0, 8)}</p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">

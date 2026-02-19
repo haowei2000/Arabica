@@ -103,10 +103,9 @@ export default function AppWorkspacePage() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="bg-card border-b border-border px-4 py-2.5 shrink-0">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0 sticky top-0 z-30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Back */}
             <Button
               variant="ghost" size="icon" className="size-7"
               onClick={handleBackToHome} title="Back to Apps"
@@ -114,16 +113,15 @@ export default function AppWorkspacePage() {
               <ArrowLeft className="size-3.5" />
             </Button>
             <div className="h-4 w-px bg-border" />
-            {/* App identity */}
-            <div className="flex items-center gap-1.5">
-              <Bot className="size-3.5 text-muted-foreground shrink-0" />
-              <span
-                className="text-sm font-semibold font-mono cursor-default"
-                title={currentAppId ? `App ID: ${currentAppId}` : undefined}
-              >
-                {currentAppCode || 'App'}
-              </span>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
+              <Bot className="size-3.5 text-white" />
             </div>
+            <span
+              className="text-sm font-semibold font-mono cursor-default"
+              title={currentAppId ? `App ID: ${currentAppId}` : undefined}
+            >
+              {currentAppCode || 'App'}
+            </span>
           </div>
 
           <div className="flex items-center gap-1">
