@@ -135,7 +135,7 @@ def save_run_history(self, run_id: str, workspace_id: str) -> dict[str, Any]:
             detail = json.dumps(turns, ensure_ascii=False)
 
             # 5. Write to WorkspaceContext
-            path = f"{workspace_id}/history/{run_id}"
+            path = f"history/{run_id}"
             service = WorkspaceContextService(session, workspace_id)
             await service.set(
                 path=path,
