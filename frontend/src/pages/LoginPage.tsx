@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun } from 'lucide-react';
+import { Moon, Sun, Bot, Eye, EyeOff } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const navigate = useNavigate();
   const { setUser } = useAuthStore();
@@ -28,66 +29,107 @@ export default function LoginPage() {
       setUser(user);
       navigate('/chat');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败');
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted relative">
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-primary-50 via-secondary-50/60 to-navy-100 dark:from-navy-950 dark:via-navy-900 dark:to-secondary-950">
+      {/* Background decoration */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-primary-400/10 dark:bg-primary-500/5 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-secondary-400/10 dark:bg-secondary-500/5 blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-primary-300/5 dark:bg-primary-600/5 blur-3xl" />
+      </div>
+
+      {/* Theme toggle */}
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={toggleTheme}
-        className="absolute top-4 right-4"
-        title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+        className="absolute top-4 right-4 z-10"
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
       >
         {theme === 'dark' ? <Sun className="size-5" /> : <Moon className="size-5" />}
       </Button>
 
-      <div className="max-w-md w-full bg-card rounded-xl shadow-xl border border-border p-8">
-        <h2 className="text-2xl font-bold text-center mb-6">对话 Agent 管理平台</h2>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="username">用户名</Label>
-            <Input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="请输入用户名"
-              required
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="password">密码</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="请输入密码"
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/30">
-              {error}
+      {/* Login card */}
+      <div className="relative z-10 max-w-md w-full mx-4 animate-fade-in">
+        <div className="bg-white/80 dark:bg-navy-800/80 backdrop-blur-xl rounded-2xl shadow-2xl shadow-navy-900/5 dark:shadow-black/30 border border-white/50 dark:border-navy-700/50 p-8">
+          {/* Logo and title */}
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/30 mb-4">
+              <Bot className="size-7 text-white" />
             </div>
-          )}
+            <h1 className="text-2xl font-bold text-foreground">AI Agent Platform</h1>
+            <p className="text-sm text-muted-foreground mt-1">Sign in to your account</p>
+          </div>
 
-          <Button type="submit" disabled={loading} className="w-full">
-            {loading ? '登录中...' : '登录'}
-          </Button>
-        </form>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter your username"
+                className="h-11 bg-white/60 dark:bg-navy-900/40"
+                required
+              />
+            </div>
 
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          Powered by Aiwen
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  className="h-11 pr-10 bg-white/60 dark:bg-navy-900/40"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20 animate-fade-in">
+                {error}
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={loading}
+              className="w-full h-11 text-base font-medium bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 shadow-lg shadow-primary-500/20 transition-all duration-200"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Signing in...
+                </span>
+              ) : (
+                'Sign In'
+              )}
+            </Button>
+          </form>
+
+          <div className="mt-8 text-center text-xs text-muted-foreground/60">
+            Powered by Aiwen
+          </div>
         </div>
       </div>
     </div>

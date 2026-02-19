@@ -260,10 +260,15 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="bg-card border-b border-border px-6 py-3.5">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-6 py-3 sticky top-0 z-30">
         <div className="flex items-center justify-between max-w-5xl mx-auto">
-          <h1 className="text-sm font-semibold text-foreground tracking-wide">AI Agent Platform</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
+              <Bot className="size-3.5 text-white" />
+            </div>
+            <h1 className="text-sm font-semibold text-foreground">AI Agent Platform</h1>
+          </div>
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={toggleTheme}
