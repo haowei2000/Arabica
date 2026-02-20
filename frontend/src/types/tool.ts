@@ -39,11 +39,6 @@ export interface UserTool {
   inner_tool_name?: string | null;
   parameter_mapping?: Record<string, string> | null;
   tool_type: string;
-  code?: string | null;
-  http_config?: Record<string, unknown> | null;
-  container_config?: Record<string, unknown> | null;
-  client_config?: Record<string, unknown> | null;
-  celery_config?: Record<string, unknown> | null;
   input_schema: Record<string, unknown>;
   output_schema?: Record<string, unknown> | null;
   category: string;
@@ -67,8 +62,6 @@ export interface UserToolCreate {
   input_schema: Record<string, unknown>;
   inner_tool_name?: string | null;
   parameter_mapping?: Record<string, string> | null;
-  code?: string | null;
-  http_config?: Record<string, unknown> | null;
   category?: string;
   tags?: string[];
   timeout?: number;
@@ -76,7 +69,60 @@ export interface UserToolCreate {
   is_public?: boolean;
 }
 
+export type UserToolUpdate = Partial<UserToolCreate>;
+
 export interface UserToolListResponse {
   tools: UserTool[];
+  total: number;
+}
+
+// ─── Tool Testing ─────────────────────────────────────────────────────────────
+
+export interface UserToolTestRequest {
+  parameters: Record<string, unknown>;
+}
+
+export interface UserToolTestResponse {
+  success: boolean;
+  message?: string | null;
+  data?: Record<string, unknown> | null;
+  error?: string | null;
+  execution_time_ms?: number | null;
+  tool_name: string;
+  tool_id: string;
+}
+
+// ─── Tool Export / Import ─────────────────────────────────────────────────────
+
+export interface ToolExportData {
+  name: string;
+  display_name: string;
+  description: string;
+  execution_mode: string;
+  input_schema: Record<string, unknown>;
+  output_schema?: Record<string, unknown> | null;
+  category: string;
+  tags: string[];
+  timeout: number;
+  inner_tool_name?: string | null;
+  parameter_mapping?: Record<string, string> | null;
+  chain?: Record<string, unknown>[] | null;
+}
+
+// ─── Inner Tools ──────────────────────────────────────────────────────────────
+
+export interface InnerToolInfo {
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  timeout: number;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+}
+
+export interface InnerToolListResponse {
+  inner_tools: InnerToolInfo[];
   total: number;
 }

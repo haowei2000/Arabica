@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from aiwen.celery_worker.celery_app import celery_app, example_task
-from aiwen.celery_worker.tasks.document_tasks import process_document_structured
+from aiwen.celery_worker.tasks.knowledge_tasks import process_document_structured
 from aiwen.core.dependencies.agents import get_document_crud, get_knowledge_crud
 from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.storage.global_storage import get_global_s3_storage

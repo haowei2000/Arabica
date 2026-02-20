@@ -51,23 +51,23 @@
 
 /* shadcn/ui CSS variables — dark mode */
 html.dark {
-  --background: oklch(0.07 0.02 250);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.11 0.03 250);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.13 0.03 250);
-  --popover-foreground: oklch(0.985 0 0);
+  --background: oklch(0.08 0.02 250);    /* page bg — deep navy */
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.15 0.03 250);          /* card — clear lift above bg (+0.07) */
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.20 0.04 250);       /* popover — elevated above card */
+  --popover-foreground: oklch(0.95 0 0);
   --primary: oklch(0.67 0.23 45);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.20 0.05 250);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.20 0.05 250);
-  --muted-foreground: oklch(0.70 0.04 250);
-  --accent: oklch(0.20 0.05 250);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.20 0.05 250 / 0.6);
-  --input: oklch(0.20 0.05 250 / 0.6);
+  --secondary: oklch(0.24 0.05 250);     /* interactive elements */
+  --secondary-foreground: oklch(0.95 0 0);
+  --muted: oklch(0.18 0.04 250);         /* subtle tint — between card & secondary */
+  --muted-foreground: oklch(0.65 0.05 250);
+  --accent: oklch(0.26 0.06 250);        /* hover / focus accent */
+  --accent-foreground: oklch(0.95 0 0);
+  --destructive: oklch(0.65 0.22 22);
+  --border: oklch(0.30 0.05 250 / 0.8); /* more visible borders */
+  --input: oklch(0.22 0.05 250);         /* input bg distinct from card */
   --ring: oklch(0.67 0.23 45);
 }
 
@@ -136,7 +136,7 @@ html.dark {
 }
 
 html.dark body {
-    @apply bg-gradient-to-br from-navy-950 via-navy-900 to-secondary-950/50
+    @apply bg-gradient-to-br from-navy-950 via-navy-800/60 to-secondary-900/30
            text-navy-50;
 }
 

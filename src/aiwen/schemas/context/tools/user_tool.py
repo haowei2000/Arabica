@@ -69,19 +69,6 @@ class UserToolCreate(UserToolBase):
         ),
     )
 
-    # Tool-specific configurations
-    code: str | None = Field(None, description="Python code for code execution tools")
-    http_config: dict[str, Any] | None = Field(None, description="HTTP configuration")
-    container_config: dict[str, Any] | None = Field(
-        None, description="Container configuration"
-    )
-    client_config: dict[str, Any] | None = Field(
-        None, description="Client configuration"
-    )
-    celery_config: dict[str, Any] | None = Field(
-        None, description="Celery configuration"
-    )
-
 
 class UserToolUpdate(BaseModel):
     """Schema for updating a user tool (ExternalTool)"""
@@ -97,11 +84,6 @@ class UserToolUpdate(BaseModel):
     chain: list[dict[str, Any]] | None = None
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
-    code: str | None = None
-    http_config: dict[str, Any] | None = None
-    container_config: dict[str, Any] | None = None
-    client_config: dict[str, Any] | None = None
-    celery_config: dict[str, Any] | None = None
     category: str | None = None
     tags: list[str] | None = None
     version: int | str | None = None
@@ -134,11 +116,6 @@ class UserToolResponse(UserToolBase):
         None,
         description="Tool chain steps (pipeline mode)",
     )
-    code: str | None = None
-    http_config: dict[str, Any] | None = None
-    container_config: dict[str, Any] | None = None
-    client_config: dict[str, Any] | None = None
-    celery_config: dict[str, Any] | None = None
     verified: bool = False
     usage_count: int = 0
     last_used_at: datetime | None = None
@@ -171,3 +148,58 @@ class UserToolExecutionResponse(BaseModel):
     data: dict[str, Any] | None = None
     error: str | None = None
     execution_time: float | None = None
+
+
+class UserToolTestRequest(BaseModel):
+    """Schema for testing a tool with sample parameters"""
+
+    parameters: dict[str, Any] = Field(default_factory=dict, description="Test parameters")
+
+
+class UserToolTestResponse(BaseModel):
+    """Schema for tool test result"""
+
+    success: bool
+    message: str | None = None
+    data: dict[str, Any] | None = None
+    error: str | None = None
+    execution_time_ms: float | None = None
+    tool_name: str
+    tool_id: str
+
+
+class ToolExportData(BaseModel):
+    """Schema for tool export/import JSON"""
+
+    name: str
+    display_name: str
+    description: str
+    execution_mode: str = "inner"
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] | None = None
+    category: str = "custom"
+    tags: list[str] = Field(default_factory=list)
+    timeout: int = 30
+    inner_tool_name: str | None = None
+    parameter_mapping: dict[str, str] | None = None
+    chain: list[dict[str, Any]] | None = None
+
+
+class InnerToolInfo(BaseModel):
+    """Schema for inner tool metadata returned by the registry endpoint"""
+
+    name: str
+    display_name: str
+    description: str
+    category: str
+    tags: list[str]
+    timeout: int
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+
+
+class InnerToolListResponse(BaseModel):
+    """Response for listing available inner tools"""
+
+    inner_tools: list[InnerToolInfo]
+    total: int

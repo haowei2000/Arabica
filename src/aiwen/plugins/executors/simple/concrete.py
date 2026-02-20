@@ -349,6 +349,49 @@ class DefaultExecutor(Executor):
 
     # ── message conversion ───────────────────────────────────────
 
+    def _extract_trigger_context(
+        self, user_message: UserMessage | dict
+    ) -> list[dict] | None:
+        """Extract ``_trigger_context`` from a user message if present.
+
+        The trigger processor stores results under the ``_trigger_context`` key
+        either as an extra Pydantic field (``UserMessage.model_extra``) or as a
+        plain dict key.
+        """
+        if isinstance(user_message, dict):
+            return user_message.get("_trigger_context") or None
+        # Pydantic model: extra fields live in model_extra
+        extra = getattr(user_message, "model_extra", None) or {}
+        value = extra.get("_trigger_context")
+        return value if value else None
+
+    def _build_trigger_context_message(
+        self, trigger_context: list[dict]
+    ) -> ChatMessage:
+        """Build a system ChatMessage that injects workspace trigger results.
+
+        Each trigger entry has the shape::
+
+            {"trigger_id": "...", "trigger_name": "...",
+             "action_type": "...", "result": <any>}
+
+        The message is injected **before** the user turn so the LLM has access
+        to pre-fetched workspace context without an extra tool call round-trip.
+        """
+        lines = ["[Workspace context retrieved by triggers]"]
+        for item in trigger_context:
+            name = item.get("trigger_name", "trigger")
+            action = item.get("action_type", "")
+            result = item.get("result")
+            lines.append(f"\n### {name} ({action})")
+            if result is None:
+                lines.append("(no result)")
+            elif isinstance(result, (dict, list)):
+                lines.append(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                lines.append(str(result))
+        return ChatMessage(role="system", content="\n".join(lines))
+
     def _prepare_messages(self, user_message: UserMessage | dict) -> list[ChatMessage]:
         """Convert UserMessage to ChatMessage list.
 
@@ -706,6 +749,12 @@ class DefaultExecutor(Executor):
             ChatMessage(role="system", content=self.system_prompt),
         ]
         messages.extend(await self._load_history())
+
+        # Inject pre-fetched workspace context from trigger processor
+        trigger_ctx = self._extract_trigger_context(user_message)
+        if trigger_ctx:
+            messages.append(self._build_trigger_context_message(trigger_ctx))
+
         messages.extend(self._prepare_messages(user_message))
 
         async for event in self._agentic_loop(messages):

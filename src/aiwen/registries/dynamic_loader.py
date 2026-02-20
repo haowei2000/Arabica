@@ -233,9 +233,9 @@ class DynamicToolLoader:
 
         # ── Slow-path: full load + rebuild ────────────────────────
         from aiwen.registries.core import ToolRegistry
-        from aiwen.services.context.tools.tool_crud import UserToolCRUD
+        from aiwen.services.context.tools.tool_crud import ToolCRUD
 
-        crud = UserToolCRUD(db)
+        crud = ToolCRUD(db)
         tool_records = await crud.list_user_tools(
             user_id=user_id,
             workspace_id=workspace_id,

@@ -3,6 +3,18 @@ import { workspaceService } from '@/services/workspaceService';
 import { runService } from '@/services/runService';
 import { eventService } from '@/services/eventService';
 
+export const useUserRuns = (params?: { page?: number; page_size?: number; status?: string }) =>
+  useQuery({
+    queryKey: ['runs', 'user', params],
+    queryFn: () => runService.listUserRuns(params),
+  });
+
+export const useUserEvents = (params?: { limit?: number; event_types?: string }) =>
+  useQuery({
+    queryKey: ['events', 'user', params],
+    queryFn: () => eventService.listByUser(params),
+  });
+
 // Hook for fetching user's workspaces
 export const useWorkspaces = (params?: {
   page?: number;

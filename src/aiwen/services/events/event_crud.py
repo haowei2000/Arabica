@@ -7,10 +7,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.events.event import Event
+from aiwen.models.workspaces.workspace_member import WorkspaceMember
 
 
 def _normalize_uuid(val: str | UUID) -> str:
@@ -232,7 +233,15 @@ class EventCRUD:
         """
         normalized_user_id = _normalize_uuid(user_id)
 
-        conditions = [Event.user_id == normalized_user_id]
+        member_ws_subq = select(WorkspaceMember.workspace_id).where(
+            WorkspaceMember.user_id == normalized_user_id,
+            WorkspaceMember.invitation_status == "accepted",
+        )
+        ownership_condition = or_(
+            Event.user_id == normalized_user_id,
+            Event.workspace_id.in_(member_ws_subq),
+        )
+        conditions = [ownership_condition]
         if event_types:
             conditions.append(Event.event_type.in_(event_types))
         if workspace_id:

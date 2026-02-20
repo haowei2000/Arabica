@@ -26,6 +26,10 @@ export const runService = {
     );
   },
 
+  async listUserRuns(params?: { page?: number; page_size?: number; status?: string }) {
+    return apiClient.get<RunListResponse>(API_ENDPOINTS.RUNS.USER_LIST, { params });
+  },
+
   async getRunState(runId: string) {
     return apiClient.get<RunState>(API_ENDPOINTS.EVENTS.RUN_STATE(runId));
   },

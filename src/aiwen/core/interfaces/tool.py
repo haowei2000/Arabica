@@ -8,6 +8,7 @@ All tools run through the same ``execute()`` / ``__call__()`` protocol.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
+import re
 import time
 from typing import Any, ClassVar, TypeVar
 
@@ -18,61 +19,10 @@ T = TypeVar("T", bound="BaseTool")
 logger = logging.getLogger(__name__)
 
 @dataclass
-class ResourceLimits:
-    """Resource limits configuration (for container execution)"""
-
-    memory: str = "256m"  # Memory limit (e.g., "256m", "1g")
-    cpu_quota: int = 50000  # CPU quota (microseconds)
-    cpu_period: int = 100000  # CPU period (microseconds)
-    network_enabled: bool = False  # Whether to allow network access
-    read_only_rootfs: bool = True  # Read-only root filesystem
-    pids_limit: int = 100  # Maximum number of processes
-
-@dataclass
-class HTTPConfig:
-    """HTTP tool configuration"""
-
-    method: str = "POST"  # HTTP method
-    url: str = ""  # API endpoint URL
-    headers: dict[str, str] = field(default_factory=dict)  # Request headers
-    timeout: int = 30  # Timeout in seconds
-    retry_times: int = 3  # Number of retries
-    verify_ssl: bool = True  # Whether to verify SSL
-
-@dataclass
-class CeleryConfig:
-    """Celery async task configuration"""
-
-    queue: str = "default"  # Queue name
-    priority: int = 5  # Priority (0-9, lower number = higher priority)
-    progress_enabled: bool = True  # Whether to enable progress reporting
-    retry_on_failure: bool = True  # Whether to retry on failure
-    max_retries: int = 3  # Maximum retry attempts
-    countdown: int = 0  # Delayed execution (seconds)
-
-@dataclass
-class ContainerConfig:
-    """Container execution configuration"""
-
-    image: str = "python:3.12-slim"  # Docker image
-    workdir: str = "/workspace"  # Working directory
-    resource_limits: ResourceLimits = field(default_factory=ResourceLimits)
-    environment: dict[str, str] = field(default_factory=dict)  # Environment variables
-    volumes: dict[str, str] = field(default_factory=dict)  # Volume mounts
-
-@dataclass
-class ClientConfig:
-    """Client execution configuration"""
-
-    handler_name: str = ""  # Frontend handler name
-    config: dict[str, Any] = field(default_factory=dict)  # Additional configuration
-    require_user_approval: bool = False  # Whether user approval is required
-
-@dataclass
 class ToolMetadata:
     """Tool metadata"""
 
-    name: str  # Tool name (unique identifier)
+    name: str  # Tool name (unique identifiera
     display_name: str  # Display name
     description: str  # Tool description
     version: str = "1.0.0"  # Version number
@@ -460,19 +410,69 @@ def _map_params(
     return params
 
 
+_EXPR_VAR_RE = re.compile(r"\{\{(\w+(?:\.\w+)*)\}\}")
+
+
+def _is_expression_mapping(mapping: dict[str, str]) -> bool:
+    """Detect whether mapping uses expression format ``{target: expression}``.
+
+    Expression format values contain ``{{var}}`` placeholders.
+    Legacy format values are plain target-param names without braces.
+    """
+    return any("{{" in str(v) for v in mapping.values())
+
+
+def _resolve_expression_mapping(
+    source: dict[str, Any],
+    mapping: dict[str, str],
+) -> dict[str, Any]:
+    """Resolve expression-based mapping ``{target_param: expression}``.
+
+    Supported expression forms:
+    - ``"{{city}}"`` — pure variable reference, preserves original type
+    - ``"prefix_{{city}}_suffix"`` — template interpolation, result is str
+    - ``"static_value"`` — literal string with no ``{{}}`` markers
+    """
+    params: dict[str, Any] = {}
+    for target_key, expression in mapping.items():
+        expr_str = str(expression)
+
+        # Pure variable reference — preserve original type
+        pure_match = _EXPR_VAR_RE.fullmatch(expr_str)
+        if pure_match:
+            value = _resolve_key(source, pure_match.group(1))
+            if value is not None:
+                params[target_key] = value
+            continue
+
+        # Template with embedded variables — string interpolation
+        if "{{" in expr_str:
+            def _replace(m: re.Match) -> str:
+                val = _resolve_key(source, m.group(1))
+                return str(val) if val is not None else m.group(0)
+
+            params[target_key] = _EXPR_VAR_RE.sub(_replace, expr_str)
+            continue
+
+        # Static literal — pass through as-is
+        params[target_key] = expression
+
+    return params
+
+
 class ExternalTool(BaseTool):
     """
     External Tool - User-designed tools that delegate execution to other tools.
 
-    Supports two execution modes (mutually exclusive):
+    All external tools use mapping-based delegation to registered InnerTools.
 
-    1. **Single delegation** (simple): set ``inner_tool_name`` +
-       ``parameter_mapping`` + ``extra_params``.
-    2. **Chain execution** (pipeline): set ``chain`` — a list of
-       :class:`ChainStep` that are executed sequentially.  The output
-       ``data`` dict of step *N* becomes the input source for step *N+1*.
+    Supports two execution modes (evaluated in priority order):
 
-    If ``chain`` is non-empty it takes precedence over ``inner_tool_name``.
+    1. **Chain execution** (pipeline): set ``chain`` — a list of
+       :class:`ChainStep` executed sequentially.  The output ``data`` dict
+       of step *N* becomes the input source for step *N+1*.
+    2. **Single delegation**: set ``inner_tool_name`` + ``parameter_mapping``
+       + ``extra_params`` to delegate to a registered InnerTool.
 
     Class-level attributes (set by DynamicToolLoader when creating subclasses):
         inner_tool_name: Name of the tool to delegate to (single mode).
@@ -514,7 +514,13 @@ class ExternalTool(BaseTool):
             )
 
         input_dict = input_data.model_dump()
-        params = _map_params(input_dict, self.parameter_mapping, self.extra_params)
+
+        # Expression mapping: {target_param: "{{input_var}}" | "static"}
+        # Legacy mapping:     {src_param: target_param}
+        if self.parameter_mapping and _is_expression_mapping(self.parameter_mapping):
+            params = _resolve_expression_mapping(input_dict, self.parameter_mapping)
+        else:
+            params = _map_params(input_dict, self.parameter_mapping, self.extra_params)
 
         try:
             result = await tool_instance(**params)
@@ -582,3 +588,4 @@ class ExternalTool(BaseTool):
             current_data = result.get("data") or result
 
         return ToolOutputSchema(success=True, data=current_data)
+

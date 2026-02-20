@@ -28,4 +28,13 @@ export const eventService = {
   ): Promise<EventListResponse> {
     return apiClient.get(API_ENDPOINTS.EVENTS.LIST_BY_RUN(runId), { params });
   },
+
+  async listByUser(params?: {
+    skip?: number;
+    limit?: number;
+    event_types?: string;
+    workspace_id?: string;
+  }): Promise<EventListResponse> {
+    return apiClient.get(API_ENDPOINTS.EVENTS.LIST_BY_USER, { params });
+  },
 };

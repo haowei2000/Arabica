@@ -69,6 +69,7 @@ class Worker:
 
         # ── Startup-initialized tool services (stateless / reusable) ──
         self._tool_caller = RegistryToolCaller()
+        self._default_tool_provider = RegistryToolProvider()
 
     @staticmethod
     def _parse_redis_event(event_data: dict[bytes, bytes]) -> Event:

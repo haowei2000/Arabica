@@ -28,6 +28,8 @@ class UserMessage(BaseModel):
 
     message: str = Field(..., description="用户消息")
 
+    model_config = {"extra": "allow"}
+
 
 class UserMessageEventSchema(BaseEventSchema):
     """Payload for user.message events."""

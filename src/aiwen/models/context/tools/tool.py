@@ -1,10 +1,10 @@
 """Unified Tool model.
 
 Stores definitions of all tools — both inner (code-defined, synced on startup)
-and external (user-defined, delegating to InnerTools). The `tool_type` column
-discriminates between the two:
+and external (user-defined, delegating to InnerTools via mapping). The `tool_type`
+column discriminates between the two:
   - "inner": built-in tools synced from code at startup (user_id=NULL)
-  - "external": user-created tools that delegate to an InnerTool backend
+  - "external": user-created tools that delegate to an InnerTool via parameter mapping
 """
 
 from __future__ import annotations
@@ -82,23 +82,6 @@ class Tool(Base):
     config: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         comment="Tool execution configuration",
-    )
-
-    # Tool implementation
-    code: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="Python code for server_run mode"
-    )
-    http_config: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="HTTP configuration for http mode"
-    )
-    container_config: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="Container configuration"
-    )
-    client_config: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="Client configuration"
-    )
-    celery_config: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="Celery configuration"
     )
 
     # Ownership

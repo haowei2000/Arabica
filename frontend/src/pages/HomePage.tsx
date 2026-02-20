@@ -259,7 +259,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-muted/30">
+    <div className="min-h-screen bg-background">
       <header className="bg-card/80 backdrop-blur-sm border-b border-border px-6 py-3 sticky top-0 z-30">
         <div className="flex items-center justify-between max-w-5xl mx-auto">
           <div className="flex items-center gap-2.5">

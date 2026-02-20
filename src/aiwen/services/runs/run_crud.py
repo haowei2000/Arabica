@@ -7,12 +7,13 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.enums.runs import TriggerType
 from aiwen.models.runs.run import Run
 from aiwen.models.workspaces.workspace import Workspace
+from aiwen.models.workspaces.workspace_member import WorkspaceMember
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -190,7 +191,15 @@ class RunCRUD:
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
 
-        conditions = [Run.user_id == normalized_user_id]
+        member_ws_subq = select(WorkspaceMember.workspace_id).where(
+            WorkspaceMember.user_id == normalized_user_id,
+            WorkspaceMember.invitation_status == "accepted",
+        )
+        ownership_condition = or_(
+            Run.user_id == normalized_user_id,
+            Run.workspace_id.in_(member_ws_subq),
+        )
+        conditions = [ownership_condition]
         if status:
             conditions.append(Run.status == status)
 

@@ -1,7 +1,7 @@
 """
-User Tool CRUD Operations
+Tool CRUD Operations
 
-Manages user-defined custom tools (external tools) in the unified tool table.
+Manages tools (both inner and external) in the unified tool table.
 
 Name-conflict prevention
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 _TOOL_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,98}[a-zA-Z0-9]$")
 
 
-class UserToolCRUD:
+class ToolCRUD:
     """CRUD operations for user tools (external tools in the unified tool table)"""
 
     def __init__(self, db_session: AsyncSession):
@@ -68,7 +68,7 @@ class UserToolCRUD:
             )
 
         if reserved is None:
-            reserved = UserToolCRUD._get_reserved_names()
+            reserved = ToolCRUD._get_reserved_names()
 
         if name in reserved:
             raise ValueError(
@@ -90,7 +90,7 @@ class UserToolCRUD:
             return
 
         if reserved is None:
-            reserved = UserToolCRUD._get_reserved_names()
+            reserved = ToolCRUD._get_reserved_names()
 
         for idx, step in enumerate(chain):
             step_tool = step.get("tool_name")
@@ -147,11 +147,6 @@ class UserToolCRUD:
             chain=tool_data.chain,
             input_schema=tool_data.input_schema,
             output_schema=tool_data.output_schema,
-            code=tool_data.code,
-            http_config=tool_data.http_config,
-            container_config=tool_data.container_config,
-            client_config=tool_data.client_config,
-            celery_config=tool_data.celery_config,
             category=tool_data.category,
             tags=tool_data.tags,
             timeout=tool_data.timeout,

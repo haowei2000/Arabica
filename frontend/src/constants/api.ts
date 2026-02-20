@@ -20,6 +20,11 @@ export const API_ENDPOINTS = {
   },
 
 
+  // Standalone runs (user-level)
+  RUNS: {
+    USER_LIST: '/runs',
+  },
+
   // Workspaces & Runs
   WORKSPACES: {
       LIST: '/workspaces',
@@ -94,12 +99,17 @@ export const API_ENDPOINTS = {
     TOOLS: {
         TEMPLATES: '/tools/templates',
         TEMPLATE: (id: string) => `/tools/templates/${id}`,
+        TOOL_TEMPLATE: (id: string) => `/tools/${id}/template`,
         LIST: '/tools/',
         CREATE: '/tools/',
         GET: (id: string) => `/tools/${id}`,
         UPDATE: (id: string) => `/tools/${id}`,
         DELETE: (id: string) => `/tools/${id}`,
         TOGGLE: (id: string) => `/tools/${id}/toggle`,
+        TEST: (id: string) => `/tools/${id}/test`,
+        EXPORT: (id: string) => `/tools/${id}/export`,
+        IMPORT: '/tools/import',
+        INNER_TOOLS: '/tools/registry/inner-tools',
     },
 
     // Skills 管理
@@ -134,6 +144,7 @@ export const API_ENDPOINTS = {
         GET: (id: string) => `/events/${id}`,
         LIST_BY_WORKSPACE: (workspaceId: string) => `/events/workspace/${workspaceId}/list`,
         LIST_BY_RUN: (runId: string) => `/events/run/${runId}/list`,
+        LIST_BY_USER: '/events/user/list',
         RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
         RUN_STATE: (runId: string) => `/runs/${runId}/state`,
         WORKSPACE_STREAM: (workspaceId: string) => `/workspaces/${workspaceId}/events/stream`,

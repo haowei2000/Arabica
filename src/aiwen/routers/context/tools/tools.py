@@ -28,14 +28,20 @@ from aiwen.schemas.context.tools.tool_template import (
     ToolTemplateListResponse,
     get_all_templates,
     get_inner_tool_templates,
+    tool_record_to_template,
 )
 from aiwen.schemas.context.tools.user_tool import (
+    InnerToolInfo,
+    InnerToolListResponse,
+    ToolExportData,
     UserToolCreate,
     UserToolListResponse,
     UserToolResponse,
+    UserToolTestRequest,
+    UserToolTestResponse,
     UserToolUpdate,
 )
-from aiwen.services.context.tools.tool_crud import UserToolCRUD
+from aiwen.services.context.tools.tool_crud import ToolCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +128,55 @@ async def get_template(template_id: str):
     return template
 
 
+@router.get(
+    "/{tool_id}/template",
+    response_model=ToolTemplate,
+    summary="Get a tool creation template derived from an existing tool",
+)
+async def get_tool_as_template(
+    tool_id: UUID,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """
+    Generate a ToolTemplate from an existing tool record.
+
+    Useful for cloning or deriving a new tool from any existing tool.
+    The returned template is a pre-filled UserToolCreate body that the
+    frontend can load into the create form.
+
+    - For **inner tools** in the registry, the richer class-level
+      ``InnerTool.to_template()`` data is used.
+    - For **external user tools**, the template is derived from the DB record.
+
+    Args:
+        tool_id: UUID of the source tool.
+        current_user: Authenticated user.
+        db: Database session.
+
+    Returns:
+        ToolTemplate ready to be loaded into the create dialog.
+
+    Raises:
+        HTTPException 404: If tool not found or no access.
+    """
+    crud = ToolCRUD(db)
+    tool = await crud.get_tool_by_id(tool_id, current_user.id)
+    if not tool:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
+
+    # For inner tools, prefer the richer registry-level template
+    if tool.tool_type == "inner":
+        dynamic = get_inner_tool_templates()
+        tpl = dynamic.get(f"inner_{tool.name}")
+        if tpl:
+            return tpl
+
+    return tool_record_to_template(tool)
+
+
 # ============================================================================
 # Tool CRUD - Create, Read, Update, Delete external tools
 # ============================================================================
@@ -155,7 +210,7 @@ async def create_tool(
     Raises:
         HTTPException 400: If validation fails or tool name already exists
     """
-    crud = UserToolCRUD(db)
+    crud = ToolCRUD(db)
 
     try:
         tool = await crud.create_tool(current_user.id, tool_data)
@@ -200,7 +255,7 @@ async def list_tools(
     Returns:
         List of tools with pagination info
     """
-    crud = UserToolCRUD(db)
+    crud = ToolCRUD(db)
 
     # Parse tags from comma-separated string
     tag_list = [tag.strip() for tag in tags.split(",")] if tags else None
@@ -244,7 +299,7 @@ async def get_tool(
         HTTPException 404: If tool not found
         HTTPException 403: If user doesn't have access to private tool
     """
-    crud = UserToolCRUD(db)
+    crud = ToolCRUD(db)
 
     tool = await crud.get_tool_by_id(tool_id, current_user.id)
     if not tool:
@@ -285,7 +340,7 @@ async def update_tool(
         HTTPException 404: If tool not found
         HTTPException 403: If user is not the owner
     """
-    crud = UserToolCRUD(db)
+    crud = ToolCRUD(db)
 
     # Check if it's an inner tool
     tool = await crud.get_tool_by_id(tool_id)
@@ -330,7 +385,7 @@ async def delete_tool(
         HTTPException 404: If tool not found
         HTTPException 403: If user is not the owner
     """
-    crud = UserToolCRUD(db)
+    crud = ToolCRUD(db)
 
     # Check if it's an inner tool
     tool = await crud.get_tool_by_id(tool_id)
@@ -377,7 +432,7 @@ async def toggle_tool(
         HTTPException 403: If trying to toggle an inner tool
         HTTPException 404: If tool not found or no permission
     """
-    crud = UserToolCRUD(db)
+    crud = ToolCRUD(db)
 
     # Check if it's an inner tool
     tool = await crud.get_tool_by_id(tool_id)
@@ -395,6 +450,112 @@ async def toggle_tool(
         )
 
     return _build_user_tool_response(tool)
+
+
+# ============================================================================
+# Tool Import / Export
+# ============================================================================
+
+
+@router.get(
+    "/{tool_id}/export",
+    response_model=ToolExportData,
+    summary="Export a tool as JSON",
+)
+async def export_tool(
+    tool_id: UUID,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """
+    Export a tool's configuration as a portable JSON object.
+
+    The returned data can be saved to a file and later imported via
+    ``POST /tools/import`` to recreate the tool.
+
+    Args:
+        tool_id: Tool UUID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        ToolExportData with all configuration fields
+
+    Raises:
+        HTTPException 404: If tool not found
+    """
+    crud = ToolCRUD(db)
+    tool = await crud.get_tool_by_id(tool_id, current_user.id)
+    if not tool:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
+
+    return ToolExportData(
+        name=tool.name,
+        display_name=tool.display_name,
+        description=tool.description,
+        execution_mode=getattr(tool, "execution_mode", None) or "inner",
+        input_schema=tool.input_schema or {},
+        output_schema=tool.output_schema,
+        category=tool.category or "custom",
+        tags=tool.tags or [],
+        timeout=tool.timeout or 30,
+        inner_tool_name=tool.inner_tool_name,
+        parameter_mapping=tool.parameter_mapping,
+        chain=tool.chain,
+    )
+
+
+@router.post(
+    "/import",
+    response_model=UserToolResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Import a tool from exported JSON",
+)
+async def import_tool(
+    export_data: ToolExportData,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """
+    Import a tool from a previously exported JSON configuration.
+
+    Creates a new tool with the same configuration as the exported data.
+
+    Args:
+        export_data: Exported tool configuration
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        Created tool information
+
+    Raises:
+        HTTPException 400: If validation fails or tool name already exists
+    """
+    tool_data = UserToolCreate(
+        name=export_data.name,
+        display_name=export_data.display_name,
+        description=export_data.description,
+        input_schema=export_data.input_schema,
+        output_schema=export_data.output_schema,
+        category=export_data.category,
+        tags=export_data.tags,
+        timeout=export_data.timeout,
+        inner_tool_name=export_data.inner_tool_name,
+        parameter_mapping=export_data.parameter_mapping,
+        chain=export_data.chain,
+    )
+
+    crud = ToolCRUD(db)
+    try:
+        tool = await crud.create_tool(current_user.id, tool_data)
+        from aiwen.celery_worker.tasks.context_sync_tasks import sync_tool_to_contexts
+        sync_tool_to_contexts.delay(str(tool.id), str(current_user.id))
+        return _build_user_tool_response(tool)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 # ============================================================================
@@ -517,3 +678,138 @@ async def get_tool_schemas(format: str = "openai"):
     """
     schemas = ToolRegistry.get_all_schemas(format=format)
     return {"schemas": schemas, "total": len(schemas)}
+
+
+@router.get(
+    "/registry/inner-tools",
+    response_model=InnerToolListResponse,
+    summary="List available inner tools with schemas",
+)
+async def get_inner_tools():
+    """
+    Get all registered InnerTools with their input/output schemas.
+
+    Used by the frontend to display available tools when creating
+    an external tool that wraps an inner tool (parameter mapping).
+
+    Returns:
+        List of inner tools with full schema information, sorted by (category, name).
+    """
+    from aiwen.core.interfaces.tool import InnerTool
+
+    inner_tools: list[InnerToolInfo] = []
+
+    for tool_name in ToolRegistry.list_tools(enabled_only=False):
+        tool_class = ToolRegistry.get_tool_class(tool_name)
+        if tool_class is None:
+            continue
+        if not (issubclass(tool_class, InnerTool) and tool_class is not InnerTool):
+            continue
+
+        metadata = tool_class.METADATA
+        inner_tools.append(
+            InnerToolInfo(
+                name=metadata.name,
+                display_name=metadata.display_name,
+                description=metadata.description,
+                category=metadata.category,
+                tags=metadata.tags,
+                timeout=metadata.timeout,
+                input_schema=tool_class.InputSchema.model_json_schema(),
+                output_schema=tool_class.OutputSchema.model_json_schema(),
+            )
+        )
+
+    inner_tools.sort(key=lambda t: (t.category, t.name))
+
+    return InnerToolListResponse(inner_tools=inner_tools, total=len(inner_tools))
+
+
+@router.post(
+    "/{tool_id}/test",
+    response_model=UserToolTestResponse,
+    summary="Test a tool with sample parameters",
+)
+async def test_tool(
+    tool_id: UUID,
+    test_request: UserToolTestRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """
+    Test a tool by executing it with the provided parameters.
+
+    Works for both inner tools and external (user-defined) tools.
+    Returns the execution result along with timing information.
+
+    Args:
+        tool_id: Tool UUID
+        test_request: Test parameters
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        Test result with success/error, data, and execution time
+
+    Raises:
+        HTTPException 404: If tool not found
+    """
+    import time
+
+    crud = ToolCRUD(db)
+    tool = await crud.get_tool_by_id(tool_id, current_user.id)
+    if not tool:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
+
+    start_time = time.monotonic()
+
+    try:
+        if tool.tool_type == "inner":
+            # Inner tool: get instance directly from registry
+            tool_instance = ToolRegistry.get_tool_instance(tool.name)
+            if not tool_instance:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Inner tool '{tool.name}' not found in registry",
+                )
+            result = await tool_instance(**test_request.parameters)
+        else:
+            # External tool: create dynamic class and execute
+            from aiwen.registries.dynamic_loader import DynamicToolLoader
+
+            tool_cls = DynamicToolLoader.create_tool_class(tool)
+            tool_instance = tool_cls()
+            result = await tool_instance(**test_request.parameters)
+
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
+        return UserToolTestResponse(
+            success=result.get("success", False),
+            message=result.get("message"),
+            data=result.get("data"),
+            error=result.get("error"),
+            execution_time_ms=round(elapsed_ms, 2),
+            tool_name=tool.name,
+            tool_id=str(tool.id),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.error(
+            "Tool test failed for %s (id=%s): %s",
+            tool.name,
+            tool_id,
+            e,
+            exc_info=True,
+        )
+        return UserToolTestResponse(
+            success=False,
+            error=str(e),
+            execution_time_ms=round(elapsed_ms, 2),
+            tool_name=tool.name,
+            tool_id=str(tool.id),
+        )

@@ -91,3 +91,7 @@ class AppConfig(BaseModel):
     context: list[ContextSchema] | None = Field(
         None, description="List of context configurations"
     )
+    approval_tools: list[str] = Field(
+        default=["http_request"],
+        description="Tool names that require user approval before execution (HITL)",
+    )
