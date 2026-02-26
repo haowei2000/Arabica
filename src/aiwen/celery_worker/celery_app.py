@@ -25,7 +25,9 @@ celery_app.conf.update(
     enable_utc=False,
     # Task discovery
     imports=[
+        "aiwen.celery_worker.tasks.knowledge_tasks",
         "aiwen.celery_worker.tasks.context_sync_tasks",
+        "aiwen.celery_worker.tasks.background_tasks",
     ],
 )
 
