@@ -24,7 +24,6 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from aiwen.models.events import Event
 
-
 # ============================================================================
 
 
@@ -238,9 +237,9 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
     config: dict[str, Any]
     """Runtime configuration (passed during initialization)"""
 
-    async def process_event(self, event: Any) -> AsyncGenerator[Event, None]:
+    async def process_event(self, event: Event) -> AsyncGenerator[Event, None]:
         """Dispatch an incoming event to the matching _process_* handler."""
-        ...
+        yield  # pragma: no cover – protocol stub
 
     # User event handlers
 

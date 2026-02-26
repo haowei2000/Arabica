@@ -28,12 +28,12 @@ import logging
 from typing import Any, ClassVar
 
 from aiwen.core.interfaces import (
-    AgentEvent,
     Executor,
     ToolCaller,
     ToolProvider,
     WaitingForTool,
 )
+from aiwen.models.events.event import Event
 from aiwen.frameworks.tool_calling import (
     ChatMessage,
     LLMResponse,
@@ -122,8 +122,6 @@ class DefaultExecutor(Executor):
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
         # Tools in this list pause the run and ask the user before executing.
-        self.approval_tools: list[str] = config.get("approval_tools", [])
-        # Maximum tool-call iterations before forcing a stop.
         self.max_iterations: int = config.get("max_iterations", 10)
 
         # ── Dependency-injected abstractions ─────────────────────
@@ -160,7 +158,7 @@ class DefaultExecutor(Executor):
 
     # ── event dispatch ─────────────────────────────────────────────
 
-    async def process_event(self, event: AgentEvent) -> AsyncGenerator[AgentEvent, None]:
+    async def process_event(self, event: Event) -> AsyncGenerator[Event, None]:
         """Route the four supported event types to streaming handlers.
 
         WaitingForTool is caught here so it never propagates to the worker's
@@ -169,24 +167,25 @@ class DefaultExecutor(Executor):
         yielded to the worker and will be published normally.
         """
         self._event_queue.clear()
-
+        if not event.payload:
+            raise ValueError("Event payload is empty")
         try:
             match event.event_type:
-                case EventType.USER_MESSAGE.value:
+                case EventType.USER_MESSAGE:
                     self._reset_token_index()
                     async for e in self._on_user_message(event.payload):
                         yield e
 
-                case EventType.USER_FEEDBACK.value:
+                case EventType.USER_FEEDBACK:
                     self._reset_token_index()
                     async for e in self._on_user_feedback(event.payload):
                         yield e
 
-                case EventType.TOOL_RESULT.value:
+                case EventType.TOOL_RESULT:
                     async for e in self._on_tool_result(event.payload):
                         yield e
 
-                case EventType.TOOL_ERROR.value:
+                case EventType.TOOL_ERROR:
                     async for e in self._on_tool_error(event.payload):
                         yield e
 
@@ -202,7 +201,7 @@ class DefaultExecutor(Executor):
 
     async def _on_user_message(
         self, payload: dict[str, Any]
-    ) -> AsyncGenerator[AgentEvent, None]:
+    ) -> AsyncGenerator[Event, None]:
         """Start a fresh agentic loop for a new user message."""
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=self.system_prompt),
@@ -221,7 +220,7 @@ class DefaultExecutor(Executor):
 
     async def _on_user_feedback(
         self, payload: dict[str, Any]
-    ) -> AsyncGenerator[AgentEvent, None]:
+    ) -> AsyncGenerator[Event, None]:
         """Continue the conversation with user feedback as a new user turn."""
         feedback = payload.get("feedback", "")
         messages = [
@@ -233,7 +232,7 @@ class DefaultExecutor(Executor):
 
     async def _on_tool_result(
         self, payload: dict[str, Any]
-    ) -> AsyncGenerator[AgentEvent, None]:
+    ) -> AsyncGenerator[Event, None]:
         """Accumulate a successful tool result; resume the loop when all tools done."""
         tool_id = payload.get("tool_id", "")
         self._tool_results.append(
@@ -254,7 +253,7 @@ class DefaultExecutor(Executor):
 
     async def _on_tool_error(
         self, payload: dict[str, Any]
-    ) -> AsyncGenerator[AgentEvent, None]:
+    ) -> AsyncGenerator[Event, None]:
         """Accumulate a failed tool result; resume the loop when all tools done."""
         tool_id = payload.get("tool_id", "")
         self._tool_results.append(
@@ -274,7 +273,7 @@ class DefaultExecutor(Executor):
         async for event in self._resume_with_results():
             yield event
 
-    async def _resume_with_results(self) -> AsyncGenerator[AgentEvent, None]:
+    async def _resume_with_results(self) -> AsyncGenerator[Event, None]:
         """Append all collected tool results to the conversation and resume the loop."""
         messages = self._waiting_messages or []
 
@@ -362,63 +361,6 @@ class DefaultExecutor(Executor):
         """Reconstruct the ChatMessage list from a serialized format."""
         return [ChatMessage.from_dict(d) for d in serialized]
 
-    # ── tool call processing ──────────────────────────────────────
-
-    async def _process_tool_calls(
-        self,
-        tool_calls: list[ToolCallRequest] | list[dict[str, Any]],
-        messages: list[ChatMessage],
-    ) -> AsyncGenerator[AgentEvent, None]:
-        """Emit TOOL_CALL events and pause execution for the worker to handle.
-
-        1. Emits tool.call events for each tool call.
-        2. Saves conversation state to instance variables for later resumption.
-        3. Raises WaitingForTool – caught by process_event, not the worker.
-        4. Worker processes TOOL_CALL events and publishes TOOL_RESULT/TOOL_ERROR.
-        5. _on_tool_result/_on_tool_error accumulate results and resume the loop.
-        """
-        # Normalize to ToolCallRequest
-        normalized: list[ToolCallRequest] = []
-        for tc in tool_calls:
-            if isinstance(tc, ToolCallRequest):
-                normalized.append(tc)
-            elif isinstance(tc, dict):
-                normalized.append(
-                    ToolCallRequest(
-                        id=tc.get("id", ""),
-                        name=tc["name"],
-                        arguments=tc.get("arguments", tc.get("args", {})),
-                    )
-                )
-            else:
-                normalized.append(tc)
-
-        # Emit tool.call events for all tools
-        for tc in normalized:
-            yield self._emit_tool_call(
-                tool_name=tc.name,
-                tool_id=tc.id,
-                arguments=tc.arguments,
-            )
-
-        # Save conversation state so _resume_with_results can continue the loop
-        self._waiting_messages = list(messages)
-        self._pending_tool_ids = {tc.id for tc in normalized}
-        self._tool_results = []
-
-        # Pause the agentic loop; caught by process_event's try/except
-        raise WaitingForTool(
-            {
-                "type": "tool_execution",
-                "pending_tool_calls": [
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                    for tc in normalized
-                ],
-                "messages": self._serialize_messages(messages),
-                "executor_code": self.TEMPLATE["executor_code"],
-            }
-        )
-
     # ── message conversion ────────────────────────────────────────
 
     def _extract_trigger_context(
@@ -472,7 +414,7 @@ class DefaultExecutor(Executor):
     async def _agentic_loop(
         self,
         messages: list[ChatMessage],
-    ) -> AsyncGenerator[AgentEvent, None]:
+    ) -> AsyncGenerator[Event, None]:
         """Run the agentic loop: call LLM, process tool calls, repeat."""
         for _iteration in range(self.max_iterations):
             # ── per-iteration state ──────────────────────────────

@@ -4,7 +4,7 @@ This package contains specialized handlers for events that require
 dedicated processing logic outside of the executor.
 """
 
-from aiwen.services.events.handlers.lifecycle_handler import (
+from aiwen.services.events.handlers.artifact_handler import (
     handle_artifact_event,
     handle_task_event,
 )

@@ -2,33 +2,23 @@
 """Executor ABC and typed event-stream helpers.
 
 Provides the ``Executor`` abstract base class that concrete executors
-inherit from, along with the ``AgentEvent`` dataclass and the
-``WaitingForTool`` exception used across the streaming pipeline.
+inherit from, along with the ``WaitingForTool`` exception used
+across the streaming pipeline.
 
 Consumers should depend on ``ExecutorProtocol`` (in ``protocols.py``),
 not on this ABC directly — see the Dependency Inversion notes in the plan.
 """
 
-from aiwen.core.interfaces.protocols import ExecutorProtocol
-
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from aiwen.schemas.context.tools import ToolClientRequestPayload
+from aiwen.core.interfaces.protocols import ExecutorProtocol
+from aiwen.models.events import Event
 from aiwen.schemas.events.event_payloads import (
-    AgentPlanEventSchema,
-    AgentTokenEventSchema,
+    BaseEventSchema,
     EventType,
-    RunStateChangeEventSchema,
-    ToolCallEventSchema,
-    ToolPendingEventSchema,
-    ToolResultEventSchema,
-    UserMessage,
-    WorkspaceMemberJoinEventSchema, BaseEventSchema,
 )
-
 
 
 class WaitingForTool(Exception):
@@ -93,7 +83,7 @@ class Executor(ABC, ExecutorProtocol):
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self._token_index: int = 0
-        self._event_queue: list[BaseEventSchema] = []
+        self._event_queue: list[Event] = []
 
     # ── core contract ────────────────────────────────────────────
     @abstractmethod
@@ -107,8 +97,8 @@ class Executor(ABC, ExecutorProtocol):
     # override the events they care about.
 
     async def process_event(
-        self, event: BaseEventSchema
-    ) -> AsyncGenerator[BaseEventSchema, None]:  # ty:ignore[invalid-method-override]
+        self, event: Event
+    ) -> AsyncGenerator[Event, None]:  # ty:ignore[invalid-method-override]
         """Dispatch an incoming event to the appropriate handler.
 
         Routes ``event`` to the matching ``_process_*`` method based on
@@ -116,7 +106,7 @@ class Executor(ABC, ExecutorProtocol):
         ``_process_*`` methods rather than this dispatcher.
 
         Yields:
-            AgentEvent instances emitted by the handler via _emit_*() methods.
+            Event instances emitted by the handler via the _event_queue.
         """
         # Clear the event queue before processing
         self._event_queue.clear()

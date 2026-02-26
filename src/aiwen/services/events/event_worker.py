@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.config.factory import get_settings
 from aiwen.core.enums import EventType
-from aiwen.core.interfaces import AgentEvent
 from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.models.app import App
 from aiwen.models.events.event import Event
@@ -34,6 +33,7 @@ from aiwen.services.events.handlers import (
 from aiwen.services.executor.runtime import ExecutorInstanceManager
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,6 @@ class Worker:
         config["workspace_id"] = workspace_id
         config["run_id"] = run_id
 
-        # ── Inject tool services ─────────────────────────────────
         if user_tool_classes:
             # Per-run ToolCaller that knows about user-defined tools
             user_instances = {cls.METADATA.name: cls() for cls in user_tool_classes}
@@ -332,10 +331,8 @@ class Worker:
             logger.error(
                 f"Failed to create executor for run {run_id}: {e}", exc_info=True
             )
-            try:
+            with contextlib.suppress(Exception):
                 await self.state_machine.fail(run_id, error=str(e), auto_commit=True)
-            except Exception:
-                pass
             return None
 
     async def handle_event(self, event: Event):
@@ -472,19 +469,13 @@ class Worker:
             )
             return
 
-        # Forward to executor
-        agent_event = AgentEvent(
-            event_type=event.event_type.value,
-            payload=event.payload or {},
-        )
-
         # Publish all events emitted by the executor
         run_id = (
             event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
         )
         workspace_id = str(event.workspace_id)
 
-        async for output_event in executor.process_event(agent_event):
+        async for output_event in executor.process_event(event):
             await self._publish_event(output_event, run_id, workspace_id)
 
     async def _fetch_run_data(self, run_id: UUID) -> tuple[Run | None, dict | None]:
@@ -535,30 +526,17 @@ class Worker:
 
     async def _publish_event(
         self,
-        event: AgentEvent,
+        event: Event,
         run_id: UUID,
         workspace_id: str,
     ):
-        """
-        通过 EventPublisher 发布 Agent 事件。
-
-        AgentEvent 会被转换为统一的 EventPublisher 格式:
-        {
-            "id": uuid,
-            "event_type": "agent.token" | "agent.message" | "tool.call" | ...,
-            "workspace_id": str,
-            "run_id": str,
-            "payload": {...},
-            "sequence": int,
-            "created_at": timestamp
-        }
-        """
+        """Publish an Event emitted by the executor through EventPublisher."""
         try:
             await self.event_publisher.publish(
-                event_type=event.event_type,
+                event_type=str(event.event_type),
                 workspace_id=workspace_id,
                 run_id=str(run_id),
-                payload=event.payload,
+                payload=event.payload,  # type: ignore[arg-type]
                 auto_commit=True,
             )
         except Exception as e:
