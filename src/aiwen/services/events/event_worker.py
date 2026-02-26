@@ -28,6 +28,7 @@ from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
+from aiwen.services.executor.runtime import ExecutorInstanceManager
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
 
@@ -323,11 +324,18 @@ class Worker:
             # 3. Load user-defined external tools (incl. chain/pipeline tools)
             user_tool_classes = []
             if run.user_id:
-                user_tool_classes = await DynamicToolLoader.load_user_tools(
-                    self.db,
-                    run.user_id,
-                    run.workspace_id,
-                )
+                try:
+                    user_tool_classes = await DynamicToolLoader.load_user_tools(
+                        self.db,
+                        run.user_id,
+                        run.workspace_id,
+                    )
+                except Exception as tool_load_err:
+                    logger.error(f"Failed to load user tools for run {run_id}: {tool_load_err}", exc_info=True)
+                    # Rollback failed transaction
+                    await self.db.rollback()
+                    # Continue without user tools
+                    user_tool_classes = []
 
             # 4. Prepare Executor with user tools injected
             workspace_id = str(run.workspace_id)
@@ -347,11 +355,18 @@ class Worker:
             logger.error(f"_handle_user_message error: {e}", exc_info=True)
             if run_id:
                 try:
+                    # Rollback any failed transaction before trying to mark run as failed
+                    await self.db.rollback()
                     await self.state_machine.fail(
                         run_id, error=str(e), auto_commit=True
                     )
                 except Exception as fail_err:
                     logger.error(f"Failed to mark run {run_id} as failed: {fail_err}")
+                    # Try one more rollback
+                    try:
+                        await self.db.rollback()
+                    except Exception:
+                        pass
 
     async def _fetch_run_data(self, run_id: UUID) -> tuple[Run | None, dict | None]:
         """
@@ -695,7 +710,7 @@ class Worker:
             logger.info(f"Processing run cancellation for {run_id}")
 
             # Release executor resources if still attached
-            if self.runtime.has_executor(run_id):
+            if self.runtime.exists(run_id):
                 self.runtime.release(run_id)
                 logger.info(f"Released executor resources for cancelled run {run_id}")
 

@@ -123,7 +123,48 @@ class BaseTool(ABC):
         Raises:
             ValidationError: Input parameters do not conform to schema
         """
-        return self.InputSchema(**raw_input)
+        # Clean up empty strings and parse JSON strings
+        import json
+
+        cleaned_input = {}
+        for key, value in raw_input.items():
+            if value == '' or value is None:
+                # Empty string or None - skip it, let Pydantic use field defaults
+                continue
+            elif isinstance(value, str):
+                # Try to parse JSON strings for complex types (dict/list)
+                stripped = value.strip()
+                if stripped and stripped[0] in ('{', '['):
+                    try:
+                        cleaned_input[key] = json.loads(stripped)
+                    except (json.JSONDecodeError, ValueError) as e:
+                        # Try lenient JSON parsing (quote unquoted values)
+                        try:
+                            # Attempt to fix common JSON errors
+                            import re
+                            # Add quotes to unquoted string values
+                            # Pattern: :word (not already quoted, not a number/bool/null)
+                            fixed = re.sub(
+                                r':(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*([,}\]])',
+                                r':"\2"\3',
+                                stripped
+                            )
+                            cleaned_input[key] = json.loads(fixed)
+                        except (json.JSONDecodeError, ValueError):
+                            # Still failed - log warning and keep as string
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.warning(
+                                f"Failed to parse JSON for parameter '{key}': {e}\n"
+                                f"Value: {value[:200]}"
+                            )
+                            cleaned_input[key] = value
+                else:
+                    cleaned_input[key] = value
+            else:
+                cleaned_input[key] = value
+
+        return self.InputSchema(**cleaned_input)
 
     def format_output(self, output: ToolOutputSchema) -> dict[str, Any]:
         """
