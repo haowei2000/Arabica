@@ -45,6 +45,19 @@ class EventType(StrEnum):
     WORKSPACE_MEMBER_LEAVE = "workspace.member.leave"
     WORKSPACE_MEMBER_ROLE_CHANGE = "workspace.member.role.change"
 
+    # Task events
+    TASK_CREATE = "task.create"
+    TASK_UPDATE = "task.update"
+    TASK_DELETE = "task.delete"
+    TASK_COMPLETE = "task.complete"
+    TASK_ASSIGN = "task.assign"
+
+    # Artifact events
+    ARTIFACT_CREATE = "artifact.create"
+    ARTIFACT_UPDATE = "artifact.update"
+    ARTIFACT_DELETE = "artifact.delete"
+    ARTIFACT_VERSION = "artifact.version"
+
     # System events
     SYSTEM_ERROR = "system.error"
     SYSTEM_NOTIFICATION = "system.notification"

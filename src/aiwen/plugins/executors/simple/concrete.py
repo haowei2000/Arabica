@@ -242,7 +242,13 @@ class DefaultExecutor(Executor):
         tool_calls: list[ToolCallRequest] | list[dict[str, Any]],
         messages: list[ChatMessage],
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Execute a list of tool calls, yielding events and appending results.
+        """Emit tool call events and pause execution for worker to handle.
+
+        NEW BEHAVIOR: Instead of executing tools directly, this method now:
+        1. Emits tool.call events for each tool
+        2. Pauses execution (raises WaitingForTool)
+        3. Worker picks up tool.call events, executes tools, publishes tool.result
+        4. Executor resumes when tool.result/error events arrive
 
         Accepts either ``ToolCallRequest`` objects or raw dicts (for
         backward compatibility with serialized remaining_tool_calls).
@@ -263,58 +269,29 @@ class DefaultExecutor(Executor):
             else:
                 normalized.append(tc)
 
-        for idx, tc in enumerate(normalized):
-            # ── HITL approval gate ───────────────────────────────
-            if tc.name in self.approval_tools:
-                remaining = [
-                    {"id": r.id, "name": r.name, "arguments": r.arguments}
-                    for r in normalized[idx + 1:]
-                ]
-
-                yield self._emit_tool_pending(
-                    tool_name=tc.name,
-                    tool_id=tc.id,
-                    arguments=tc.arguments,
-                )
-                raise WaitingForTool(
-                    {
-                        "type": "tool_approval",
-                        "tool_name": tc.name,
-                        "tool_id": tc.id,
-                        "arguments": tc.arguments,
-                        "messages": self._serialize_messages(messages),
-                        "remaining_tool_calls": remaining,
-                        "executor_code": self.TEMPLATE["executor_code"],
-                    }
-                )
-
+        # Emit tool.call events for ALL tools without executing
+        for tc in normalized:
             yield self._emit_tool_call(
                 tool_name=tc.name,
                 tool_id=tc.id,
                 arguments=tc.arguments,
             )
 
-            start_time = time.time()
-            try:
-                result = await self._execute_tool_call(tc.name, tc.arguments)
-                elapsed_ms = int((time.time() - start_time) * 1000)
-                yield self._emit_tool_result(
-                    tool_name=tc.name,
-                    tool_id=tc.id,
-                    result=result,
-                    execution_time_ms=elapsed_ms,
-                )
-                messages.append(
-                    ChatMessage(
-                        role="tool",
-                        content=json.dumps(
-                            result, ensure_ascii=False, default=str
-                        ),
-                        tool_call_id=tc.id,
-                    )
-                )
-            except Exception as e:
-                elapsed_ms = int((time.time() - start_time) * 1000)
+        # Serialize remaining state and pause for worker execution
+        remaining_calls = [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+            for tc in normalized
+        ]
+
+        # Pause execution - worker will execute tools and resume
+        raise WaitingForTool(
+            {
+                "type": "tool_execution",
+                "pending_tool_calls": remaining_calls,
+                "messages": self._serialize_messages(messages),
+                "executor_code": self.TEMPLATE["executor_code"],
+            }
+        )
                 error_msg = str(e)
                 yield self._emit_tool_error(
                     tool_name=tc.name,
@@ -407,85 +384,88 @@ class DefaultExecutor(Executor):
         self,
         user_message: dict,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Handle a resumed run after tool approval / rejection."""
-        waiting_info: dict = user_message.get("_waiting_info", {})
-        approval: dict = user_message.get("_approval", {})
-        approved: bool = approval.get("approved", True)
+        """Handle a resumed run after tool execution by worker.
 
-        tool_name: str = waiting_info.get("tool_name", "")
-        tool_id: str = waiting_info.get("tool_id", "")
-        tool_args: dict = waiting_info.get("arguments", {})
+        NEW BEHAVIOR: Tool results come from worker-published events, not direct execution.
+        The waiting_info contains tool_results populated by the worker.
+        """
+        waiting_info: dict = user_message.get("_waiting_info", {})
+        waiting_type: str = waiting_info.get("type", "")
 
         # ── reconstruct conversation state ───────────────────────
         stored = waiting_info.get("messages", [])
         messages: list[ChatMessage] = self._deserialize_messages(stored)
 
-        # ── handle the approved / rejected tool ──────────────────
-        if approved:
-            yield self._emit_tool_call(
-                tool_name=tool_name,
-                tool_id=tool_id,
-                arguments=tool_args,
-            )
-            start_time = time.time()
-            try:
-                result = await self._execute_tool_call(tool_name, tool_args)
-                elapsed_ms = int((time.time() - start_time) * 1000)
-                yield self._emit_tool_result(
-                    tool_name=tool_name,
-                    tool_id=tool_id,
-                    result=result,
-                    execution_time_ms=elapsed_ms,
-                )
+        if waiting_type == "tool_execution":
+            # NEW: Tool results come from worker via events
+            tool_results: list[dict] = user_message.get("_tool_results", [])
+
+            # Append tool results to message history
+            for tool_result in tool_results:
+                tool_id = tool_result.get("tool_id", "")
+                tool_name = tool_result.get("tool_name", "")
+                success = tool_result.get("success", True)
+
+                if success:
+                    result_data = tool_result.get("result", {})
+                    content = json.dumps(result_data, ensure_ascii=False, default=str)
+                else:
+                    error_msg = tool_result.get("error_message", "Unknown error")
+                    content = json.dumps(
+                        {"success": False, "error": error_msg},
+                        ensure_ascii=False,
+                    )
+
                 messages.append(
                     ChatMessage(
                         role="tool",
-                        content=json.dumps(
-                            result, ensure_ascii=False, default=str
-                        ),
+                        content=content,
                         tool_call_id=tool_id,
                     )
                 )
-            except Exception as e:
-                elapsed_ms = int((time.time() - start_time) * 1000)
-                error_msg = str(e)
-                yield self._emit_tool_error(
+
+        elif waiting_type == "tool_approval":
+            # LEGACY: HITL approval path (kept for backward compatibility)
+            approval: dict = user_message.get("_approval", {})
+            approved: bool = approval.get("approved", True)
+
+            tool_name: str = waiting_info.get("tool_name", "")
+            tool_id: str = waiting_info.get("tool_id", "")
+
+            if approved:
+                # Emit tool.call event for worker to execute
+                yield self._emit_tool_call(
                     tool_name=tool_name,
                     tool_id=tool_id,
-                    error_message=error_msg,
+                    arguments=waiting_info.get("arguments", {}),
                 )
+                # Pause again - worker will execute and resume
+                raise WaitingForTool(
+                    {
+                        "type": "tool_execution",
+                        "pending_tool_calls": [
+                            {
+                                "id": tool_id,
+                                "name": tool_name,
+                                "arguments": waiting_info.get("arguments", {}),
+                            }
+                        ],
+                        "messages": self._serialize_messages(messages),
+                        "executor_code": self.TEMPLATE["executor_code"],
+                    }
+                )
+            else:
+                # User rejected tool
                 messages.append(
                     ChatMessage(
                         role="tool",
                         content=json.dumps(
-                            {"success": False, "error": error_msg},
+                            {"success": False, "error": "Tool call rejected by user"},
                             ensure_ascii=False,
                         ),
                         tool_call_id=tool_id,
                     )
                 )
-        else:
-            yield self._emit_tool_error(
-                tool_name=tool_name,
-                tool_id=tool_id,
-                error_message="Tool call rejected by user",
-            )
-            messages.append(
-                ChatMessage(
-                    role="tool",
-                    content=json.dumps(
-                        {"success": False, "error": "Tool call rejected by user"},
-                        ensure_ascii=False,
-                    ),
-                    tool_call_id=tool_id,
-                )
-            )
-
-        # ── process remaining tool calls from the same AI turn ───
-        remaining = waiting_info.get("remaining_tool_calls", [])
-        if remaining:
-            async for event in self._process_tool_calls(remaining, messages):
-                yield event
 
         # ── continue the normal agentic loop ─────────────────────
         async for event in self._agentic_loop(messages):

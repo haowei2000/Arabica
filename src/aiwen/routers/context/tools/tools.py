@@ -213,12 +213,21 @@ async def create_tool(
     crud = ToolCRUD(db)
 
     try:
+        logger.info(f"Creating tool: name={tool_data.name}, user_id={current_user.id}")
         tool = await crud.create_tool(current_user.id, tool_data)
         from aiwen.celery_worker.tasks.context_sync_tasks import sync_tool_to_contexts
         sync_tool_to_contexts.delay(str(tool.id), str(current_user.id))
+        logger.info(f"Tool created successfully: id={tool.id}, name={tool.name}")
         return _build_user_tool_response(tool)
     except ValueError as e:
+        logger.warning(f"Tool creation failed: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error creating tool: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create tool: {str(e)}"
+        )
 
 
 @router.get(
