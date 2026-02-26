@@ -3,7 +3,7 @@
 
 Architecture:
     TriggerConditionEvaluator  - Pure condition matching (no I/O)
-    TriggerProcessor           - Loads triggers from DB, evaluates, executes actions
+    TriggerProcessor - Loads triggers from DB, evaluates, executes actions
 
 Action execution:
     ``tool_name`` is any registered tool name (e.g. ``glance_context``,

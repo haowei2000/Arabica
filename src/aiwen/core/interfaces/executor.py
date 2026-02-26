@@ -86,8 +86,15 @@ class Executor(ABC):
 
     Subclasses must:
       * declare a ``TEMPLATE`` ClassVar (consumed by ``@register_executor``)
-      * implement ``setup()``, ``run()``
-      * optionally override ``stream()`` and ``cancel()``
+      * implement ``setup()``
+      * override ``_process_*`` methods for events they want to handle
+
+    All interactions with the executor happen through ``process_event()``.
+    The old ``run()``, ``stream()``, and ``cancel()`` methods have been
+    removed in favor of event-driven processing:
+      * user.message event triggers agent execution
+      * run.cancelled event triggers cleanup
+      * executor emits agent.* events for streaming output
     """
 
     TEMPLATE: ClassVar[dict[str, Any]]
@@ -99,7 +106,7 @@ class Executor(ABC):
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self._token_index: int = 0
-        self._cancelled: bool = False
+        self._event_queue: list[AgentEvent] = []
 
     # ── core contract ────────────────────────────────────────────
     @abstractmethod
@@ -107,49 +114,32 @@ class Executor(ABC):
         """Setup any resources needed by the agent."""
         ...
 
-    @abstractmethod
-    async def run(self, user_message: UserMessage) -> dict[str, Any]:
-        """Run to completion and return the final result."""
-        ...
-
-    async def cancel(self) -> None:
-        """Request graceful cancellation of a running executor.
-
-        The default implementation sets an internal flag.  Long-running
-        loops (e.g. the agentic loop) should check ``self._cancelled``
-        periodically.
-        """
-        self._cancelled = True
-
-    async def stream(
-        self, user_message: UserMessage,
-    ) -> AsyncGenerator[AgentEvent, None]:
-        """Yield typed events while processing input.
-
-        Tool dependencies are injected via the constructor (config),
-        not passed as arguments to this method.
-
-        The default implementation runs the agent to completion and emits
-        a single ``AGENT_MESSAGE``.  Override for true streaming.
-        """
-        result = await self.run(user_message)
-        yield self._emit_message(result.get("answer", str(result)))
-
     # ── event processing hooks ────────────────────────────────────
     # Override these in subclasses to react to incoming events.
     # Default implementations are no-ops so subclasses only need to
     # override the events they care about.
 
-    async def process_event(self, event: AgentEvent) -> None:
+    async def process_event(self, event: AgentEvent) -> AsyncGenerator[AgentEvent, None]:
         """Dispatch an incoming event to the appropriate handler.
 
         Routes ``event`` to the matching ``_process_*`` method based on
         ``event.event_type``. Subclasses should override individual
         ``_process_*`` methods rather than this dispatcher.
+
+        Yields:
+            AgentEvent instances emitted by the handler via _emit_*() methods.
         """
+        # Clear the event queue before processing
+        self._event_queue.clear()
+
+        # Call the handler
         handler = self._EVENT_HANDLERS.get(event.event_type)
         if handler:
             await handler(self, event.payload)
+
+        # Yield all events that were emitted during processing
+        for emitted_event in self._event_queue:
+            yield emitted_event
 
     # -- User event handlers --
 
@@ -163,23 +153,23 @@ class Executor(ABC):
 
     # -- Agent event handlers --
 
-    async def _process_token(self, payload: dict[str, Any]) -> None:
+    async def _process_agent_token(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_TOKEN event."""
         ...
 
-    async def _process_message(self, payload: dict[str, Any]) -> None:
+    async def _process_agent_message(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_MESSAGE event."""
         ...
 
-    async def _process_thinking(self, payload: dict[str, Any]) -> None:
+    async def _process_agent_thinking(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_THINKING event."""
         ...
 
-    async def _process_plan_step(self, payload: dict[str, Any]) -> None:
+    async def _process_agent_plan_step(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_PLAN_STEP event."""
         ...
 
-    async def _process_heartbeat(self, payload: dict[str, Any]) -> None:
+    async def _process_agent_heartbeat(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_HEARTBEAT event."""
         ...
 
@@ -207,11 +197,11 @@ class Executor(ABC):
 
     # -- Context event handlers --
 
-    async def _process_using_context(self, payload: dict[str, Any]) -> None:
+    async def _process_context_using(self, payload: dict[str, Any]) -> None:
         """Handle an incoming USING_CONTEXT event."""
         ...
 
-    async def _process_put_outcome(self, payload: dict[str, Any]) -> None:
+    async def _process_context_put_outcome(self, payload: dict[str, Any]) -> None:
         """Handle an incoming PUT_OUTCOME event."""
         ...
 
@@ -259,6 +249,46 @@ class Executor(ABC):
         """Handle an incoming WORKSPACE_MEMBER_ROLE_CHANGE event."""
         ...
 
+    # -- Task event handlers --
+
+    async def _process_task_create(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TASK_CREATE event."""
+        ...
+
+    async def _process_task_update(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TASK_UPDATE event."""
+        ...
+
+    async def _process_task_delete(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TASK_DELETE event."""
+        ...
+
+    async def _process_task_complete(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TASK_COMPLETE event."""
+        ...
+
+    async def _process_task_assign(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TASK_ASSIGN event."""
+        ...
+
+    # -- Artifact event handlers --
+
+    async def _process_artifact_create(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming ARTIFACT_CREATE event."""
+        ...
+
+    async def _process_artifact_update(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming ARTIFACT_UPDATE event."""
+        ...
+
+    async def _process_artifact_delete(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming ARTIFACT_DELETE event."""
+        ...
+
+    async def _process_artifact_version(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming ARTIFACT_VERSION event."""
+        ...
+
     # -- System event handlers --
 
     async def _process_system_error(self, payload: dict[str, Any]) -> None:
@@ -281,7 +311,9 @@ class Executor(ABC):
 
     # ── event factories ──────────────────────────────────────────
     # Each method constructs an AgentEvent whose payload is validated
-    # by the matching Pydantic schema before it is returned.
+    # by the matching Pydantic schema, then adds it to the event queue.
+    # These methods return the event for convenience (e.g., assertions in tests),
+    # but the primary side effect is enqueueing the event.
 
     def _emit_token(self, token: str, *, is_final: bool = False) -> AgentEvent:
         """``AGENT_TOKEN`` – one streaming chunk."""
@@ -294,21 +326,26 @@ class Executor(ABC):
             ).model_dump(),
         )
         self._token_index += 1
+        self._event_queue.append(event)
         return event
 
     def _emit_message(self, content: str) -> AgentEvent:
         """``AGENT_MESSAGE`` – the complete text response."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.AGENT_MESSAGE.value,
             payload={"content": content},
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_thinking(self, content: str) -> AgentEvent:
         """``AGENT_THINKING`` – a reasoning / chain-of-thought trace."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.AGENT_THINKING.value,
             payload={"content": content},
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_plan_step(
         self,
@@ -318,7 +355,7 @@ class Executor(ABC):
         output: str | None = None,
     ) -> AgentEvent:
         """``AGENT_PLAN_STEP`` – one step in a multi-step plan."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.AGENT_PLAN_STEP.value,
             payload=AgentPlanEventSchema(
                 step_number=step_number,
@@ -327,6 +364,8 @@ class Executor(ABC):
                 output=output,
             ).model_dump(),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_tool_call(
         self,
@@ -335,7 +374,7 @@ class Executor(ABC):
         arguments: dict[str, Any],
     ) -> AgentEvent:
         """``TOOL_CALL`` – the LLM has decided to invoke a tool."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.TOOL_CALL.value,
             payload=ToolCallEventSchema(
                 tool_name=tool_name,
@@ -343,6 +382,8 @@ class Executor(ABC):
                 arguments=arguments,
             ).model_dump(),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_tool_result(
         self,
@@ -353,7 +394,7 @@ class Executor(ABC):
         execution_time_ms: int | None = None,
     ) -> AgentEvent:
         """``TOOL_RESULT`` – a tool completed successfully."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.TOOL_RESULT.value,
             payload=ToolResultEventSchema(
                 tool_name=tool_name,
@@ -363,6 +404,8 @@ class Executor(ABC):
                 execution_time_ms=execution_time_ms,
             ).model_dump(),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_tool_error(
         self,
@@ -371,7 +414,7 @@ class Executor(ABC):
         error_message: str,
     ) -> AgentEvent:
         """``TOOL_ERROR`` – a tool raised an exception."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.TOOL_ERROR.value,
             payload=ToolResultEventSchema(
                 tool_name=tool_name,
@@ -381,6 +424,8 @@ class Executor(ABC):
                 error_message=error_message,
             ).model_dump(),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_tool_pending(
         self,
@@ -390,7 +435,7 @@ class Executor(ABC):
         reason: str = "requires_approval",
     ) -> AgentEvent:
         """``TOOL_PENDING`` – tool is blocked; waiting for human action."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.TOOL_PENDING.value,
             payload=ToolPendingEventSchema(
                 tool_name=tool_name,
@@ -400,6 +445,8 @@ class Executor(ABC):
                 arguments=arguments,
             ).model_dump(),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_tool_client_request(
         self,
@@ -416,7 +463,7 @@ class Executor(ABC):
         This event is sent to the browser to trigger local execution
         (e.g., file picker, camera capture, clipboard access).
         """
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.TOOL_CLIENT_REQUEST.value,
             payload=ToolClientRequestPayload(
                 tool_name=tool_name,
@@ -427,6 +474,8 @@ class Executor(ABC):
                 config=config or {},
             ).model_dump(),
         )
+        self._event_queue.append(event)
+        return event
 
     # ── user event factories ──────────────────────────────────────
 
@@ -435,7 +484,9 @@ class Executor(ABC):
         payload: dict[str, Any] = {"message": message}
         if user_id:
             payload["user_id"] = user_id
-        return AgentEvent(event_type=EventType.USER_MESSAGE.value, payload=payload)
+        event = AgentEvent(event_type=EventType.USER_MESSAGE.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_user_feedback(
         self, feedback: str, *, rating: int | None = None, user_id: str | None = None
@@ -446,7 +497,9 @@ class Executor(ABC):
             payload["rating"] = rating
         if user_id:
             payload["user_id"] = user_id
-        return AgentEvent(event_type=EventType.USER_FEEDBACK.value, payload=payload)
+        event = AgentEvent(event_type=EventType.USER_FEEDBACK.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     # ── agent event factories ─────────────────────────────────────
 
@@ -455,7 +508,9 @@ class Executor(ABC):
         payload: dict[str, Any] = {"status": status}
         if detail:
             payload["detail"] = detail
-        return AgentEvent(event_type=EventType.AGENT_HEARTBEAT.value, payload=payload)
+        event = AgentEvent(event_type=EventType.AGENT_HEARTBEAT.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     # ── context event factories ───────────────────────────────────
 
@@ -475,7 +530,9 @@ class Executor(ABC):
         }
         if snippet:
             payload["snippet"] = snippet
-        return AgentEvent(event_type=EventType.USING_CONTEXT.value, payload=payload)
+        event = AgentEvent(event_type=EventType.USING_CONTEXT.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_put_outcome(
         self,
@@ -493,7 +550,9 @@ class Executor(ABC):
         }
         if context_id:
             payload["context_id"] = context_id
-        return AgentEvent(event_type=EventType.PUT_OUTCOME.value, payload=payload)
+        event = AgentEvent(event_type=EventType.PUT_OUTCOME.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     # ── run lifecycle event factories ─────────────────────────────
 
@@ -502,7 +561,9 @@ class Executor(ABC):
         payload: dict[str, Any] = {"run_id": run_id}
         if executor_code:
             payload["executor_code"] = executor_code
-        return AgentEvent(event_type=EventType.RUN_CREATED.value, payload=payload)
+        event = AgentEvent(event_type=EventType.RUN_CREATED.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_run_state_change(
         self,
@@ -513,7 +574,7 @@ class Executor(ABC):
         triggered_by: str | None = None,
     ) -> AgentEvent:
         """``RUN_STATE_CHANGE`` – run transitioned between states."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.RUN_STATE_CHANGE.value,
             payload=RunStateChangeEventSchema(
                 previous_state=previous_state,
@@ -522,6 +583,8 @@ class Executor(ABC):
                 triggered_by=triggered_by,
             ).model_dump(exclude={"event_type", "app_id", "workspace_id", "run_id", "executor_code"}),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_run_completed(
         self, run_id: str, *, result: dict[str, Any] | None = None
@@ -530,7 +593,9 @@ class Executor(ABC):
         payload: dict[str, Any] = {"run_id": run_id}
         if result:
             payload["result"] = result
-        return AgentEvent(event_type=EventType.RUN_COMPLETED.value, payload=payload)
+        event = AgentEvent(event_type=EventType.RUN_COMPLETED.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_run_failed(
         self, run_id: str, error: str, *, error_type: str | None = None
@@ -539,23 +604,29 @@ class Executor(ABC):
         payload: dict[str, Any] = {"run_id": run_id, "error": error}
         if error_type:
             payload["error_type"] = error_type
-        return AgentEvent(event_type=EventType.RUN_FAILED.value, payload=payload)
+        event = AgentEvent(event_type=EventType.RUN_FAILED.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_run_cancelled(self, run_id: str, *, reason: str | None = None) -> AgentEvent:
         """``RUN_CANCELLED`` – run was cancelled."""
         payload: dict[str, Any] = {"run_id": run_id}
         if reason:
             payload["reason"] = reason
-        return AgentEvent(event_type=EventType.RUN_CANCELLED.value, payload=payload)
+        event = AgentEvent(event_type=EventType.RUN_CANCELLED.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     # ── workspace event factories ─────────────────────────────────
 
     def _emit_workspace_created(self, workspace_id: str, name: str) -> AgentEvent:
         """``WORKSPACE_CREATED`` – a new workspace was created."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.WORKSPACE_CREATED.value,
             payload={"workspace_id": workspace_id, "name": name},
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_workspace_updated(
         self, workspace_id: str, *, changes: dict[str, Any] | None = None
@@ -564,7 +635,9 @@ class Executor(ABC):
         payload: dict[str, Any] = {"workspace_id": workspace_id}
         if changes:
             payload["changes"] = changes
-        return AgentEvent(event_type=EventType.WORKSPACE_UPDATED.value, payload=payload)
+        event = AgentEvent(event_type=EventType.WORKSPACE_UPDATED.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_workspace_member_join(
         self,
@@ -575,7 +648,7 @@ class Executor(ABC):
         invited_by: str | None = None,
     ) -> AgentEvent:
         """``WORKSPACE_MEMBER_JOIN`` – a member joined the workspace."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.WORKSPACE_MEMBER_JOIN.value,
             payload=WorkspaceMemberJoinEventSchema(
                 member_id=member_id,
@@ -583,15 +656,19 @@ class Executor(ABC):
                 invited_by=invited_by,
             ).model_dump(exclude={"event_type", "app_id", "workspace_id", "run_id", "executor_code"}),
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_workspace_member_leave(
         self, workspace_id: str, member_id: str
     ) -> AgentEvent:
         """``WORKSPACE_MEMBER_LEAVE`` – a member left the workspace."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.WORKSPACE_MEMBER_LEAVE.value,
             payload={"workspace_id": workspace_id, "member_id": member_id},
         )
+        self._event_queue.append(event)
+        return event
 
     def _emit_workspace_member_role_change(
         self,
@@ -601,7 +678,7 @@ class Executor(ABC):
         new_role: str,
     ) -> AgentEvent:
         """``WORKSPACE_MEMBER_ROLE_CHANGE`` – a member's role was changed."""
-        return AgentEvent(
+        event = AgentEvent(
             event_type=EventType.WORKSPACE_MEMBER_ROLE_CHANGE.value,
             payload={
                 "workspace_id": workspace_id,
@@ -610,6 +687,8 @@ class Executor(ABC):
                 "new_role": new_role,
             },
         )
+        self._event_queue.append(event)
+        return event
 
     # ── system event factories ────────────────────────────────────
 
@@ -622,7 +701,9 @@ class Executor(ABC):
             payload["error_type"] = error_type
         if details:
             payload["details"] = details
-        return AgentEvent(event_type=EventType.SYSTEM_ERROR.value, payload=payload)
+        event = AgentEvent(event_type=EventType.SYSTEM_ERROR.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
     def _emit_system_notification(
         self, message: str, *, level: str = "info", category: str | None = None
@@ -631,35 +712,35 @@ class Executor(ABC):
         payload: dict[str, Any] = {"message": message, "level": level}
         if category:
             payload["category"] = category
-        return AgentEvent(event_type=EventType.SYSTEM_NOTIFICATION.value, payload=payload)
+        event = AgentEvent(event_type=EventType.SYSTEM_NOTIFICATION.value, payload=payload)
+        self._event_queue.append(event)
+        return event
 
 
 # Populate the dispatch table after the class body so all methods are defined.
-Executor._EVENT_HANDLERS = {
-    EventType.USER_MESSAGE.value: Executor._process_user_message,
-    EventType.USER_FEEDBACK.value: Executor._process_user_feedback,
-    EventType.AGENT_TOKEN.value: Executor._process_token,
-    EventType.AGENT_MESSAGE.value: Executor._process_message,
-    EventType.AGENT_THINKING.value: Executor._process_thinking,
-    EventType.AGENT_PLAN_STEP.value: Executor._process_plan_step,
-    EventType.AGENT_HEARTBEAT.value: Executor._process_heartbeat,
-    EventType.TOOL_CALL.value: Executor._process_tool_call,
-    EventType.TOOL_RESULT.value: Executor._process_tool_result,
-    EventType.TOOL_ERROR.value: Executor._process_tool_error,
-    EventType.TOOL_PENDING.value: Executor._process_tool_pending,
-    EventType.TOOL_CLIENT_REQUEST.value: Executor._process_tool_client_request,
-    EventType.USING_CONTEXT.value: Executor._process_using_context,
-    EventType.PUT_OUTCOME.value: Executor._process_put_outcome,
-    EventType.RUN_CREATED.value: Executor._process_run_created,
-    EventType.RUN_STATE_CHANGE.value: Executor._process_run_state_change,
-    EventType.RUN_COMPLETED.value: Executor._process_run_completed,
-    EventType.RUN_FAILED.value: Executor._process_run_failed,
-    EventType.RUN_CANCELLED.value: Executor._process_run_cancelled,
-    EventType.WORKSPACE_CREATED.value: Executor._process_workspace_created,
-    EventType.WORKSPACE_UPDATED.value: Executor._process_workspace_updated,
-    EventType.WORKSPACE_MEMBER_JOIN.value: Executor._process_workspace_member_join,
-    EventType.WORKSPACE_MEMBER_LEAVE.value: Executor._process_workspace_member_leave,
-    EventType.WORKSPACE_MEMBER_ROLE_CHANGE.value: Executor._process_workspace_member_role_change,
-    EventType.SYSTEM_ERROR.value: Executor._process_system_error,
-    EventType.SYSTEM_NOTIFICATION.value: Executor._process_system_notification,
-}
+# This mapping is auto-generated from EventType enum to ensure completeness.
+def _build_event_handlers() -> dict[str, Any]:
+    """Build the event handler dispatch table.
+
+    Automatically maps each EventType enum value to its corresponding
+    _process_* method. If a method is missing for an event type, this
+    will raise an AttributeError at import time, ensuring completeness.
+
+    Returns:
+        dict mapping event_type string to handler method
+    """
+    handlers = {}
+    for event_type in EventType:
+        # Convert event type to method name: "user.message" -> "_process_user_message"
+        method_name = f"_process_{event_type.value.replace('.', '_')}"
+        try:
+            handler = getattr(Executor, method_name)
+            handlers[event_type.value] = handler
+        except AttributeError:
+            raise AttributeError(
+                f"Missing event handler: Executor.{method_name}() for {event_type.value}. "
+                f"All EventType enum values must have a corresponding _process_* method."
+            ) from None
+    return handlers
+
+Executor._EVENT_HANDLERS = _build_event_handlers()

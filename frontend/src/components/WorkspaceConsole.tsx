@@ -80,56 +80,82 @@ function RunEventRow({
   isLast: boolean;
   isActiveEdge: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const label   = EVENT_LABEL[event.event_type] ?? event.event_type;
   const summary = eventSummary(event);
   const failed  = isFailedEvent(event);
+  const hasPayload = event.payload && Object.keys(event.payload).length > 0;
 
   return (
     <div className={cn(
-      'relative flex items-center gap-2 py-1 px-3',
+      'relative',
       !isLast  && 'border-b border-border/30',
       failed   && 'bg-red-500/8',
       isActiveEdge && 'event-running',
     )}>
-      <span className={cn(
-        'size-1 rounded-full shrink-0',
-        failed       ? 'bg-red-500/70' :
-        isActiveEdge ? 'bg-yellow-400/80 animate-pulse' :
-                       'bg-muted-foreground/25'
-      )} />
-      <span className={cn(
-        'text-[10px] font-medium shrink-0',
-        failed       ? 'text-red-400' :
-        isActiveEdge ? 'text-yellow-400/90' :
-                       'text-foreground/60'
-      )}>
-        {label}
-      </span>
-      {summary && (
+      <button
+        type="button"
+        onClick={() => hasPayload && setExpanded(!expanded)}
+        className={cn(
+          'w-full flex items-center gap-2 py-1 px-3 text-left transition-colors',
+          hasPayload && 'hover:bg-muted/40 cursor-pointer',
+          !hasPayload && 'cursor-default'
+        )}
+      >
+        {hasPayload && (
+          <ChevronRight className={cn(
+            'size-2.5 text-muted-foreground/40 transition-transform shrink-0',
+            expanded && 'rotate-90'
+          )} />
+        )}
+        {!hasPayload && <div className="w-2.5 shrink-0" />}
         <span className={cn(
-          'text-[10px] truncate flex-1 min-w-0',
-          failed ? 'text-red-400/60' : 'text-muted-foreground/60'
+          'size-1 rounded-full shrink-0',
+          failed       ? 'bg-red-500/70' :
+          isActiveEdge ? 'bg-yellow-400/80 animate-pulse' :
+                         'bg-muted-foreground/25'
+        )} />
+        <span className={cn(
+          'text-[10px] font-medium shrink-0',
+          failed       ? 'text-red-400' :
+          isActiveEdge ? 'text-yellow-400/90' :
+                         'text-foreground/60'
         )}>
-          {summary}
+          {label}
         </span>
+        {summary && (
+          <span className={cn(
+            'text-[10px] truncate flex-1 min-w-0',
+            failed ? 'text-red-400/60' : 'text-muted-foreground/60'
+          )}>
+            {summary}
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums ml-auto">
+          {formatRelativeTime(event.created_at)}
+        </span>
+      </button>
+
+      {expanded && hasPayload && (
+        <div className="px-3 pb-2 pt-1 bg-muted/30">
+          <div className="rounded-md bg-card border border-border/50 p-2">
+            <div className="text-[9px] text-muted-foreground/60 uppercase tracking-wide mb-1 font-medium">Payload</div>
+            <pre className="text-[10px] text-foreground/80 font-mono overflow-x-auto leading-relaxed whitespace-pre-wrap break-all max-h-60 overflow-y-auto">
+              {JSON.stringify(event.payload, null, 2)}
+            </pre>
+          </div>
+        </div>
       )}
-      <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums ml-auto">
-        {formatRelativeTime(event.created_at)}
-      </span>
     </div>
   );
 }
 
 function RunTimelineItem({
   run,
-  isActive,
   latestSseEvent,
-  onSelect,
 }: {
   run: Run;
-  isActive: boolean;
   latestSseEvent: Event | undefined;
-  onSelect: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { data: eventsData, isLoading: eventsLoading } = useRunEvents(run.id, expanded);
@@ -157,17 +183,14 @@ function RunTimelineItem({
   return (
     <div className={cn(
       'group relative rounded-lg border transition-colors',
-      isActive ? 'border-primary/20 bg-primary/5' : 'border-border bg-card hover:bg-muted/30',
+      'border-border bg-card hover:bg-muted/30',
     )}>
       <div
         className="flex items-center gap-2 px-2.5 py-2 cursor-pointer select-none transition-colors"
-        onClick={() => { onSelect(run.id); setExpanded((v) => !v); }}
+        onClick={() => setExpanded((v) => !v)}
       >
         <span className={cn('size-1.5 rounded-full shrink-0', dotCls)} />
-        <span className={cn(
-          'text-xs truncate flex-1 min-w-0',
-          isActive ? 'text-foreground font-medium' : 'text-foreground/75'
-        )}>
+        <span className="text-xs truncate flex-1 min-w-0 text-foreground/75">
           {title}
         </span>
         {isRunning && validPreview && (
@@ -265,7 +288,6 @@ export default function WorkspaceConsole() {
     planSteps,
     pendingApprovals,
     startNewRun,
-    loadRun,
   } = useChatStore();
 
   const { data: runsData, isLoading: runsLoading } = useRuns(currentWorkspaceId || '', {
@@ -520,9 +542,7 @@ export default function WorkspaceConsole() {
                   <RunTimelineItem
                     key={run.id}
                     run={run}
-                    isActive={currentRunId === run.id}
                     latestSseEvent={latestRunEvents[run.id]}
-                    onSelect={loadRun}
                   />
                 ))}
               </div>

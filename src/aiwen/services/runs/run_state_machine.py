@@ -39,9 +39,9 @@ class RunStateMachine:
     Manages the lifecycle of runs through valid state transitions.
 
     State Diagram:
-        pending -> running
+        pending -> running | cancelled
         running -> waiting | finished | failed | cancelled
-        waiting -> running | cancelled
+        waiting -> running | failed | cancelled
         finished, cancelled, failed -> (terminal states)
 
     Each transition emits a run.state.change event.
@@ -58,6 +58,7 @@ class RunStateMachine:
         ],
         RunStatus.WAITING.value: [
             RunStatus.RUNNING.value,
+            RunStatus.FAILED.value,
             RunStatus.CANCELLED.value,
         ],
         # Terminal states - no valid transitions

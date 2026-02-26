@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ChevronRight, Brain, Loader2, Play } from 'lucide-react';
+import { ChevronRight, Brain, Loader2, Play, Trash2 } from 'lucide-react';
 import { useWorkspaces, useWorkspaceRuns, useRunEvents } from '@/hooks/useMemory';
+import { useDeleteWorkspace } from '@/hooks/useWorkspaces';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { cn } from '@/lib/utils';
@@ -40,6 +41,7 @@ export default function MemoryPage() {
   const { data: workspaceData, isLoading: workspacesLoading } = useWorkspaces({ page_size: 50 });
   const { data: runsData } = useWorkspaceRuns(selectedWorkspace, expandedWorkspaces.has(selectedWorkspace || '') || viewMode === 'drawer');
   const { data: eventsData } = useRunEvents(selectedRun, expandedRuns.has(selectedRun || '') || (viewMode === 'drawer' && !!selectedRun));
+  const deleteWorkspaceMutation = useDeleteWorkspace();
 
   const workspaces = workspaceData?.items ?? [];
   const runs = runsData?.items ?? [];
@@ -77,6 +79,22 @@ export default function MemoryPage() {
   };
 
   const handleModeToggle = (m: ViewMode) => setViewMode(m);
+
+  const handleDeleteWorkspace = async (e: React.MouseEvent, workspaceId: string, name: string) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to delete workspace "${name}" and all its runs and events? This action cannot be undone.`)) return;
+    try {
+      await deleteWorkspaceMutation.mutateAsync(workspaceId);
+      // Clean up local state
+      if (selectedWorkspace === workspaceId) setSelectedWorkspace(null);
+      if (selectedRun) setSelectedRun(null);
+      expandedWorkspaces.delete(workspaceId);
+      setExpandedWorkspaces(new Set(expandedWorkspaces));
+    } catch (error) {
+      console.error('Failed to delete workspace:', error);
+      alert('Failed to delete workspace. Please try again.');
+    }
+  };
 
   if (workspacesLoading) {
     return <div className="flex items-center justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
@@ -129,10 +147,19 @@ export default function MemoryPage() {
         // ── Card grid ─────────────────────────────────────────────────────────
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {workspaces.map((workspace) => (
-            <div key={workspace.id} className="rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors">
+            <div key={workspace.id} className="rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors group relative">
+              <button
+                type="button"
+                onClick={(e) => handleDeleteWorkspace(e, workspace.id, workspace.name)}
+                disabled={deleteWorkspaceMutation.isPending}
+                className="absolute top-2 right-2 p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
+                title="Delete workspace"
+              >
+                <Trash2 className="size-3" />
+              </button>
               <div className="flex items-start gap-2.5">
                 <span className={cn('size-2 rounded-full mt-1 shrink-0', statusDot(workspace.status))} />
-                <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">{workspace.name}</p>
+                <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate pr-6">{workspace.name}</p>
               </div>
               {workspace.description && <p className="text-xs text-muted-foreground line-clamp-2">{workspace.description}</p>}
               <div className="flex flex-wrap gap-1.5">
@@ -154,7 +181,7 @@ export default function MemoryPage() {
             const isExpanded = expandedWorkspaces.has(workspace.id);
             const workspaceRuns = isExpanded ? runs : [];
             return (
-              <div key={workspace.id}>
+              <div key={workspace.id} className="group relative">
                 <button type="button" onClick={() => toggleWorkspace(workspace.id)}
                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left">
                   <span className={cn('size-2 rounded-full shrink-0', statusDot(workspace.status))} />
@@ -165,6 +192,15 @@ export default function MemoryPage() {
                   )}
                   <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 tabular-nums shrink-0"><Play className="size-2.5" />{workspace.run_count}</span>
                   <span className="text-[10px] text-muted-foreground/50 shrink-0">{formatRelativeTime(workspace.created_at)}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteWorkspace(e, workspace.id, workspace.name)}
+                    disabled={deleteWorkspaceMutation.isPending}
+                    className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
+                    title="Delete workspace"
+                  >
+                    <Trash2 className="size-3" />
+                  </button>
                 </button>
 
                 {isExpanded && (
@@ -236,16 +272,27 @@ export default function MemoryPage() {
               </div>
               <ScrollArea className="flex-1">
                 {workspaces.map((ws) => (
-                  <button key={ws.id} type="button" onClick={() => selectWorkspace(ws.id)}
-                    className={cn(
-                      'w-full flex items-center gap-2 px-3 py-2.5 text-left',
-                      'border-b border-border/30 last:border-0 hover:bg-muted/40 transition-colors',
-                      selectedWorkspace === ws.id && 'bg-primary/8 border-l-2 border-l-primary'
-                    )}>
-                    <span className={cn('size-1.5 rounded-full shrink-0', statusDot(ws.status))} />
-                    <span className="text-xs font-medium flex-1 min-w-0 truncate">{ws.name}</span>
-                    <ChevronRight className="size-3 text-muted-foreground/40 shrink-0" />
-                  </button>
+                  <div key={ws.id} className="group relative">
+                    <button type="button" onClick={() => selectWorkspace(ws.id)}
+                      className={cn(
+                        'w-full flex items-center gap-2 px-3 py-2.5 text-left',
+                        'border-b border-border/30 last:border-0 hover:bg-muted/40 transition-colors',
+                        selectedWorkspace === ws.id && 'bg-primary/8 border-l-2 border-l-primary'
+                      )}>
+                      <span className={cn('size-1.5 rounded-full shrink-0', statusDot(ws.status))} />
+                      <span className="text-xs font-medium flex-1 min-w-0 truncate">{ws.name}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteWorkspace(e, ws.id, ws.name)}
+                        disabled={deleteWorkspaceMutation.isPending}
+                        className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 z-10"
+                        title="Delete workspace"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                      <ChevronRight className="size-3 text-muted-foreground/40 shrink-0" />
+                    </button>
+                  </div>
                 ))}
               </ScrollArea>
             </div>

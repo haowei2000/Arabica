@@ -29,8 +29,6 @@ class EventType(StrEnum):
 
     # Context events
     USING_CONTEXT = "context.using"
-    PUT_OUTCOME = "context.put_outcome"
-
     # Run lifecycle events
     RUN_CREATED = "run.created"
     RUN_STATE_CHANGE = "run.state.change"
