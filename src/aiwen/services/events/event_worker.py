@@ -269,13 +269,15 @@ class Worker:
             # 2.5 Evaluate workspace triggers and enrich payload
             workspace_id_str = str(run.workspace_id)
             try:
-                from aiwen.services.triggers.trigger_processor import process_event_triggers
+                from aiwen.services.triggers.trigger_processor import (
+                    process_event_triggers,
+                )
                 trigger_results = await process_event_triggers(self.db, workspace_id_str, event)
                 if trigger_results:
                     event.payload = {**(event.payload or {}), "_trigger_context": trigger_results}
                     input_data = UserMessage(**(event.payload or {}))
             except Exception as _trigger_err:
-                logger.warning(f"Trigger processing failed for run {run_id}: {_trigger_err}")
+                logger.error(f"Trigger processing failed for run {run_id}: {_trigger_err}", exc_info=True)
 
             # 3. Load user-defined external tools (incl. chain/pipeline tools)
             user_tool_classes = []
@@ -398,7 +400,7 @@ class Worker:
         if raw_approval:
             await self.redis.delete(resume_key)
 
-        # Normalise user_message to a plain dict
+        # Normalize user_message to a plain dict
         if hasattr(user_message, "model_dump") and callable(
             user_message.model_dump
         ):
@@ -437,7 +439,7 @@ class Worker:
         try:
             async for event in executor.stream(user_message):
                 # 通过 EventPublisher 发布事件（统一格式）
-                await self._publish_agent_event(event, run_id, workspace_id)
+                await self._publish_event(event, run_id, workspace_id)
 
                 # Publish heartbeat if enough time has elapsed
                 now = datetime.now(UTC)
@@ -467,12 +469,6 @@ class Worker:
             )
             logger.info(f"Run {run_id} completed")
 
-            # Async: persist conversation history to WorkspaceContext via Celery
-            try:
-                from aiwen.celery_worker.tasks.run_history_tasks import save_run_history
-                save_run_history.delay(str(run_id), workspace_id)
-            except Exception as e:
-                logger.warning(f"Failed to enqueue save_run_history for run {run_id}: {e}")
 
         except executor.WaitingForTool as e:
             await self.state_machine.pause_for_tool(
@@ -505,7 +501,7 @@ class Worker:
             logger.warning(f"Failed to check run status for {run_id}: {e}")
             return False
 
-    async def _publish_agent_event(
+    async def _publish_event(
         self,
         event: AgentEvent,
         run_id: UUID,

@@ -6,7 +6,7 @@ export interface Trigger {
   condition_type: string;
   condition_value?: string | null;
   condition_field?: string | null;
-  action_type: string;
+  tool_name: string;
   action_params?: Record<string, unknown> | null;
   priority: number;
   enabled: boolean;
@@ -24,7 +24,7 @@ export interface TriggerCreate {
   condition_type: string;
   condition_value?: string;
   condition_field?: string;
-  action_type: string;
+  tool_name: string;
   action_params?: Record<string, unknown>;
   priority?: number;
   enabled?: boolean;

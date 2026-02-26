@@ -33,10 +33,6 @@ class ListContextTool(InnerTool):
             default="children",
             description="children: direct children only, descendants: all nested items",
         )
-        level: Literal["glance", "overview", "detail"] = Field(
-            default="glance",
-            description="Detail level for results",
-        )
         limit: int = Field(
             default=100,
             ge=1,
@@ -64,8 +60,7 @@ class ListContextTool(InnerTool):
                 results = results.limit(input_data.limit)
 
                 # Convert to detail level
-                level_enum = DetailLevel.from_str(input_data.level)
-                contexts = results.disclose_all(level_enum)
+                contexts = results.disclose_all(DetailLevel.GLANCE)
 
                 # Get paths
                 paths = results.paths()
@@ -79,7 +74,6 @@ class ListContextTool(InnerTool):
                         "count": len(contexts),
                         "paths": paths,
                         "contexts": contexts,
-                        "level": input_data.level,
                     },
                 )
 

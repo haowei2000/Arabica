@@ -44,8 +44,8 @@ async def sqlalchemy_exception_handler(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=error(
             code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            message="数据库操作失败",
-            detail=str(exc) if settings.DEBUG else "数据库内部错误",
+            message="Database operation failed",
+            detail=str(exc) if settings.DEBUG else "Internal database error",
         ).model_dump(),
     )
 
@@ -62,8 +62,8 @@ async def response_validation_exception_handler(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=error(
             code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            message="服务器响应数据格式错误",
-            detail=exc.errors() if settings.DEBUG else "响应数据格式验证失败",
+            message="Server response data format error",
+            detail=exc.errors() if settings.DEBUG else "Response data format validation failed",
         ).model_dump(),
     )
 

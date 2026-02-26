@@ -63,7 +63,7 @@ async def create_trigger(
         condition_type=data.condition_type,
         condition_value=data.condition_value,
         condition_field=data.condition_field,
-        action_type=data.action_type,
+        tool_name=data.tool_name,
         action_params=data.action_params,
         priority=data.priority,
         enabled=data.enabled,
@@ -293,7 +293,7 @@ async def test_trigger(
         matched=matched,
         trigger_id=str(trigger.id),
         trigger_name=trigger.name,
-        action_type=trigger.action_type,
+        tool_name=trigger.tool_name,
         result=result,
         error=error,
     )

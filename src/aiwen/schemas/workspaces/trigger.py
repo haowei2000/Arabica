@@ -24,11 +24,14 @@ class TriggerCreate(BaseModel):
     condition_field: str | None = Field(
         "message", description="检查的 payload 字段名，默认 message，支持点记法如 data.text"
     )
-    action_type: str = Field(
+    tool_name: str = Field(
         ...,
-        description="动作类型: read_context | list_context | glance_context | glob_context | search_context",
+        description="要执行的工具名称，可以是任意已注册的工具，如 glance_context | read_context | http_request 等",
     )
-    action_params: dict[str, Any] | None = Field(None, description="动作参数，如 {'prefix': 'tools'}")
+    action_params: dict[str, Any] | None = Field(
+        None,
+        description="传递给工具的参数（workspace_id 会自动注入，无需手动填写）",
+    )
     priority: int = Field(0, description="优先级（数值越小优先级越高）")
     enabled: bool = Field(True, description="是否启用")
 
@@ -42,8 +45,8 @@ class TriggerUpdate(BaseModel):
     condition_type: str | None = Field(None, description="条件类型")
     condition_value: str | None = Field(None, description="条件表达式")
     condition_field: str | None = Field(None, description="检查的 payload 字段名")
-    action_type: str | None = Field(None, description="动作类型")
-    action_params: dict[str, Any] | None = Field(None, description="动作参数")
+    tool_name: str | None = Field(None, description="工具名称")
+    action_params: dict[str, Any] | None = Field(None, description="工具参数")
     priority: int | None = Field(None, description="优先级")
     enabled: bool | None = Field(None, description="是否启用")
 
@@ -60,7 +63,7 @@ class TriggerResponse(ResponseMixin, BaseModel):
     condition_type: str
     condition_value: str | None = None
     condition_field: str | None = None
-    action_type: str
+    tool_name: str
     action_params: dict[str, Any] | None = None
     priority: int
     enabled: bool
@@ -90,6 +93,6 @@ class TriggerTestResponse(BaseModel):
     matched: bool = Field(..., description="是否匹配条件")
     trigger_id: str = Field(..., description="触发器 ID")
     trigger_name: str = Field(..., description="触发器名称")
-    action_type: str = Field(..., description="执行的动作类型")
-    result: Any = Field(None, description="动作执行结果（仅 matched=True 时有值）")
+    tool_name: str = Field(..., description="执行的工具名称")
+    result: Any = Field(None, description="工具执行结果（仅 matched=True 时有值）")
     error: str | None = Field(None, description="执行错误信息")

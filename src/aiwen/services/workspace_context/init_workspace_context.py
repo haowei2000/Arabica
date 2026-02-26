@@ -252,7 +252,7 @@ async def _populate_triggers(
             condition_type=tmpl.condition_type,
             condition_value=tmpl.condition_value,
             condition_field=tmpl.condition_field,
-            action_type=tmpl.action_type,
+            tool_name=tmpl.tool_name,
             action_params=tmpl.action_params,
             priority=tmpl.priority,
             enabled=tmpl.enabled,

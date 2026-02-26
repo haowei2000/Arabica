@@ -1,7 +1,5 @@
 """Tree context tool - get hierarchical tree structure."""
 
-from typing import Literal
-
 from pydantic import Field
 
 from aiwen.core.interfaces.tool import (
@@ -30,10 +28,6 @@ class TreeContextTool(InnerTool):
             default=None,
             description="Root path to build tree from (None for full tree)",
         )
-        level: Literal["glance", "overview", "detail"] = Field(
-            default="overview",
-            description="Detail level for each node",
-        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from aiwen.extensions.database import get_session
@@ -47,7 +41,7 @@ class TreeContextTool(InnerTool):
                 # Get tree structure
                 tree = await service.tree(
                     root=input_data.root,
-                    level=input_data.level,
+                    level="overview",
                 )
 
                 # Count nodes
@@ -64,7 +58,6 @@ class TreeContextTool(InnerTool):
                     message=f"Retrieved tree structure ({total_nodes} nodes)",
                     data={
                         "root": input_data.root or "/",
-                        "level": input_data.level,
                         "total_nodes": total_nodes,
                         "tree": tree,
                     },

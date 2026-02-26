@@ -1,7 +1,5 @@
 """Glob context tool - query contexts using glob patterns."""
 
-from typing import Literal
-
 from pydantic import Field
 
 from aiwen.core.interfaces.tool import (
@@ -28,10 +26,6 @@ class GlobContextTool(InnerTool):
         workspace_id: str = Field(description="Workspace ID")
         pattern: str = Field(
             description="Glob pattern (e.g., 'tools/*', 'tools/**', 'knowledge/*/docs')"
-        )
-        level: Literal["glance", "overview", "detail"] = Field(
-            default="glance",
-            description="Detail level for results",
         )
         limit: int = Field(
             default=50,
@@ -65,8 +59,7 @@ class GlobContextTool(InnerTool):
                 results = results.limit(input_data.limit)
 
                 # Convert to detail level
-                level_enum = DetailLevel.from_str(input_data.level)
-                contexts = results.disclose_all(level_enum)
+                contexts = results.disclose_all(DetailLevel.GLANCE)
 
                 # Get paths for summary
                 paths = results.paths()
@@ -79,7 +72,6 @@ class GlobContextTool(InnerTool):
                         "count": len(contexts),
                         "paths": paths,
                         "contexts": contexts,
-                        "level": input_data.level,
                         "tags_filter": input_data.tags,
                     },
                 )

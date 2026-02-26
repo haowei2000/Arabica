@@ -80,13 +80,13 @@ class WorkspaceTrigger(Base):
     )
 
     # Action
-    action_type: Mapped[str] = mapped_column(
+    tool_name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
-        comment="动作类型: read_context | list_context | glance_context | glob_context | search_context",
+        comment="要执行的工具名称（任意已注册工具，如 glance_context / http_request 等）",
     )
     action_params: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, comment="动作参数，如 {'prefix': 'tools'}"
+        JSONB, nullable=True, comment="传递给工具的参数（workspace_id 会自动注入）"
     )
 
     # Execution control

@@ -1,13 +1,10 @@
-import { useState } from 'react';
-import { Zap, Loader2, Trash2, Pencil, X, Activity, Filter, GitBranch } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Zap, Loader2, Trash2, Pencil, Activity, Filter, ChevronDown, X } from 'lucide-react';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
 import { formatRelativeTime } from '@/utils/formatDate';
 import { useTriggers, useCreateTrigger, useUpdateTrigger, useDeleteTrigger } from '@/hooks/useTriggers';
-import { useToolList } from '@/hooks/useTools';
-import { useKnowledgeList } from '@/hooks/useKnowledge';
-import { useSkills } from '@/hooks/useSkills';
-import { useUserContexts } from '@/hooks/useWorkspaces';
+import { useInnerTools } from '@/hooks/useTools';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,216 +15,251 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { TriggerCreate, Trigger } from '@/types/trigger';
+import type { InnerToolInfo } from '@/types/tool';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────
 
 const CONDITION_TYPES = ['always', 'keyword', 'regex', 'jsonpath'] as const;
-const ACTION_TYPES = [
-  'glance_context',
-  'list_context',
-  'read_context',
-  'glob_context',
-  'search_context',
-] as const;
 
-type ContextCategory = 'tools' | 'knowledge' | 'skills' | 'memory';
-const CONTEXT_CATEGORIES: ContextCategory[] = ['tools', 'knowledge', 'skills', 'memory'];
+// ─── JSON Schema field parser ───────────────────────────────────────────────
 
-const CATEGORY_COLOR: Record<ContextCategory, string> = {
-  tools:     'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
-  knowledge: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800',
-  skills:    'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800',
-  memory:    'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-900/30 dark:text-pink-300 dark:border-pink-800',
-};
-
-// What param key each action_type uses
-const ACTION_PARAM_KEY: Record<string, string> = {
-  glance_context: 'prefix',
-  list_context:   'prefix',
-  read_context:   'path',
-  glob_context:   'pattern',
-  search_context: 'query',
-};
-
-// Whether this action type benefits from the two-level context picker
-const USE_CONTEXT_PICKER: Record<string, boolean> = {
-  glance_context: true,
-  list_context:   true,
-  read_context:   true,
-  glob_context:   true,
-  search_context: false,
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-interface ContextItem { path: string; name: string; description?: string | null }
-
-/** Detect which category a contextParam belongs to */
-function getCategoryFromParam(param: string): ContextCategory | null {
-  const bare = param.replace('/*', '');
-  for (const cat of CONTEXT_CATEGORIES) {
-    if (bare === cat || bare.startsWith(`${cat}/`)) return cat;
-  }
-  return null;
+interface SchemaField {
+  key: string;
+  type: string;           // "string" | "number" | "integer" | "boolean" | "array"
+  description: string;
+  required: boolean;
+  default?: unknown;
+  enum?: string[];
 }
 
-/** Given a category, build the "all items in category" default param value */
-function allCategoryParam(cat: ContextCategory, actionType: string): string {
-  return actionType === 'glob_context' ? `${cat}/*` : cat;
+/** Parse JSON Schema into a flat list of fields, excluding workspace_id */
+function parseSchemaFields(schema: Record<string, unknown>): SchemaField[] {
+  const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
+  const required = (schema.required ?? []) as string[];
+  return Object.entries(properties)
+    .filter(([key]) => key !== 'workspace_id')
+    .map(([key, prop]) => ({
+      key,
+      type: String(prop.type ?? 'string'),
+      description: String(prop.description ?? ''),
+      required: required.includes(key),
+      default: prop.default,
+      enum: prop.enum ? (prop.enum as string[]) : undefined,
+    }));
 }
 
-/** Extract the param string from saved action_params */
-function extractParam(action_params: Record<string, unknown> | null | undefined, action_type: string): string {
-  if (!action_params) return '';
-  const key = ACTION_PARAM_KEY[action_type];
-  return key ? String(action_params[key] ?? '') : '';
-}
+// ─── Dynamic param form ─────────────────────────────────────────────────────
 
-/** Build action_params object from the structured param value */
-function buildParams(value: string, action_type: string): Record<string, unknown> | undefined {
-  const key = ACTION_PARAM_KEY[action_type];
-  if (!key || !value.trim()) return undefined;
-  return { [key]: value.trim() };
-}
-
-// ─── Context Picker sub-component ─────────────────────────────────────────────
-
-function ContextPicker({
-  actionType,
-  value,
+function ParamForm({
+  fields,
+  values,
   onChange,
-  categoryItems,
 }: {
-  actionType: string;
-  value: string;
-  onChange: (v: string) => void;
-  categoryItems: Record<ContextCategory, ContextItem[]>;
+  fields: SchemaField[];
+  values: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
 }) {
-  const activeCategory = getCategoryFromParam(value);
-
-  const handleCategoryClick = (cat: ContextCategory) => {
-    if (activeCategory === cat) {
-      onChange(''); // deselect
-    } else {
-      onChange(allCategoryParam(cat, actionType));
-    }
-  };
-
-  const handleItemClick = (path: string) => {
-    const newVal = actionType === 'glob_context' ? path : path;
-    onChange(newVal === value ? allCategoryParam(activeCategory!, actionType) : newVal);
-  };
-
-  const paramKey = ACTION_PARAM_KEY[actionType] ?? 'prefix';
-  const items = activeCategory ? categoryItems[activeCategory] : [];
+  if (fields.length === 0) return (
+    <p className="text-xs text-muted-foreground italic">This tool has no configurable parameters.</p>
+  );
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
-      <Label>{paramKey.charAt(0).toUpperCase() + paramKey.slice(1)}</Label>
+    <div className="space-y-3">
+      {fields.map((field) => {
+        const val = values[field.key];
+        const label = (
+          <Label key={field.key + '-label'} className="flex items-center gap-1">
+            {field.key}
+            {field.required && <span className="text-destructive">*</span>}
+            {!field.required && <span className="text-[10px] text-muted-foreground">(optional)</span>}
+          </Label>
+        );
 
-      {/* Level 1 — category chips */}
-      <div className="flex flex-wrap gap-1.5">
-        {CONTEXT_CATEGORIES.map((cat) => {
-          const isActive = activeCategory === cat;
+        if (field.type === 'boolean') {
           return (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => handleCategoryClick(cat)}
-              className={cn(
-                'px-3 py-1 text-xs rounded-full border font-medium transition-all',
-                isActive
-                  ? CATEGORY_COLOR[cat]
-                  : 'bg-background border-border text-muted-foreground hover:border-foreground/30'
-              )}
-            >
-              {cat}
-            </button>
+            <div key={field.key} className="flex items-center gap-2">
+              <Checkbox
+                checked={Boolean(val ?? field.default ?? false)}
+                onCheckedChange={(v) => onChange(field.key, v === true)}
+              />
+              {label}
+              {field.description && <span className="text-xs text-muted-foreground">{field.description}</span>}
+            </div>
           );
-        })}
-      </div>
+        }
 
-      {/* Level 2 — items within selected category */}
-      {activeCategory && (
-        <div className="rounded-md border border-border overflow-hidden">
-          {/* "All [category]" option */}
-          {(() => {
-            const allVal = allCategoryParam(activeCategory, actionType);
-            const isSelected = value === allVal;
-            return (
-              <button
-                type="button"
-                onClick={() => onChange(allVal)}
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 text-left text-sm transition-colors border-b border-border',
-                  isSelected
-                    ? cn(CATEGORY_COLOR[activeCategory], 'font-medium')
-                    : 'bg-card hover:bg-muted/50'
-                )}
+        if (field.enum) {
+          return (
+            <div key={field.key} className="space-y-1">
+              {label}
+              <Select
+                value={String(val ?? field.default ?? field.enum[0])}
+                onValueChange={(v) => onChange(field.key, v)}
               >
-                <span className={cn('size-2 rounded-full shrink-0', isSelected ? 'bg-current' : 'bg-border')} />
-                <span className="flex-1 font-medium">All {activeCategory}</span>
-                <span className="text-xs font-mono opacity-60">{allVal}</span>
-              </button>
-            );
-          })()}
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {field.enum.map((opt) => (
+                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
+            </div>
+          );
+        }
 
-          {/* Specific items */}
-          {items.length > 0 ? (
-            <ScrollArea viewportClassName="max-h-48">
-              <div>
-                {items.map((item) => {
-                  const isSelected = value === item.path;
-                  return (
-                    <button
-                      key={item.path}
-                      type="button"
-                      onClick={() => handleItemClick(item.path)}
-                      className={cn(
-                        'w-full flex items-center gap-3 px-3 py-2 text-left text-sm transition-colors border-b border-border last:border-0',
-                        isSelected
-                          ? cn(CATEGORY_COLOR[activeCategory], 'font-medium')
-                          : 'bg-card hover:bg-muted/50'
-                      )}
-                    >
-                      <span className={cn('size-2 rounded-full shrink-0', isSelected ? 'bg-current' : 'bg-muted-foreground/30')} />
-                      <div className="flex-1 min-w-0">
-                        <p className="truncate font-medium leading-tight">{item.name}</p>
-                        {item.description && (
-                          <p className="text-xs text-muted-foreground truncate mt-0.5">{item.description}</p>
-                        )}
-                      </div>
-                      <span className="text-xs font-mono opacity-50 shrink-0 max-w-32 truncate">{item.path}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-          ) : (
-            <p className="text-xs text-muted-foreground px-3 py-2 bg-card">No items found.</p>
-          )}
-        </div>
-      )}
+        if (field.type === 'number' || field.type === 'integer') {
+          return (
+            <div key={field.key} className="space-y-1">
+              {label}
+              <Input
+                type="number"
+                value={val !== undefined ? String(val) : String(field.default ?? '')}
+                onChange={(e) => onChange(field.key, e.target.value === '' ? undefined : Number(e.target.value))}
+                placeholder={field.description}
+              />
+            </div>
+          );
+        }
 
-      {/* Manual input / current value display */}
-      <div className="flex items-center gap-2">
-        <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="or type a custom path…"
-          className="font-mono text-sm flex-1"
-        />
-        {value && (
-          <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => onChange('')}>
-            <X className="size-3.5" />
-          </Button>
-        )}
-      </div>
+        // Default: string / array
+        return (
+          <div key={field.key} className="space-y-1">
+            {label}
+            <Input
+              value={val !== undefined ? String(val) : String(field.default ?? '')}
+              onChange={(e) => onChange(field.key, e.target.value || undefined)}
+              placeholder={field.description}
+              className="font-mono text-sm"
+            />
+            {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────────
+// ─── Tool picker combobox ────────────────────────────────────────────────────
+
+function ToolPicker({
+  value,
+  onChange,
+  tools,
+}: {
+  value: string;
+  onChange: (name: string, tool: InnerToolInfo | null) => void;
+  tools: InnerToolInfo[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState(value);
+
+  useEffect(() => { setSearch(value); }, [value]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return tools.filter(
+      (t) => t.name.includes(q) || t.display_name.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)
+    ).slice(0, 30);
+  }, [tools, search]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, InnerToolInfo[]>();
+    for (const t of filtered) {
+      if (!map.has(t.category)) map.set(t.category, []);
+      map.get(t.category)!.push(t);
+    }
+    return map;
+  }, [filtered]);
+
+  const handleSelect = (tool: InnerToolInfo) => {
+    onChange(tool.name, tool);
+    setSearch(tool.name);
+    setOpen(false);
+  };
+
+  const handleInputChange = (v: string) => {
+    setSearch(v);
+    onChange(v, tools.find((t) => t.name === v) ?? null);
+    setOpen(true);
+  };
+
+  const handleClear = () => {
+    setSearch('');
+    onChange('', null);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-1">
+        <div className="relative flex-1">
+          <Input
+            value={search}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder="e.g., glance_context, http_request…"
+            className="font-mono text-sm pr-8"
+            required
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <ChevronDown className="size-4" />
+        </Button>
+      </div>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-card shadow-lg shadow-black/10 overflow-hidden">
+          <ScrollArea viewportClassName="max-h-56">
+            {grouped.size === 0 ? (
+              <p className="text-xs text-muted-foreground px-3 py-2">No tools found.</p>
+            ) : (
+              Array.from(grouped.entries()).map(([cat, items]) => (
+                <div key={cat}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground px-3 py-1.5 bg-muted/50 border-b border-border/50">
+                    {cat}
+                  </p>
+                  {items.map((tool) => (
+                    <button
+                      key={tool.name}
+                      type="button"
+                      onMouseDown={() => handleSelect(tool)}
+                      className={cn(
+                        'w-full flex items-start gap-3 px-3 py-2 text-left text-sm hover:bg-muted/60 transition-colors border-b border-border/30 last:border-0',
+                        value === tool.name && 'bg-primary/5 text-primary'
+                      )}
+                    >
+                      <span className="font-mono text-xs mt-0.5 shrink-0 w-36 truncate">{tool.name}</span>
+                      <span className="text-xs text-muted-foreground truncate">{tool.description}</span>
+                    </button>
+                  ))}
+                </div>
+              ))
+            )}
+          </ScrollArea>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ──────────────────────────────────────────────────────────
 
 const INITIAL_FORM: TriggerCreate = {
   name: '',
@@ -236,7 +268,7 @@ const INITIAL_FORM: TriggerCreate = {
   condition_type: 'always',
   condition_value: '',
   condition_field: 'message',
-  action_type: 'glance_context',
+  tool_name: '',
   action_params: undefined,
   priority: 0,
   enabled: true,
@@ -247,63 +279,69 @@ export default function TriggerPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [editingTrigger, setEditingTrigger] = useState<Trigger | null>(null);
+  const [formData, setFormData] = useState<TriggerCreate>(INITIAL_FORM);
+  // Dynamic param values from the schema-driven form
+  const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
+  // Currently selected tool info (null = custom / unknown tool)
+  const [selectedTool, setSelectedTool] = useState<InnerToolInfo | null>(null);
 
   const handleModeToggle = (m: ViewMode) => {
     setViewMode(m);
     if (m === 'list') setOpenItemId(null);
   };
-  const [editingTrigger, setEditingTrigger] = useState<Trigger | null>(null);
-  const [formData, setFormData] = useState<TriggerCreate>(INITIAL_FORM);
-  const [contextParam, setContextParam] = useState('');
-  const [searchQuery, setSearchQuery] = useState(''); // for search_context action
-
-  // Always fetch — needed for the context picker when modal opens
-  const { data: toolsData }     = useToolList({ enabled_only: true, include_public: true });
-  const { data: knowledgeData } = useKnowledgeList({ page: 1, page_size: 100 });
-  const { data: skillsData }    = useSkills({ page: 1, page_size: 100 });
-  const { data: memoriesData }  = useUserContexts({ context_type: 'user_memory', page: 1, page_size: 50 });
 
   const { data: triggersData, isLoading } = useTriggers({ page: 1, page_size: 100 });
+  const { data: innerToolData } = useInnerTools();
   const createMutation = useCreateTrigger();
   const updateMutation = useUpdateTrigger();
   const deleteMutation = useDeleteTrigger();
 
   const triggers = triggersData?.items ?? [];
+  const allTools: InnerToolInfo[] = innerToolData?.inner_tools ?? [];
 
-  // Build category → items map for the picker
-  const categoryItems: Record<ContextCategory, ContextItem[]> = {
-    tools: (toolsData?.tools ?? []).map((t: any) => ({
-      path: `tools/${t.tool_code || t.id}`,
-      name: t.display_name || t.name,
-      description: t.description,
-    })),
-    knowledge: (knowledgeData?.items ?? []).map((k: any) => ({
-      path: `knowledge/${k.id}`,
-      name: k.name,
-      description: k.description,
-    })),
-    skills: (skillsData?.items ?? []).map((s: any) => ({
-      path: `skills/${s.id}`,
-      name: s.name,
-      description: s.description,
-    })),
-    memory: ((memoriesData as any)?.items ?? []).map((m: any) => ({
-      path: `memory/${m.id}`,
-      name: m.glance || m.summary?.slice(0, 60) || 'Memory',
-      description: m.summary?.slice(0, 80),
-    })),
+  /** Fields to display, derived from selected tool's schema */
+  const schemaFields = useMemo<SchemaField[]>(() => {
+    if (!selectedTool) return [];
+    return parseSchemaFields(selectedTool.input_schema as Record<string, unknown>);
+  }, [selectedTool]);
+
+  /** Build action_params from dynamic form values, stripping undefined */
+  const buildActionParams = (): Record<string, unknown> | undefined => {
+    if (schemaFields.length === 0) return undefined;
+    const result: Record<string, unknown> = {};
+    for (const field of schemaFields) {
+      const v = paramValues[field.key];
+      if (v !== undefined && v !== '') result[field.key] = v;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+
+  const handleToolChange = (name: string, tool: InnerToolInfo | null) => {
+    setFormData((f) => ({ ...f, tool_name: name }));
+    setSelectedTool(tool);
+    setParamValues({});
+  };
+
+  const handleParamChange = (key: string, value: unknown) => {
+    setParamValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetForm = () => {
+    setFormData(INITIAL_FORM);
+    setSelectedTool(null);
+    setParamValues({});
   };
 
   const openCreateModal = () => {
-    setFormData(INITIAL_FORM);
-    setContextParam('');
-    setSearchQuery('');
+    resetForm();
     setShowCreateModal(true);
   };
 
   const openEditModal = (trigger: Trigger) => {
     setEditingTrigger(trigger);
-    const param = extractParam(trigger.action_params, trigger.action_type);
+    const tool = allTools.find((t) => t.name === trigger.tool_name) ?? null;
+    setSelectedTool(tool);
     setFormData({
       name: trigger.name,
       description: trigger.description || '',
@@ -311,48 +349,27 @@ export default function TriggerPage() {
       condition_type: trigger.condition_type,
       condition_value: trigger.condition_value || '',
       condition_field: trigger.condition_field || 'message',
-      action_type: trigger.action_type,
+      tool_name: trigger.tool_name,
       action_params: trigger.action_params || undefined,
       priority: trigger.priority,
       enabled: trigger.enabled,
     });
-    if (trigger.action_type === 'search_context') {
-      setSearchQuery(param);
-      setContextParam('');
-    } else {
-      setContextParam(param);
-      setSearchQuery('');
-    }
+    // Pre-fill param values from saved action_params
+    setParamValues((trigger.action_params as Record<string, unknown>) ?? {});
     setShowEditModal(true);
   };
 
   const closeModal = () => {
     setShowCreateModal(false);
     setShowEditModal(false);
-    setFormData(INITIAL_FORM);
     setEditingTrigger(null);
-    setContextParam('');
-    setSearchQuery('');
-  };
-
-  const handleActionTypeChange = (v: string) => {
-    setFormData({ ...formData, action_type: v });
-    // Reset params when switching to/from search_context
-    setContextParam('');
-    setSearchQuery('');
-  };
-
-  const getActionParams = () => {
-    if (formData.action_type === 'search_context') {
-      return buildParams(searchQuery, 'search_context');
-    }
-    return buildParams(contextParam, formData.action_type);
+    resetForm();
   };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createMutation.mutateAsync({ ...formData, action_params: getActionParams() });
+      await createMutation.mutateAsync({ ...formData, action_params: buildActionParams() });
       closeModal();
     } catch (error) {
       alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -365,7 +382,7 @@ export default function TriggerPage() {
     try {
       await updateMutation.mutateAsync({
         id: editingTrigger.id,
-        data: { ...formData, action_params: getActionParams() },
+        data: { ...formData, action_params: buildActionParams() },
       });
       closeModal();
     } catch (error) {
@@ -384,7 +401,6 @@ export default function TriggerPage() {
 
   const isModalOpen = showCreateModal || showEditModal;
   const needsConditionValue = formData.condition_type !== 'always';
-  const useContextPicker = USE_CONTEXT_PICKER[formData.action_type];
 
   if (isLoading) {
     return (
@@ -396,6 +412,7 @@ export default function TriggerPage() {
 
   return (
     <div>
+      {/* ── Header ── */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
@@ -412,68 +429,50 @@ export default function TriggerPage() {
         </div>
       </div>
 
+      {/* ── Trigger list ── */}
       {triggers.length > 0 ? viewMode === 'card' ? (
-        /* ── Card grid ── */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {triggers.map((trigger) => {
-            const paramVal = extractParam(trigger.action_params, trigger.action_type);
-            const cat = getCategoryFromParam(paramVal) as ContextCategory | null;
-            return (
-              <div key={trigger.id} className="rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors">
-                <div className="flex items-start gap-2.5">
-                  <span className={cn('size-2 rounded-full mt-1 shrink-0', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
-                  <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">{trigger.name}</p>
-                </div>
-                {trigger.description && <p className="text-xs text-muted-foreground line-clamp-2">{trigger.description}</p>}
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
-                    <Activity className="size-2.5" />{trigger.event_type}
-                  </span>
-                  {trigger.condition_type !== 'always' && (
-                    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50">
-                      <Filter className="size-2.5" />{trigger.condition_type}
-                    </span>
-                  )}
-                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50">
-                    <Zap className="size-2.5" />{trigger.action_type}
-                  </span>
-                </div>
-                {paramVal && (
-                  <span className={cn(
-                    'text-[10px] px-2 py-0.5 rounded-full border font-mono self-start max-w-full truncate',
-                    cat ? CATEGORY_COLOR[cat] : 'bg-muted text-muted-foreground border-border/50'
-                  )}>
-                    {paramVal}
+          {triggers.map((trigger) => (
+            <div key={trigger.id} className="rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors">
+              <div className="flex items-start gap-2.5">
+                <span className={cn('size-2 rounded-full mt-1 shrink-0', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
+                <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">{trigger.name}</p>
+              </div>
+              {trigger.description && <p className="text-xs text-muted-foreground line-clamp-2">{trigger.description}</p>}
+              <div className="flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
+                  <Activity className="size-2.5" />{trigger.event_type}
+                </span>
+                {trigger.condition_type !== 'always' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200/70 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800/50">
+                    <Filter className="size-2.5" />{trigger.condition_type}
                   </span>
                 )}
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
-                  <span className="tabular-nums">p:{trigger.priority}</span>
-                  <span className={cn(trigger.enabled ? 'text-green-600' : '')}>{trigger.enabled ? 'enabled' : 'disabled'}</span>
-                  <span className="ml-auto">{formatRelativeTime(trigger.created_at)}</span>
-                </div>
-                <div className="flex gap-2 pt-2 border-t border-border/40">
-                  <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(trigger)}>
-                    <Pencil className="size-3.5" />Edit
-                  </Button>
-                  <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
-                    disabled={deleteMutation.isPending} onClick={() => handleDelete(trigger)}>
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50">
+                  <Zap className="size-2.5" />{trigger.tool_name}
+                </span>
               </div>
-            );
-          })}
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
+                <span className="tabular-nums">p:{trigger.priority}</span>
+                <span className={cn(trigger.enabled ? 'text-green-600' : '')}>{trigger.enabled ? 'enabled' : 'disabled'}</span>
+                <span className="ml-auto">{formatRelativeTime(trigger.created_at)}</span>
+              </div>
+              <div className="flex gap-2 pt-2 border-t border-border/40">
+                <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(trigger)}>
+                  <Pencil className="size-3.5" />Edit
+                </Button>
+                <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                  disabled={deleteMutation.isPending} onClick={() => handleDelete(trigger)}>
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
-        /* ── List / Drawer ── */
         <div className="rounded-xl border border-border bg-card overflow-visible divide-y divide-border/50">
           {triggers.map((trigger) => {
-            const paramVal = extractParam(trigger.action_params, trigger.action_type);
-            const cat = getCategoryFromParam(paramVal) as ContextCategory | null;
-
-            const statusDot = (
-              <span className={cn('size-2 rounded-full shrink-0', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
-            );
+            const statusDot = <span className={cn('size-2 rounded-full shrink-0', trigger.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />;
             const chips = (
               <>
                 <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0 font-mono">
@@ -485,21 +484,9 @@ export default function TriggerPage() {
                   </span>
                 )}
                 <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50 shrink-0">
-                  <Zap className="size-2.5" />{trigger.action_type}
+                  <Zap className="size-2.5" />{trigger.tool_name}
                 </span>
-                {paramVal && (
-                  <span className={cn(
-                    'text-[10px] px-2 py-0.5 rounded-full border font-mono shrink-0 max-w-32 truncate',
-                    cat ? CATEGORY_COLOR[cat] : 'bg-muted text-muted-foreground border-border/50'
-                  )}>
-                    {paramVal}
-                  </span>
-                )}
               </>
-            );
-
-            const rowHeader = (
-              <>{statusDot}<span className="text-sm font-medium flex-1 min-w-0 truncate">{trigger.name}</span>{chips}</>
             );
 
             if (viewMode === 'list') {
@@ -516,19 +503,16 @@ export default function TriggerPage() {
                       <Trash2 className="size-3.5 text-destructive/70" />
                     </button>
                   </div>
-                  {/* Hover tooltip */}
-                  <div className="absolute right-2 top-full mt-1 z-50 w-72 rounded-xl border border-border bg-card shadow-lg shadow-black/10 p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
+                  <div className="absolute right-2 top-full mt-1 z-50 w-72 rounded-xl border border-border bg-card shadow-lg p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
                     <div className="space-y-2 text-xs">
-                      {trigger.description && <p className="text-foreground/80 leading-relaxed">{trigger.description}</p>}
+                      {trigger.description && <p className="text-foreground/80">{trigger.description}</p>}
                       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1.5 border-t border-border/50 text-muted-foreground">
                         <span>Event</span><span className="text-foreground font-mono">{trigger.event_type}</span>
                         <span>Condition</span><span className="text-foreground">{trigger.condition_type}</span>
                         {trigger.condition_value && (<><span>Match</span><span className="text-foreground font-mono truncate">{trigger.condition_value}</span></>)}
-                        <span>Action</span><span className="text-foreground">{trigger.action_type}</span>
-                        {paramVal && (<><span>{ACTION_PARAM_KEY[trigger.action_type] ?? 'param'}</span><span className="text-foreground font-mono truncate">{paramVal}</span></>)}
+                        <span>Tool</span><span className="text-foreground font-mono">{trigger.tool_name}</span>
                         <span>Priority</span><span className="text-foreground tabular-nums">{trigger.priority}</span>
                         <span>Status</span><span className="text-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span>
-                        <span>Created</span><span className="text-foreground">{new Date(trigger.created_at).toLocaleDateString()}</span>
                       </div>
                     </div>
                   </div>
@@ -536,23 +520,21 @@ export default function TriggerPage() {
               );
             }
 
-            // Drawer mode
             return (
               <AccordionItem
                 key={trigger.id}
                 isOpen={openItemId === trigger.id}
                 onToggle={() => setOpenItemId(openItemId === trigger.id ? null : trigger.id)}
-                header={rowHeader}
+                header={<>{statusDot}<span className="text-sm font-medium flex-1 min-w-0 truncate">{trigger.name}</span>{chips}</>}
                 detail={
                   <div className="space-y-3">
-                    {trigger.description && <p className="text-xs text-foreground/80 leading-relaxed">{trigger.description}</p>}
+                    {trigger.description && <p className="text-xs text-foreground/80">{trigger.description}</p>}
                     <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
                       <span className="text-muted-foreground">Event</span><span className="font-mono">{trigger.event_type}</span>
                       <span className="text-muted-foreground">Condition</span><span>{trigger.condition_type}</span>
                       {trigger.condition_value && (<><span className="text-muted-foreground">Match</span><span className="font-mono">{trigger.condition_value}</span></>)}
-                      {trigger.condition_field && trigger.condition_field !== 'message' && (<><span className="text-muted-foreground">Field</span><span className="font-mono">{trigger.condition_field}</span></>)}
-                      <span className="text-muted-foreground">Action</span><span>{trigger.action_type}</span>
-                      {paramVal && (<><span className="text-muted-foreground">{ACTION_PARAM_KEY[trigger.action_type] ?? 'param'}</span><span className="font-mono">{paramVal}</span></>)}
+                      <span className="text-muted-foreground">Tool</span><span className="font-mono">{trigger.tool_name}</span>
+                      {trigger.action_params && (<><span className="text-muted-foreground">Params</span><span className="font-mono truncate">{JSON.stringify(trigger.action_params)}</span></>)}
                       <span className="text-muted-foreground">Priority</span><span className="tabular-nums">{trigger.priority}</span>
                       <span className="text-muted-foreground">Status</span>
                       <span className="flex items-center gap-1.5">
@@ -584,7 +566,7 @@ export default function TriggerPage() {
         </div>
       )}
 
-      {/* Create / Edit Dialog */}
+      {/* ── Create / Edit Dialog ── */}
       <Dialog open={isModalOpen} onOpenChange={(open) => { if (!open) closeModal(); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -598,7 +580,7 @@ export default function TriggerPage() {
               <Input
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g., Inject Tools on Message"
+                placeholder="e.g., Inject memory context on every message"
                 required
               />
             </div>
@@ -621,7 +603,7 @@ export default function TriggerPage() {
                 <Input
                   value={formData.event_type}
                   onChange={(e) => setFormData({ ...formData, event_type: e.target.value })}
-                  placeholder="e.g., user.message"
+                  placeholder="user.message"
                   required
                 />
               </div>
@@ -663,42 +645,38 @@ export default function TriggerPage() {
               </div>
             )}
 
-            {/* Action Type */}
+            {/* Tool picker */}
             <div className="space-y-1.5">
-              <Label>Action Type *</Label>
-              <Select value={formData.action_type} onValueChange={handleActionTypeChange}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ACTION_TYPES.map((at) => (
-                    <SelectItem key={at} value={at}>{at}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Tool Name *</Label>
+              <ToolPicker
+                value={formData.tool_name}
+                onChange={handleToolChange}
+                tools={allTools}
+              />
+              {selectedTool && (
+                <p className="text-xs text-muted-foreground">{selectedTool.description}</p>
+              )}
+              {!selectedTool && formData.tool_name && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Tool not found in registry — params will be saved as-is.
+                </p>
+              )}
             </div>
 
-            {/* Context picker — two-level for prefix/path/pattern actions */}
-            {useContextPicker && (
-              <ContextPicker
-                actionType={formData.action_type}
-                value={contextParam}
-                onChange={setContextParam}
-                categoryItems={categoryItems}
-              />
-            )}
-
-            {/* Query input for search_context */}
-            {formData.action_type === 'search_context' && (
-              <div className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-4">
-                <Label>Search Query</Label>
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="e.g., web search tool"
-                  className="font-mono text-sm"
+            {/* Dynamic param form */}
+            {selectedTool && (
+              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Parameters
+                  </p>
+                  <span className="text-[10px] text-muted-foreground">workspace_id is auto-injected</span>
+                </div>
+                <ParamForm
+                  fields={schemaFields}
+                  values={paramValues}
+                  onChange={handleParamChange}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Static query injected into the context search at trigger time.
-                </p>
               </div>
             )}
 

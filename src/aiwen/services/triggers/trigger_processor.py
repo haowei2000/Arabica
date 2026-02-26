@@ -4,6 +4,13 @@
 Architecture:
     TriggerConditionEvaluator  - Pure condition matching (no I/O)
     TriggerProcessor           - Loads triggers from DB, evaluates, executes actions
+
+Action execution:
+    ``tool_name`` is any registered tool name (e.g. ``glance_context``,
+    ``read_context``, ``http_request``, …).  ``action_params`` are passed
+    directly as keyword arguments to the tool.  If the tool's InputSchema
+    declares a ``workspace_id`` field and it is not already in
+    ``action_params``, the current workspace ID is injected automatically.
 """
 
 import logging
@@ -128,7 +135,7 @@ class TriggerProcessor:
     Usage (in EventWorker):
         proc = TriggerProcessor(db, workspace_id)
         results = await proc.process_event(event)
-        # results: list of {"trigger_id", "trigger_name", "action_type", "result"}
+        # results: list of {"trigger_id", "trigger_name", "tool_name", "result"}
     """
 
     def __init__(self, db: AsyncSession, workspace_id: str):
@@ -143,7 +150,7 @@ class TriggerProcessor:
             event: The Event ORM instance from Redis stream (has .event_type, .payload).
 
         Returns:
-            List of result dicts with keys: trigger_id, trigger_name, action_type, result.
+            List of result dicts with keys: trigger_id, trigger_name, tool_name, result.
         """
         event_type = getattr(event, "event_type", None) or getattr(event, "type", None)
         payload = getattr(event, "payload", {}) or {}
@@ -152,6 +159,12 @@ class TriggerProcessor:
             return []
 
         triggers = await self._load_triggers(event_type)
+        logger.debug(
+            "Trigger lookup: workspace=%s event_type=%s found=%d",
+            self.workspace_id,
+            event_type,
+            len(triggers),
+        )
         if not triggers:
             return []
 
@@ -159,14 +172,27 @@ class TriggerProcessor:
         for trigger in triggers:
             try:
                 matched = self._evaluator.evaluate(trigger, payload)
+                logger.debug(
+                    "Trigger '%s' (id=%s) condition=%s matched=%s",
+                    trigger.name,
+                    trigger.id,
+                    trigger.condition_type,
+                    matched,
+                )
                 if not matched:
                     continue
                 result = await self._execute_action(trigger)
+                logger.info(
+                    "Trigger '%s' fired: tool=%s result_type=%s",
+                    trigger.name,
+                    trigger.tool_name,
+                    type(result).__name__,
+                )
                 results.append(
                     {
                         "trigger_id": str(trigger.id),
                         "trigger_name": trigger.name,
-                        "action_type": trigger.action_type,
+                        "tool_name": trigger.tool_name,
                         "result": result,
                     }
                 )
@@ -196,92 +222,42 @@ class TriggerProcessor:
         return list(result.scalars().all())
 
     async def _execute_action(self, trigger: WorkspaceTrigger) -> Any:
-        """Execute the trigger's action using WorkspaceContextService.
+        """Execute the trigger action by invoking a registered tool by name.
+
+        ``trigger.tool_name`` is the tool name.  ``trigger.action_params``
+        are forwarded as keyword arguments.  If the tool's InputSchema has a
+        ``workspace_id`` field and none was provided in action_params, the
+        current workspace ID is injected automatically.
 
         Args:
             trigger: The matched WorkspaceTrigger.
 
         Returns:
-            The action result (serializable).
+            The tool's output dict, or None if the tool was not found.
         """
-        from aiwen.services.workspace_context.workspace_context_service import (
-            WorkspaceContextService,
-        )
+        from aiwen.registries.core import ToolRegistry
 
-        service = WorkspaceContextService(self.db, self.workspace_id)
-        params = trigger.action_params or {}
-        action = trigger.action_type
+        tool_name = trigger.tool_name
+        tool_instance = ToolRegistry.get_tool_instance(tool_name)
 
-        if action == "glance_context":
-            prefix = params.get("prefix")
-            result = await service.glance(prefix)
-            return result
+        if tool_instance is None:
+            logger.warning(
+                "Trigger '%s' references unknown tool '%s'; skipping",
+                trigger.name,
+                tool_name,
+            )
+            return None
 
-        if action == "list_context":
-            prefix = params.get("prefix", "")
-            level = params.get("level", "overview")
-            query_result = await service.children(prefix)
-            return self._disclose_query_result(query_result, level)
+        # Build call kwargs from action_params
+        kwargs: dict[str, Any] = dict(trigger.action_params or {})
 
-        if action == "read_context":
-            path = params.get("path", "")
-            level = params.get("level", "overview")
-            result = await service.get(path, level)
-            return result
+        # Auto-inject workspace_id if the tool's schema declares it
+        if "workspace_id" not in kwargs:
+            input_fields = tool_instance.InputSchema.model_fields
+            if "workspace_id" in input_fields:
+                kwargs["workspace_id"] = self.workspace_id
 
-        if action == "glob_context":
-            pattern = params.get("pattern", "**")
-            level = params.get("level", "overview")
-            query_result = await service.glob(pattern)
-            return self._disclose_query_result(query_result, level)
-
-        if action == "search_context":
-            query = params.get("query", "")
-            level = params.get("level", "glance")
-            # Search via glob("**") + keyword filter on glance text
-            query_result = await service.glob("**")
-            return self._search_query_result(query_result, query, level)
-
-        logger.warning("Trigger %s has unknown action_type '%s'", trigger.id, action)
-        return None
-
-    def _disclose_query_result(self, query_result: Any, level: str) -> Any:
-        """Convert a QueryResult to a serializable structure at the given level."""
-        try:
-            from aiwen.frameworks.context import DetailLevel
-
-            level_enum = DetailLevel.from_str(level)
-            if hasattr(query_result, "disclose_all"):
-                return query_result.disclose_all(level_enum)
-            if hasattr(query_result, "to_dict"):
-                return query_result.to_dict()
-        except Exception as exc:
-            logger.warning("Failed to disclose query result: %s", exc)
-        # Fallback: return as-is
-        return query_result
-
-    def _search_query_result(self, query_result: Any, keyword: str, level: str) -> Any:
-        """Filter query result by keyword in glance text, then disclose."""
-        try:
-            from aiwen.frameworks.context import DetailLevel
-
-            level_enum = DetailLevel.from_str(level)
-            keyword_lower = keyword.lower()
-
-            if hasattr(query_result, "entries"):
-                filtered = [
-                    e for e in query_result.entries
-                    if keyword_lower in (getattr(e, "glance", "") or "").lower()
-                ]
-                if hasattr(query_result, "with_entries"):
-                    filtered_result = query_result.with_entries(filtered)
-                    if hasattr(filtered_result, "disclose_all"):
-                        return filtered_result.disclose_all(level_enum)
-                # Fallback: return glance strings for matching entries
-                return [getattr(e, "glance", str(e)) for e in filtered]
-        except Exception as exc:
-            logger.warning("Failed to search query result: %s", exc)
-        return self._disclose_query_result(query_result, level)
+        return await tool_instance(**kwargs)
 
 
 async def process_event_triggers(

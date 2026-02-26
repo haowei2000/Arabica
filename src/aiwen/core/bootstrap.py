@@ -16,12 +16,11 @@ Created: 2025/12/31
 Version: v2.0.0
 """
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from aiwen.config.components.redis import RedisConfig
 from aiwen.extensions.database import _engines, _ensure_registered, get_session
 from aiwen.extensions.logger import setup_logging
 from aiwen.extensions.storage.global_storage import get_global_s3_storage

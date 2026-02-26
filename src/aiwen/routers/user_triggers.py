@@ -51,7 +51,7 @@ async def create_user_trigger(
         condition_type=data.condition_type,
         condition_value=data.condition_value,
         condition_field=data.condition_field,
-        action_type=data.action_type,
+        tool_name=data.tool_name,
         action_params=data.action_params,
         priority=data.priority,
         enabled=data.enabled,

@@ -84,7 +84,7 @@ class ChatMessage:
         )
 
     def to_openai_dict(self) -> dict[str, Any]:
-        """Convert to OpenAI API message format.
+        """Convert to the OpenAI API message format.
 
         For ``role="assistant"`` with tool calls, produces the nested
         ``tool_calls`` structure expected by the API.  For ``role="tool"``,

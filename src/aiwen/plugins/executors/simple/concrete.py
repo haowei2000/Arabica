@@ -6,10 +6,8 @@ abstractions (``ToolProvider`` / ``ToolCaller``).  The executor never
 imports concrete tool registries or tool modules directly – all
 dependencies are injected via config by the Worker (composition root).
 
-Tool calling is delegated to a ``ToolCallingStrategy`` which can be
-either ``FunctionCallingStrategy`` (OpenAI-compatible ``tools`` param)
-or ``PromptCallingStrategy`` (tool descriptions in system prompt +
-XML-tagged output parsing).
+Tool calling is delegated to ``PromptCallingStrategy`` (tool descriptions
+in system prompt + XML-tagged output parsing).
 
 Tool approval (HITL) flow
 -------------------------
@@ -45,10 +43,8 @@ from aiwen.core.interfaces import (
 )
 from aiwen.frameworks.tool_calling import (
     ChatMessage,
-    FunctionCallingStrategy,
     LLMResponse,
     PromptCallingStrategy,
-    ToolCallingStrategy,
     ToolCallRequest,
 )
 from aiwen.registries.core import register_executor
@@ -115,9 +111,6 @@ class DefaultExecutor(Executor):
       - ``ToolProvider``  – provides available tool classes (injected via config)
       - ``ToolCaller``    – executes a tool by name (injected via config)
 
-    Config keys:
-      - ``tool_calling_mode`` – ``"function_calling"`` (default) or
-        ``"prompt_calling"``.
     """
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
@@ -148,8 +141,7 @@ class DefaultExecutor(Executor):
         self._api_key, self._base_url = self._resolve_llm_config()
 
         # ── Tool calling strategy ────────────────────────────────
-        mode = config.get("tool_calling_mode", "function_calling")
-        self.strategy: ToolCallingStrategy = self._create_strategy(mode)
+        self.strategy = PromptCallingStrategy()
 
         # Collect tool classes and pre-format them for the strategy.
         tool_classes = self._collect_tool_classes()
@@ -194,13 +186,6 @@ class DefaultExecutor(Executor):
             case _:
                 raise ValueError(f"Unsupported provider: {self.model_provider}")
         return api_key, base_url
-
-    @staticmethod
-    def _create_strategy(mode: str) -> ToolCallingStrategy:
-        """Instantiate the appropriate strategy for the given mode."""
-        if mode == "prompt_calling":
-            return PromptCallingStrategy()
-        return FunctionCallingStrategy()
 
     # ── tool loading (via injected ToolProvider) ────────────────
 
@@ -373,7 +358,7 @@ class DefaultExecutor(Executor):
         Each trigger entry has the shape::
 
             {"trigger_id": "...", "trigger_name": "...",
-             "action_type": "...", "result": <any>}
+             "tool_name": "...", "result": <any>}
 
         The message is injected **before** the user turn so the LLM has access
         to pre-fetched workspace context without an extra tool call round-trip.
@@ -381,7 +366,7 @@ class DefaultExecutor(Executor):
         lines = ["[Workspace context retrieved by triggers]"]
         for item in trigger_context:
             name = item.get("trigger_name", "trigger")
-            action = item.get("action_type", "")
+            action = item.get("tool_name", "")
             result = item.get("result")
             lines.append(f"\n### {name} ({action})")
             if result is None:

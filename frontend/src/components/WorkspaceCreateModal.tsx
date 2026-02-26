@@ -175,7 +175,7 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
   const triggerItems: ResourceItem[] = (triggersData?.items ?? []).map((t: any) => ({
     id: t.id,
     name: t.name,
-    description: `${t.event_type} → ${t.action_type}`,
+    description: `${t.event_type} → ${t.tool_name}`,
   }));
 
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void) => (id: string) => {

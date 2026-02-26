@@ -162,7 +162,7 @@ class PromptCallingStrategy(ToolCallingStrategy):
             hold_buf += token
 
             if not in_tool_block:
-                # Check if buffer might be the start of a <tool_call> tag.
+                # Check if the buffer might be the start of a <tool_call> tag.
                 tag_start = "<tool_call>"
                 idx = hold_buf.find("<")
                 if idx == -1:
