@@ -1,6 +1,6 @@
 """Data models for the custom tool calling architecture.
 
-Provides simple, JSON-serializable dataclasses that replace LangChain's
+Provides default, JSON-serializable dataclasses that replace LangChain's
 ``AIMessage`` / ``ToolMessage`` types in the executor layer.
 """
 

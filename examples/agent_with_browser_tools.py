@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from aiwen.plugins.executors.simple import (
+from aiwen.plugins.executors.default import (
     DefaultAgentTemplate,
 )
 from aiwen.schemas.events.event_payloads import UserMessage
@@ -40,7 +40,7 @@ async def main():
     logger.info("Test 1: Verifying browser tools are loaded")
     logger.info("=" * 60)
 
-    # Create a simple question that would use browser tools
+    # Create a default question that would use browser tools
     question = """
     Can you list what browser automation tools you have available?
     Just list the tool names, don't execute them.

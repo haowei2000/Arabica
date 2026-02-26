@@ -1,4 +1,3 @@
-"""Read context tool - retrieve context by path with progressive disclosure."""
 
 from pydantic import Field
 
@@ -11,7 +10,6 @@ from aiwen.core.interfaces.tool import (
 
 
 class ReadContextTool(InnerTool):
-    """Read context content with progressive disclosure (glance/overview/detail)."""
 
     METADATA = ToolMetadata(
         name="read_context",

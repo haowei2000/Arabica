@@ -591,7 +591,7 @@ class ContextCRUD:
             scores[context_id]["vector"] = vector_score
             scores[context_id]["context"] = context
 
-        # Add text scores (simple binary: 1.0 if found, 0.0 otherwise)
+        # Add text scores (default binary: 1.0 if found, 0.0 otherwise)
         for i, context in enumerate(text_results):
             context_id = str(context.id)
             # Text relevance score decreases by rank

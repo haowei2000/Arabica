@@ -481,7 +481,7 @@ def test_with_mock_registry(monkeypatch):
 ```python
 # Force import to trigger decorators
 import aiwen.services.tools.inner_tool.server_tools
-import aiwen.plugins.executors.simple.concrete
+import aiwen.plugins.executors.default.concrete
 ```
 
 ### "Already registered" errors

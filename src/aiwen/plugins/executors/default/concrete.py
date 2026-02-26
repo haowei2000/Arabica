@@ -10,10 +10,10 @@ Tool calling is delegated to ``PromptCallingStrategy`` (tool descriptions
 in system prompt + XML-tagged output parsing).
 
 Event-driven execution flow:
-    USER_MESSAGE     ->  start fresh agentic loop
-    USER_FEEDBACK    ->  continue with feedback as user turn
-    TOOL_RESULT      ->  accumulate result, resume loop when all tools done
-    TOOL_ERROR       ->  accumulate error, resume loop when all tools done
+    USER_MESSAGE -> start fresh agentic loop
+    USER_FEEDBACK -> continue with feedback as the user turns
+    TOOL_RESULT -> accumulate a result, resume loop when all tools done
+    TOOL_ERROR -> accumulate error, resume loop when all tools are done
 
 Streaming event map:
     LLM streaming        ->  AGENT_THINKING  (inside <think> block)

@@ -48,7 +48,7 @@ router = APIRouter(prefix="/document", tags=["document"])
 
 @router.get("/test-celery")
 async def test_celery():
-    """Test if Celery is working by sending a simple task."""
+    """Test if Celery is working by sending a default task."""
     try:
         result = example_task.delay()
         return {

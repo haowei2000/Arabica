@@ -194,15 +194,15 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-    from aiwen.plugins.executors.simple import DefaultAgentTemplate
-    from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
+   from aiwen.plugins.executors.default import DefaultAgentTemplate
+   from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
 
-    templates = [
-        (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
-        (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
-    ]
+   templates = [
+      (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
+      (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
+   ]
 
-    # ... 注册逻辑
+   # ... 注册逻辑
 ```
 
 ### 步骤 3: 重启应用

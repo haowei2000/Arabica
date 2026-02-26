@@ -520,7 +520,7 @@ def _parse_python_code(
 
 
 def _node_name(node: ast.AST) -> str:
-    """Extract a simple name string from an AST node."""
+    """Extract a default name string from an AST node."""
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):

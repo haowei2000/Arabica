@@ -51,7 +51,7 @@ Lint (并行)          Test (并行)         Report
 ```bash
 # 重命名文件
 mv .gitlab-ci.yml .gitlab-ci.full.yml
-mv .gitlab-ci.simple.yml .gitlab-ci.yml
+mv .gitlab-ci.default.yml .gitlab-ci.yml
 ```
 
 ### 2. 调整变量

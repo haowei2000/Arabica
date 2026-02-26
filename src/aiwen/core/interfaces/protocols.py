@@ -22,6 +22,9 @@ from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
+from aiwen.models.events import Event
+
+
 # ============================================================================
 
 
@@ -235,36 +238,7 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
     config: dict[str, Any]
     """Runtime configuration (passed during initialization)"""
 
-    # ── Core Methods ─────────────────────────────────────────────────
-
-    @abstractmethod
-    async def setup(self) -> None:
-        """Setup resources needed by the executor."""
-        ...
-
-    @abstractmethod
-    async def run(self, user_message: Any) -> dict[str, Any]:
-        """Execute to completion and return final result."""
-        ...
-
-    async def stream(
-        self, user_message: Any,
-    ) -> AsyncGenerator[Any, None]:
-        """Stream typed events during execution.
-
-        Tool dependencies are injected via the constructor (config),
-        not passed as arguments to this method.
-        """
-        ...
-
-    async def cancel(self) -> None:
-        """Request graceful cancellation of a running executor."""
-        ...
-
-    # ── Event Processing Hooks ────────────────────────────────────────
-    # Override these to react to incoming events of each type.
-
-    async def process_event(self, event: Any) -> None:
+    async def process_event(self, event: Any) -> AsyncGenerator[Event, None]:
         """Dispatch an incoming event to the matching _process_* handler."""
         ...
 

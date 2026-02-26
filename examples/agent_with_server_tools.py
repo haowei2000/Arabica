@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 async def example_1_all_server_tools():
     """Example 1: Enable all server tools"""
-    from aiwen.plugins.executors.simple import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.schemas.events.event_payloads import UserMessage
@@ -47,7 +47,7 @@ async def example_1_all_server_tools():
 
 async def example_2_specific_groups():
     """Example 2: Enable specific tool groups"""
-    from aiwen.plugins.executors.simple import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.schemas.events.event_payloads import UserMessage
@@ -77,7 +77,7 @@ async def example_2_specific_groups():
 
 async def example_3_fine_grained_control():
     """Example 3: Fine-grained control with dict"""
-    from aiwen.plugins.executors.simple import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.schemas.events.event_payloads import UserMessage
@@ -115,7 +115,7 @@ async def example_4_combined_tools():
     from aiwen.services.context.tools.dynamic_tool_loader import DynamicToolLoader
 
     from aiwen.extensions.database import get_session
-    from aiwen.plugins.executors.simple import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.schemas.context.tools.user_tool import UserToolCreate
@@ -191,7 +191,7 @@ async def example_5_workspace_query():
 
     from aiwen.extensions.database import get_session
     from aiwen.models.workspaces.workspace import Workspace
-    from aiwen.plugins.executors.simple import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.schemas.events.event_payloads import UserMessage
@@ -260,7 +260,7 @@ async def main():
 
 async def quick_demo():
     """Quick demo showing the most common usage"""
-    from aiwen.plugins.executors.simple import (
+    from aiwen.plugins.executors.default import (
         DefaultAgentTemplate,
     )
     from aiwen.schemas.events.event_payloads import UserMessage

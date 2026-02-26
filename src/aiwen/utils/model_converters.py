@@ -210,7 +210,7 @@ def models_to_schemas[
     """Convert list of SQLAlchemy models to Pydantic schemas.
 
     This function replaces list comprehensions with 15-line manual assignments
-    with a simple function call.
+    with a default function call.
 
     Args:
         schema_class: Pydantic schema class to instantiate

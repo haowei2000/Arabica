@@ -130,7 +130,7 @@ config = {
 ## Complete Configuration Example
 
 ```python
-from aiwen.plugins.executors.simple import (
+from aiwen.plugins.executors.default import (
     DefaultAgentTemplate,
 )
 

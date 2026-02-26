@@ -4,7 +4,6 @@ Base Tool Class System
 Provides a unified tool interface with automatic JSON Schema generation.
 All tools run through the same ``execute()`` / ``__call__()`` protocol.
 """
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
@@ -13,6 +12,8 @@ import time
 from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, Field
+
+from aiwen.core.interfaces.protocols import ToolProtocol
 
 T = TypeVar("T", bound="BaseTool")
 
@@ -45,7 +46,7 @@ class ToolOutputSchema(BaseModel):
     data: dict[str, Any] | None = Field(default=None, description="Return data")
     error: str | None = Field(default=None, description="Error information")
 
-class BaseTool(ABC):
+class BaseTool(ABC,ToolProtocol):
     """
     Base Tool Class
 
