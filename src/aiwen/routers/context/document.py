@@ -184,7 +184,6 @@ async def upload_document(
     task_id = process_document_structured(
         document_id=str(document.id),
         knowledge_id=knowledge_id,
-        bucket=bucket_name,
         object_key=object_key,
         mime_type=file.content_type or "application/octet-stream",
         user_id=str(current_user.id),

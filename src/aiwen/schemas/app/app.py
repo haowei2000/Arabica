@@ -20,7 +20,7 @@ class AppCreate(BaseModel):
         max_length=100,
     )
     executor_code: str | None = Field(
-        "DEFAULT001", description="Code of the executor to use"
+        "SimpleAgent", description="Code of the executor to use"
     )
     executor_id: UUID | None = Field(None, description="ID of the executor to use")
     user_id: UUID | None = Field(None, description="ID of the user creating the app")

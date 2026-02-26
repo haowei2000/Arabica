@@ -28,7 +28,6 @@ from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
 from aiwen.schemas.events.event_payloads import UserMessage
 from aiwen.services.events.event_publisher import EventPublisher
-from aiwen.services.executor.runtime import ExecutorInstanceManager
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
 
@@ -186,6 +185,11 @@ class Worker:
         Raises:
             ValueError: When executor_code is not registered.
         """
+        # Fallback: Map legacy DEFAULT001 to SimpleAgent
+        if executor_code == "DEFAULT001":
+            logger.warning("Mapping legacy executor code 'DEFAULT001' to 'SimpleAgent'")
+            executor_code = "SimpleAgent"
+
         executor_cls = ExecutorRegistry._get_singleton_instance().get(executor_code)
         if not executor_cls:
             raise ValueError(f"Executor with code '{executor_code}' not found")

@@ -243,7 +243,6 @@ def process_document(
 def process_document_structured(
     document_id: str,
     knowledge_id: str,
-    bucket: str,
     object_key: str,
     mime_type: str,
     user_id: str,
@@ -261,7 +260,6 @@ def process_document_structured(
             "document_id": document_id,
             "user_id": user_id,
             "knowledge_id": knowledge_id,
-            "bucket": bucket,
             "object_key": object_key,
             "mime_type": mime_type,
             "structure_type": structure_type,

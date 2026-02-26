@@ -86,7 +86,7 @@ async def create_run(
     # Resolve executor_code from the app's linked executor
     app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
     app_row = app_result.scalar_one_or_none()
-    executor_code = "DEFAULT001"
+    executor_code = "SimpleAgent"
     if app_row and app_row.executor_id:
         tmpl_result = await state_machine.db.execute(
             select(ExecutorTemplate).where(ExecutorTemplate.id == app_row.executor_id)
@@ -348,7 +348,7 @@ async def resume_run(
     # Read waiting_for BEFORE resume_from_tool clears it – we need
     # executor_code to re-trigger the worker on the correct stream.
     waiting_info = run.waiting_for or {}
-    executor_code = waiting_info.get("executor_code", "DEFAULT001")
+    executor_code = waiting_info.get("executor_code", "SimpleAgent")
 
     # ── store approval for the worker ──────────────────────────
     if state_machine.redis:
