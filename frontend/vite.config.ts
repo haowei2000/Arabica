@@ -5,9 +5,19 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiUrl = env.VITE_API_BASE_URL || 'http://localhost:8000/api'
-  // Extract base URL for proxy (remove /api suffix if present)
-  const proxyTarget = apiUrl.replace(/\/api\/?$/, '') || 'http://localhost:8000'
+
+  // Get backend host and port from env, with fallbacks
+  const backendHost = env.VITE_BACKEND_HOST || env.AIWEN_APP_HOST || '127.0.0.1'
+  const backendPort = env.VITE_BACKEND_PORT || env.AIWEN_APP_PORT || '8000'
+  const defaultBackendUrl = `http://${backendHost}:${backendPort}`
+
+  // API base URL for frontend code (usually '/api' for relative URLs)
+  const apiUrl = env.VITE_API_BASE_URL || '/api'
+
+  // Proxy target: if API base URL is relative, use default backend URL
+  const proxyTarget = apiUrl.startsWith('http')
+    ? apiUrl.replace(/\/api\/?$/, '')
+    : defaultBackendUrl
 
   return {
     plugins: [react()],

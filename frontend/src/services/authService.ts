@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import { API_ENDPOINTS } from '@/constants/api';
+import { API_ENDPOINTS, API_BASE_URL } from '@/constants/api';
 import type {
   RegisterRequest,
   TokenResponse,
@@ -16,9 +16,7 @@ export const authService = {
     formData.append('password', password);
 
     const response = await fetch(
-      `${import.meta.env.VITE_API_URL || 'http://localhost:8000/api'}${
-        API_ENDPOINTS.AUTH.LOGIN
-      }`,
+      `${API_BASE_URL}${API_ENDPOINTS.AUTH.LOGIN}`,
       {
         method: 'POST',
         headers: {

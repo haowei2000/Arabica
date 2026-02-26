@@ -40,7 +40,7 @@ Open Network tab and filter by "conversations" - you should see API requests whe
 
 ## Manual Test:
 
-Navigate to: http://localhost:5173 (or your Vite dev server URL)
+Navigate to: http://localhost:3000 (or your Vite dev server URL, e.g., http://<YOUR_IP>:3000 for LAN access)
 1. Login
 2. Select an app
 3. You should see the sidebar on the left with "对话历史" header
