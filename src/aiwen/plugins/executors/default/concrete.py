@@ -217,7 +217,7 @@ class DefaultExecutor(Executor):
     async def _on_tool_result(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Accumulate a successful tool result; resume the loop when all tools done."""
+        """Accumulate a successful tool result; call LLM when all tools done."""
         tool_id = payload.get("tool_id", "")
         self._tool_results.append(
             {
@@ -232,13 +232,28 @@ class DefaultExecutor(Executor):
         if self._pending_tool_ids:
             return  # Still waiting for other tool results
 
-        async for event in self._resume_with_results():
+        # All tools done — build messages and call LLM directly
+        messages = self._waiting_messages or [
+            ChatMessage(role="system", content=self.system_prompt)
+        ]
+        for r in self._tool_results:
+            content = json.dumps(r["result"], ensure_ascii=False, default=str)
+            messages.append(
+                ChatMessage(role="tool", content=content, tool_call_id=r["tool_id"])
+            )
+
+        self._waiting_messages = None
+        self._pending_tool_ids = set()
+        self._tool_results = []
+
+        self._reset_token_index()
+        async for event in self._agentic_loop(messages):
             yield event
 
     async def _on_tool_error(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Accumulate a failed tool result; resume the loop when all tools done."""
+        """Accumulate a failed tool result; call LLM when all tools done."""
         tool_id = payload.get("tool_id", "")
         self._tool_results.append(
             {
@@ -254,30 +269,19 @@ class DefaultExecutor(Executor):
         if self._pending_tool_ids:
             return  # Still waiting for other tool results
 
-        async for event in self._resume_with_results():
-            yield event
-
-    async def _resume_with_results(self) -> AsyncGenerator[Event, None]:
-        """Append all collected tool results to the conversation and resume the loop."""
-        messages = self._waiting_messages or []
-
+        # All tools done — build messages and call LLM directly
+        messages = self._waiting_messages or [
+            ChatMessage(role="system", content=self.system_prompt)
+        ]
         for r in self._tool_results:
-            if r["success"]:
-                content = json.dumps(r["result"], ensure_ascii=False, default=str)
-            else:
-                content = json.dumps(
-                    {"success": False, "error": r.get("error_message", "Unknown error")},
-                    ensure_ascii=False,
-                )
+            content = json.dumps(
+                {"success": False, "error": r.get("error_message", "Unknown error")},
+                ensure_ascii=False,
+            )
             messages.append(
-                ChatMessage(
-                    role="tool",
-                    content=content,
-                    tool_call_id=r["tool_id"],
-                )
+                ChatMessage(role="tool", content=content, tool_call_id=r["tool_id"])
             )
 
-        # Clear pending state before resuming (loop may emit more tool calls)
         self._waiting_messages = None
         self._pending_tool_ids = set()
         self._tool_results = []

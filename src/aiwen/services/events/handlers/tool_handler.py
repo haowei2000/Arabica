@@ -105,6 +105,24 @@ async def handle_tool_call(
             result = await caller.call(tool_name, arguments)
             elapsed_ms = int((time.time() - start_time) * 1000)
 
+            # Check for logical failure: tool returned {"success": false, "error": "..."}
+            if isinstance(result, dict) and result.get("success") is False:
+                error_msg = result.get("error") or result.get("message") or "Tool returned success=false"
+                await event_publisher.publish(
+                    event_type=EventType.TOOL_ERROR,
+                    workspace_id=str(run.workspace_id),
+                    run_id=str(run_id),
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_id": tool_id,
+                        "error_message": error_msg,
+                        "execution_time_ms": elapsed_ms,
+                    },
+                    auto_commit=True,
+                )
+                logger.error(f"Tool '{tool_name}' failed for run {run_id}: {error_msg}")
+                return
+
             # Publish tool.result event
             await event_publisher.publish(
                 event_type=EventType.TOOL_RESULT,
