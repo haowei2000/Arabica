@@ -30,6 +30,7 @@ async def handle_tool_call(
     db: AsyncSession,
     event_publisher: EventPublisher,
     state_machine: RunStateMachine,
+    tool_caller: RegistryToolCaller | None = None,
 ):
     """Execute a tool and publish result/error event.
 
@@ -38,6 +39,8 @@ async def handle_tool_call(
         db: Database session
         event_publisher: Event publisher for results
         state_machine: Run state machine
+        tool_caller: Reusable RegistryToolCaller instance; a new one is created
+            if not provided (fallback for callers without a shared instance).
     """
     try:
         if not event.run_id:
@@ -98,8 +101,8 @@ async def handle_tool_call(
         # Execute the tool
         start_time = time.time()
         try:
-            tool_caller = RegistryToolCaller()
-            result = await tool_caller.call(tool_name, arguments)
+            caller = tool_caller or RegistryToolCaller()
+            result = await caller.call(tool_name, arguments)
             elapsed_ms = int((time.time() - start_time) * 1000)
 
             # Publish tool.result event

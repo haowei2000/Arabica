@@ -34,6 +34,7 @@ from aiwen.core.bootstrap import bootstrap_worker
 from aiwen.extensions.database import get_session
 from aiwen.services.events.event_publisher import REDIS_EXECUTOR_LABEL
 from aiwen.services.events.event_worker import Worker
+from aiwen.services.executor.runtime import ExecutorInstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +51,14 @@ async def run_single_worker(
     db_factory: Any,
     consumer_name: str,
     worker_index: int,
+    shared_runtime: ExecutorInstanceManager,
 ) -> None:
     """Run a single worker instance."""
     logger.info(f"🚀 Worker [{worker_index}] starting (consumer: {consumer_name})")
 
     try:
         async with db_factory as session:
-            worker = Worker(redis_client, session, consumer_name=consumer_name)
+            worker = Worker(redis_client, session, consumer_name=consumer_name, runtime=shared_runtime)
             await worker.start(REDIS_EXECUTOR_LABEL)
     except asyncio.CancelledError:
         logger.info(f"⏹️  Worker [{worker_index}] cancelled")
@@ -82,13 +84,16 @@ async def run_workers(num_workers: int, name_prefix: str) -> None:
         bootstrap = await bootstrap_worker()
         redis_client = bootstrap.get_redis_client()
 
+        # Single shared runtime so all workers can find executors created by any peer
+        shared_runtime = ExecutorInstanceManager()
+
         # Create worker tasks
         for i in range(num_workers):
             consumer_name = generate_consumer_name(name_prefix, i)
             db_factory = get_session("aiwen")
 
             task = asyncio.create_task(
-                run_single_worker(redis_client, db_factory, consumer_name, i),
+                run_single_worker(redis_client, db_factory, consumer_name, i, shared_runtime),
                 name=f"worker-{i}",
             )
             tasks.append(task)

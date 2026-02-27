@@ -333,7 +333,7 @@ class UserMemoryContextInput(BaseModel):
 
     def to_context_create(self) -> ContextCreate:
         return ContextCreate(
-            context_type=ContextType.USER_MEMORY,
+            context_type=ContextType.SHORT_MEMORY,
             source_id=self.source_id,
             content=self.memory,
             summary=self.summary,

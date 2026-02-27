@@ -86,6 +86,9 @@ async def create_workspace(
         data.context_config.tool_ids,
         data.context_config.knowledge_ids,
         data.context_config.skill_ids,
+        data.context_config.source_workspace_ids,
+        data.context_config.memory_ids,
+        data.context_config.trigger_ids,
     ]):
         from aiwen.services.workspace_context.init_workspace_context import (
             init_workspace_context,
@@ -590,7 +593,7 @@ async def reinit_workspace_context(
         )
 
     # Soft-delete all non-history context entries
-    history_prefix = "/history/%"
+    history_prefix = "/long_memory/%"
     await db.execute(
         sql_update(WorkspaceContext)
         .where(

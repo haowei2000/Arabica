@@ -4,10 +4,25 @@ Event Worker - 事件驱动的 Agent 执行器
 
 监听 run_tasks stream，执行 Agent 并通过 EventPublisher 发布所有事件。
 所有事件使用统一的 EventPublisher 格式，前端只需处理一种结构。
+
+并发模型
+--------
+每条 Redis 消息在独立的 asyncio Task 中处理，每个 Task 拥有独立的
+DB session / EventPublisher / RunStateMachine。这样多个 run 的 LLM 调用
+可以真正并发，互不阻塞。
+
+共享状态（Worker 级别，asyncio 单线程安全）：
+  - runtime           : ExecutorInstanceManager — 跨 run 的 executor 实例
+  - _executor_locks   : 每个 run_id 一把锁，防止同一 run 的事件交错处理
+  - _tool_caller      : RegistryToolCaller 单例
+  - _default_tool_provider : RegistryToolProvider 单例
+  - _base_config_cache: executor template 配置缓存
 """
 
 import asyncio
+import contextlib
 import logging
+from dataclasses import dataclass
 from uuid import UUID
 
 import redis.asyncio as redis_async
@@ -17,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.config.factory import get_settings
 from aiwen.core.enums import EventType
 from aiwen.core.interfaces.protocols import ExecutorProtocol
+from aiwen.extensions.database import get_session
 from aiwen.models.app import App
 from aiwen.models.events.event import Event
 from aiwen.models.runs.run import Run
@@ -30,10 +46,10 @@ from aiwen.services.events.handlers import (
     handle_task_event,
     handle_tool_call,
 )
+from aiwen.services.triggers.trigger_processor import process_event_triggers
 from aiwen.services.executor.runtime import ExecutorInstanceManager
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
-import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +58,26 @@ REDIS_CONSUMER_GROUP = _redis_cfg.consumer_group
 REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
+
+# Event types that should be checked against workspace triggers before processing.
+_TRIGGER_EVENT_TYPES: frozenset[str] = frozenset({
+    EventType.USER_MESSAGE,
+    EventType.TOOL_CALL,
+    EventType.TOOL_RESULT,
+})
+
+
+@dataclass(slots=True)
+class _Ctx:
+    """Per-event execution context: isolated DB session + stateless services.
+
+    Created fresh for every dispatched event so that concurrent tasks never
+    share a SQLAlchemy session (sessions are not concurrency-safe).
+    """
+
+    db: AsyncSession
+    publisher: EventPublisher
+    state_machine: RunStateMachine
 
 
 class Worker:
@@ -56,35 +92,104 @@ class Worker:
         redis_client: redis_async.Redis,
         db: AsyncSession,
         consumer_name: str = "worker-1",
+        runtime: ExecutorInstanceManager | None = None,
     ):
         self.redis = redis_client
-        self.db = db
+        # db is kept only for the stuck-run background task which runs every
+        # 120 s.  All event processing uses per-task sessions (see _dispatch).
+        self._maintenance_db = db
         self.consumer_name = consumer_name
-        self.runtime = ExecutorInstanceManager()
-        # EventPublisher created once, shared with RunStateMachine
-        self.event_publisher = EventPublisher(db, redis_client)
-        self.state_machine = RunStateMachine(
-            db, redis_client, event_publisher=self.event_publisher
-        )
+        self.runtime = runtime if runtime is not None else ExecutorInstanceManager()
 
-        self._stuck_detector = StuckRunDetector(self.state_machine)
+        # Per-run locks: serialise concurrent process_event calls on the same executor.
+        # Safe to share across tasks because asyncio is single-threaded.
+        self._executor_locks: dict[UUID, asyncio.Lock] = {}
+
         self._stuck_detector_task: asyncio.Task | None = None
 
         # ── Startup-initialized tool services (stateless / reusable) ──
         self._tool_caller = RegistryToolCaller()
         self._default_tool_provider = RegistryToolProvider()
+        # Cache for deserialized template base configs, keyed by executor_code.
+        self._base_config_cache: dict[str, dict] = {}
+
+        # ── Run-level event buffers ──
+        # During a run, events are held in memory and only broadcast to Redis
+        # for real-time SSE.  The full history is written to PostgreSQL in one
+        # atomic commit when the run completes or fails.
+        # Keyed by run_id string.
+        self._run_event_buffers: dict[str, list[Event]] = {}
+        # Tracks the current max sequence for each buffered run so that
+        # subsequent per-dispatch publishers don't re-query a stale DB value.
+        self._run_seq_cursors: dict[str, int] = {}
 
     @staticmethod
     def _parse_redis_event(event_data: dict[bytes, bytes]) -> Event:
-        """Parse Redis stream event data into an Event instance.
+        """Parse Redis stream event data into a transient Event instance."""
+        return Event.from_redis_fields(event_data)
+
+    # ── Run-level event buffer helpers ──────────────────────────────────────
+
+    def _get_run_buffer(self, run_id: str) -> list[Event] | None:
+        """Return the active in-memory buffer for a run, or None if not buffering."""
+        return self._run_event_buffers.get(run_id)
+
+    def _start_run_buffer(self, run_id: str, initial_seq: int) -> None:
+        """Begin buffering events for *run_id* in memory.
 
         Args:
-            event_data: Raw event data from Redis stream
-
-        Returns:
-            A transient Event instance (not attached to the DB session).
+            run_id: String run ID.
+            initial_seq: The sequence number that was last committed to DB for
+                this run (obtained from the current publisher's counter after
+                ``state_machine.start()``).  Subsequent publishers look this up
+                via ``_run_seq_cursors`` to avoid re-querying a stale DB.
         """
-        return Event.from_redis_fields(event_data)
+        self._run_event_buffers[run_id] = []
+        self._run_seq_cursors[run_id] = initial_seq
+        logger.debug(f"Started event buffer for run {run_id} (initial_seq={initial_seq})")
+
+    def _pop_run_buffer(self, run_id: str) -> list[Event]:
+        """Remove and return all buffered events for *run_id*; cleans up cursor."""
+        self._run_seq_cursors.pop(run_id, None)
+        return self._run_event_buffers.pop(run_id, [])
+
+    async def _run_triggers(self, event: Event, ctx: _Ctx) -> None:
+        """Check workspace triggers for the event and inject results into payload.
+
+        Queries enabled triggers for the event's workspace that match
+        ``event.event_type``.  Each matched trigger's tool is executed and the
+        aggregated results are stored in ``event.payload["_trigger_context"]``
+        so the downstream executor can consume them as additional context.
+
+        Only called for USER_MESSAGE, TOOL_CALL, and TOOL_RESULT events.
+        Failures are logged and silently swallowed to avoid interrupting the
+        main event processing pipeline.
+        """
+        if not event.workspace_id:
+            return
+
+        workspace_id = str(event.workspace_id)
+        try:
+            results = await process_event_triggers(ctx.db, workspace_id, event)
+            if results:
+                payload = dict(event.payload or {})
+                payload["_trigger_context"] = results
+                event.payload = payload
+                logger.info(
+                    "Triggers fired: workspace=%s event=%s run=%s triggers=%s",
+                    workspace_id,
+                    event.event_type,
+                    event.run_id,
+                    [r["trigger_name"] for r in results],
+                )
+        except Exception as e:
+            logger.error(
+                "Trigger processing failed for %s run=%s: %s",
+                event.event_type,
+                event.run_id,
+                e,
+                exc_info=True,
+            )
 
     async def _ensure_consumer_group(self, stream_name: str) -> None:
         """Ensure a consumer group exists, create if not."""
@@ -108,7 +213,13 @@ class Worker:
         while True:
             try:
                 await asyncio.sleep(120)
-                recovered = await self._stuck_detector.detect_and_recover(self.db)
+                # Create a fresh session for each detection cycle to avoid
+                # using a stale long-lived session.
+                async with get_session("aiwen") as db:
+                    publisher = EventPublisher(db, self.redis)
+                    state_machine = RunStateMachine(db, self.redis, publisher)
+                    detector = StuckRunDetector(state_machine)
+                    recovered = await detector.detect_and_recover(db)
                 if recovered:
                     logger.info(f"Stuck detector recovered runs: {recovered}")
             except asyncio.CancelledError:
@@ -121,7 +232,6 @@ class Worker:
         await self._ensure_consumer_group(stream_name)
         logger.info(f"Worker '{self.consumer_name}' listening on stream: {stream_name}")
 
-        # Launch stuck run detector as background task
         self._stuck_detector_task = asyncio.create_task(self._stuck_run_detector_loop())
 
         while True:
@@ -130,7 +240,7 @@ class Worker:
                     groupname=REDIS_CONSUMER_GROUP,
                     consumername=self.consumer_name,
                     streams={stream_name: ">"},
-                    count=1,
+                    count=10,
                     block=1000,
                 )
 
@@ -139,20 +249,12 @@ class Worker:
 
                 _, event_queue = redis_messages[0]
                 for event_id, event_data in event_queue:
-                    try:
-                        # Parse Redis stream data (bytes to strings, JSON to dicts)
-                        parsed_event = self._parse_redis_event(event_data)
-                        await self.handle_event(parsed_event)
-                        # 成功处理后确认消息
-                        await self.redis.xack(
-                            stream_name, REDIS_CONSUMER_GROUP, event_id
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to process message {event_id}: {e}",
-                            exc_info=True,
-                        )
-                        # 注意：失败的消息不会被确认，会进入 pending 队列等待重试
+                    # Each event gets its own task + DB session so that long-running
+                    # LLM calls for one run don't block event processing for others.
+                    asyncio.create_task(
+                        self._dispatch(stream_name, event_id, event_data),
+                        name=f"event-{self.consumer_name}-{event_id}",
+                    )
 
             except asyncio.CancelledError:
                 if self._stuck_detector_task:
@@ -162,6 +264,36 @@ class Worker:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
+    async def _dispatch(
+        self, stream_name: str, event_id: bytes, event_data: dict
+    ) -> None:
+        """Process one Redis stream message in an isolated DB session.
+
+        Creates a fresh session / EventPublisher / RunStateMachine so this
+        task never shares mutable state with sibling tasks.  xack is sent
+        only on success; failed messages re-enter the pending queue.
+        """
+        try:
+            async with get_session("aiwen") as db:
+                publisher = EventPublisher(
+                    db,
+                    self.redis,
+                    run_buffer_provider=self._get_run_buffer,
+                    run_seq_cursor=self._run_seq_cursors,
+                )
+                state_machine = RunStateMachine(db, self.redis, publisher)
+                ctx = _Ctx(db=db, publisher=publisher, state_machine=state_machine)
+
+                parsed_event = self._parse_redis_event(event_data)
+                await self.handle_event(parsed_event, ctx)
+
+            await self.redis.xack(stream_name, REDIS_CONSUMER_GROUP, event_id)
+        except Exception as e:
+            logger.error(
+                f"Failed to process message {event_id}: {e}", exc_info=True
+            )
+            # Not acked → enters pending queue for retry
+
     def prepare_executor(
         self,
         executor_code: str,
@@ -170,59 +302,34 @@ class Worker:
         workspace_id: str = "",
         run_id: str = "",
     ) -> ExecutorProtocol:
-        """Build an Executor with startup-initialized tool services.
-
-        The ToolCaller singleton and default ToolProvider are created once
-        in ``__init__`` and reused across runs.  When ``user_tool_classes``
-        is provided (user-defined ExternalTools loaded from the DB), a
-        per-run ToolProvider and ToolCaller are created that include them.
-
-        Args:
-            executor_code: Executor identifier (matches TEMPLATE["executor_code"]).
-            app_config: App-level config that overrides the template defaults.
-            user_tool_classes: Optional list of dynamic ExternalTool subclasses
-                loaded from the database for the current user.
-
-        Returns:
-            A fully configured Executor instance.
-
-        Raises:
-            ValueError: When executor_code is not registered.
-        """
-        # Fallback: Map legacy DEFAULT001 to SimpleAgent
-        if executor_code == "DEFAULT001":
-            logger.warning("Mapping legacy executor code 'DEFAULT001' to 'SimpleAgent'")
-            executor_code = "SimpleAgent"
-
+        """Build an Executor with startup-initialized tool services."""
         executor_cls = ExecutorRegistry._get_singleton_instance().get(executor_code)
         if not executor_cls:
             raise ValueError(f"Executor with code '{executor_code}' not found")
 
-        # Build config from template defaults
-        config: dict = {}
-        template_config = executor_cls.TEMPLATE.get("config")
-        if template_config is not None:
-            if hasattr(template_config, "model_dump"):
-                config = template_config.model_dump()
-            elif isinstance(template_config, dict):
-                config = dict(template_config)
+        # Build config from cached template defaults.
+        if executor_code not in self._base_config_cache:
+            template_config = executor_cls.TEMPLATE.get("config")
+            base: dict = {}
+            if template_config is not None:
+                if hasattr(template_config, "model_dump"):
+                    base = template_config.model_dump()
+                elif isinstance(template_config, dict):
+                    base = dict(template_config)
+            self._base_config_cache[executor_code] = base
 
-        # App-level config overrides template defaults
+        config: dict = dict(self._base_config_cache[executor_code])
+
         if app_config:
             config.update(app_config)
 
-        # ── Inject run context ────────────────────────────────────
         config["workspace_id"] = workspace_id
         config["run_id"] = run_id
 
         if user_tool_classes:
-            # Per-run ToolCaller that knows about user-defined tools
             user_instances = {cls.METADATA.name: cls() for cls in user_tool_classes}
-            config["tool_caller"] = RegistryToolCaller(
-                extra_instances=user_instances,
-            )
+            config["tool_caller"] = RegistryToolCaller(extra_instances=user_instances)
 
-            # Per-run ToolProvider that includes user tools
             base_extra = list(self._default_tool_provider._extra_tool_classes)
             if not config.get("enable_browser_tools", True):
                 base_extra = []
@@ -230,64 +337,44 @@ class Worker:
                 extra_tool_classes=base_extra + list(user_tool_classes),
             )
         else:
-            # No user tools — reuse startup singletons
             config["tool_caller"] = self._tool_caller
-            config["tool_provider"] = RegistryToolProvider()
+            config["tool_provider"] = self._default_tool_provider
 
         return executor_cls(config)
 
-    async def _get_or_create_executor(self, event: Event) -> ExecutorProtocol | None:
-        """Get existing executor or create new one for the event's run.
-
-        Args:
-            event: The event to process
-
-        Returns:
-            Executor instance or None if not applicable
-        """
+    async def _get_or_create_executor(
+        self, event: Event, ctx: _Ctx
+    ) -> ExecutorProtocol | None:
+        """Get existing executor or create new one for the event's run."""
         run_id = event.run_id
         if not run_id:
-            logger.debug(
-                f"Event {event.event_type} has no run_id, skipping executor lookup"
-            )
+            logger.debug(f"Event {event.event_type} has no run_id, skipping")
             return None
 
         run_id = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
 
-        # Check if executor already exists for this run
         existing_executor = self.runtime.get(run_id)
         if existing_executor:
             return existing_executor
 
-        # For user.message events, create a new executor
         if event.event_type == EventType.USER_MESSAGE:
-            return await self._create_executor_for_run(event, run_id)
+            return await self._create_executor_for_run(event, run_id, ctx)
 
-        # For other events, no executor means we can't process
         logger.warning(
             f"No executor found for run {run_id}, event {event.event_type} cannot be processed"
         )
         return None
 
     async def _create_executor_for_run(
-        self, event: Event, run_id: UUID
+        self, event: Event, run_id: UUID, ctx: _Ctx
     ) -> ExecutorProtocol | None:
-        """Create and initialize a new executor for a run.
-
-        Args:
-            event: The user.message event
-            run_id: The run ID
-
-        Returns:
-            Initialized executor instance or None on failure
-        """
+        """Create and initialize a new executor for a run."""
         try:
             if not event.executor_code:
                 logger.error("Event has no executor_code, cannot create executor")
                 return None
 
-            # Fetch run data from database
-            run, app_config = await self._fetch_run_data(run_id)
+            run, app_config = await self._fetch_run_data(run_id, ctx.db)
             if not run:
                 logger.error(f"Run {run_id} not found")
                 return None
@@ -296,22 +383,18 @@ class Worker:
                 logger.warning(f"Run {run_id} is terminal, skipping")
                 return None
 
-            # Load user-defined tools
             user_tool_classes = []
             if run.user_id:
                 try:
                     user_tool_classes = await DynamicToolLoader.load_user_tools(
-                        self.db,
+                        ctx.db,
                         run.user_id,
                         run.workspace_id,
                     )
                 except Exception as tool_err:
-                    logger.error(
-                        f"Failed to load user tools: {tool_err}", exc_info=True
-                    )
-                    await self.db.rollback()
+                    logger.error(f"Failed to load user tools: {tool_err}", exc_info=True)
+                    await ctx.db.rollback()
 
-            # Create executor
             workspace_id = str(run.workspace_id)
             executor = self.prepare_executor(
                 event.executor_code,
@@ -321,43 +404,42 @@ class Worker:
                 run_id=str(run_id),
             )
 
-            # Attach to runtime and transition to running
             self.runtime.attach(run_id, executor)
-            await self.state_machine.start(run_id, auto_commit=True)
+            await ctx.state_machine.start(run_id, auto_commit=True)
+
+            # Start buffering *after* the RUN_STATE_CHANGE event has been
+            # committed to DB by state_machine.start().  All subsequent events
+            # (agent tokens, tool calls, etc.) will be held in memory and only
+            # broadcast to Redis until the run completes or fails.
+            run_id_str = str(run_id)
+            initial_seq = ctx.publisher._seq_counters.get(run_id_str, 0)
+            self._start_run_buffer(run_id_str, initial_seq)
 
             return executor
 
         except Exception as e:
-            logger.error(
-                f"Failed to create executor for run {run_id}: {e}", exc_info=True
-            )
+            logger.error(f"Failed to create executor for run {run_id}: {e}", exc_info=True)
             with contextlib.suppress(Exception):
-                await self.state_machine.fail(run_id, error=str(e), auto_commit=True)
+                run_id_str = str(run_id)
+                buffered = self._pop_run_buffer(run_id_str)
+                if buffered:
+                    ctx.db.add_all(buffered)
+                await ctx.state_machine.fail(run_id, error=str(e), auto_commit=True)
             return None
 
-    async def handle_event(self, event: Event):
-        """
-        Route events to appropriate handlers using match-case.
-
-        Event routing strategy:
-        - Output events (agent.*, tool.result/error, run.*): Skip
-        - User events (user.message, user.feedback): Forward to executor
-        - Tool events: Some to executor, some to dedicated handlers
-        - Run/Task/Artifact events: To dedicated handlers
-        - Other events: Forward to executor
-
-        Args:
-            event: Parsed event data from Redis stream
-        """
-        # Expire cached ORM objects so each run starts with fresh DB state
-        self.db.expire_all()
+    async def handle_event(self, event: Event, ctx: _Ctx) -> None:
+        """Route events to appropriate handlers."""
+        ctx.db.expire_all()
 
         try:
             event_type = event.event_type
 
-            # Route event based on type using match-case
+            # Run workspace triggers before routing so the downstream handler
+            # receives an event enriched with trigger results in _trigger_context.
+            if event_type in _TRIGGER_EVENT_TYPES:
+                await self._run_triggers(event, ctx)
+
             match event_type:
-                # ── Skip: Output events published by executor or state machine ──
                 case (
                     EventType.AGENT_TOKEN
                     | EventType.AGENT_MESSAGE
@@ -365,7 +447,6 @@ class Worker:
                     | EventType.AGENT_PLAN_STEP
                     | EventType.AGENT_HEARTBEAT
                 ):
-                    logger.debug(f"Skipping agent output event: {event_type}")
                     return
 
                 case (
@@ -374,10 +455,8 @@ class Worker:
                     | EventType.RUN_COMPLETED
                     | EventType.RUN_FAILED
                 ):
-                    logger.debug(f"Skipping run lifecycle event: {event_type}")
                     return
 
-                # ── Forward to Executor: User and core agent events ──
                 case (
                     EventType.USER_MESSAGE
                     | EventType.USER_FEEDBACK
@@ -386,19 +465,17 @@ class Worker:
                     | EventType.TOOL_PENDING
                     | EventType.TOOL_CLIENT_REQUEST
                 ):
-                    await self._forward_to_executor(event)
+                    await self._forward_to_executor(event, ctx)
 
-                # ── Dedicated Handlers: Tool execution ──
                 case EventType.TOOL_CALL:
                     await handle_tool_call(
-                        event, self.db, self.event_publisher, self.state_machine
+                        event, ctx.db, ctx.publisher, ctx.state_machine,
+                        tool_caller=self._tool_caller,
                     )
 
-                # ── Dedicated Handlers: Run lifecycle ──
                 case EventType.RUN_CANCELLED:
                     await handle_run_cancellation(event, self.runtime)
 
-                # ── Dedicated Handlers: Task lifecycle ──
                 case (
                     EventType.TASK_CREATE
                     | EventType.TASK_UPDATE
@@ -408,7 +485,6 @@ class Worker:
                 ):
                     await handle_task_event(event)
 
-                # ── Dedicated Handlers: Artifact lifecycle ──
                 case (
                     EventType.ARTIFACT_CREATE
                     | EventType.ARTIFACT_UPDATE
@@ -417,31 +493,21 @@ class Worker:
                 ):
                     await handle_artifact_event(event)
 
-                # ── Dedicated Handlers: Workspace events ──
                 case (
                     EventType.WORKSPACE_CREATED
                     | EventType.WORKSPACE_UPDATED
                     | EventType.WORKSPACE_MEMBER_JOIN
                     | EventType.WORKSPACE_MEMBER_LEAVE
                     | EventType.WORKSPACE_MEMBER_ROLE_CHANGE
+                    | EventType.USING_CONTEXT
                 ):
-                    logger.debug(f"Workspace event {event_type} - no handler yet")
+                    pass
 
-                # ── Dedicated Handlers: Context events ──
-                case EventType.USING_CONTEXT:
-                    logger.debug(f"Context event {event_type} - forwarding to executor")
-
-                # ── Default: Forward to executor ──
                 case _:
-                    logger.warning(
-                        f"Unknown event type {event_type}, forwarding to executor"
-                    )
-                    await self._forward_to_executor(event)
+                    logger.warning(f"Unknown event type {event_type}, skipping")
 
         except Exception as e:
-            logger.error(
-                f"handle_event error for {event.event_type}: {e}", exc_info=True
-            )
+            logger.error(f"handle_event error for {event.event_type}: {e}", exc_info=True)
             if event.run_id:
                 try:
                     run_id = (
@@ -449,95 +515,91 @@ class Worker:
                         if isinstance(event.run_id, UUID)
                         else UUID(str(event.run_id))
                     )
-                    await self.state_machine.fail(
-                        run_id, error=str(e), auto_commit=True
-                    )
+                    run_id_str = str(run_id)
+                    # Flush buffered events so the run history is not lost on failure.
+                    buffered = self._pop_run_buffer(run_id_str)
+                    if buffered:
+                        ctx.db.add_all(buffered)
+                    await ctx.state_machine.fail(run_id, error=str(e), auto_commit=True)
+                    self.runtime.release(run_id)
                 except Exception as fail_err:
                     logger.error(f"Failed to mark run as failed: {fail_err}")
 
-    async def _forward_to_executor(self, event: Event):
-        """Forward event to executor for processing and publish emitted events.
-
-        Args:
-            event: Event to forward
-        """
-        # Get or create executor
-        executor = await self._get_or_create_executor(event)
+    async def _forward_to_executor(self, event: Event, ctx: _Ctx) -> None:
+        """Forward event to executor for processing and publish emitted events."""
+        executor = await self._get_or_create_executor(event, ctx)
         if not executor:
-            logger.debug(
-                f"No executor available for event {event.event_type}, skipping"
-            )
             return
 
-        # Publish all events emitted by the executor
         run_id = (
             event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
         )
+        run_id_str = str(run_id)
         workspace_id = str(event.workspace_id)
 
-        async for output_event in executor.process_event(event):
-            await self._publish_event(output_event, run_id, workspace_id)
+        if run_id not in self._executor_locks:
+            self._executor_locks[run_id] = asyncio.Lock()
 
-    async def _fetch_run_data(self, run_id: UUID) -> tuple[Run | None, dict | None]:
-        """
-        获取 Run 和对应的 App 配置。
+        async with self._executor_locks[run_id]:
+            async for output_event in executor.process_event(event):
+                await self._publish_event(output_event, run_id, workspace_id, ctx)
 
-        Args:
-            run_id: Run 的 UUID
+            # Events are buffered in memory during execution; no per-iteration
+            # commit needed.  Flush everything atomically when the run ends.
 
-        Returns:
-            (Run对象, App配置字典) 的元组
-        """
-        stmt_run = await self.db.execute(select(Run).where(Run.id == str(run_id)))
-        run = stmt_run.scalar_one_or_none()
-        if not run:
+            if not getattr(executor, "_pending_tool_ids", None):
+                # Drain the in-memory buffer and persist all events together with
+                # the final run state change in a single DB commit.
+                buffered = self._pop_run_buffer(run_id_str)
+                if buffered:
+                    ctx.db.add_all(buffered)
+
+                try:
+                    await ctx.state_machine.complete(run_id, auto_commit=True)
+                except Exception as complete_err:
+                    logger.error(f"Failed to complete run {run_id}: {complete_err}")
+
+                self._executor_locks.pop(run_id, None)
+                self.runtime.release(run_id)
+                ctx.publisher.release_sequence_counter(run_id_str)
+                logger.debug(f"Run {run_id} finished and executor released")
+
+    async def _fetch_run_data(
+        self, run_id: UUID, db: AsyncSession
+    ) -> tuple[Run | None, dict | None]:
+        """Fetch Run and its App config in a single JOIN query."""
+        stmt = (
+            select(Run, App.config)
+            .outerjoin(App, Run.app_id == App.id)
+            .where(Run.id == str(run_id))
+        )
+        result = await db.execute(stmt)
+        row = result.first()
+        if not row:
             return None, None
-
-        app_config = None
-        if run.app_id:
-            app_result = await self.db.execute(
-                select(App).where(App.id == str(run.app_id))
-            )
-            app = app_result.scalar_one_or_none()
-            if app and app.config:
-                app_config = app.config
-
+        run, app_config = row
         return run, app_config
-
-    async def _is_run_cancelled(self, run_id: UUID) -> bool:
-        """
-        检查 Run 是否被取消。
-
-        Args:
-            run_id: Run UUID
-
-        Returns:
-            如果 Run 被取消返回 True，否则返回 False
-        """
-        try:
-            result = await self.db.execute(
-                select(Run.status).where(Run.id == str(run_id))
-            )
-            status = result.scalar_one_or_none()
-            return status == RunStatus.CANCELLED.value
-        except Exception as e:
-            logger.warning(f"Failed to check run status for {run_id}: {e}")
-            return False
 
     async def _publish_event(
         self,
         event: Event,
         run_id: UUID,
         workspace_id: str,
-    ):
-        """Publish an Event emitted by the executor through EventPublisher."""
+        ctx: _Ctx,
+    ) -> None:
+        """Publish an executor-emitted Event via this task's EventPublisher.
+
+        Uses auto_commit=False — all events in one executor iteration are
+        flushed immediately (for Redis broadcast) and committed in a single
+        batch by _forward_to_executor after the iteration completes.
+        """
         try:
-            await self.event_publisher.publish(
+            await ctx.publisher.publish(
                 event_type=str(event.event_type),
                 workspace_id=workspace_id,
                 run_id=str(run_id),
-                payload=event.payload,  # type: ignore[arg-type]
-                auto_commit=True,
+                payload=event.payload,
+                auto_commit=False,
             )
         except Exception as e:
             logger.error(f"Error publishing agent event for run {run_id}: {e}")

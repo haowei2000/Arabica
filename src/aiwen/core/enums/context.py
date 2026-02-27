@@ -9,7 +9,7 @@ class ContextType(StrEnum):
     CHUNK = "CHUNK"
     CONVERSATION = "conversation"
     MESSAGE = "message"
-    USER_MEMORY = "user_memory"
+    SHORT_MEMORY = "short_memory"
     SKILL = "SKILL"
     TOOL = "tool"
     KNOWLEDGE = "knowledge"
@@ -18,5 +18,6 @@ class ContextPathSuffix:
     TOOLS = "tools"
     SKILLS = "skills"
     KNOWLEDGE = "knowledge"
-    WORKSPACE_HISTORY = "history"
+    SHORT_MEMORY = "short_memory"
+    LONG_MEMORY = "long_memory"
 

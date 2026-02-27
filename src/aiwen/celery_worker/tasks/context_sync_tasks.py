@@ -437,7 +437,7 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):
         # ── 1. Read memory, clear old embedding, sync WorkspaceContext ────
         async with get_session("aiwen") as session:
             mem = await session.get(Context, memory_id)
-            if not mem or mem.context_type != ContextType.USER_MEMORY:
+            if not mem or mem.context_type != ContextType.SHORT_MEMORY:
                 logger.warning(f"sync_memory: memory {memory_id} not found")
                 return
 

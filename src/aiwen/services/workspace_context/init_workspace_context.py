@@ -69,6 +69,10 @@ async def init_workspace_context(
             db, UUID(workspace_id), UUID(user_id_str), config.trigger_ids
         )
 
+    # Create root "/" and first-level directory nodes so that glance_context
+    # and list_context on "/" return a meaningful directory structure.
+    await _create_root_structure(service, user_id_str, counts)
+
     logger.info(
         "init_workspace_context: workspace=%s tools=%d knowledge=%d skills=%d history=%d memories=%d triggers=%d",
         workspace_id, counts["tools"], counts["knowledge"], counts["skills"],
@@ -196,14 +200,14 @@ async def _populate_memories(
     result = await db.execute(
         select(Context).where(
             Context.id.in_([str(mid) for mid in memory_ids]),
-            Context.context_type == ContextType.USER_MEMORY,
+            Context.context_type == ContextType.SHORT_MEMORY,
         )
     )
     memories = result.scalars().all()
 
     count = 0
     for mem in memories:
-        path = f"memory/{mem.id}"
+        path = f"short_memory/{mem.id}"
         glance = mem.glance or (mem.summary[:60] if mem.summary else mem.content[:60])
         await service.set(
             path=path,
@@ -266,45 +270,184 @@ async def _populate_triggers(
     return count
 
 
+async def _create_root_structure(
+    service: WorkspaceContextService,
+    user_id: str,
+    counts: dict[str, int],
+) -> None:
+    """Create root and first-level directory nodes in WorkspaceContext.
+
+    The leaf entries (e.g. ``tools/my_tool``) are written by the individual
+    ``_populate_*`` helpers.  This function adds the parent directory nodes
+    so that ``list_context`` / ``glance_context`` on ``"/"`` returns a proper
+    directory tree instead of an empty result.
+
+    Directory layout::
+
+        /                   ← root, always created
+        ├── tools/          ← only if count > 0
+        ├── knowledge/
+        ├── skills/
+        ├── short_memory/
+        ├── long_memory/
+        └── triggers/
+    """
+    # Ordered list of (path, display_label, count_key, description)
+    _DIRS = [
+        ("tools",        "Tools",        "tools",     "Callable tools available in this workspace"),
+        ("knowledge",    "Knowledge",    "knowledge", "Knowledge bases attached to this workspace"),
+        ("skills",       "Skills",       "skills",    "Skill templates and prompt guides"),
+        ("short_memory", "Short Memory", "memories",  "Persisted workspace short-term memory fragments"),
+        ("long_memory",  "Long Memory",  "history",   "Imported long-term conversation history"),
+        ("triggers",     "Triggers",     "triggers",  "Automated event trigger rules"),
+    ]
+
+    populated: list[tuple[str, str, int, str]] = []
+
+    for path, label, count_key, description in _DIRS:
+        count = counts.get(count_key, 0)
+        glance = f"{label} ({count} item{'s' if count != 1 else ''})"
+        await service.set(
+            path=path,
+            glance=glance,
+            overview=description,
+            detail=None,
+            tags=[path, "directory"],
+            meta={"item_count": count, "directory": True},
+            created_by=user_id,
+            content_type="application/json",
+        )
+        if count > 0:
+            populated.append((path, label, count, description))
+
+    # Root node — always written; glance summarises non-empty categories.
+    if populated:
+        root_glance = "Workspace context root — " + ", ".join(
+            f"{label}: {count}" for _, label, count, _ in populated
+        )
+        root_overview = {
+            path: {"label": label, "count": count, "description": desc}
+            for path, label, count, desc in populated
+        }
+    else:
+        root_glance = "Workspace context root (no resources yet)"
+        root_overview = {}
+
+    await service.set(
+        path="",
+        glance=root_glance,
+        overview=root_overview,
+        detail=None,
+        tags=["root", "directory"],
+        meta={
+            "directory": True,
+            "directories": [p for p, _, _, _ in _DIRS],
+        },
+        created_by=user_id,
+        content_type="application/json",
+    )
+
+
 async def _populate_history(
     db: AsyncSession,
     service: WorkspaceContextService,
     user_id: str,
     source_workspace_ids: list[UUID],
 ) -> int:
+    """Copy finished runs from source workspaces into long_memory/.
+
+    For each source workspace, loads all completed/finished runs and
+    reconstructs a conversation summary from USER_MESSAGE and AGENT_MESSAGE
+    events.  Each run becomes one entry at ``long_memory/{run_id}``.
+    """
+    import json
+
     from sqlalchemy import select
 
-    from aiwen.models.context.workspace_context import WorkspaceContext
+    from aiwen.core.enums.events import EventType
+    from aiwen.models.events.event import Event
+    from aiwen.models.runs.run import Run
 
     count = 0
     for src_id in source_workspace_ids:
         src_id_str = str(src_id)
-        result = await db.execute(
-            select(WorkspaceContext).where(
-                WorkspaceContext.workspace_id == src_id,
-                WorkspaceContext.is_deleted.is_(False),
-                WorkspaceContext.path.like("/history/%"),
-            )
-        )
-        entries = result.scalars().all()
 
-        for entry in entries:
-            # Strip leading "/history/" and re-root under the new workspace.
-            suffix = entry.path[len("/history/"):]  # type: ignore[index]
-            new_path = f"history/{suffix}"
+        # Load finished runs for the source workspace (most recent 50).
+        runs_result = await db.execute(
+            select(Run)
+            .where(
+                Run.workspace_id == src_id_str,
+                Run.status.in_(["finished", "completed", "failed"]),
+            )
+            .order_by(Run.created_at.desc())
+            .limit(50)
+        )
+        runs = runs_result.scalars().all()
+
+        for run in runs:
+            run_id_str = str(run.id)
+
+            # Fetch user + agent message events for this run, in order.
+            events_result = await db.execute(
+                select(Event)
+                .where(
+                    Event.run_id == run_id_str,
+                    Event.event_type.in_([
+                        EventType.USER_MESSAGE,
+                        EventType.AGENT_MESSAGE,
+                    ]),
+                )
+                .order_by(Event.sequence)
+            )
+            events = events_result.scalars().all()
+
+            if not events:
+                continue
+
+            # Build a readable conversation transcript.
+            turns = []
+            for ev in events:
+                payload = ev.payload or {}
+                if ev.event_type == EventType.USER_MESSAGE:
+                    msg = payload.get("message", "")
+                    if isinstance(msg, list):
+                        msg = " ".join(
+                            p.get("text", "") if isinstance(p, dict) else str(p)
+                            for p in msg
+                        )
+                    turns.append({"role": "user", "content": str(msg)})
+                elif ev.event_type == EventType.AGENT_MESSAGE:
+                    content = payload.get("content") or payload.get("message", "")
+                    turns.append({"role": "assistant", "content": str(content)})
+
+            if not turns:
+                continue
+
+            # Glance: first user message, truncated.
+            first_user = next(
+                (t["content"] for t in turns if t["role"] == "user"), ""
+            )
+            glance = first_user[:120] if first_user else f"Run {run_id_str[:8]}"
+
             await service.set(
-                path=new_path,
-                glance=entry.glance or entry.name,
-                overview=entry.summary,
-                detail=entry.content,
-                tags=(entry.tags or []) + ["imported_history"],
-                meta={
-                    **(entry.meta or {}),
+                path=f"long_memory/{run_id_str}",
+                glance=glance,
+                overview={
+                    "run_id": run_id_str,
+                    "status": run.status,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
                     "source_workspace_id": src_id_str,
-                    "source_path": entry.path,
+                    "turn_count": len(turns),
+                },
+                detail=json.dumps(turns, ensure_ascii=False),
+                tags=["long_memory", "imported_history"],
+                meta={
+                    "run_id": run_id_str,
+                    "source_workspace_id": src_id_str,
                 },
                 created_by=user_id,
-                content_type=entry.content_type or "application/json",
+                content_type="application/json",
             )
             count += 1
+
     return count

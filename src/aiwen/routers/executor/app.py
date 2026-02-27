@@ -27,7 +27,7 @@ async def list_executors(
     Returns:
         List of available executor codes
     """
-    return await curd.list_executors()
+    return await curd.list_executors(include_disabled=False)
 
 
 @router.post("/create", response_model=AppResponse, status_code=status.HTTP_201_CREATED)

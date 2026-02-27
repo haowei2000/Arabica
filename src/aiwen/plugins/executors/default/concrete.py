@@ -33,13 +33,13 @@ from aiwen.core.interfaces import (
     ToolProvider,
     WaitingForTool,
 )
-from aiwen.models.events.event import Event
 from aiwen.frameworks.tool_calling import (
     ChatMessage,
     LLMResponse,
     PromptCallingStrategy,
     ToolCallRequest,
 )
+from aiwen.models.events.event import Event
 from aiwen.registries.core import register_executor
 from aiwen.schemas.app import AppConfig
 from aiwen.schemas.events.event_payloads import EventType, UserMessage
@@ -55,18 +55,6 @@ You are a helpful AI assistant.
 - workspace_id: {workspace_id}
 - run_id: {run_id}
 
-## MANDATORY First Step
-
-**Before responding to any user request**, you MUST call the following tool first:
-
-```
-list_context(workspace_id="{workspace_id}", path="./skills", mode="descendants", level="glance")
-```
-
-This retrieves all skills defined for this workspace. Read them carefully — they contain \
-domain knowledge, instructions, and behavioural rules you must follow throughout the conversation. \
-Do not skip this step even if the user's request seems straightforward.
-
 ## Context Tool
 
 You have access to a workspace context store via the following operations.
@@ -78,11 +66,7 @@ glob_context   | search_context
 create_context | update_context | delete_context
 ```
 
-Each context entry has three disclosure levels: `glance` → `overview` → `detail`.
-Start with `glance`, go deeper only when needed.
 
-> To see everything available in this workspace, call:
-> `list_context(workspace_id="{workspace_id}", path="./", mode="descendants", level="glance")`
 """
 
 # Characters needed to rule out a ``<think>`` opening tag.
@@ -139,9 +123,9 @@ class DefaultExecutor(Executor):
         self.tools_info: Any = self.strategy.format_tools(tool_classes)
 
         self.workspace_id: str = config.get("workspace_id", "")
-        run_id: str = config.get("run_id", "")
+        self.run_id: str = config.get("run_id", "")
         self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            workspace_id=self.workspace_id, run_id=run_id
+            workspace_id=self.workspace_id, run_id=self.run_id
         )
 
         # ── State for multi-tool tracking across events ──────────
@@ -409,6 +393,76 @@ class DefaultExecutor(Executor):
 
         return [ChatMessage(role="user", content=str(message))]
 
+    # ── run history loading ───────────────────────────────────────
+
+    async def _load_run_history(self) -> ChatMessage | None:
+        """Fetch the current run's event history from Redis via get_run_history.
+
+        Uses the injected ``tool_caller`` so the executor stays decoupled from
+        the tool registry.  Returns a system ``ChatMessage`` ready to be
+        inserted into the conversation, or ``None`` if unavailable / empty.
+        """
+        if not self.run_id or not self.tool_caller:
+            return None
+        try:
+            result = await self.tool_caller.call(
+                "get_run_history",
+                {"run_id": self.run_id, "limit": 50},
+            )
+            events = (result or {}).get("data", {}).get("events", [])
+            if not events:
+                return None
+
+            lines = ["[Current run event history]"]
+            for e in events:
+                event_type = e.get("event_type", "")
+                payload = e.get("payload") or {}
+                seq = e.get("sequence", "?")
+
+                if event_type == EventType.USER_MESSAGE:
+                    msg = payload.get("message", "")
+                    if isinstance(msg, list):
+                        msg = " ".join(
+                            p.get("text", "") if isinstance(p, dict) else str(p)
+                            for p in msg
+                        )
+                    lines.append(f"[{seq}] User: {str(msg)[:300]}")
+
+                elif event_type == EventType.AGENT_MESSAGE:
+                    content = payload.get("content") or payload.get("message", "")
+                    lines.append(f"[{seq}] Assistant: {str(content)[:300]}")
+
+                elif event_type == EventType.TOOL_CALL:
+                    tool_name = payload.get("tool_name", "?")
+                    args = json.dumps(
+                        payload.get("arguments", {}), ensure_ascii=False
+                    )
+                    lines.append(f"[{seq}] Tool call: {tool_name}({args[:200]})")
+
+                elif event_type == EventType.TOOL_RESULT:
+                    tool_name = payload.get("tool_name", "?")
+                    res = payload.get("result")
+                    res_str = (
+                        json.dumps(res, ensure_ascii=False, default=str)[:300]
+                        if res is not None
+                        else "null"
+                    )
+                    lines.append(f"[{seq}] Tool result: {tool_name} → {res_str}")
+
+                elif event_type == EventType.TOOL_ERROR:
+                    tool_name = payload.get("tool_name", "?")
+                    error = payload.get("error_message", "unknown error")
+                    lines.append(f"[{seq}] Tool error: {tool_name} → {error[:200]}")
+
+            if len(lines) <= 1:
+                return None
+
+            return ChatMessage(role="system", content="\n".join(lines))
+
+        except Exception as e:
+            logger.warning(f"Failed to load run history for run {self.run_id}: {e}")
+            return None
+
     # ── agentic loop (core streaming logic) ──────────────────────
 
     async def _agentic_loop(
@@ -416,7 +470,22 @@ class DefaultExecutor(Executor):
         messages: list[ChatMessage],
     ) -> AsyncGenerator[Event, None]:
         """Run the agentic loop: call LLM, process tool calls, repeat."""
+        # Reserve a slot at index 1 (right after system prompt) for run history.
+        # It is inserted once here and refreshed in-place before every LLM call
+        # so the model always sees the latest event stream.
+        run_history_idx: int = -1
+        initial_history = await self._load_run_history()
+        if initial_history is not None:
+            messages.insert(1, initial_history)
+            run_history_idx = 1
+
         for _iteration in range(self.max_iterations):
+            # ── refresh run history before each LLM call ─────────
+            if run_history_idx >= 0:
+                fresh = await self._load_run_history()
+                if fresh is not None:
+                    messages[run_history_idx] = fresh
+
             # ── per-iteration state ──────────────────────────────
             response_buf = ""
             think_buf = ""
@@ -502,12 +571,9 @@ class DefaultExecutor(Executor):
                 yield self._emit_token("", is_final=True)
                 yield self._emit_message(llm_response.content or response_buf)
                 break
-
-            # ── emit tool calls and pause (may raise WaitingForTool) ──
-            async for event in self._process_tool_calls(
-                llm_response.tool_calls, messages
-            ):
-                yield event
+            else:
+                async for e in self._emit_tool_calls(llm_response.tool_calls, messages):
+                    yield e
 
             # Reset token index for the next LLM call iteration
             self._reset_token_index()
@@ -532,7 +598,7 @@ class DefaultExecutor(Executor):
 
             async with get_session("aiwen") as db:
                 service = await get_cached_workspace_context(db, self.workspace_id)
-                results = await service.descendants(f"{self.workspace_id}/history")
+                results = await service.descendants(f"{self.workspace_id}/long_memory")
                 history_entries = results.disclose_all(DetailLevel.DETAIL)
 
             messages: list[ChatMessage] = []
@@ -557,3 +623,31 @@ class DefaultExecutor(Executor):
         except Exception as e:
             logger.warning(f"Failed to load history for workspace {self.workspace_id}: {e}")
             return []
+
+    async def _emit_tool_calls(
+        self,
+        tool_calls: list[ToolCallRequest],
+        messages: list[ChatMessage],
+    ) -> AsyncGenerator[Event, None]:
+        """Emit one TOOL_CALL event per tool, save state, then pause the loop.
+
+        Saves the current message history so ``_resume_with_results`` can
+        reconstruct the conversation when all tool results arrive.
+        Raises ``WaitingForTool`` after yielding all events, which propagates
+        up to ``process_event`` where it is caught and silenced.
+        """
+        self._waiting_messages = list(messages)
+
+        for tc in tool_calls:
+            self._pending_tool_ids.add(tc.id)
+            yield self._emit_tool_call(tc.name, tc.id, tc.arguments)
+
+        raise WaitingForTool(
+            {
+                "type": "tool_calls",
+                "tool_calls": [
+                    {"tool_name": tc.name, "tool_id": tc.id, "arguments": tc.arguments}
+                    for tc in tool_calls
+                ],
+            }
+        )

@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 import logging
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import redis.asyncio as redis_async
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.config.factory import get_settings
@@ -24,6 +25,17 @@ REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
 REDIS_STREAM_EVENTS_SUFFIX = _redis_cfg.stream_events_suffix
 REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
+
+# Event types that workers must consume from the executor stream.
+# Defined at module level to avoid recreating the set on every publish() call.
+_EXECUTOR_STREAM_TYPES: frozenset[str] = frozenset({
+    EventType.USER_MESSAGE,
+    EventType.USER_FEEDBACK,
+    EventType.TOOL_CALL,
+    EventType.TOOL_RESULT,
+    EventType.TOOL_ERROR,
+    EventType.RUN_CANCELLED,
+})
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -51,15 +63,37 @@ class EventPublisher:
     Events are auto-sequenced per run and per workspace.
     """
 
-    def __init__(self, db: AsyncSession, redis_client: redis_async.Redis | None = None):
+    def __init__(
+        self,
+        db: AsyncSession,
+        redis_client: redis_async.Redis | None = None,
+        run_buffer_provider: Callable[[str], list[Event] | None] | None = None,
+        run_seq_cursor: dict[str, int] | None = None,
+    ):
         """Initialize EventPublisher.
 
         Args:
             db: SQLAlchemy async session
             redis_client: Redis async client (optional, for real-time broadcasting)
+            run_buffer_provider: Callable that returns the in-memory event buffer
+                for a run_id, or None if that run is not being buffered.  When a
+                buffer is returned, events are appended there instead of being
+                written to PostgreSQL — DB sync happens at run completion.
+            run_seq_cursor: Shared Worker-level dict mapping run_id → current max
+                sequence.  Used to keep sequence numbers consistent across the
+                multiple per-dispatch EventPublisher instances that service the
+                same run without re-querying the DB every time.
         """
         self.db = db
         self.redis = redis_client
+        self._run_buffer_provider = run_buffer_provider
+        # Shared mutable dict owned by Worker; None for callers outside the worker.
+        self._run_seq_cursor = run_seq_cursor
+        # In-memory sequence counters keyed by run_id (or "ws:<workspace_id>").
+        # Avoids a SELECT MAX(sequence) round-trip for every event after the first
+        # one per run.  Safe because asyncio is single-threaded and the worker
+        # serialises event processing per run via an asyncio.Lock.
+        self._seq_counters: dict[str, int] = {}
 
     async def publish(
         self,
@@ -106,8 +140,11 @@ class EventPublisher:
         # Get the next sequence number for this run (or workspace if no run)
         sequence = await self._get_next_sequence(workspace_id_str, run_id_str)
 
-        # Create event in PostgreSQL
+        # Build the event with explicit Python-side defaults so the object is
+        # fully usable (including .id) without a DB flush or refresh.
         event = Event(
+            id=uuid4(),
+            created_at=datetime.now(UTC),
             event_type=event_type_str,
             workspace_id=workspace_id_str,
             run_id=run_id_str,
@@ -119,22 +156,31 @@ class EventPublisher:
             executor_code=executor_code,
         )
 
-        self.db.add(event)
+        # Check if this run is in buffered mode (Redis-only during execution).
+        buffer = (
+            self._run_buffer_provider(run_id_str)
+            if (self._run_buffer_provider and run_id_str)
+            else None
+        )
 
-        if auto_commit:
-            await self.db.commit()
+        if buffer is not None:
+            # Buffered mode: hold in memory, broadcast to Redis for real-time SSE.
+            # The buffer is flushed to DB atomically when the run completes/fails.
+            buffer.append(event)
+            if self.redis:
+                await self._broadcast_to_redis(event)
         else:
-            await self.db.flush()
+            # Normal mode: persist to PostgreSQL immediately.
+            self.db.add(event)
+            if auto_commit:
+                await self.db.commit()
+            else:
+                await self.db.flush()
 
-        await self.db.refresh(event)
-
-        # Update run's last_event_sequence if applicable
-        if run_id_str:
-            await self._update_run_sequence(run_id_str, sequence, auto_commit)
-
-        # Broadcast to Redis Streams for real-time delivery
-        if self.redis:
-            await self._broadcast_to_redis(event)
+            if run_id_str:
+                await self._update_run_sequence(run_id_str, sequence, auto_commit)
+            if self.redis:
+                await self._broadcast_to_redis(event)
 
         logger.debug(
             f"Published event {event.id} type={event_type_str} "
@@ -180,96 +226,97 @@ class EventPublisher:
         return created_events
 
     async def _get_next_sequence(self, workspace_id: str, run_id: str | None) -> int:
-        """Get the next sequence number for a run or workspace.
+        """Return the next sequence number, using an in-memory counter.
 
-        Args:
-            workspace_id: Workspace ID
-            run_id: Run ID (optional)
+        The first call for a given run (or workspace) queries the DB to find
+        the current max; every subsequent call just increments the counter in
+        memory.  This eliminates one ``SELECT MAX`` round-trip per event.
 
-        Returns:
-            Next sequence number
+        When the Worker provides a shared ``run_seq_cursor`` dict, that dict is
+        consulted before hitting the DB.  This prevents duplicate sequence numbers
+        across the multiple per-dispatch EventPublisher instances that may serve
+        the same run while it is being buffered (and therefore not committed to DB).
         """
-        if run_id:
-            # Get max sequence for this run
-            stmt = select(func.coalesce(func.max(Event.sequence), 0)).where(
-                Event.run_id == run_id
-            )
-        else:
-            # Get max sequence for workspace-level events (no run_id)
-            stmt = select(func.coalesce(func.max(Event.sequence), 0)).where(
-                Event.workspace_id == workspace_id,
-                Event.run_id.is_(None),
-            )
+        key = run_id if run_id else f"ws:{workspace_id}"
 
-        result = await self.db.execute(stmt)
-        max_seq = result.scalar() or 0
-        return max_seq + 1
+        if key not in self._seq_counters:
+            # Check Worker-level cursor first — avoids a stale DB read when
+            # buffered events have incremented the sequence but aren't in DB yet.
+            if self._run_seq_cursor is not None and run_id and run_id in self._run_seq_cursor:
+                self._seq_counters[key] = self._run_seq_cursor[run_id]
+            else:
+                # Cold start: read the current maximum from the DB.
+                if run_id:
+                    stmt = select(func.coalesce(func.max(Event.sequence), 0)).where(
+                        Event.run_id == run_id
+                    )
+                else:
+                    stmt = select(func.coalesce(func.max(Event.sequence), 0)).where(
+                        Event.workspace_id == workspace_id,
+                        Event.run_id.is_(None),
+                    )
+                result = await self.db.execute(stmt)
+                self._seq_counters[key] = result.scalar() or 0
+
+        self._seq_counters[key] += 1
+
+        # Keep the Worker cursor in sync so the next publisher picks up correctly.
+        if self._run_seq_cursor is not None and run_id and run_id in self._run_seq_cursor:
+            self._run_seq_cursor[run_id] = self._seq_counters[key]
+
+        return self._seq_counters[key]
+
+    def release_sequence_counter(self, run_id: str) -> None:
+        """Remove the in-memory counter for a completed run to free memory."""
+        self._seq_counters.pop(run_id, None)
 
     async def _update_run_sequence(
         self, run_id: str, sequence: int, auto_commit: bool
     ) -> None:
-        """Update the run's last_event_sequence.
+        """Update the run's last_event_sequence using a direct UPDATE statement.
 
-        Args:
-            run_id: Run ID
-            sequence: New sequence number
-            auto_commit: Whether to commit
+        Avoids the SELECT + ORM-update pattern (two round-trips) by issuing a
+        single UPDATE statement directly.
         """
-        stmt = select(Run).where(Run.id == run_id)
-        result = await self.db.execute(stmt)
-        run = result.scalar_one_or_none()
+        stmt = (
+            update(Run)
+            .where(Run.id == run_id)
+            .values(last_event_sequence=sequence, updated_at=datetime.now(UTC))
+        )
+        await self.db.execute(stmt)
 
-        if run:
-            run.last_event_sequence = sequence
-            run.updated_at = datetime.now(UTC)
-
-            if auto_commit:
-                await self.db.commit()
-            else:
-                await self.db.flush()
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def _broadcast_to_redis(self, event: Event) -> None:
-        """Broadcast event to Redis Streams.
+        """Broadcast event to Redis Streams using a pipeline (one round-trip).
 
-        Args:
-            event: Event to broadcast
+        Streams written:
+          - run:{id}:events       – SSE clients subscribed to this run
+          - workspace:{id}:events – SSE clients subscribed to the workspace
+          - executor stream       – worker consumers (actionable events only)
         """
         if not self.redis:
             return
         fields = event.to_redis_fields()
         try:
-            # Publish to run stream if applicable
-            if event.run_id:
-                run_stream = (
-                    f"{REDIS_RUN_LABEL}:{event.run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
-                )
-                await self.redis.xadd(
-                    name=run_stream,
-                    fields=fields,
-                    maxlen=1000,
-                    approximate=True,
-                )
-            logger.info(f"Success publish to {REDIS_RUN_LABEL} an event")
-            # Publish to the workspace stream
-            workspace_stream = f"{REDIS_WORKSPACE_LABEL}:{event.workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
-            await self.redis.xadd(
-                name=workspace_stream,
-                fields=fields,
-                maxlen=10000,
-                approximate=True,
-            )
+            async with self.redis.pipeline(transaction=False) as pipe:
+                if event.run_id:
+                    run_stream = f"{REDIS_RUN_LABEL}:{event.run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                    pipe.xadd(run_stream, fields, maxlen=1000, approximate=True)
 
-            logger.info(f"Success publish to {REDIS_WORKSPACE_LABEL} an event")
-            # Publish USER_MESSAGE events to global task queue for Worker consumption
-            if event.event_type == EventType.USER_MESSAGE and event.run_id:
-                await self.redis.xadd(
-                    name=REDIS_EXECUTOR_LABEL,
-                    fields=fields,
-                    maxlen=10000,
-                    approximate=True,
-                )
+                workspace_stream = f"{REDIS_WORKSPACE_LABEL}:{event.workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                pipe.xadd(workspace_stream, fields, maxlen=10000, approximate=True)
 
-                logger.info(f"Success publish to {REDIS_EXECUTOR_LABEL} an event")
+                # Actionable events that workers must consume and act on.
+                if event.event_type in _EXECUTOR_STREAM_TYPES and event.run_id:
+                    pipe.xadd(REDIS_EXECUTOR_LABEL, fields, maxlen=10000, approximate=True)
+
+                await pipe.execute()
+
+            logger.debug(f"Broadcast event {event.event_type} run={event.run_id}")
         except Exception as e:
             logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")
             # Don't fail the whole publication if Redis broadcast fails

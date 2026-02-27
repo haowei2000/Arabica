@@ -97,8 +97,8 @@ class ContextStoreAdapter:
             ContextPathSuffix.TOOLS: "Available Tools",
             ContextPathSuffix.SKILLS: "Available Skills",
             ContextPathSuffix.KNOWLEDGE: "Knowledge Base",
-            ContextPathSuffix.WORKSPACE_HISTORY: "Run History",
-            ContextPathSuffix.USER_HISTORY: "User History",
+            ContextPathSuffix.LONG_MEMORY: "Long Memory",
+            ContextPathSuffix.SHORT_MEMORY: "Short Memory",
         }
 
         for suffix, title in paths.items():

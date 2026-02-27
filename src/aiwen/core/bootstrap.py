@@ -16,8 +16,8 @@ Created: 2025/12/31
 Version: v2.0.0
 """
 
-import logging
 from dataclasses import dataclass
+import logging
 
 from sqlalchemy import select
 

@@ -339,7 +339,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
             try:
                 stmt = select(ToolModel).where(
-                    ToolModel.tool_code == tool_name,
+                    ToolModel.name == tool_name,
                     ToolModel.tool_type == "inner",
                 )
                 result = await db.execute(stmt)

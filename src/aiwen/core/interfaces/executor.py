@@ -12,6 +12,7 @@ not on this ABC directly — see the Dependency Inversion notes in the plan.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
+from uuid import uuid4
 
 from aiwen.core.interfaces.protocols import ExecutorProtocol
 from aiwen.models.events import Event
@@ -286,6 +287,42 @@ class Executor(ABC, ExecutorProtocol):
     def _reset_token_index(self) -> None:
         """Reset the per-stream token counter.  Call at stream start."""
         self._token_index = 0
+
+    # ── Event factory helpers ─────────────────────────────────────
+
+    def _make_event(self, event_type: EventType, payload: dict[str, Any]) -> Event:
+        """Create a transient Event for yielding from the executor.
+
+        workspace_id is a placeholder — the worker overrides it when
+        publishing via EventPublisher.publish().
+        """
+        return Event(event_type=event_type, workspace_id=uuid4(), payload=payload)
+
+    def _emit_token(self, token: str, *, is_final: bool = False) -> Event:
+        """Emit a streaming token event (AGENT_TOKEN)."""
+        event = self._make_event(
+            EventType.AGENT_TOKEN,
+            {"token": token, "index": self._token_index, "is_final": is_final},
+        )
+        self._token_index += 1
+        return event
+
+    def _emit_message(self, content: str) -> Event:
+        """Emit a complete message event (AGENT_MESSAGE)."""
+        return self._make_event(EventType.AGENT_MESSAGE, {"content": content})
+
+    def _emit_thinking(self, content: str) -> Event:
+        """Emit a reasoning/thinking trace event (AGENT_THINKING)."""
+        return self._make_event(EventType.AGENT_THINKING, {"content": content})
+
+    def _emit_tool_call(
+        self, tool_name: str, tool_id: str, arguments: dict[str, Any]
+    ) -> Event:
+        """Emit a single tool call event (TOOL_CALL)."""
+        return self._make_event(
+            EventType.TOOL_CALL,
+            {"tool_name": tool_name, "tool_id": tool_id, "arguments": arguments},
+        )
 
 # Populate the dispatch table after the class body so all methods are defined.
 # This mapping is auto-generated from EventType enum to ensure completeness.

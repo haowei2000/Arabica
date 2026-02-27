@@ -1,7 +1,8 @@
-"""Get run history tool."""
+"""Get run event history from Redis stream."""
 
 from pydantic import Field
 
+from aiwen.core.enums.events import EventType
 from aiwen.core.interfaces.tool import (
     InnerTool,
     ToolInputSchema,
@@ -9,71 +10,103 @@ from aiwen.core.interfaces.tool import (
     ToolOutputSchema,
 )
 
+# High-frequency noise events excluded by default
+_DEFAULT_EXCLUDE: list[str] = [
+    EventType.AGENT_TOKEN,
+    EventType.AGENT_THINKING,
+    EventType.AGENT_HEARTBEAT,
+]
+
 
 class GetRunHistoryTool(InnerTool):
-    """Get recent run history for a workspace"""
+    """Get real-time event history for a run directly from its Redis stream."""
 
     METADATA = ToolMetadata(
         name="get_run_history",
         display_name="Get Run History",
-        description="Get recent run history for a workspace with optional status filter",
+        description=(
+            "Get real-time event history for a run from Redis stream. "
+            "Excludes agent_token, agent_thinking and agent_heartbeat by default."
+        ),
         category="utility",
-        tags=["runs", "history", "workspace"],
-        timeout=15,
+        tags=["runs", "history", "events", "redis"],
+        timeout=10,
     )
 
     class InputSchema(ToolInputSchema):
-        workspace_id: str = Field(description="The workspace UUID")
+        run_id: str = Field(description="The run UUID to fetch events for")
         limit: int = Field(
-            default=10, ge=1, le=100, description="Maximum runs to return"
+            default=100,
+            ge=1,
+            le=1000,
+            description="Maximum number of events to return (most recent N)",
         )
-        status: str | None = Field(
-            default=None,
-            description="Filter by status (running, completed, failed, etc.)",
+        exclude_types: list[str] = Field(
+            default_factory=lambda: list(_DEFAULT_EXCLUDE),
+            description=(
+                "Event types to exclude. "
+                "Defaults to agent_token, agent_thinking, agent_heartbeat."
+            ),
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
+        import redis.asyncio as redis_async
 
-        from aiwen.extensions.database import get_session
-        from aiwen.models.runs.run import Run
+        from aiwen.config.factory import get_settings
+        from aiwen.models.events.event import Event
 
-        async with get_session("aiwen") as db:
-            query = (
-                select(Run)
-                .where(Run.workspace_id == input_data.workspace_id)
-                .order_by(Run.created_at.desc())
-                .limit(input_data.limit)
-            )
+        cfg = get_settings().redis
+        exclude = frozenset(input_data.exclude_types)
 
-            if input_data.status:
-                query = query.where(Run.status == input_data.status)
+        stream_key = f"{cfg.run_label}:{input_data.run_id}:{cfg.stream_events_suffix}"
 
-            result = await db.execute(query)
-            runs = result.scalars().all()
+        redis_client = redis_async.Redis(
+            host=cfg.host,
+            port=cfg.port,
+            username=cfg.username or None,
+            password=cfg.password or None,
+            db=cfg.db,
+            decode_responses=False,
+        )
+        try:
+            # Run streams are capped at ~1000 entries (maxlen in EventPublisher).
+            # Fetch all chronologically, then filter and tail to limit.
+            raw_entries: list = await redis_client.xrange(stream_key)
+        finally:
+            await redis_client.aclose()
 
-            return ToolOutputSchema(
-                success=True,
-                message=f"Retrieved {len(runs)} runs for workspace",
-                data={
-                    "runs": [
-                        {
-                            "id": str(run.id),
-                            "status": run.status,
-                            "trigger_type": run.trigger_type,
-                            "created_at": run.created_at.isoformat()
-                            if run.created_at
-                            else None,
-                            "completed_at": run.completed_at.isoformat()
-                            if run.completed_at
-                            else None,
-                            "input_preview": str(run.input_data)[:100]
-                            if run.input_data
-                            else None,
-                        }
-                        for run in runs
-                    ],
-                    "total": len(runs),
-                    "workspace_id": input_data.workspace_id,
-                },
-            )
+        # Parse, filter excluded types, keep last `limit` entries.
+        events = []
+        for _entry_id, fields in raw_entries:
+            try:
+                event = Event.from_redis_fields(fields)
+            except Exception:
+                continue
+            if str(event.event_type) not in exclude:
+                events.append(event)
+
+        # Tail to limit (most recent N events after filtering)
+        if len(events) > input_data.limit:
+            events = events[-input_data.limit:]
+
+        return ToolOutputSchema(
+            success=True,
+            message=f"Retrieved {len(events)} events for run {input_data.run_id}",
+            data={
+                "events": [
+                    {
+                        # "id": str(event.id),
+                        "event_type": str(event.event_type),
+                        "sequence": event.sequence,
+                        "payload": event.payload,
+                        # "created_at": (
+                        #     event.created_at.isoformat() if event.created_at else None
+                        # ),
+                    }
+                    for event in events
+                ],
+                "total": len(events),
+                "run_id": input_data.run_id,
+                "stream_key": stream_key,
+            },
+        )

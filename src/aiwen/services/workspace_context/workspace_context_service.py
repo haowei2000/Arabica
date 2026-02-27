@@ -117,7 +117,7 @@ class WorkspaceContextService:
             ContextPathSuffix.TOOLS: "Available Tools",
             ContextPathSuffix.SKILLS: "Available Skills",
             ContextPathSuffix.KNOWLEDGE: "Knowledge Base",
-            ContextPathSuffix.WORKSPACE_HISTORY: "Run History",
+            ContextPathSuffix.LONG_MEMORY: "Long Memory",
         }
 
         for suffix, title in paths.items():
