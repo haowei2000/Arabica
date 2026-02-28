@@ -1,5 +1,6 @@
 """Create context tool - add new context to workspace."""
 
+import json
 from typing import Any
 
 from pydantic import Field
@@ -57,39 +58,67 @@ class CreateContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        from sqlalchemy import select
+
         from aiwen.extensions.database import get_session
-        from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
         try:
+            normalized_path = "/" + input_data.path.lstrip("/")
+
+            summary_str = (
+                json.dumps(input_data.overview, ensure_ascii=False)
+                if isinstance(input_data.overview, dict)
+                else input_data.overview
+            )
+            content_str = (
+                json.dumps(input_data.detail, ensure_ascii=False)
+                if isinstance(input_data.detail, (dict, list))
+                else (str(input_data.detail) if input_data.detail is not None else None)
+            )
+
             async with get_session("aiwen") as db:
-                # Initialize service with caching
-                service = await get_cached_workspace_context(db, input_data.workspace_id)
-
-                # Create context
-                await service.set(
-                    path=input_data.path,
-                    glance=input_data.glance,
-                    overview=input_data.overview,
-                    detail=input_data.detail,
-                    tags=input_data.tags or [],
-                    meta=input_data.meta or {},
-                    name=input_data.name or input_data.glance,
-                    content_type=input_data.content_type,
+                stmt = select(WorkspaceContext).where(
+                    WorkspaceContext.workspace_id == input_data.workspace_id,
+                    WorkspaceContext.path == normalized_path,
                 )
+                result = await db.execute(stmt)
+                ctx = result.scalar_one_or_none()
 
-                # Verify creation
-                created = await service.get(input_data.path, level="overview")
+                if ctx:
+                    ctx.is_deleted = False
+                    ctx.glance = input_data.glance
+                    ctx.name = input_data.name or input_data.glance
+                    ctx.summary = summary_str
+                    ctx.content = content_str
+                    ctx.tags = input_data.tags
+                    ctx.meta = input_data.meta or {}
+                    ctx.content_type = input_data.content_type
+                else:
+                    ctx = WorkspaceContext(
+                        workspace_id=input_data.workspace_id,
+                        path=normalized_path,
+                        name=input_data.name or input_data.glance,
+                        glance=input_data.glance,
+                        summary=summary_str,
+                        content=content_str,
+                        tags=input_data.tags,
+                        meta=input_data.meta or {},
+                        content_type=input_data.content_type,
+                    )
+                    db.add(ctx)
 
-                return ToolOutputSchema(
-                    success=True,
-                    message=f"Created context at: {input_data.path}",
-                    data={
-                        "path": input_data.path,
-                        "glance": input_data.glance,
-                        "tags": input_data.tags,
-                        "context": created,
-                    },
-                )
+                await db.commit()
+
+            return ToolOutputSchema(
+                success=True,
+                message=f"Created context at: {input_data.path}",
+                data={
+                    "path": input_data.path,
+                    "glance": input_data.glance,
+                    "tags": input_data.tags,
+                },
+            )
 
         except Exception as e:
             return ToolOutputSchema(

@@ -48,24 +48,62 @@ from aiwen.schemas.llm.chat_llm import ChatLLM
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are a helpful AI assistant.
+You are an intelligent AI assistant operating inside the Aiwen platform.
 
 ## Session
 
 - workspace_id: {workspace_id}
 - run_id: {run_id}
 
-## Context Tool
+## Core Concepts
 
-You have access to a workspace context store via the following operations.
-All operations belong to the same **Context Tool** and require `workspace_id`.
+### Knowledge  (path prefix: `knowledge/`)
+Curated reference content stored in the workspace context store —
+documentation, facts, notes. Use `list_context` or `glance_context`
+with path `knowledge` to discover what is available.
 
-```
-glance_context | read_context | list_context | tree_context
-glob_context   | search_context
-create_context | update_context | delete_context
-```
+### Skill  (path prefix: `skills/`)
+Reusable procedures, prompt templates, and HOW-TO guides defined by
+the workspace owner. Read a skill with `read_context` to obtain step-
+by-step instructions you should follow.
 
+### Tool  (path prefix: `tools/`)
+Descriptions of executable capabilities installed in the workspace.
+Browse with `list_context(path="tools")` to see which tools are
+enabled before invoking them.
+
+### Task
+A tracked unit of work within the current run. Use `create_task` to
+record a goal, `update_task` to mark progress (status: pending →
+in_progress → done), and `list_tasks` to review open items. Break
+complex requests into subtasks using `parent_task_id`.
+
+### Artifact
+A persistent, versioned output you produce — generated text, code,
+analysis, data. Use `create_artifact` to save any valuable result;
+content is automatically uploaded to storage. Use `read_artifact` or
+`list_artifacts` to retrieve previous outputs.
+
+## Context Store Operations
+
+All context operations require `workspace_id`. Common patterns:
+- Discover resources : `list_context(path="knowledge")` or `glance_context`
+- Read a resource    : `read_context(path="knowledge/topic_name")`
+- Save progress notes: `create_context` / `update_context`
+- Search             : `search_context(query="...")`
+- Hierarchy view     : `tree_context(root="skills")`
+
+Available operations:
+  glance_context | read_context | list_context | tree_context
+  glob_context   | search_context
+  create_context | update_context | delete_context
+
+## Working Approach
+
+1. Start by checking available knowledge and skills relevant to the request.
+2. Break complex tasks into subtasks using `create_task`.
+3. Save significant outputs with `create_artifact`.
+4. Think step-by-step before calling tools; prefer to batch related lookups.
 
 """
 
@@ -118,9 +156,17 @@ class DefaultExecutor(Executor):
         # ── Tool calling strategy ────────────────────────────────
         self.strategy = PromptCallingStrategy()
 
-        # Collect tool classes and pre-format them for the strategy.
-        tool_classes = self._collect_tool_classes()
-        self.tools_info: Any = self.strategy.format_tools(tool_classes)
+        # Use pre-computed tools_info from Worker cache when available
+        # (avoids Pydantic schema generation for 150+ tools on every run).
+        if "tools_info" in config:
+            self.tools_info: Any = config["tools_info"]
+        else:
+            tool_classes = self._collect_tool_classes()
+            self.tools_info = self.strategy.format_tools(tool_classes)
+
+        # Cache the LLM client so it is not recreated for every LLM call
+        # within the same run (saves connection overhead on multi-iteration loops).
+        self._llm_client = self.strategy.build_client(self._api_key, self._base_url)
 
         self.workspace_id: str = config.get("workspace_id", "")
         self.run_id: str = config.get("run_id", "")
@@ -191,6 +237,7 @@ class DefaultExecutor(Executor):
             ChatMessage(role="system", content=self.system_prompt),
         ]
         messages.extend(await self._load_history())
+        messages.extend(await self._load_run_event_messages())
 
         # Inject pre-fetched workspace context from trigger processor
         trigger_ctx = self._extract_trigger_context(payload)
@@ -467,6 +514,85 @@ class DefaultExecutor(Executor):
             logger.warning(f"Failed to load run history for run {self.run_id}: {e}")
             return None
 
+    async def _load_run_event_messages(self) -> list[ChatMessage]:
+        """Load prior conversation turns for this run from the Redis stream.
+
+        Fetches via ``get_run_history`` (same source as ``_load_run_history``)
+        so events that have not yet been persisted to PostgreSQL are included.
+        Filters to only USER_MESSAGE / AGENT_MESSAGE events and converts them
+        to proper role-based ChatMessages.
+
+        The current user message (the most recent USER_MESSAGE, which triggered
+        this handler) is excluded — it is appended separately by
+        ``_prepare_messages``.  Returns an empty list when ``run_id`` or
+        ``tool_caller`` is not available, or the stream has no prior turns.
+        """
+        if not self.run_id or not self.tool_caller:
+            return []
+        try:
+            result = await self.tool_caller.call(
+                "get_run_history",
+                {
+                    "run_id": self.run_id,
+                    "limit": 200,
+                    "exclude_types": [
+                        EventType.AGENT_TOKEN,
+                        EventType.AGENT_THINKING,
+                        EventType.AGENT_HEARTBEAT,
+                        EventType.TOOL_CALL,
+                        EventType.TOOL_RESULT,
+                        EventType.TOOL_ERROR,
+                    ],
+                },
+            )
+            raw_events = (result or {}).get("data", {}).get("events", [])
+            if not raw_events:
+                return []
+
+            # Keep only conversation-turn events, in stream order.
+            turn_types = {str(EventType.USER_MESSAGE), str(EventType.AGENT_MESSAGE)}
+            events = [e for e in raw_events if e.get("event_type") in turn_types]
+
+            # Remove the last USER_MESSAGE — it is the current trigger and will
+            # be appended again by _prepare_messages.
+            last_user_idx = -1
+            for i, e in enumerate(events):
+                if e.get("event_type") == str(EventType.USER_MESSAGE):
+                    last_user_idx = i
+            if last_user_idx >= 0:
+                events = events[:last_user_idx]
+
+            # Keep only the most recent max_history_messages events.
+            if len(events) > self.max_history_messages:
+                events = events[-self.max_history_messages :]
+
+            messages: list[ChatMessage] = []
+            for e in events:
+                payload = e.get("payload") or {}
+                event_type = e.get("event_type", "")
+                if event_type == str(EventType.USER_MESSAGE):
+                    msg = payload.get("message", "")
+                    if isinstance(msg, list):
+                        msg = " ".join(
+                            p.get("text", "") if isinstance(p, dict) else str(p)
+                            for p in msg
+                        )
+                    if msg:
+                        messages.append(ChatMessage(role="user", content=str(msg)))
+                elif event_type == str(EventType.AGENT_MESSAGE):
+                    content = payload.get("content") or payload.get("message", "")
+                    if content:
+                        messages.append(
+                            ChatMessage(role="assistant", content=str(content))
+                        )
+            return messages
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to load run event messages for run {self.run_id}: {e}"
+            )
+            return []
+
     # ── agentic loop (core streaming logic) ──────────────────────
 
     async def _agentic_loop(
@@ -503,6 +629,7 @@ class DefaultExecutor(Executor):
                 model=self.model_name,
                 api_key=self._api_key,
                 base_url=self._base_url,
+                client=self._llm_client,
             )
             async for item in stream:
                 if isinstance(item, LLMResponse):

@@ -24,9 +24,7 @@ class DeleteContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
-        path: str = Field(
-            description="Context path to delete"
-        )
+        path: str = Field(description="Context path to delete")
         recursive: bool = Field(
             default=False,
             description="If true, delete all descendants too (like rm -r)",
@@ -37,13 +35,12 @@ class DeleteContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        from sqlalchemy import or_, select
+
         from aiwen.extensions.database import get_session
-        from aiwen.services.workspace_context.workspace_context_service import (
-            WorkspaceContextService,
-        )
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
         try:
-            # Safety check
             if not input_data.confirm:
                 return ToolOutputSchema(
                     success=False,
@@ -55,41 +52,51 @@ class DeleteContextTool(InnerTool):
                     },
                 )
 
+            normalized_path = "/" + input_data.path.lstrip("/")
             async with get_session("aiwen") as db:
-                # Initialize service with caching
-                from aiwen.utils.workspace_context_cache import (
-                    get_cached_workspace_context,
-                )
-                service = await get_cached_workspace_context(db, input_data.workspace_id)
+                if input_data.recursive:
+                    stmt = select(WorkspaceContext).where(
+                        WorkspaceContext.workspace_id == input_data.workspace_id,
+                        WorkspaceContext.is_deleted == False,  # noqa: E712
+                        or_(
+                            WorkspaceContext.path == normalized_path,
+                            WorkspaceContext.path.like(f"{normalized_path}/%"),
+                        ),
+                    )
+                else:
+                    stmt = select(WorkspaceContext).where(
+                        WorkspaceContext.workspace_id == input_data.workspace_id,
+                        WorkspaceContext.path == normalized_path,
+                        WorkspaceContext.is_deleted == False,  # noqa: E712
+                    )
 
-                # Check if context exists
-                existing = await service.get(input_data.path, level="glance")
-                if existing is None:
+                result = await db.execute(stmt)
+                contexts = result.scalars().all()
+
+                if not contexts:
                     return ToolOutputSchema(
                         success=False,
                         message=f"Context not found at path: {input_data.path}",
                         data={"path": input_data.path, "exists": False},
                     )
 
-                # Get descendants count if recursive
-                deleted_paths = [input_data.path]
-                if input_data.recursive:
-                    descendants = await service.descendants(input_data.path)
-                    deleted_paths.extend(descendants.paths())
+                deleted_paths = []
+                for ctx in contexts:
+                    ctx.is_deleted = True
+                    deleted_paths.append(ctx.path)
 
-                # Delete
-                await service.delete(input_data.path, recursive=input_data.recursive)
+                await db.commit()
 
-                return ToolOutputSchema(
-                    success=True,
-                    message=f"Deleted {len(deleted_paths)} context(s) at: {input_data.path}",
-                    data={
-                        "path": input_data.path,
-                        "recursive": input_data.recursive,
-                        "deleted_count": len(deleted_paths),
-                        "deleted_paths": deleted_paths,
-                    },
-                )
+            return ToolOutputSchema(
+                success=True,
+                message=f"Deleted {len(deleted_paths)} context(s) at: {input_data.path}",
+                data={
+                    "path": input_data.path,
+                    "recursive": input_data.recursive,
+                    "deleted_count": len(deleted_paths),
+                    "deleted_paths": deleted_paths,
+                },
+            )
 
         except Exception as e:
             return ToolOutputSchema(

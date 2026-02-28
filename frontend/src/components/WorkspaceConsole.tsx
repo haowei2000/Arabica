@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
@@ -44,21 +44,36 @@ const SHIMMER_STYLE = `
 const EVENT_LABEL: Record<string, string> = {
   'user.message':     'User',
   'agent.thinking':   'Thinking',
-  'agent.text':       'Response',
-  'tool.called':      'Tool call',
+  'agent.message':    'Response',
+  'tool.call':        'Tool call',
+  'tool.pending':     'Tool pending',
   'tool.result':      'Tool result',
+  'tool.error':       'Tool error',
   'run.state.change': 'State',
+  'run.created':      'Run created',
+  'context.using':    'Context',
+  'agent.plan.step':  'Plan step',
 };
+
+/** Event types too noisy to show in the timeline */
+const HIDDEN_EVENT_TYPES = new Set([
+  'agent.token',
+  'agent.heartbeat',
+]);
 
 function eventSummary(event: Event): string {
   const p = event.payload;
   switch (event.event_type) {
     case 'user.message':     return String(p.message || p.content || '').slice(0, 80);
     case 'agent.thinking':   return String(p.content || p.thinking || '').slice(0, 80);
-    case 'agent.text':       return String(p.content || p.text || '').slice(0, 80);
-    case 'tool.called':      return String(p.tool_name || p.name || '');
+    case 'agent.message':    return String(p.content || p.message || '').slice(0, 80);
+    case 'tool.call':        return String(p.tool_name || p.name || '');
+    case 'tool.pending':     return String(p.tool_name || p.name || '');
     case 'tool.result':      return String(p.tool_name || p.name || '');
-    case 'run.state.change': return String(p.to_state || p.status || '');
+    case 'tool.error':       return String(p.tool_name || p.name || '');
+    case 'run.state.change': return String(p.new_state || p.to_state || p.status || '');
+    case 'context.using':    return String(p.context_type || p.context_name || '');
+    case 'agent.plan.step':  return String(p.step_description || '').slice(0, 80);
     default:                 return '';
   }
 }
@@ -159,7 +174,19 @@ function RunTimelineItem({
 }) {
   const [expanded, setExpanded] = useState(false);
   const { data: eventsData, isLoading: eventsLoading } = useRunEvents(run.id, expanded);
-  const events = eventsData?.items ?? [];
+  const dbEvents = eventsData?.items ?? [];
+
+  // Merge DB events with live SSE events accumulated in the store.
+  // SSE events arrive before PG persistence, so this fills the gap.
+  const liveEvents = useRunEventsStore((s) => s.liveEvents[run.id] ?? []);
+  const events = useMemo(() => {
+    const bySeq = new Map<number, Event>();
+    for (const e of [...dbEvents, ...liveEvents]) {
+      // Live events take precedence (most up-to-date payload)
+      bySeq.set(e.sequence, e);
+    }
+    return [...bySeq.values()].sort((a, b) => a.sequence - b.sequence);
+  }, [dbEvents, liveEvents]);
 
   const fullMessage = run.input_data?.message ? String(run.input_data.message) : '';
   const title = fullMessage ? fullMessage.slice(0, 55) : 'New run';
@@ -170,7 +197,7 @@ function RunTimelineItem({
   const previewEvent: Event | undefined =
     latestSseEvent ??
     (events.length > 0 ? events[events.length - 1] : undefined);
-  const validPreview = previewEvent && previewEvent.event_type !== 'agent.heartbeat';
+  const validPreview = previewEvent && !HIDDEN_EVENT_TYPES.has(previewEvent.event_type);
 
   const dotCls = isRunning
     ? 'bg-yellow-400 animate-pulse'
@@ -245,7 +272,7 @@ function RunTimelineItem({
               <Loader2 className="size-3 animate-spin text-muted-foreground/40" />
             </div>
           ) : (() => {
-            const visible = events.filter((e) => e.event_type !== 'agent.heartbeat');
+            const visible = events.filter((e) => !HIDDEN_EVENT_TYPES.has(e.event_type));
             return visible.length === 0 ? (
               <p className="text-[10px] text-muted-foreground/40 px-3 py-2">No events</p>
             ) : (

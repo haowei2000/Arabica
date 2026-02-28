@@ -1,4 +1,3 @@
-
 from pydantic import Field
 
 from aiwen.core.interfaces.tool import (
@@ -27,32 +26,37 @@ class ReadContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        from sqlalchemy import select
+
         from aiwen.extensions.database import get_session
-        from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
         try:
+            normalized_path = "/" + input_data.path.lstrip("/")
             async with get_session("aiwen") as db:
-                # Initialize service with caching
-                service = await get_cached_workspace_context(db, input_data.workspace_id)
-
-                # Get context with full detail
-                result = await service.get(input_data.path, level="detail")
-
-                if result is None:
-                    return ToolOutputSchema(
-                        success=False,
-                        message=f"Context not found at path: {input_data.path}",
-                        data={"path": input_data.path, "exists": False},
-                    )
-
-                return ToolOutputSchema(
-                    success=True,
-                    message=f"Retrieved context: {input_data.path}",
-                    data={
-                        "path": input_data.path,
-                        "context": result,
-                    },
+                stmt = select(WorkspaceContext).where(
+                    WorkspaceContext.workspace_id == input_data.workspace_id,
+                    WorkspaceContext.path == normalized_path,
+                    WorkspaceContext.is_deleted == False,  # noqa: E712
                 )
+                result = await db.execute(stmt)
+                ctx = result.scalar_one_or_none()
+
+            if ctx is None:
+                return ToolOutputSchema(
+                    success=False,
+                    message=f"Context not found at path: {input_data.path}",
+                    data={"path": input_data.path, "exists": False},
+                )
+
+            return ToolOutputSchema(
+                success=True,
+                message=f"Retrieved context: {input_data.path}",
+                data={
+                    "path": input_data.path,
+                    "context": ctx.disclose("detail"),
+                },
+            )
 
         except Exception as e:
             return ToolOutputSchema(

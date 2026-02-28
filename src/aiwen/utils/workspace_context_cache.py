@@ -20,6 +20,7 @@ Memory Usage:
 import asyncio
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.services.workspace_context.workspace_context_service import (
     WorkspaceContextService,
 )
+
+if TYPE_CHECKING:
+    import redis.asyncio as redis_async
 
 logger = logging.getLogger(__name__)
 
@@ -40,25 +44,36 @@ _WORKSPACE_CONTEXT_CACHE = TTLCache(maxsize=_CACHE_MAXSIZE, ttl=_CACHE_TTL)
 # Locks to prevent concurrent duplicate loads
 _CACHE_LOCKS: dict[str, asyncio.Lock] = {}
 
+# Shared Redis client — set once by the Worker at startup to avoid creating
+# a new TCP connection on every dirty-flag check.
+_shared_redis: "redis_async.Redis | None" = None
+
+
+def set_shared_redis_client(client: "redis_async.Redis") -> None:
+    """Register the Worker's Redis client for workspace dirty-flag checks.
+
+    Call this once during worker initialisation so that
+    ``_is_workspace_dirty`` reuses the existing connection pool instead of
+    opening a new TCP connection on every cache-hit path.
+    """
+    global _shared_redis
+    _shared_redis = client
+
 
 async def _is_workspace_dirty(workspace_id: str) -> bool:
     """Check Redis for a dirty flag written by Celery after updating WorkspaceContext.
 
     Uses GETDEL so the flag is atomically consumed on first read — only the
     first concurrent caller triggers a reload; subsequent callers see a clean cache.
-    """
-    try:
-        import redis.asyncio as redis_async
 
-        from aiwen.config.factory import get_settings
-        cfg = get_settings().redis
-        auth = f":{cfg.password}@" if cfg.password else ""
-        r = redis_async.from_url(
-            f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
-            decode_responses=True,
-        )
-        dirty = await r.getdel(f"workspace_context_dirty:{workspace_id}")
-        await r.aclose()
+    Requires ``set_shared_redis_client()`` to have been called first.
+    Returns False immediately when no shared client is available (non-worker
+    contexts such as Alembic / tests) rather than opening a new connection.
+    """
+    if _shared_redis is None:
+        return False
+    try:
+        dirty = await _shared_redis.getdel(f"workspace_context_dirty:{workspace_id}")
         return dirty is not None
     except Exception:
         return False

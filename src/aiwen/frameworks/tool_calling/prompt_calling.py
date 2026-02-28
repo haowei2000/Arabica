@@ -69,6 +69,11 @@ class PromptCallingStrategy(ToolCallingStrategy):
     # -- helpers -------------------------------------------------------------
 
     @staticmethod
+    def build_client(api_key: str, base_url: str) -> AsyncOpenAI:
+        """Create an AsyncOpenAI client. Call once and reuse to avoid overhead."""
+        return AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+    @staticmethod
     def _build_client(api_key: str, base_url: str) -> AsyncOpenAI:
         return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
@@ -131,8 +136,10 @@ class PromptCallingStrategy(ToolCallingStrategy):
         model: str,
         api_key: str,
         base_url: str,
+        client: AsyncOpenAI | None = None,
     ) -> AsyncGenerator[str | LLMResponse, None]:
-        client = self._build_client(api_key, base_url)
+        if client is None:
+            client = self._build_client(api_key, base_url)
         api_messages = self._inject_tools_prompt(messages, tools_info or "")
 
         stream = await client.chat.completions.create(

@@ -50,6 +50,7 @@ from aiwen.services.triggers.trigger_processor import process_event_triggers
 from aiwen.services.executor.runtime import ExecutorInstanceManager
 from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
+from aiwen.utils.workspace_context_cache import set_shared_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,17 @@ class Worker:
         # Tracks the current max sequence for each buffered run so that
         # subsequent per-dispatch publishers don't re-query a stale DB value.
         self._run_seq_cursors: dict[str, int] = {}
+
+        # ── Tool prompt cache ──
+        # Keyed by executor_code (default tools only, no user tools).
+        # Avoids re-generating Pydantic JSON schemas + markdown for 150+
+        # tools on every run.
+        self._tools_info_cache: dict[str, str] = {}
+
+        # Register this worker's Redis client so workspace_context_cache can
+        # reuse it for dirty-flag checks instead of opening a new connection
+        # per call.
+        set_shared_redis_client(redis_client)
 
     @staticmethod
     def _parse_redis_event(event_data: dict[bytes, bytes]) -> Event:
@@ -339,8 +351,20 @@ class Worker:
         else:
             config["tool_caller"] = self._tool_caller
             config["tool_provider"] = self._default_tool_provider
+            # Pass cached tools_info to skip re-generating schemas on every run.
+            if executor_code in self._tools_info_cache:
+                config["tools_info"] = self._tools_info_cache[executor_code]
 
-        return executor_cls(config)
+        executor = executor_cls(config)
+
+        # Populate cache from first executor build (default tools only).
+        if not user_tool_classes and executor_code not in self._tools_info_cache:
+            tools_info = getattr(executor, "tools_info", None)
+            if tools_info:
+                self._tools_info_cache[executor_code] = tools_info
+                logger.debug(f"Cached tools_info for executor '{executor_code}'")
+
+        return executor
 
     async def _get_or_create_executor(
         self, event: Event, ctx: _Ctx
@@ -396,6 +420,16 @@ class Worker:
                     await ctx.db.rollback()
 
             workspace_id = str(run.workspace_id)
+
+            # Pre-warm the workspace context cache so _load_history() inside
+            # the executor hits the cache instead of opening a separate DB
+            # session and doing a cold DB load on the first run.
+            try:
+                from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+                await get_cached_workspace_context(ctx.db, workspace_id)
+            except Exception as ctx_err:
+                logger.debug(f"Workspace context pre-warm failed (non-critical): {ctx_err}")
+
             executor = self.prepare_executor(
                 event.executor_code,
                 app_config,

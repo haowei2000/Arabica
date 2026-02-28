@@ -41,41 +41,53 @@ class ListContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        from sqlalchemy import select
+
         from aiwen.extensions.database import get_session
-        from aiwen.frameworks.context import DetailLevel
-        from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
         try:
+            normalized_path = "/" + input_data.path.strip("/")
+            prefix = normalized_path + "/"
+            child_depth = normalized_path.count("/") + 1  # slash count of direct children
+
             async with get_session("aiwen") as db:
-                # Initialize service with caching
-                service = await get_cached_workspace_context(db, input_data.workspace_id)
-
-                # Query based on mode
-                if input_data.mode == "children":
-                    results = await service.children(input_data.path)
-                else:
-                    results = await service.descendants(input_data.path)
-
-                # Limit results
-                results = results.limit(input_data.limit)
-
-                # Convert to detail level
-                contexts = results.disclose_all(DetailLevel.GLANCE)
-
-                # Get paths
-                paths = results.paths()
-
-                return ToolOutputSchema(
-                    success=True,
-                    message=f"Found {len(contexts)} {input_data.mode} under: {input_data.path}",
-                    data={
-                        "path": input_data.path,
-                        "mode": input_data.mode,
-                        "count": len(contexts),
-                        "paths": paths,
-                        "contexts": contexts,
-                    },
+                stmt = (
+                    select(WorkspaceContext)
+                    .where(
+                        WorkspaceContext.workspace_id == input_data.workspace_id,
+                        WorkspaceContext.path.like(f"{prefix}%"),
+                        WorkspaceContext.is_deleted == False,  # noqa: E712
+                    )
+                    .order_by(WorkspaceContext.path)
                 )
+                result = await db.execute(stmt)
+                all_descendants = result.scalars().all()
+
+            if input_data.mode == "children":
+                contexts = [
+                    ctx for ctx in all_descendants
+                    if ctx.path and ctx.path.count("/") == child_depth
+                ]
+            else:
+                contexts = list(all_descendants)
+
+            contexts = contexts[: input_data.limit]
+
+            items = [ctx.disclose("glance") for ctx in contexts]
+            paths = [(ctx.path or "").lstrip("/") for ctx in contexts]
+
+            return ToolOutputSchema(
+                success=True,
+                message=f"Found {len(items)} {input_data.mode} under: {input_data.path}",
+                data={
+                    "path": input_data.path,
+                    "mode": input_data.mode,
+                    "count": len(items),
+                    "paths": paths,
+                    "contexts": items,
+                },
+            )
 
         except Exception as e:
             return ToolOutputSchema(

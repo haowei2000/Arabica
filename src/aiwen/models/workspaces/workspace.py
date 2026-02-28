@@ -22,7 +22,9 @@ from aiwen.extensions.database import get_base
 
 if TYPE_CHECKING:
     from aiwen.models.events.event import Event
+    from aiwen.models.runs.artifact import Artifact
     from aiwen.models.runs.run import Run
+    from aiwen.models.runs.task import Task
 
 Base = get_base("aiwen")
 
@@ -118,6 +120,12 @@ class Workspace(Base):
     )
     events: Mapped[list[Event]] = relationship(
         "Event", back_populates="workspace", cascade="all, delete-orphan"
+    )
+    artifacts: Mapped[list[Artifact]] = relationship(
+        "Artifact", back_populates="workspace", cascade="all, delete-orphan"
+    )
+    tasks: Mapped[list[Task]] = relationship(
+        "Task", back_populates="workspace", cascade="all, delete-orphan"
     )
 
     __table_args__ = (

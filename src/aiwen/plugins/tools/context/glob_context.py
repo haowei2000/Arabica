@@ -1,5 +1,7 @@
 """Glob context tool - query contexts using glob patterns."""
 
+import re
+
 from pydantic import Field
 
 from aiwen.core.interfaces.tool import (
@@ -8,6 +10,21 @@ from aiwen.core.interfaces.tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern:
+    """Convert glob pattern to regex. * = single path segment, ** = any depth."""
+    normalized = "/" + pattern.lstrip("/")
+    parts = re.split(r"(\*\*|\*)", normalized)
+    regex_parts = []
+    for part in parts:
+        if part == "**":
+            regex_parts.append(".*")
+        elif part == "*":
+            regex_parts.append("[^/]*")
+        else:
+            regex_parts.append(re.escape(part))
+    return re.compile("^" + "".join(regex_parts) + "$")
 
 
 class GlobContextTool(InnerTool):
@@ -39,42 +56,59 @@ class GlobContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        from sqlalchemy import select
+
         from aiwen.extensions.database import get_session
-        from aiwen.frameworks.context import DetailLevel
-        from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
         try:
+            pattern_regex = _glob_to_regex(input_data.pattern)
+
+            # SQL prefix hint: narrow down rows before Python-level glob matching
+            prefix_end = input_data.pattern.find("*")
+            sql_prefix = None
+            if prefix_end > 0:
+                sql_prefix = "/" + input_data.pattern[:prefix_end].lstrip("/")
+
             async with get_session("aiwen") as db:
-                # Initialize service with caching
-                service = await get_cached_workspace_context(db, input_data.workspace_id)
-
-                # Glob query
-                results = await service.glob(input_data.pattern)
-
-                # Apply tag filter if provided
-                if input_data.tags:
-                    results = results.filter_tags(input_data.tags)
-
-                # Limit results
-                results = results.limit(input_data.limit)
-
-                # Convert to detail level
-                contexts = results.disclose_all(DetailLevel.GLANCE)
-
-                # Get paths for summary
-                paths = results.paths()
-
-                return ToolOutputSchema(
-                    success=True,
-                    message=f"Found {len(contexts)} contexts matching pattern: {input_data.pattern}",
-                    data={
-                        "pattern": input_data.pattern,
-                        "count": len(contexts),
-                        "paths": paths,
-                        "contexts": contexts,
-                        "tags_filter": input_data.tags,
-                    },
+                stmt = (
+                    select(WorkspaceContext)
+                    .where(
+                        WorkspaceContext.workspace_id == input_data.workspace_id,
+                        WorkspaceContext.is_deleted == False,  # noqa: E712
+                    )
+                    .order_by(WorkspaceContext.path)
                 )
+
+                if sql_prefix:
+                    stmt = stmt.where(WorkspaceContext.path.like(f"{sql_prefix}%"))
+
+                result = await db.execute(stmt)
+                contexts = result.scalars().all()
+
+            # Apply glob filter in Python
+            matched = [ctx for ctx in contexts if ctx.path and pattern_regex.match(ctx.path)]
+
+            # Apply tag filter
+            if input_data.tags:
+                matched = [ctx for ctx in matched if ctx.has_all_tags(input_data.tags)]
+
+            matched = matched[: input_data.limit]
+
+            items = [ctx.disclose("glance") for ctx in matched]
+            paths = [(ctx.path or "").lstrip("/") for ctx in matched]
+
+            return ToolOutputSchema(
+                success=True,
+                message=f"Found {len(items)} contexts matching pattern: {input_data.pattern}",
+                data={
+                    "pattern": input_data.pattern,
+                    "count": len(items),
+                    "paths": paths,
+                    "contexts": items,
+                    "tags_filter": input_data.tags,
+                },
+            )
 
         except Exception as e:
             return ToolOutputSchema(

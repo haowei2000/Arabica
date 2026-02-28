@@ -80,10 +80,12 @@ export function useWorkspaceStream(workspaceId: string | null) {
           // Skip keepalives and heartbeats
           if (internal === 'keepalive' || type === 'agent.heartbeat') return;
 
-          // Store latest event per run for real-time preview in the runs panel
+          // Store latest event per run for real-time preview in the runs panel,
+          // and accumulate all live events so the timeline stays complete even
+          // before PG persistence catches up.
           const runId = payload.run_id as string | undefined;
           if (runId && type) {
-            useRunEventsStore.getState().setLatestEvent(runId, {
+            const event: import('@/types/event').Event = {
               id: (payload.id as string) || '',
               workspace_id: workspaceId,
               run_id: runId,
@@ -93,7 +95,10 @@ export function useWorkspaceStream(workspaceId: string | null) {
               event_type: type,
               payload: (payload.payload as Record<string, unknown>) || {},
               created_at: (payload.created_at as string) || new Date().toISOString(),
-            });
+            };
+            const store = useRunEventsStore.getState();
+            store.setLatestEvent(runId, event);
+            store.addLiveEvent(runId, event);
             // Invalidate per-run events query so expanded run lists refresh
             queryClient.invalidateQueries({ queryKey: ['run-events', runId] });
           }

@@ -1,7 +1,25 @@
 # aiwen/core/logger.py
 import logging
+import os
+import shutil
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+
+
+class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Windows-safe log rotation handler.
+
+    The standard TimedRotatingFileHandler uses os.rename() which raises
+    PermissionError on Windows when another process holds the file open.
+    This subclass overrides rotate() to copy the log to the backup name
+    and then truncate the original file in-place, keeping all handles valid.
+    """
+
+    def rotate(self, source: str, dest: str) -> None:
+        if os.path.exists(source):
+            shutil.copy2(source, dest)
+            # Truncate in-place so existing open handles remain valid
+            open(source, "w").close()  # noqa: WPS515
 
 # 获取项目根目录（假设 logger.py 在 aiwen/core/ 下）
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
@@ -38,7 +56,7 @@ def setup_logging():
     root_logger.addHandler(console_handler)
 
     # === 文件处理器（按天轮转，保留30天）===
-    file_handler = TimedRotatingFileHandler(
+    file_handler = _WinSafeTimedRotatingFileHandler(
         filename=LOG_DIR / "aiwen.log",
         when="midnight",
         interval=1,
@@ -51,7 +69,7 @@ def setup_logging():
 
     # （可选）错误日志单独记录
     if not settings.DEBUG:
-        error_handler = TimedRotatingFileHandler(
+        error_handler = _WinSafeTimedRotatingFileHandler(
             filename=LOG_DIR / "error.log",
             when="midnight",
             interval=1,

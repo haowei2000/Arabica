@@ -36,45 +36,49 @@ class GlanceContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+        from sqlalchemy import select
+
         from aiwen.extensions.database import get_session
-        from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
         try:
             async with get_session("aiwen") as db:
-                # Initialize service with caching
-                service = await get_cached_workspace_context(db, input_data.workspace_id)
-
-                # Get glances
-                glances = await service.glance(prefix=input_data.prefix)
-
-                # Limit results
-                glances = glances[: input_data.limit]
-
-                # Parse glances into structured format
-                structured_glances = []
-                for glance_line in glances:
-                    if " → " in glance_line:
-                        path, glance_text = glance_line.split(" → ", 1)
-                        structured_glances.append({
-                            "path": path.strip(),
-                            "glance": glance_text.strip(),
-                        })
-                    else:
-                        structured_glances.append({
-                            "path": "",
-                            "glance": glance_line.strip(),
-                        })
-
-                return ToolOutputSchema(
-                    success=True,
-                    message=f"Scanned {len(glances)} contexts",
-                    data={
-                        "prefix": input_data.prefix,
-                        "count": len(glances),
-                        "glances": structured_glances,
-                        "raw_glances": glances,  # Original format for display
-                    },
+                stmt = (
+                    select(WorkspaceContext)
+                    .where(
+                        WorkspaceContext.workspace_id == input_data.workspace_id,
+                        WorkspaceContext.is_deleted == False,  # noqa: E712
+                    )
+                    .order_by(WorkspaceContext.path)
+                    .limit(input_data.limit)
                 )
+
+                if input_data.prefix:
+                    normalized_prefix = "/" + input_data.prefix.lstrip("/")
+                    stmt = stmt.where(
+                        WorkspaceContext.path.like(f"{normalized_prefix}%")
+                    )
+
+                result = await db.execute(stmt)
+                contexts = result.scalars().all()
+
+            glances = [
+                {
+                    "path": (ctx.path or "").lstrip("/"),
+                    "glance": ctx.glance or ctx.name,
+                }
+                for ctx in contexts
+            ]
+
+            return ToolOutputSchema(
+                success=True,
+                message=f"Scanned {len(glances)} contexts",
+                data={
+                    "prefix": input_data.prefix,
+                    "count": len(glances),
+                    "glances": glances,
+                },
+            )
 
         except Exception as e:
             return ToolOutputSchema(
