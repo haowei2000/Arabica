@@ -66,6 +66,10 @@ def downgrade() -> None:
 
     op.drop_column('workspace_trigger', 'user_id')
 
+    # Delete user-level rows (workspace_id IS NULL) before restoring NOT NULL constraint
+    conn = op.get_bind()
+    conn.execute(sa.text("DELETE FROM workspace_trigger WHERE workspace_id IS NULL"))
+
     # Restore workspace_id as NOT NULL
     op.alter_column(
         'workspace_trigger',

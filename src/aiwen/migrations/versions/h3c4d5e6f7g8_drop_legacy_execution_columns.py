@@ -25,11 +25,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_column("tool", "code")
-    op.drop_column("tool", "http_config")
-    op.drop_column("tool", "container_config")
-    op.drop_column("tool", "client_config")
-    op.drop_column("tool", "celery_config")
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE tool DROP COLUMN IF EXISTS code"))
+    conn.execute(sa.text("ALTER TABLE tool DROP COLUMN IF EXISTS http_config"))
+    conn.execute(sa.text("ALTER TABLE tool DROP COLUMN IF EXISTS container_config"))
+    conn.execute(sa.text("ALTER TABLE tool DROP COLUMN IF EXISTS client_config"))
+    conn.execute(sa.text("ALTER TABLE tool DROP COLUMN IF EXISTS celery_config"))
 
 
 def downgrade() -> None:

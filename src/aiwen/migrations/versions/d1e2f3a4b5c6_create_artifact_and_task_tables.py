@@ -19,190 +19,64 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create artifact and task tables."""
+    conn = op.get_bind()
     # --- artifact table ---
-    op.create_table(
-        "artifact",
-        sa.Column(
-            "id",
-            postgresql.UUID(as_uuid=True),
-            primary_key=True,
-            comment="Artifact unique ID",
-        ),
-        sa.Column(
-            "workspace_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("workspace.id", ondelete="CASCADE"),
-            nullable=False,
-            comment="Workspace ID",
-        ),
-        sa.Column(
-            "run_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("run.id", ondelete="SET NULL"),
-            nullable=True,
-            comment="Run ID that produced this artifact",
-        ),
-        sa.Column("name", sa.String(512), nullable=False, comment="Artifact name"),
-        sa.Column(
-            "artifact_type",
-            sa.String(50),
-            nullable=False,
-            server_default="text",
-            comment="Artifact type: text/code/file/image/document/data/other",
-        ),
-        sa.Column(
-            "content_type",
-            sa.String(255),
-            nullable=True,
-            comment="MIME type (e.g., text/plain, application/json)",
-        ),
-        sa.Column("content", sa.Text, nullable=True, comment="Artifact content (inline)"),
-        sa.Column(
-            "s3_key",
-            sa.String(1024),
-            nullable=True,
-            comment="S3 storage key for large artifact files",
-        ),
-        sa.Column(
-            "s3_url",
-            sa.String(2048),
-            nullable=True,
-            comment="S3 public/presigned URL for artifact access",
-        ),
-        sa.Column(
-            "version",
-            sa.Integer,
-            nullable=False,
-            server_default="1",
-            comment="Artifact version number",
-        ),
-        sa.Column(
-            "meta",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
-            comment="Additional metadata (tags, source, etc.)",
-        ),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-            comment="Creation time",
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=True,
-            comment="Last update time",
-        ),
-    )
-    op.create_index("ix_artifact_workspace", "artifact", ["workspace_id", "created_at"])
-    op.create_index("ix_artifact_run", "artifact", ["run_id", "created_at"])
-    op.create_index("ix_artifact_type", "artifact", ["artifact_type"])
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS artifact (
+            id UUID PRIMARY KEY,
+            workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+            run_id UUID REFERENCES run(id) ON DELETE SET NULL,
+            name VARCHAR(512) NOT NULL,
+            artifact_type VARCHAR(50) NOT NULL DEFAULT 'text',
+            content_type VARCHAR(255),
+            content TEXT,
+            s3_key VARCHAR(1024),
+            s3_url VARCHAR(2048),
+            version INTEGER NOT NULL DEFAULT 1,
+            meta JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    """))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_artifact_workspace ON artifact (workspace_id, created_at)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_artifact_run ON artifact (run_id, created_at)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_artifact_type ON artifact (artifact_type)"))
 
     # --- task table ---
-    op.create_table(
-        "task",
-        sa.Column(
-            "id",
-            postgresql.UUID(as_uuid=True),
-            primary_key=True,
-            comment="Task unique ID",
-        ),
-        sa.Column(
-            "workspace_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("workspace.id", ondelete="CASCADE"),
-            nullable=False,
-            comment="Workspace ID",
-        ),
-        sa.Column(
-            "run_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("run.id", ondelete="SET NULL"),
-            nullable=True,
-            comment="Run ID this task belongs to",
-        ),
-        sa.Column(
-            "parent_task_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("task.id", ondelete="SET NULL"),
-            nullable=True,
-            comment="Parent task ID for nested tasks",
-        ),
-        sa.Column("title", sa.String(512), nullable=False, comment="Task title"),
-        sa.Column(
-            "description", sa.Text, nullable=True, comment="Detailed task description"
-        ),
-        sa.Column(
-            "result",
-            sa.Text,
-            nullable=True,
-            comment="Task result or output after completion",
-        ),
-        sa.Column(
-            "status",
-            sa.String(50),
-            nullable=False,
-            server_default="pending",
-            comment="Status: pending/in_progress/done/failed/cancelled",
-        ),
-        sa.Column(
-            "priority",
-            sa.Integer,
-            nullable=False,
-            server_default="2",
-            comment="Priority level (1-5, higher = more urgent)",
-        ),
-        sa.Column(
-            "assignee",
-            sa.String(255),
-            nullable=True,
-            comment="Who this task is assigned to",
-        ),
-        sa.Column(
-            "meta",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
-            comment="Additional metadata",
-        ),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-            comment="Creation time",
-        ),
-        sa.Column(
-            "completed_at",
-            sa.DateTime(timezone=True),
-            nullable=True,
-            comment="Completion time",
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=True,
-            comment="Last update time",
-        ),
-    )
-    op.create_index("ix_task_workspace", "task", ["workspace_id", "created_at"])
-    op.create_index("ix_task_run", "task", ["run_id", "status"])
-    op.create_index("ix_task_status", "task", ["status", "priority"])
-    op.create_index("ix_task_parent", "task", ["parent_task_id"])
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS task (
+            id UUID PRIMARY KEY,
+            workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+            run_id UUID REFERENCES run(id) ON DELETE SET NULL,
+            parent_task_id UUID REFERENCES task(id) ON DELETE SET NULL,
+            title VARCHAR(512) NOT NULL,
+            description TEXT,
+            result TEXT,
+            status VARCHAR(50) NOT NULL DEFAULT 'pending',
+            priority INTEGER NOT NULL DEFAULT 2,
+            assignee VARCHAR(255),
+            meta JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            completed_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    """))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_workspace ON task (workspace_id, created_at)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_run ON task (run_id, status)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_status ON task (status, priority)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_parent ON task (parent_task_id)"))
 
 
 def downgrade() -> None:
     """Drop artifact and task tables."""
-    op.drop_index("ix_task_parent", table_name="task")
-    op.drop_index("ix_task_status", table_name="task")
-    op.drop_index("ix_task_run", table_name="task")
-    op.drop_index("ix_task_workspace", table_name="task")
-    op.drop_table("task")
+    conn = op.get_bind()
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_task_parent"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_task_status"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_task_run"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_task_workspace"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS task"))
 
-    op.drop_index("ix_artifact_type", table_name="artifact")
-    op.drop_index("ix_artifact_run", table_name="artifact")
-    op.drop_index("ix_artifact_workspace", table_name="artifact")
-    op.drop_table("artifact")
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_artifact_type"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_artifact_run"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_artifact_workspace"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS artifact"))

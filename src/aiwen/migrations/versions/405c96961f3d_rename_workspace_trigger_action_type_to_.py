@@ -20,14 +20,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Rename action_type -> tool_name on workspace_trigger."""
-    op.alter_column(
-        'workspace_trigger',
-        'action_type',
-        new_column_name='tool_name',
-        existing_type=sa.String(length=100),
-        existing_nullable=False,
-        comment='要执行的工具名称（任意已注册工具，如 glance_context / http_request 等）',
-    )
+    conn = op.get_bind()
+    conn.execute(sa.text("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'workspace_trigger' AND column_name = 'action_type'
+            ) THEN
+                ALTER TABLE workspace_trigger RENAME COLUMN action_type TO tool_name;
+            END IF;
+        END $$;
+    """))
 
 
 def downgrade() -> None:

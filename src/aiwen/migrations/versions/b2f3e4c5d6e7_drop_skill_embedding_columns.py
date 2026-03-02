@@ -20,10 +20,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_column('skill', 'embedding_384')
-    op.drop_column('skill', 'embedding_768')
-    op.drop_column('skill', 'embedding_1024')
-    op.drop_column('skill', 'embedding_1536')
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE skill DROP COLUMN IF EXISTS embedding_384"))
+    conn.execute(sa.text("ALTER TABLE skill DROP COLUMN IF EXISTS embedding_768"))
+    conn.execute(sa.text("ALTER TABLE skill DROP COLUMN IF EXISTS embedding_1024"))
+    conn.execute(sa.text("ALTER TABLE skill DROP COLUMN IF EXISTS embedding_1536"))
 
 
 def downgrade() -> None:

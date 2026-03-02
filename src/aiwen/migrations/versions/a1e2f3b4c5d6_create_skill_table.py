@@ -19,29 +19,30 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'skill',
-        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('name', sa.String(255), nullable=False),
-        sa.Column('description', sa.Text, nullable=True),
-        sa.Column('content', sa.Text, nullable=False),
-        sa.Column('glance', sa.Text, nullable=True),
-        sa.Column('summary', sa.Text, nullable=True),
-        sa.Column('path', sa.String(500), nullable=True),
-        sa.Column('source_id', postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column('tags', postgresql.JSONB, nullable=True),
-        sa.Column('meta', postgresql.JSONB, nullable=True),
-        sa.Column('embedding_384', Vector(384), nullable=True),
-        sa.Column('embedding_768', Vector(768), nullable=True),
-        sa.Column('embedding_1024', Vector(1024), nullable=True),
-        sa.Column('embedding_1536', Vector(1536), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.text('now()')),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index('ix_skill_user_id', 'skill', ['user_id'])
-    op.create_index('ix_skill_user_id_name', 'skill', ['user_id', 'name'])
+    conn = op.get_bind()
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS skill (
+            id UUID PRIMARY KEY,
+            user_id UUID NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            content TEXT NOT NULL,
+            glance TEXT,
+            summary TEXT,
+            path VARCHAR(500),
+            source_id UUID,
+            tags JSONB,
+            meta JSONB,
+            embedding_384 vector(384),
+            embedding_768 vector(768),
+            embedding_1024 vector(1024),
+            embedding_1536 vector(1536),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ
+        )
+    """))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_skill_user_id ON skill (user_id)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_skill_user_id_name ON skill (user_id, name)"))
 
 
 def downgrade() -> None:

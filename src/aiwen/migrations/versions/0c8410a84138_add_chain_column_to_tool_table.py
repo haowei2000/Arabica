@@ -20,16 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.add_column(
-        'tool',
-        sa.Column(
-            'chain',
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
-            comment='Ordered list of chain steps: [{tool_name, parameter_mapping, extra_params}]',
-        ),
-    )
-    op.execute("ALTER TABLE tool DROP COLUMN IF EXISTS execution_mode")
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE tool ADD COLUMN IF NOT EXISTS chain JSONB"))
+    conn.execute(sa.text("ALTER TABLE tool DROP COLUMN IF EXISTS execution_mode"))
 
 
 def downgrade() -> None:
