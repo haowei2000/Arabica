@@ -61,6 +61,9 @@ const HIDDEN_EVENT_TYPES = new Set([
   'agent.heartbeat',
 ]);
 
+// Stable empty array to avoid creating a new reference on every render in Zustand selectors
+const EMPTY_EVENTS: Event[] = [];
+
 function eventSummary(event: Event): string {
   const p = event.payload;
   switch (event.event_type) {
@@ -176,7 +179,7 @@ function RunTimelineItem({
 
   // Events come exclusively from the workspace SSE stream accumulated in the store.
   // No PG fetch — the stream is the single source of truth.
-  const events = useRunEventsStore((s) => s.liveEvents[run.id] ?? []);
+  const events = useRunEventsStore((s) => s.liveEvents[run.id] ?? EMPTY_EVENTS);
 
   const fullMessage = run.input_data?.message ? String(run.input_data.message) : '';
   const title = fullMessage ? fullMessage.slice(0, 55) : 'New run';

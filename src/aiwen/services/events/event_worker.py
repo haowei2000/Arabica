@@ -37,6 +37,7 @@ from aiwen.extensions.database import get_session
 from aiwen.models.app import App
 from aiwen.models.events.event import Event
 from aiwen.models.runs.run import Run
+from aiwen.models.workspaces.workspace import Workspace
 from aiwen.registries.core import ExecutorRegistry
 from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
@@ -188,7 +189,12 @@ class Worker:
 
         workspace_id = str(event.workspace_id)
         try:
-            results = await process_event_triggers(ctx.db, workspace_id, event)
+            run_id_str = str(event.run_id) if event.run_id else None
+            results = await process_event_triggers(
+                ctx.db, workspace_id, event,
+                publisher=ctx.publisher,
+                run_id=run_id_str,
+            )
             if results:
                 lines = ["[Workspace context retrieved by triggers]"]
                 for item in results:
@@ -413,10 +419,6 @@ class Worker:
     ) -> ExecutorProtocol | None:
         """Create and initialize a new executor for a run."""
         try:
-            if not event.executor_code:
-                logger.error("Event has no executor_code, cannot create executor")
-                return None
-
             run, app_config = await self._fetch_run_data(run_id, ctx.db)
             if not run:
                 logger.error(f"Run {run_id} not found")
@@ -425,6 +427,16 @@ class Worker:
             if RunStateMachine.is_terminal(run.status):
                 logger.warning(f"Run {run_id} is terminal, skipping")
                 return None
+
+            # Resolve executor_code: event → workspace fallback → default
+            executor_code = event.executor_code
+            if not executor_code:
+                executor_code = getattr(run, "_ws_executor_code", None) or "SimpleAgent"
+                logger.debug(
+                    "event.executor_code missing for run %s; using '%s'",
+                    run_id,
+                    executor_code,
+                )
 
             user_tool_classes = []
             if run.user_id:
@@ -450,7 +462,7 @@ class Worker:
                 logger.debug(f"Workspace context pre-warm failed (non-critical): {ctx_err}")
 
             executor = self.prepare_executor(
-                event.executor_code,
+                executor_code,
                 app_config,
                 user_tool_classes or None,
                 workspace_id=workspace_id,
@@ -491,6 +503,17 @@ class Worker:
             # receives an event enriched with trigger results in _trigger_context.
             if event_type in _TRIGGER_EVENT_TYPES:
                 await self._run_triggers(event, ctx)
+
+            # Trigger-sourced TOOL_CALL / TOOL_RESULT / TOOL_ERROR events carry
+            # "_source": "trigger" to signal they were already executed by the
+            # trigger processor.  Skip normal routing so the tool is not
+            # re-executed and the executor loop is not re-entered.
+            if (event.payload or {}).get("_source") == "trigger" and event_type in (
+                EventType.TOOL_CALL,
+                EventType.TOOL_RESULT,
+                EventType.TOOL_ERROR,
+            ):
+                return
 
             match event_type:
                 case (
@@ -620,18 +643,35 @@ class Worker:
     async def _fetch_run_data(
         self, run_id: UUID, db: AsyncSession
     ) -> tuple[Run | None, dict | None]:
-        """Fetch Run and its App config in a single JOIN query."""
+        """Fetch Run and resolve executor config via 3-level fallback.
+
+        Fallback order:
+          1. run.app_id → App.config  (legacy)
+          2. workspace.executor_config  (new native config)
+          3. None → executor template defaults applied in prepare_executor()
+        """
         stmt = (
-            select(Run, App.config)
+            select(Run, App.config, Workspace.executor_config, Workspace.executor_code)
             .outerjoin(App, Run.app_id == App.id)
+            .outerjoin(Workspace, Run.workspace_id == Workspace.id)
             .where(Run.id == str(run_id))
         )
         result = await db.execute(stmt)
         row = result.first()
         if not row:
             return None, None
-        run, app_config = row
-        return run, app_config
+        run, app_config, ws_executor_config, ws_executor_code = row
+
+        # 3-level fallback for executor config
+        resolved_config = app_config or ws_executor_config or None
+
+        # If the event had no executor_code, store workspace's on the run context
+        # so _create_executor_for_run can use it (passed via event.executor_code already).
+        # We attach ws_executor_code to the run object transiently for caller access.
+        if ws_executor_code and not run.app_id:
+            run._ws_executor_code = ws_executor_code  # type: ignore[attr-defined]
+
+        return run, resolved_config
 
     async def _publish_event(
         self,

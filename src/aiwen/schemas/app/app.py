@@ -95,3 +95,10 @@ class AppConfig(BaseModel):
         default=["http_request"],
         description="Tool names that require user approval before execution (HITL)",
     )
+    global_event: bool = Field(
+        default=False,
+        description=(
+            "If True, load conversation history from all runs in the workspace "
+            "instead of the current run only. Enables cross-run context awareness."
+        ),
+    )

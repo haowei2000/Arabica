@@ -173,6 +173,7 @@ class DefaultExecutor(Executor):
 
         self.workspace_id: str = config.get("workspace_id", "")
         self.run_id: str = config.get("run_id", "")
+        self.global_event: bool = config.get("global_event", False)
         self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             workspace_id=self.workspace_id, run_id=self.run_id
         )
@@ -248,10 +249,9 @@ class DefaultExecutor(Executor):
     ) -> AsyncGenerator[Event, None]:
         """Continue the conversation with user feedback as a new user turn."""
         feedback = payload.get("feedback", "")
-        messages = [
-            ChatMessage(role="system", content=self.system_prompt),
-            ChatMessage(role="user", content=str(feedback)),
-        ]
+        messages = [ChatMessage(role="system", content=self.system_prompt)]
+        messages.extend(await self._load_event_history())
+        messages.append(ChatMessage(role="user", content=str(feedback)))
         async for event in self._agentic_loop(messages):
             yield event
 
@@ -270,6 +270,8 @@ class DefaultExecutor(Executor):
 
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_event_history())
+        # TODO add the tool result
+        messages.append(ChatMessage(role="assistant", content=payload.get("result", "")))
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -288,6 +290,7 @@ class DefaultExecutor(Executor):
 
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_event_history())
+        messages.append(ChatMessage(role="assistant", content=payload.get("error", "")))
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -362,13 +365,23 @@ class DefaultExecutor(Executor):
         USER_MESSAGE event; this method reads it and injects it as a system message
         immediately before the user turn.
         """
-        if not self.run_id or not self.tool_caller:
+        if not self.tool_caller:
             return []
         try:
-            result = await self.tool_caller.call(
-                "get_run_history",
-                {"run_id": self.run_id, "limit": 200},
-            )
+            if self.global_event and self.workspace_id:
+                # Load important events from all runs in the workspace so the
+                # agent has cross-run context awareness.
+                result = await self.tool_caller.call(
+                    "get_workspace_history",
+                    {"workspace_id": self.workspace_id, "limit": self.max_history_messages},
+                )
+            else:
+                if not self.run_id:
+                    return []
+                result = await self.tool_caller.call(
+                    "get_run_history",
+                    {"run_id": self.run_id, "limit": 200},
+                )
             raw_events = (result or {}).get("data", {}).get("events", [])
             if not raw_events:
                 return []

@@ -4,6 +4,8 @@ export interface Workspace {
   description?: string | null;
   owner_id: string;
   app_id?: string | null;
+  executor_code?: string | null;
+  executor_config?: Record<string, unknown> | null;
   visibility: string;
   is_shared: boolean;
   settings?: Record<string, unknown> | null;
@@ -35,9 +37,23 @@ export interface WorkspaceCreate {
   name: string;
   description?: string;
   app_id?: string;
+  executor_code?: string;
+  executor_config?: Record<string, unknown>;
   visibility?: 'private' | 'team' | 'public';
   settings?: Record<string, unknown>;
   context_config?: WorkspaceContextConfig;
+}
+
+export interface WorkspaceUpdate {
+  name?: string;
+  description?: string;
+  app_id?: string;
+  executor_code?: string;
+  executor_config?: Record<string, unknown>;
+  visibility?: string;
+  is_shared?: boolean;
+  settings?: Record<string, unknown>;
+  status?: string;
 }
 
 export interface WorkspaceContext {

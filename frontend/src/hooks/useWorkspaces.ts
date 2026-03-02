@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspaceService';
 import { apiClient } from '@/services/api';
 import { API_ENDPOINTS } from '@/constants/api';
-import type { WorkspaceCreate, WorkspaceContextConfig } from '@/types/workspace';
+import type { WorkspaceCreate, WorkspaceUpdate, WorkspaceContextConfig } from '@/types/workspace';
 
 export const useWorkspaces = (params?: {
   page?: number;
@@ -74,7 +74,7 @@ export const useUpdateWorkspace = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ workspaceId, data }: { workspaceId: string; data: { name?: string; description?: string } }) =>
+    mutationFn: ({ workspaceId, data }: { workspaceId: string; data: WorkspaceUpdate }) =>
       workspaceService.updateWorkspace(workspaceId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workspaces'] });

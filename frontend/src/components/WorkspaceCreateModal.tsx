@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, GitBranch, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, GitBranch, Loader2, Cpu } from 'lucide-react';
 
 const ADJECTIVES = ['swift', 'bright', 'calm', 'clever', 'bold', 'sharp', 'keen', 'agile', 'vivid', 'crisp', 'brisk', 'lofty'];
 const NOUNS = ['falcon', 'river', 'cloud', 'spark', 'wave', 'peak', 'grove', 'forge', 'dawn', 'crest', 'prism', 'vault'];
@@ -16,6 +16,7 @@ import { useKnowledgeList } from '@/hooks/useKnowledge';
 import { useSkills } from '@/hooks/useSkills';
 import { useWorkspaces, useUserContexts } from '@/hooks/useWorkspaces';
 import { useTriggers } from '@/hooks/useTriggers';
+import { useTemplates } from '@/hooks/useApps';
 import type { WorkspaceCreate, WorkspaceContextConfig } from '@/types/workspace';
 import {
   Dialog,
@@ -114,6 +115,9 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
   const [step, setStep] = useState<Step>('info');
   const [name, setName] = useState(() => randomWorkspaceName());
   const [description, setDescription] = useState('');
+  const [selectedExecutorCode, setSelectedExecutorCode] = useState<string>('');
+
+  const { data: templates = [] } = useTemplates();
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [selectedKnowledge, setSelectedKnowledge] = useState<Set<string>>(new Set());
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
@@ -128,6 +132,13 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
   const { data: workspacesData } = useWorkspaces({ page: 1, page_size: 50 });
   const { data: memoriesData } = useUserContexts({ context_type: 'user_memory', page: 1, page_size: 50 });
   const { data: triggersData } = useTriggers({ page: 1, page_size: 50 });
+
+  // Auto-select first executor template once loaded
+  useEffect(() => {
+    if (!selectedExecutorCode && templates.length > 0) {
+      setSelectedExecutorCode(templates[0].executor_code);
+    }
+  }, [templates, selectedExecutorCode]);
 
   // Auto-select all resources once data is loaded
   useEffect(() => {
@@ -232,6 +243,7 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
       name,
       description: description || undefined,
       app_id: appId,
+      executor_code: selectedExecutorCode || undefined,
       context_config: hasResources ? context_config : undefined,
     });
   };
@@ -251,7 +263,7 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
               <DialogTitle className="text-base">Create New Workspace</DialogTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Step {step === 'info' ? '1' : '2'} of 2 —{' '}
-                {step === 'info' ? 'Basic info' : 'Add resources'}
+                {step === 'info' ? 'Name & executor' : 'Add resources'}
               </p>
             </div>
             <Button
@@ -306,6 +318,31 @@ export default function WorkspaceCreateModal({ appId, onConfirm, onClose, isLoad
                   rows={3}
                   placeholder="What is this workspace for?"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ws-executor" className="flex items-center gap-1.5">
+                  <Cpu size={13} className="text-muted-foreground" />
+                  Executor
+                </Label>
+                <select
+                  id="ws-executor"
+                  value={selectedExecutorCode}
+                  onChange={(e) => setSelectedExecutorCode(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {templates.length === 0 ? (
+                    <option value="SimpleAgent">SimpleAgent</option>
+                  ) : (
+                    templates.map((t) => (
+                      <option key={t.executor_code} value={t.executor_code}>
+                        {t.executor_name || t.executor_code}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  The AI agent engine that will power this workspace.
+                </p>
               </div>
             </div>
           ) : (

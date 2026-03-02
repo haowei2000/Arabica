@@ -51,6 +51,8 @@ class WorkspaceCRUD:
         name: str,
         description: str | None = None,
         app_id: str | UUID | None = None,
+        executor_code: str | None = None,
+        executor_config: dict[str, Any] | None = None,
         visibility: str = "private",
         settings: dict[str, Any] | None = None,
         auto_commit: bool = False,
@@ -74,6 +76,8 @@ class WorkspaceCRUD:
             name=name,
             description=description,
             app_id=normalize_uuid_to_str(app_id) if app_id else None,
+            executor_code=executor_code,
+            executor_config=executor_config,
             visibility=visibility,
             settings=settings,
         )
@@ -235,6 +239,8 @@ class WorkspaceCRUD:
         name: str | None = None,
         description: str | None = None,
         app_id: str | UUID | None = None,
+        executor_code: str | None = None,
+        executor_config: dict[str, Any] | None = None,
         visibility: str | None = None,
         is_shared: bool | None = None,
         settings: dict[str, Any] | None = None,
@@ -273,6 +279,10 @@ class WorkspaceCRUD:
             workspace.description = description
         if app_id is not None:
             workspace.app_id = normalize_uuid_to_str(app_id) if app_id else None
+        if executor_code is not None:
+            workspace.executor_code = executor_code
+        if executor_config is not None:
+            workspace.executor_config = executor_config
         if visibility is not None:
             workspace.visibility = visibility
         if is_shared is not None:

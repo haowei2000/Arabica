@@ -48,8 +48,16 @@ class ListContextTool(InnerTool):
 
         try:
             normalized_path = "/" + input_data.path.strip("/")
-            prefix = normalized_path + "/"
-            child_depth = normalized_path.count("/") + 1  # slash count of direct children
+
+            if normalized_path == "/":
+                # Root: children are top-level paths like "/tools", "/knowledge".
+                # prefix="/" matches them all; child_depth=1 because they have exactly
+                # one slash.  Using "//" would match nothing since no path starts that way.
+                prefix = "/"
+                child_depth = 1
+            else:
+                prefix = normalized_path + "/"
+                child_depth = normalized_path.count("/") + 1  # slash count of direct children
 
             async with get_session("aiwen") as db:
                 stmt = (

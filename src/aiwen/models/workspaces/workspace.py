@@ -74,6 +74,14 @@ class Workspace(Base):
         Boolean, default=False, comment="是否已共享"
     )
 
+    # Executor configuration (replaces App lookup for new workspaces)
+    executor_code: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="执行器代码"
+    )
+    executor_config: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, comment="执行器配置"
+    )
+
     # Configuration
     settings: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, comment="工作空间配置"

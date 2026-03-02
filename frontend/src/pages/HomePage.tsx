@@ -10,7 +10,7 @@ function randomAppCode() {
   return `${adj}-${noun}-${num}`;
 }
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Zap, Layers, Library, Wrench, Brain, Sparkles } from 'lucide-react';
+import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Zap, Layers, Library, Wrench, Brain, Sparkles, FolderKanban } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -269,6 +269,15 @@ export default function HomePage() {
             <h1 className="text-sm font-semibold text-foreground">AI Agent Platform</h1>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => { resetChat(); navigate('/app'); }}
+              className="h-8 px-3 text-xs text-muted-foreground rounded-lg hover:bg-muted transition-colors flex items-center gap-1.5"
+              title="Open Workspaces"
+            >
+              <FolderKanban className="size-3.5" />
+              Workspaces
+            </button>
             <button
               type="button"
               onClick={toggleTheme}

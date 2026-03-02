@@ -69,12 +69,8 @@ async def create_run(
 
     # Determine app_id (from request or workspace default)
     app_id = user_message_event.app_id
-    if not app_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No app_id provided and workspace has no default app",
-        )
-    # Create run
+
+    # Create run (app_id is now optional)
     run = await run_crud.create(
         workspace_id=workspace_id,
         app_id=app_id,
@@ -83,24 +79,32 @@ async def create_run(
         auto_commit=False,
     )
 
-    # Resolve executor_code from the app's linked executor
-    app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
-    app_row = app_result.scalar_one_or_none()
+    # Resolve executor_code:
+    #   1. app.executor_id → ExecutorTemplate.executor_code  (legacy)
+    #   2. workspace.executor_code  (new native config)
+    #   3. default "SimpleAgent"
     executor_code = "SimpleAgent"
-    if app_row and app_row.executor_id:
-        tmpl_result = await state_machine.db.execute(
-            select(ExecutorTemplate).where(ExecutorTemplate.id == app_row.executor_id)
-        )
-        tmpl = tmpl_result.scalar_one_or_none()
-        if tmpl:
-            executor_code = tmpl.executor_code
+    if app_id:
+        app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
+        app_row = app_result.scalar_one_or_none()
+        if app_row and app_row.executor_id:
+            tmpl_result = await state_machine.db.execute(
+                select(ExecutorTemplate).where(ExecutorTemplate.id == app_row.executor_id)
+            )
+            tmpl = tmpl_result.scalar_one_or_none()
+            if tmpl:
+                executor_code = tmpl.executor_code
+    else:
+        # Fall back to workspace's own executor_code
+        if workspace.executor_code:
+            executor_code = workspace.executor_code
 
     # Publish user message event (also triggers Worker via run_tasks stream)
     await event_publisher.publish(
         event_type=EventType.USER_MESSAGE,
         workspace_id=workspace_id,
         run_id=str(run.id),
-        app_id=str(app_id),
+        app_id=str(app_id) if app_id else None,
         user_id=str(current_user.id),
         executor_code=executor_code,
         payload={

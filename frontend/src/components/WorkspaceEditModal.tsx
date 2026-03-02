@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2, Save } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2, Save, Cpu } from 'lucide-react';
 import { useToolList } from '@/hooks/useTools';
 import { useKnowledgeList } from '@/hooks/useKnowledge';
 import { useSkills } from '@/hooks/useSkills';
 import { useWorkspaces, useUserContexts, useWorkspaceContexts, useUpdateWorkspace, useReinitWorkspaceContext } from '@/hooks/useWorkspaces';
+import { useTemplates } from '@/hooks/useApps';
 import type { Workspace, WorkspaceContextConfig } from '@/types/workspace';
 import {
   Dialog,
@@ -116,6 +117,9 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   const [step, setStep] = useState<Step>('info');
   const [name, setName] = useState(workspace.name);
   const [description, setDescription] = useState(workspace.description ?? '');
+  const [selectedExecutorCode, setSelectedExecutorCode] = useState<string>(workspace.executor_code ?? '');
+
+  const { data: templates = [] } = useTemplates();
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [selectedKnowledge, setSelectedKnowledge] = useState<Set<string>>(new Set());
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
@@ -222,13 +226,17 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
 
   const handleSave = async () => {
     try {
-      // Update name/description if changed
-      if (name.trim() !== workspace.name || description !== (workspace.description ?? '')) {
+      // Update name/description/executor if changed
+      const nameChanged = name.trim() !== workspace.name;
+      const descChanged = description !== (workspace.description ?? '');
+      const executorChanged = selectedExecutorCode !== (workspace.executor_code ?? '');
+      if (nameChanged || descChanged || executorChanged) {
         await updateWorkspace.mutateAsync({
           workspaceId: workspace.id,
           data: {
             name: name.trim() || workspace.name,
             description: description || undefined,
+            executor_code: selectedExecutorCode || undefined,
           },
         });
       }
@@ -261,7 +269,7 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
               <DialogTitle className="text-base">Edit Workspace</DialogTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Step {step === 'info' ? '1' : '2'} of 2 —{' '}
-                {step === 'info' ? 'Basic info' : 'Context resources'}
+                {step === 'info' ? 'Name & executor' : 'Context resources'}
               </p>
             </div>
             <Button variant="ghost" size="icon" className="size-7 -mr-1 -mt-1" onClick={onClose}>
@@ -306,6 +314,30 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
                   rows={3}
                   placeholder="What is this workspace for?"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ws-executor" className="flex items-center gap-1.5">
+                  <Cpu size={13} className="text-muted-foreground" />
+                  Executor
+                </Label>
+                <select
+                  id="ws-executor"
+                  value={selectedExecutorCode}
+                  onChange={(e) => setSelectedExecutorCode(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">— keep current —</option>
+                  {templates.map((t) => (
+                    <option key={t.executor_code} value={t.executor_code}>
+                      {t.executor_name || t.executor_code}
+                    </option>
+                  ))}
+                </select>
+                {workspace.executor_code && (
+                  <p className="text-xs text-muted-foreground">
+                    Current: <span className="font-mono">{workspace.executor_code}</span>
+                  </p>
+                )}
               </div>
             </div>
           ) : (

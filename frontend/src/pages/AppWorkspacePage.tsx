@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Moon, Sun, Trash2, ArrowLeft, Plus,
+  Moon, Sun, Trash2, Plus,
   ChevronLeft, ChevronRight, Pencil,
-  Bot, LogOut, Play, FolderKanban,
+  Bot, LogOut, Play, FolderKanban, Cpu,
 } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useUIStore } from '@/stores/useUIStore';
@@ -33,11 +33,11 @@ export default function AppWorkspacePage() {
   const [historyOpen, setHistoryOpen] = useState(true);
 
   const navigate = useNavigate();
-  const { currentAppId, currentAppCode, clearCurrentApp } = useAppStore();
+  const { clearCurrentApp } = useAppStore();
+  // Show all workspaces; optionally filtered by app when navigated from an app
   const { data: workspacesData, isLoading: workspacesLoading } = useWorkspaces({
     page: 1,
     page_size: 50,
-    app_id: currentAppId || undefined,
   });
   const createWorkspaceMutation = useCreateWorkspace();
   const deleteWorkspaceMutation = useDeleteWorkspace();
@@ -48,10 +48,24 @@ export default function AppWorkspacePage() {
   useEffect(() => {
     if (!authService.isAuthenticated()) {
       navigate('/login');
-      return;
     }
-    if (!currentAppId) navigate('/home');
-  }, [navigate, currentAppId]);
+  }, [navigate]);
+
+  // Auto-create default workspace if none exist; auto-select first workspace
+  useEffect(() => {
+    if (workspacesLoading) return;
+    const workspaces = workspacesData?.items ?? [];
+    if (workspaces.length === 0 && !createWorkspaceMutation.isPending) {
+      // Silently create a default workspace and auto-select it
+      createWorkspaceMutation.mutateAsync({ name: 'Default' })
+        .then((ws) => setCurrentWorkspace(ws.id, ws.name, ws.app_id))
+        .catch(() => {});
+    } else if (!currentWorkspaceId) {
+      // Auto-select first workspace
+      const first = workspaces[0];
+      setCurrentWorkspace(first.id, first.name, first.app_id);
+    }
+  }, [workspacesLoading, workspacesData]);
 
   const handleCreateWorkspace = async (data: WorkspaceCreate) => {
     try {
@@ -81,13 +95,6 @@ export default function AppWorkspacePage() {
     setCurrentWorkspace(workspaceId, name, appId || null);
   };
 
-  const handleBackToHome = () => {
-    resetChat();
-    clearCurrentWorkspace();
-    clearCurrentApp();
-    navigate('/home');
-  };
-
   const handleLogout = () => {
     authService.logout();
     resetChat();
@@ -95,8 +102,6 @@ export default function AppWorkspacePage() {
     clearCurrentApp();
     navigate('/login');
   };
-
-  if (!currentAppId) return null;
 
   const workspaces = workspacesData?.items ?? [];
 
@@ -106,22 +111,10 @@ export default function AppWorkspacePage() {
       <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0 sticky top-0 z-30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost" size="icon" className="size-7"
-              onClick={handleBackToHome} title="Back to Apps"
-            >
-              <ArrowLeft className="size-3.5" />
-            </Button>
-            <div className="h-4 w-px bg-border" />
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
               <Bot className="size-3.5 text-white" />
             </div>
-            <span
-              className="text-sm font-semibold font-mono cursor-default"
-              title={currentAppId ? `App ID: ${currentAppId}` : undefined}
-            >
-              {currentAppCode || 'App'}
-            </span>
+            <span className="text-sm font-semibold cursor-default">AI Agent Platform</span>
           </div>
 
           <div className="flex items-center gap-1">
@@ -260,7 +253,14 @@ export default function AppWorkspacePage() {
                             <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 pt-1.5 border-t border-border/50 text-muted-foreground">
                               <span>Status</span><span className="text-foreground capitalize">{workspace.status}</span>
                               <span>Runs</span><span className="text-foreground tabular-nums">{workspace.run_count}</span>
-                              {workspace.app_id && <><span>App</span><span className="text-foreground font-mono truncate">{workspace.app_id.slice(0, 8)}…</span></>}
+                              {(workspace.executor_code || workspace.app_id) && (
+                                <>
+                                  <span className="flex items-center gap-0.5"><Cpu className="size-2.5" />Executor</span>
+                                  <span className="text-foreground font-mono truncate">
+                                    {workspace.executor_code || `app:${workspace.app_id?.slice(0, 6)}…`}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -307,7 +307,6 @@ export default function AppWorkspacePage() {
 
       {showCreateForm && (
         <WorkspaceCreateModal
-          appId={currentAppId || undefined}
           onConfirm={handleCreateWorkspace}
           onClose={() => setShowCreateForm(false)}
           isLoading={createWorkspaceMutation.isPending}

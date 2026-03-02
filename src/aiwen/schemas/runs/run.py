@@ -15,7 +15,7 @@ class RunCreate(BaseModel):
     """Schema for creating a new run."""
 
     workspace_id: str | UUID = Field(..., description="工作空间ID")
-    app_id: str | UUID = Field(..., description="应用ID")
+    app_id: str | UUID | None = Field(None, description="应用ID")
     parent_run_id: str | UUID | None = Field(None, description="父运行ID")
     trigger_type: TriggerType = Field(TriggerType.USER, description="触发类型")
     input_data: dict[str, Any] | None = Field(None, description="初始输入数据")
@@ -36,7 +36,7 @@ class RunResponse(ResponseMixin, BaseModel):
 
     id: str
     workspace_id: str
-    app_id: str
+    app_id: str | None = None
     user_id: str
     parent_run_id: str | None = None
     status: RunStatus

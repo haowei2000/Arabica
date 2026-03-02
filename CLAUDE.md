@@ -1,7 +1,7 @@
 # CLAUDE.md
 Dont run format check and other unnecessary oprerations.
 Please Write the code in English.
-
+Import: please hint me to fix the grammar error when i send a message to help to improve my English
 ## Project Overview
 
 **Aiwen Service (v5.5.0)** - An enterprise-grade AI-powered agent orchestration platform with event-sourced architecture.

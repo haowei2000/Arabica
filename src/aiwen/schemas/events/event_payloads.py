@@ -40,7 +40,7 @@ class UserMessageEventSchema(BaseEventSchema):
 
     # Override base fields to make them required or set defaults
     event_type: EventType = EventType.USER_MESSAGE
-    app_id: UUID = Field(..., description="应用ID")
+    app_id: UUID | None = Field(None, description="应用ID (optional, workspace executor used if absent)")
     workspace_id: UUID | str = Field(..., description="工作空间ID")
 
 

@@ -27,7 +27,7 @@ export default function LoginPage() {
       await authService.login(username, password);
       const user = await authService.getCurrentUser();
       setUser(user);
-      navigate('/chat');
+      navigate('/app');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {

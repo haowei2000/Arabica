@@ -36,7 +36,7 @@ function App() {
             <Route path="/app" element={<AppWorkspacePage />} />
           <Route path="/chat" element={<ChatPage />} />
             <Route path="/knowledge/:knowledgeId/documents" element={<DocumentPage/>}/>
-            <Route path="/" element={<Navigate to="/home" replace/>}/>
+            <Route path="/" element={<Navigate to="/app" replace/>}/>
             {/* Backwards compatibility */}
             <Route path="/apps" element={<Navigate to="/home" replace/>}/>
         </Routes>

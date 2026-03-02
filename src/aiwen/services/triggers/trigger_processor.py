@@ -15,7 +15,9 @@ Action execution:
 
 import logging
 import re
+import time
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,9 +140,19 @@ class TriggerProcessor:
         # results: list of {"trigger_id", "trigger_name", "tool_name", "result"}
     """
 
-    def __init__(self, db: AsyncSession, workspace_id: str):
+    def __init__(
+        self,
+        db: AsyncSession,
+        workspace_id: str,
+        publisher: Any | None = None,
+        run_id: str | None = None,
+        publish_workspace_id: str | None = None,
+    ):
         self.db = db
         self.workspace_id = workspace_id
+        self._publisher = publisher
+        self._run_id = run_id
+        self._publish_workspace_id = publish_workspace_id or workspace_id
         self._evaluator = TriggerConditionEvaluator()
 
     async def process_event(self, event: Any) -> list[dict[str, Any]]:
@@ -229,12 +241,18 @@ class TriggerProcessor:
         ``workspace_id`` field and none was provided in action_params, the
         current workspace ID is injected automatically.
 
+        When a publisher is available, emits TOOL_CALL before execution
+        and TOOL_RESULT / TOOL_ERROR after.  All three carry
+        ``"_source": "trigger"`` in the payload so the worker skips
+        re-execution when it consumes them from the executor stream.
+
         Args:
             trigger: The matched WorkspaceTrigger.
 
         Returns:
             The tool's output dict, or None if the tool was not found.
         """
+        from aiwen.core.enums.events import EventType
         from aiwen.registries.core import ToolRegistry
 
         tool_name = trigger.tool_name
@@ -257,13 +275,89 @@ class TriggerProcessor:
             if "workspace_id" in input_fields:
                 kwargs["workspace_id"] = self.workspace_id
 
-        return await tool_instance(**kwargs)
+        tool_id = str(uuid4())
+
+        # Publish TOOL_CALL for real-time observability.
+        # "_source": "trigger" prevents the worker from re-executing the tool
+        # when it consumes this event from the executor stream.
+        if self._publisher and self._run_id:
+            try:
+                await self._publisher.publish(
+                    event_type=EventType.TOOL_CALL,
+                    workspace_id=self._publish_workspace_id,
+                    run_id=self._run_id,
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_id": tool_id,
+                        "arguments": kwargs,
+                        "trigger_name": trigger.name,
+                        "trigger_id": str(trigger.id),
+                        "_source": "trigger",
+                    },
+                    auto_commit=True,
+                )
+            except Exception as pub_err:
+                logger.warning("Failed to publish trigger tool call event: %s", pub_err)
+
+        start_time = time.time()
+        try:
+            result = await tool_instance(**kwargs)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            if self._publisher and self._run_id:
+                try:
+                    await self._publisher.publish(
+                        event_type=EventType.TOOL_RESULT,
+                        workspace_id=self._publish_workspace_id,
+                        run_id=self._run_id,
+                        payload={
+                            "tool_name": tool_name,
+                            "tool_id": tool_id,
+                            "result": result,
+                            "execution_time_ms": elapsed_ms,
+                            "trigger_name": trigger.name,
+                            "trigger_id": str(trigger.id),
+                            "_source": "trigger",
+                        },
+                        auto_commit=True,
+                    )
+                except Exception as pub_err:
+                    logger.warning("Failed to publish trigger tool result event: %s", pub_err)
+
+            return result
+
+        except Exception as exc:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            if self._publisher and self._run_id:
+                try:
+                    await self._publisher.publish(
+                        event_type=EventType.TOOL_ERROR,
+                        workspace_id=self._publish_workspace_id,
+                        run_id=self._run_id,
+                        payload={
+                            "tool_name": tool_name,
+                            "tool_id": tool_id,
+                            "error_message": str(exc),
+                            "execution_time_ms": elapsed_ms,
+                            "trigger_name": trigger.name,
+                            "trigger_id": str(trigger.id),
+                            "_source": "trigger",
+                        },
+                        auto_commit=True,
+                    )
+                except Exception as pub_err:
+                    logger.warning("Failed to publish trigger tool error event: %s", pub_err)
+
+            raise
 
 
 async def process_event_triggers(
     db: AsyncSession,
     workspace_id: str,
     event: Any,
+    publisher: Any | None = None,
+    run_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Convenience function for use in EventWorker.handle_event.
 
@@ -271,9 +365,17 @@ async def process_event_triggers(
         db: Database session.
         workspace_id: Workspace UUID string.
         event: Event ORM instance.
+        publisher: Optional EventPublisher for emitting trigger tool events.
+        run_id: Run ID string to associate trigger tool events with.
 
     Returns:
         List of trigger result dicts (may be empty).
     """
-    proc = TriggerProcessor(db, workspace_id)
+    proc = TriggerProcessor(
+        db,
+        workspace_id,
+        publisher=publisher,
+        run_id=run_id,
+        publish_workspace_id=workspace_id,
+    )
     return await proc.process_event(event)
