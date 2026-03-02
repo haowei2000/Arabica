@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
-import { useRuns, useRunEvents } from '@/hooks/useRuns';
+import { useRuns } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
@@ -173,20 +173,10 @@ function RunTimelineItem({
   latestSseEvent: Event | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { data: eventsData, isLoading: eventsLoading } = useRunEvents(run.id, expanded);
-  const dbEvents = eventsData?.items ?? [];
 
-  // Merge DB events with live SSE events accumulated in the store.
-  // SSE events arrive before PG persistence, so this fills the gap.
-  const liveEvents = useRunEventsStore((s) => s.liveEvents[run.id] ?? []);
-  const events = useMemo(() => {
-    const bySeq = new Map<number, Event>();
-    for (const e of [...dbEvents, ...liveEvents]) {
-      // Live events take precedence (most up-to-date payload)
-      bySeq.set(e.sequence, e);
-    }
-    return [...bySeq.values()].sort((a, b) => a.sequence - b.sequence);
-  }, [dbEvents, liveEvents]);
+  // Events come exclusively from the workspace SSE stream accumulated in the store.
+  // No PG fetch — the stream is the single source of truth.
+  const events = useRunEventsStore((s) => s.liveEvents[run.id] ?? []);
 
   const fullMessage = run.input_data?.message ? String(run.input_data.message) : '';
   const title = fullMessage ? fullMessage.slice(0, 55) : 'New run';
@@ -267,11 +257,7 @@ function RunTimelineItem({
 
       {expanded && (
         <div className="border-t border-border/40 mx-1 mb-1 rounded-b-md overflow-hidden bg-muted/20">
-          {eventsLoading ? (
-            <div className="flex justify-center py-3">
-              <Loader2 className="size-3 animate-spin text-muted-foreground/40" />
-            </div>
-          ) : (() => {
+          {(() => {
             const visible = events.filter((e) => !HIDDEN_EVENT_TYPES.has(e.event_type));
             return visible.length === 0 ? (
               <p className="text-[10px] text-muted-foreground/40 px-3 py-2">No events</p>
@@ -280,7 +266,7 @@ function RunTimelineItem({
                 <div>
                   {visible.map((e, i) => (
                     <RunEventRow
-                      key={e.id}
+                      key={e.id || `${e.sequence}`}
                       event={e}
                       isLast={i === visible.length - 1}
                       isActiveEdge={isRunning && i === visible.length - 1}

@@ -99,8 +99,6 @@ export function useWorkspaceStream(workspaceId: string | null) {
             const store = useRunEventsStore.getState();
             store.setLatestEvent(runId, event);
             store.addLiveEvent(runId, event);
-            // Invalidate per-run events query so expanded run lists refresh
-            queryClient.invalidateQueries({ queryKey: ['run-events', runId] });
           }
 
           switch (type) {
