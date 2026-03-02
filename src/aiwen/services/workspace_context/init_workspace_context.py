@@ -128,6 +128,7 @@ async def _populate_knowledge(
 ) -> int:
     from sqlalchemy import select
 
+    from aiwen.models.context.knowledge.documents import Document
     from aiwen.models.context.knowledge.knowledge import Knowledge
 
     result = await db.execute(
@@ -137,19 +138,46 @@ async def _populate_knowledge(
 
     count = 0
     for kb in knowledge_list:
-        path = f"knowledge/{kb.id}"
-        glance = (kb.description[:80] if kb.description else None) or kb.name
+        kb_id = str(kb.id)
+        # Add the knowledge base itself.
         await service.set(
-            path=path,
-            glance=glance,
+            path=f"knowledge/{kb_id}",
+            glance=(kb.description[:80] if kb.description else None) or kb.name,
             overview=kb.description,
             detail=None,
             tags=["knowledge"],
-            meta={"knowledge_id": str(kb.id)},
+            meta={"knowledge_id": kb_id},
             created_by=user_id,
             content_type="text/plain",
         )
         count += 1
+
+        # Add every document that belongs to this knowledge base.
+        doc_result = await db.execute(
+            select(Document)
+            .where(Document.knowledge_id == kb.id, Document.is_deleted.is_(False))
+            .order_by(Document.created_at)
+        )
+        for doc in doc_result.scalars().all():
+            await service.set(
+                path=f"knowledge/{kb_id}/{doc.id}",
+                glance=doc.original_name,
+                overview={
+                    "document_id": str(doc.id),
+                    "knowledge_id": kb_id,
+                    "file_name": doc.original_name,
+                    "mime_type": doc.mime_type,
+                    "status": doc.status,
+                    "chunk_count": doc.chunk_count,
+                },
+                detail=doc.content,
+                tags=["knowledge", "document"],
+                meta={"document_id": str(doc.id), "knowledge_id": kb_id},
+                created_by=user_id,
+                content_type="text/plain",
+            )
+            count += 1
+
     return count
 
 
@@ -159,26 +187,39 @@ async def _populate_skills(
     user_id: str,
     skill_ids: list[UUID],
 ) -> int:
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from aiwen.models.context.skill import Skill
 
     result = await db.execute(
         select(Skill).where(Skill.id.in_(skill_ids))
     )
-    skills = result.scalars().all()
+    selected_skills = result.scalars().all()
+
+    # Collect path prefixes for descendant lookup.
+    path_prefixes = [s.path for s in selected_skills if s.path]
+
+    # Load descendants: skills whose path starts with any selected skill's path.
+    descendants: list[Skill] = []
+    if path_prefixes:
+        desc_result = await db.execute(
+            select(Skill).where(
+                Skill.id.not_in(skill_ids),
+                or_(*(Skill.path.like(f"{p}/%") for p in path_prefixes)),
+            )
+        )
+        descendants = list(desc_result.scalars().all())
 
     count = 0
-    for skill in skills:
-        path = f"skills/{skill.id}"
+    for skill in list(selected_skills) + descendants:
         glance = skill.glance or (skill.description[:60] if skill.description else skill.name)
         await service.set(
-            path=path,
+            path=f"skills/{skill.id}",
             glance=glance,
             overview=skill.summary,
             detail=skill.content,
             tags=["skills"] + (skill.tags or []),
-            meta={"skill_id": str(skill.id)},
+            meta={"skill_id": str(skill.id), "skill_path": skill.path},
             created_by=user_id,
             content_type="text/plain",
         )
@@ -192,25 +233,40 @@ async def _populate_memories(
     user_id: str,
     memory_ids: list[UUID],
 ) -> int:
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from aiwen.core.enums import ContextType
     from aiwen.models.context.context import Context
 
+    id_strs = [str(mid) for mid in memory_ids]
     result = await db.execute(
         select(Context).where(
-            Context.id.in_([str(mid) for mid in memory_ids]),
+            Context.id.in_(id_strs),
             Context.context_type == ContextType.SHORT_MEMORY,
         )
     )
-    memories = result.scalars().all()
+    selected = result.scalars().all()
+
+    # Collect path prefixes for descendant lookup.
+    path_prefixes = [m.path for m in selected if m.path]
+
+    # Load all descendant contexts whose path starts with any selected context's path.
+    descendants: list[Context] = []
+    if path_prefixes:
+        desc_result = await db.execute(
+            select(Context).where(
+                Context.id.not_in(id_strs),
+                Context.context_type == ContextType.SHORT_MEMORY,
+                or_(*(Context.path.like(f"{p}/%") for p in path_prefixes)),
+            )
+        )
+        descendants = list(desc_result.scalars().all())
 
     count = 0
-    for mem in memories:
-        path = f"short_memory/{mem.id}"
+    for mem in list(selected) + descendants:
         glance = mem.glance or (mem.summary[:60] if mem.summary else mem.content[:60])
         await service.set(
-            path=path,
+            path=f"short_memory/{mem.id}",
             glance=glance,
             overview=mem.summary,
             detail=mem.content,

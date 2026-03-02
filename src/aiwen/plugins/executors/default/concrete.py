@@ -10,10 +10,14 @@ Tool calling is delegated to ``PromptCallingStrategy`` (tool descriptions
 in system prompt + XML-tagged output parsing).
 
 Event-driven execution flow:
-    USER_MESSAGE -> start fresh agentic loop
-    USER_FEEDBACK -> continue with feedback as the user turns
-    TOOL_RESULT -> accumulate a result, resume loop when all tools done
-    TOOL_ERROR -> accumulate error, resume loop when all tools are done
+    USER_MESSAGE -> load full event history, start agentic loop
+    USER_FEEDBACK -> continue with feedback as the user turn
+    TOOL_RESULT -> load full event history (includes results), resume loop
+    TOOL_ERROR  -> load full event history (includes errors), resume loop
+
+Trigger context (set by event worker in payload["_context"]) is embedded
+naturally when USER_MESSAGE events are converted to ChatMessages inside
+_load_event_history — no trigger-specific logic in this module.
 
 Streaming event map:
     LLM streaming        ->  AGENT_THINKING  (inside <think> block)
@@ -42,7 +46,7 @@ from aiwen.frameworks.tool_calling import (
 from aiwen.models.events.event import Event
 from aiwen.registries.core import register_executor
 from aiwen.schemas.app import AppConfig
-from aiwen.schemas.events.event_payloads import EventType, UserMessage
+from aiwen.schemas.events.event_payloads import EventType
 from aiwen.schemas.llm.chat_llm import ChatLLM
 
 logger = logging.getLogger(__name__)
@@ -143,7 +147,6 @@ class DefaultExecutor(Executor):
         self.model_provider = config.get("model_provider", "tongyi")
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
-        # Tools in this list pause the run and ask the user before executing.
         self.max_iterations: int = config.get("max_iterations", 10)
 
         # ── Dependency-injected abstractions ─────────────────────
@@ -174,12 +177,10 @@ class DefaultExecutor(Executor):
             workspace_id=self.workspace_id, run_id=self.run_id
         )
 
-        # ── State for multi-tool tracking across events ──────────
-        # Populated in _process_tool_calls before raising WaitingForTool;
-        # cleared in _resume_with_results after all pending tools complete.
-        self._waiting_messages: list[ChatMessage] | None = None
+        # Tracks tool IDs that have been emitted but not yet resolved.
+        # Used to detect when all parallel tool calls are complete before
+        # resuming the agentic loop.
         self._pending_tool_ids: set[str] = set()
-        self._tool_results: list[dict[str, Any]] = []
 
     # ── abstract method ───────────────────────────────────────────
 
@@ -203,7 +204,7 @@ class DefaultExecutor(Executor):
             match event.event_type:
                 case EventType.USER_MESSAGE:
                     self._reset_token_index()
-                    async for e in self._on_user_message(event.payload):
+                    async for e in self._on_user_message():
                         yield e
 
                 case EventType.USER_FEEDBACK:
@@ -229,23 +230,16 @@ class DefaultExecutor(Executor):
 
     # ── streaming event handlers ──────────────────────────────────
 
-    async def _on_user_message(
-        self, payload: dict[str, Any]
-    ) -> AsyncGenerator[Event, None]:
-        """Start a fresh agentic loop for a new user message."""
-        messages: list[ChatMessage] = [
-            ChatMessage(role="system", content=self.system_prompt),
-        ]
-        messages.extend(await self._load_history())
-        messages.extend(await self._load_run_event_messages())
+    async def _on_user_message(self) -> AsyncGenerator[Event, None]:
+        """Start a fresh agentic loop for a new user message.
 
-        # Inject pre-fetched workspace context from trigger processor
-        trigger_ctx = self._extract_trigger_context(payload)
-        if trigger_ctx:
-            messages.append(self._build_trigger_context_message(trigger_ctx))
-
-        messages.extend(self._prepare_messages(payload))
-
+        Full conversation is reconstructed from the event stream via
+        _load_event_history so the executor is stateless across events.
+        Trigger context injected by the event worker (payload["_context"])
+        is embedded naturally when the USER_MESSAGE event is converted.
+        """
+        messages = [ChatMessage(role="system", content=self.system_prompt)]
+        messages.extend(await self._load_event_history())
         async for event in self._agentic_loop(messages):
             yield event
 
@@ -264,35 +258,18 @@ class DefaultExecutor(Executor):
     async def _on_tool_result(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Accumulate a successful tool result; call LLM when all tools done."""
-        tool_id = payload.get("tool_id", "")
-        self._tool_results.append(
-            {
-                "tool_id": tool_id,
-                "tool_name": payload.get("tool_name", ""),
-                "result": payload.get("result", {}),
-                "success": True,
-            }
-        )
-        self._pending_tool_ids.discard(tool_id)
+        """Discard a resolved tool ID; resume the loop when all tools are done.
 
+        The tool result is already persisted in the event stream.
+        _load_event_history will pick it up and include it in the
+        reconstructed conversation — no in-memory accumulation needed.
+        """
+        self._pending_tool_ids.discard(payload.get("tool_id", ""))
         if self._pending_tool_ids:
             return  # Still waiting for other tool results
 
-        # All tools done — build messages and call LLM directly
-        messages = self._waiting_messages or [
-            ChatMessage(role="system", content=self.system_prompt)
-        ]
-        for r in self._tool_results:
-            content = json.dumps(r["result"], ensure_ascii=False, default=str)
-            messages.append(
-                ChatMessage(role="tool", content=content, tool_call_id=r["tool_id"])
-            )
-
-        self._waiting_messages = None
-        self._pending_tool_ids = set()
-        self._tool_results = []
-
+        messages = [ChatMessage(role="system", content=self.system_prompt)]
+        messages.extend(await self._load_event_history())
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -300,39 +277,17 @@ class DefaultExecutor(Executor):
     async def _on_tool_error(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Accumulate a failed tool result; call LLM when all tools done."""
-        tool_id = payload.get("tool_id", "")
-        self._tool_results.append(
-            {
-                "tool_id": tool_id,
-                "tool_name": payload.get("tool_name", ""),
-                "result": None,
-                "success": False,
-                "error_message": payload.get("error_message", "Unknown error"),
-            }
-        )
-        self._pending_tool_ids.discard(tool_id)
+        """Discard a failed tool ID; resume the loop when all tools are done.
 
+        Same stateless approach as _on_tool_result: the error event is in
+        the stream and _load_event_history includes it automatically.
+        """
+        self._pending_tool_ids.discard(payload.get("tool_id", ""))
         if self._pending_tool_ids:
             return  # Still waiting for other tool results
 
-        # All tools done — build messages and call LLM directly
-        messages = self._waiting_messages or [
-            ChatMessage(role="system", content=self.system_prompt)
-        ]
-        for r in self._tool_results:
-            content = json.dumps(
-                {"success": False, "error": r.get("error_message", "Unknown error")},
-                ensure_ascii=False,
-            )
-            messages.append(
-                ChatMessage(role="tool", content=content, tool_call_id=r["tool_id"])
-            )
-
-        self._waiting_messages = None
-        self._pending_tool_ids = set()
-        self._tool_results = []
-
+        messages = [ChatMessage(role="system", content=self.system_prompt)]
+        messages.extend(await self._load_event_history())
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -384,193 +339,50 @@ class DefaultExecutor(Executor):
         logger.info(f"Collected {len(classes)} tool classes via ToolProvider")
         return classes
 
-    # ── message serialization ──────────────────────────────────────
+    async def _load_event_history(self) -> list[ChatMessage]:
+        """Load the current run's event stream and convert to LLM-ready ChatMessages.
 
-    @staticmethod
-    def _serialize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
-        """Serialize the ChatMessage list to JSON-compatible format."""
-        return [msg.to_dict() for msg in messages]
+        Fetches USER_MESSAGE, AGENT_MESSAGE, TOOL_RESULT, and TOOL_ERROR events
+        in sequence order and maps them to role-based ChatMessages compatible with
+        PromptCallingStrategy (XML-based tool calling, no native tool_calls):
 
-    @staticmethod
-    def _deserialize_messages(serialized: list[dict[str, Any]]) -> list[ChatMessage]:
-        """Reconstruct the ChatMessage list from a serialized format."""
-        return [ChatMessage.from_dict(d) for d in serialized]
+          USER_MESSAGE  -> system message for ``_context`` (if set by event worker)
+                           followed by a user message
+          AGENT_MESSAGE -> assistant message
+          TOOL_RESULT   -> appended to the preceding assistant message content
+          TOOL_ERROR    -> appended to the preceding assistant message content
+          TOOL_CALL     -> skipped (content is embedded in the AGENT_MESSAGE text)
 
-    # ── message conversion ────────────────────────────────────────
+        Tool results are merged into the assistant turn rather than sent as
+        role="tool" messages.  role="tool" requires a preceding assistant message
+        with native tool_calls, which PromptCallingStrategy never produces.
 
-    def _extract_trigger_context(
-        self, user_message: UserMessage | dict
-    ) -> list[dict] | None:
-        """Extract ``_trigger_context`` from a user message if present."""
-        if isinstance(user_message, dict):
-            return user_message.get("_trigger_context") or None
-        extra = getattr(user_message, "model_extra", None) or {}
-        value = extra.get("_trigger_context")
-        return value if value else None
-
-    def _build_trigger_context_message(
-        self, trigger_context: list[dict]
-    ) -> ChatMessage:
-        """Build a system ChatMessage that injects workspace trigger results."""
-        lines = ["[Workspace context retrieved by triggers]"]
-        for item in trigger_context:
-            name = item.get("trigger_name", "trigger")
-            action = item.get("tool_name", "")
-            result = item.get("result")
-            lines.append(f"\n### {name} ({action})")
-            if result is None:
-                lines.append("(no result)")
-            elif isinstance(result, (dict, list)):
-                lines.append(json.dumps(result, ensure_ascii=False, indent=2))
-            else:
-                lines.append(str(result))
-        return ChatMessage(role="system", content="\n".join(lines))
-
-    def _prepare_messages(self, user_message: UserMessage | dict) -> list[ChatMessage]:
-        """Convert a UserMessage or payload dict to a ChatMessage list."""
-        if isinstance(user_message, dict):
-            message = user_message.get("message", "")
-        else:
-            message = user_message.message
-
-        if isinstance(message, list):
-            return [
-                ChatMessage.from_dict(m) if isinstance(m, dict) else m
-                for m in message
-            ]
-
-        if isinstance(message, str):
-            return [ChatMessage(role="user", content=message)]
-
-        return [ChatMessage(role="user", content=str(message))]
-
-    # ── run history loading ───────────────────────────────────────
-
-    async def _load_run_history(self) -> ChatMessage | None:
-        """Fetch the current run's event history from Redis via get_run_history.
-
-        Uses the injected ``tool_caller`` so the executor stays decoupled from
-        the tool registry.  Returns a system ``ChatMessage`` ready to be
-        inserted into the conversation, or ``None`` if unavailable / empty.
-        """
-        if not self.run_id or not self.tool_caller:
-            return None
-        try:
-            result = await self.tool_caller.call(
-                "get_run_history",
-                {"run_id": self.run_id, "limit": 50},
-            )
-            events = (result or {}).get("data", {}).get("events", [])
-            if not events:
-                return None
-
-            lines = ["[Current run event history]"]
-            for e in events:
-                event_type = e.get("event_type", "")
-                payload = e.get("payload") or {}
-                seq = e.get("sequence", "?")
-
-                if event_type == EventType.USER_MESSAGE:
-                    msg = payload.get("message", "")
-                    if isinstance(msg, list):
-                        msg = " ".join(
-                            p.get("text", "") if isinstance(p, dict) else str(p)
-                            for p in msg
-                        )
-                    lines.append(f"[{seq}] User: {str(msg)[:300]}")
-
-                elif event_type == EventType.AGENT_MESSAGE:
-                    content = payload.get("content") or payload.get("message", "")
-                    lines.append(f"[{seq}] Assistant: {str(content)[:300]}")
-
-                elif event_type == EventType.TOOL_CALL:
-                    tool_name = payload.get("tool_name", "?")
-                    args = json.dumps(
-                        payload.get("arguments", {}), ensure_ascii=False
-                    )
-                    lines.append(f"[{seq}] Tool call: {tool_name}({args[:200]})")
-
-                elif event_type == EventType.TOOL_RESULT:
-                    tool_name = payload.get("tool_name", "?")
-                    res = payload.get("result")
-                    res_str = (
-                        json.dumps(res, ensure_ascii=False, default=str)[:300]
-                        if res is not None
-                        else "null"
-                    )
-                    lines.append(f"[{seq}] Tool result: {tool_name} → {res_str}")
-
-                elif event_type == EventType.TOOL_ERROR:
-                    tool_name = payload.get("tool_name", "?")
-                    error = payload.get("error_message", "unknown error")
-                    lines.append(f"[{seq}] Tool error: {tool_name} → {error[:200]}")
-
-            if len(lines) <= 1:
-                return None
-
-            return ChatMessage(role="system", content="\n".join(lines))
-
-        except Exception as e:
-            logger.warning(f"Failed to load run history for run {self.run_id}: {e}")
-            return None
-
-    async def _load_run_event_messages(self) -> list[ChatMessage]:
-        """Load prior conversation turns for this run from the Redis stream.
-
-        Fetches via ``get_run_history`` (same source as ``_load_run_history``)
-        so events that have not yet been persisted to PostgreSQL are included.
-        Filters to only USER_MESSAGE / AGENT_MESSAGE events and converts them
-        to proper role-based ChatMessages.
-
-        The current user message (the most recent USER_MESSAGE, which triggered
-        this handler) is excluded — it is appended separately by
-        ``_prepare_messages``.  Returns an empty list when ``run_id`` or
-        ``tool_caller`` is not available, or the stream has no prior turns.
+        This is the single place where trigger context enters the LLM conversation:
+        the event worker stores formatted context in payload["_context"] of the
+        USER_MESSAGE event; this method reads it and injects it as a system message
+        immediately before the user turn.
         """
         if not self.run_id or not self.tool_caller:
             return []
         try:
             result = await self.tool_caller.call(
                 "get_run_history",
-                {
-                    "run_id": self.run_id,
-                    "limit": 200,
-                    "exclude_types": [
-                        EventType.AGENT_TOKEN,
-                        EventType.AGENT_THINKING,
-                        EventType.AGENT_HEARTBEAT,
-                        EventType.TOOL_CALL,
-                        EventType.TOOL_RESULT,
-                        EventType.TOOL_ERROR,
-                    ],
-                },
+                {"run_id": self.run_id, "limit": 200},
             )
             raw_events = (result or {}).get("data", {}).get("events", [])
             if not raw_events:
                 return []
 
-            # Keep only conversation-turn events, in stream order.
-            turn_types = {str(EventType.USER_MESSAGE), str(EventType.AGENT_MESSAGE)}
-            events = [e for e in raw_events if e.get("event_type") in turn_types]
-
-            # Remove the last USER_MESSAGE — it is the current trigger and will
-            # be appended again by _prepare_messages.
-            last_user_idx = -1
-            for i, e in enumerate(events):
-                if e.get("event_type") == str(EventType.USER_MESSAGE):
-                    last_user_idx = i
-            if last_user_idx >= 0:
-                events = events[:last_user_idx]
-
-            # Keep only the most recent max_history_messages events.
-            if len(events) > self.max_history_messages:
-                events = events[-self.max_history_messages :]
-
             messages: list[ChatMessage] = []
-            for e in events:
-                payload = e.get("payload") or {}
+            for e in raw_events:
                 event_type = e.get("event_type", "")
+                payload = e.get("payload") or {}
+
                 if event_type == str(EventType.USER_MESSAGE):
+                    # Inject trigger context pre-formatted by the event worker.
+                    ctx = payload.get("_context")
+                    if ctx:
+                        messages.append(ChatMessage(role="system", content=str(ctx)))
                     msg = payload.get("message", "")
                     if isinstance(msg, list):
                         msg = " ".join(
@@ -579,18 +391,43 @@ class DefaultExecutor(Executor):
                         )
                     if msg:
                         messages.append(ChatMessage(role="user", content=str(msg)))
+
                 elif event_type == str(EventType.AGENT_MESSAGE):
                     content = payload.get("content") or payload.get("message", "")
                     if content:
-                        messages.append(
-                            ChatMessage(role="assistant", content=str(content))
-                        )
+                        messages.append(ChatMessage(role="assistant", content=str(content)))
+
+                elif event_type == str(EventType.TOOL_RESULT):
+                    tool_name = payload.get("tool_name", "")
+                    result_data = payload.get("result")
+                    result_str = json.dumps(result_data, ensure_ascii=False, default=str)
+                    tool_text = f"\nTool result ({tool_name}):\n{result_str}"
+                    # Append to the last assistant message so the model sees the
+                    # result as part of its own reasoning turn (no role="tool" needed).
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].role == "assistant":
+                            messages[i].content += tool_text
+                            break
+                    else:
+                        messages.append(ChatMessage(role="user", content=tool_text))
+
+                elif event_type == str(EventType.TOOL_ERROR):
+                    tool_name = payload.get("tool_name", "")
+                    error = payload.get("error_message", "Unknown error")
+                    tool_text = f"\nTool error ({tool_name}): {error}"
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].role == "assistant":
+                            messages[i].content += tool_text
+                            break
+                    else:
+                        messages.append(ChatMessage(role="user", content=tool_text))
+
+                # TOOL_CALL: skip — content is embedded in AGENT_MESSAGE text.
+
             return messages
 
         except Exception as e:
-            logger.warning(
-                f"Failed to load run event messages for run {self.run_id}: {e}"
-            )
+            logger.warning(f"Failed to load event history for run {self.run_id}: {e}")
             return []
 
     # ── agentic loop (core streaming logic) ──────────────────────
@@ -599,23 +436,14 @@ class DefaultExecutor(Executor):
         self,
         messages: list[ChatMessage],
     ) -> AsyncGenerator[Event, None]:
-        """Run the agentic loop: call LLM, process tool calls, repeat."""
-        # Reserve a slot at index 1 (right after system prompt) for run history.
-        # It is inserted once here and refreshed in-place before every LLM call
-        # so the model always sees the latest event stream.
-        run_history_idx: int = -1
-        initial_history = await self._load_run_history()
-        if initial_history is not None:
-            messages.insert(1, initial_history)
-            run_history_idx = 1
+        """Run the agentic loop: call LLM, process tool calls, repeat.
 
+        ``messages`` is the complete conversation built by the caller
+        (system prompt + long-term history + event history).  No additional
+        history loading happens inside the loop; the caller is responsible
+        for passing an up-to-date message list.
+        """
         for _iteration in range(self.max_iterations):
-            # ── refresh run history before each LLM call ─────────
-            if run_history_idx >= 0:
-                fresh = await self._load_run_history()
-                if fresh is not None:
-                    messages[run_history_idx] = fresh
-
             # ── per-iteration state ──────────────────────────────
             response_buf = ""
             think_buf = ""
@@ -703,7 +531,7 @@ class DefaultExecutor(Executor):
                 yield self._emit_message(llm_response.content or response_buf)
                 break
             else:
-                async for e in self._emit_tool_calls(llm_response.tool_calls, messages):
+                async for e in self._emit_tool_calls(llm_response.tool_calls):
                     yield e
 
             # Reset token index for the next LLM call iteration
@@ -715,60 +543,15 @@ class DefaultExecutor(Executor):
                 "Maximum tool-calling iterations reached. Stopping."
             )
 
-    # ── history loading ───────────────────────────────────────────
-
-    async def _load_history(self) -> list[ChatMessage]:
-        """Load previous conversation turns from WorkspaceContext."""
-        if not self.workspace_id:
-            return []
-
-        try:
-            from aiwen.extensions.database import get_session
-            from aiwen.frameworks.context import DetailLevel
-            from aiwen.utils.workspace_context_cache import get_cached_workspace_context
-
-            async with get_session("aiwen") as db:
-                service = await get_cached_workspace_context(db, self.workspace_id)
-                results = await service.descendants(f"{self.workspace_id}/long_memory")
-                history_entries = results.disclose_all(DetailLevel.DETAIL)
-
-            messages: list[ChatMessage] = []
-            for entry in history_entries:
-                detail = entry.get("detail")
-                if not detail:
-                    continue
-                try:
-                    turns = json.loads(detail) if isinstance(detail, str) else detail
-                    if not isinstance(turns, list):
-                        continue
-                    for turn in turns:
-                        role = turn.get("role")
-                        content = turn.get("content", "")
-                        if role in ("user", "assistant") and content:
-                            messages.append(ChatMessage(role=role, content=content))
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-            return messages
-
-        except Exception as e:
-            logger.warning(f"Failed to load history for workspace {self.workspace_id}: {e}")
-            return []
-
     async def _emit_tool_calls(
         self,
         tool_calls: list[ToolCallRequest],
-        messages: list[ChatMessage],
     ) -> AsyncGenerator[Event, None]:
-        """Emit one TOOL_CALL event per tool, save state, then pause the loop.
+        """Emit one TOOL_CALL event per tool, register pending IDs, then pause.
 
-        Saves the current message history so ``_resume_with_results`` can
-        reconstruct the conversation when all tool results arrive.
-        Raises ``WaitingForTool`` after yielding all events, which propagates
-        up to ``process_event`` where it is caught and silenced.
+        Raises ``WaitingForTool`` after yielding all events so the worker
+        knows the loop is suspended until TOOL_RESULT/TOOL_ERROR events arrive.
         """
-        self._waiting_messages = list(messages)
-
         for tc in tool_calls:
             self._pending_tool_ids.add(tc.id)
             yield self._emit_tool_call(tc.name, tc.id, tc.arguments)

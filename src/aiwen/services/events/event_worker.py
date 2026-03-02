@@ -21,6 +21,7 @@ DB session / EventPublisher / RunStateMachine。这样多个 run 的 LLM 调用
 
 import asyncio
 import contextlib
+import json
 import logging
 from dataclasses import dataclass
 from uuid import UUID
@@ -61,10 +62,13 @@ REDIS_RUN_LABEL = _redis_cfg.run_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
 
 # Event types that should be checked against workspace triggers before processing.
+# Only USER_MESSAGE is included because it is the only event type whose downstream
+# handler (_on_user_message) actually reads _trigger_context from the payload.
+# TOOL_CALL goes to handle_tool_call (never reads _trigger_context) and
+# TOOL_RESULT goes to _on_tool_result (also never reads it), so running triggers
+# for those types would be wasted DB queries and tool executions.
 _TRIGGER_EVENT_TYPES: frozenset[str] = frozenset({
     EventType.USER_MESSAGE,
-    EventType.TOOL_CALL,
-    EventType.TOOL_RESULT,
 })
 
 
@@ -166,14 +170,16 @@ class Worker:
         return self._run_event_buffers.pop(run_id, [])
 
     async def _run_triggers(self, event: Event, ctx: _Ctx) -> None:
-        """Check workspace triggers for the event and inject results into payload.
+        """Check workspace triggers and embed formatted results into the event payload.
 
         Queries enabled triggers for the event's workspace that match
         ``event.event_type``.  Each matched trigger's tool is executed and the
-        aggregated results are stored in ``event.payload["_trigger_context"]``
-        so the downstream executor can consume them as additional context.
+        aggregated results are formatted into a ready-to-use context string stored
+        in ``event.payload["_context"]``.  All trigger-specific logic is completed
+        here; the downstream executor treats ``_context`` as generic extra context
+        with no knowledge of triggers.
 
-        Only called for USER_MESSAGE, TOOL_CALL, and TOOL_RESULT events.
+        Only called for USER_MESSAGE events (the only type whose handler uses _context).
         Failures are logged and silently swallowed to avoid interrupting the
         main event processing pipeline.
         """
@@ -184,8 +190,21 @@ class Worker:
         try:
             results = await process_event_triggers(ctx.db, workspace_id, event)
             if results:
+                lines = ["[Workspace context retrieved by triggers]"]
+                for item in results:
+                    name = item.get("trigger_name", "trigger")
+                    action = item.get("tool_name", "")
+                    result = item.get("result")
+                    lines.append(f"\n### {name} ({action})")
+                    if result is None:
+                        lines.append("(no result)")
+                    elif isinstance(result, (dict, list)):
+                        lines.append(json.dumps(result, ensure_ascii=False, indent=2))
+                    else:
+                        lines.append(str(result))
+
                 payload = dict(event.payload or {})
-                payload["_trigger_context"] = results
+                payload["_context"] = "\n".join(lines)
                 event.payload = payload
                 logger.info(
                     "Triggers fired: workspace=%s event=%s run=%s triggers=%s",
