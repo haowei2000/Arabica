@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
@@ -23,6 +23,11 @@ import type { Event } from '@/types/event';
 import WorkspaceContextTree from '@/components/WorkspaceContextTree';
 import { useWorkspaceStream } from '@/hooks/useWorkspaceStream';
 import { useRunEventsStore } from '@/stores/useRunEventsStore';
+import { useRunEvents } from '@/hooks/useRunEvents';
+import { useTasks } from '@/hooks/useTasks';
+import { useArtifacts } from '@/hooks/useArtifacts';
+import { artifactService, type Artifact } from '@/services/artifactService';
+import { useQueryClient } from '@tanstack/react-query';
 
 // ─── Run timeline helpers ──────────────────────────────────────────────────
 
@@ -66,8 +71,112 @@ const HIDDEN_EVENT_TYPES = new Set([
   'agent.heartbeat',
 ]);
 
-// Stable empty array to avoid creating a new reference on every render in Zustand selectors
-const EMPTY_EVENTS: Event[] = [];
+
+// ─── Task status helpers ───────────────────────────────────────────────────
+const TASK_STATUS_ICON: Record<string, React.ReactNode> = {
+  pending:     <Clock className="size-3 text-muted-foreground/60 shrink-0" />,
+  in_progress: <Circle className="size-3 text-yellow-400 shrink-0 animate-pulse" />,
+  done:        <CheckCircle2 className="size-3 text-green-500 shrink-0" />,
+  failed:      <XCircle className="size-3 text-red-500 shrink-0" />,
+  cancelled:   <AlertCircle className="size-3 text-muted-foreground/40 shrink-0" />,
+};
+
+const TASK_STATUS_TEXT: Record<string, string> = {
+  pending:     'Pending',
+  in_progress: 'In progress',
+  done:        'Done',
+  failed:      'Failed',
+  cancelled:   'Cancelled',
+};
+
+const ARTIFACT_TYPE_COLOR: Record<string, string> = {
+  text:     'bg-blue-500/10 text-blue-400',
+  code:     'bg-purple-500/10 text-purple-400',
+  file:     'bg-orange-500/10 text-orange-400',
+  image:    'bg-pink-500/10 text-pink-400',
+  document: 'bg-cyan-500/10 text-cyan-400',
+  data:     'bg-green-500/10 text-green-400',
+  other:    'bg-muted text-muted-foreground',
+};
+
+// ─── ArtifactCard component ────────────────────────────────────────────────
+function ArtifactCard({
+  artifact,
+  workspaceId,
+}: {
+  artifact: Artifact;
+  workspaceId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const hasContent = !!artifact.content || !!artifact.s3_url;
+  const colorCls = ARTIFACT_TYPE_COLOR[artifact.artifact_type] ?? ARTIFACT_TYPE_COLOR.other;
+
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDownloading(true);
+    try {
+      artifactService.downloadArtifact(workspaceId, artifact.id, artifact.name);
+    } finally {
+      setTimeout(() => setDownloading(false), 1500);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div
+        className={cn(
+          'flex items-center gap-2 px-3 py-2 transition-colors',
+          hasContent && 'cursor-pointer hover:bg-muted/40',
+        )}
+        onClick={() => hasContent && setExpanded((v) => !v)}
+      >
+        {hasContent && (
+          <ChevronRight className={cn(
+            'size-2.5 text-muted-foreground/40 transition-transform shrink-0',
+            expanded && 'rotate-90'
+          )} />
+        )}
+        {!hasContent && <div className="w-2.5 shrink-0" />}
+
+        <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0', colorCls)}>
+          {artifact.artifact_type}
+        </span>
+
+        <span className="text-xs font-medium flex-1 min-w-0 truncate">{artifact.name}</span>
+
+        {artifact.version > 1 && (
+          <span className="text-[10px] text-muted-foreground/40 shrink-0">v{artifact.version}</span>
+        )}
+
+        <button
+          type="button"
+          onClick={handleDownload}
+          disabled={downloading || !hasContent}
+          title="Download"
+          className={cn(
+            'size-5 flex items-center justify-center rounded transition-colors shrink-0',
+            hasContent
+              ? 'text-muted-foreground/50 hover:text-foreground hover:bg-muted/60'
+              : 'text-muted-foreground/20 cursor-default'
+          )}
+        >
+          {downloading
+            ? <Loader2 className="size-3 animate-spin" />
+            : <Download className="size-3" />}
+        </button>
+      </div>
+
+      {expanded && artifact.content && (
+        <div className="border-t border-border/40 bg-muted/20 px-3 py-2">
+          <pre className="text-[10px] font-mono text-foreground/75 whitespace-pre-wrap break-all max-h-48 overflow-y-auto leading-relaxed">
+            {artifact.content}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function eventSummary(event: Event): string {
   const p = event.payload;
@@ -182,9 +291,9 @@ function RunTimelineItem({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Events come exclusively from the workspace SSE stream accumulated in the store.
-  // No PG fetch — the stream is the single source of truth.
-  const events = useRunEventsStore((s) => s.liveEvents[run.id] ?? EMPTY_EVENTS);
+  // Merge PG history + live SSE stream events.
+  // PG fetch only fires when the item is first expanded (lazy load).
+  const { events, isLoading: eventsLoading } = useRunEvents(run.id, expanded);
 
   const fullMessage = run.input_data?.message ? String(run.input_data.message) : '';
   const title = fullMessage ? fullMessage.slice(0, 55) : 'New run';
@@ -265,7 +374,12 @@ function RunTimelineItem({
 
       {expanded && (
         <div className="border-t border-border/40 mx-1 mb-1 rounded-b-md overflow-hidden bg-muted/20">
-          {(() => {
+          {eventsLoading ? (
+            <div className="flex items-center gap-1.5 px-3 py-2">
+              <Loader2 className="size-2.5 animate-spin text-muted-foreground/40" />
+              <span className="text-[10px] text-muted-foreground/40">Loading events…</span>
+            </div>
+          ) : (() => {
             const visible = events.filter((e) => !HIDDEN_EVENT_TYPES.has(e.event_type));
             return visible.length === 0 ? (
               <p className="text-[10px] text-muted-foreground/40 px-3 py-2">No events</p>
@@ -370,6 +484,32 @@ export default function WorkspaceConsole() {
   );
 
   useWorkspaceStream(currentWorkspaceId);
+
+  const queryClient = useQueryClient();
+
+  // Real-time tasks: poll every 3 s while any run is active
+  const hasActiveRun = runsData?.items?.some(
+    (r) => r.status === 'running' || r.status === 'pending'
+  ) ?? false;
+  const pollInterval = hasActiveRun ? 3000 : undefined;
+
+  const { data: tasksData, isLoading: tasksLoading } = useTasks(
+    currentWorkspaceId || '',
+    { limit: 100 },
+    { refetchInterval: pollInterval }
+  );
+  const { data: artifactsData, isLoading: artifactsLoading } = useArtifacts(
+    currentWorkspaceId || '',
+    { limit: 100 },
+    { refetchInterval: pollInterval }
+  );
+
+  const handleRefreshTasks = () => {
+    queryClient.invalidateQueries({ queryKey: ['tasks', currentWorkspaceId] });
+  };
+  const handleRefreshArtifacts = () => {
+    queryClient.invalidateQueries({ queryKey: ['artifacts', currentWorkspaceId] });
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -627,25 +767,121 @@ export default function WorkspaceConsole() {
           </TabsContent>
 
           <TabsContent value="tasks" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center gap-1.5 mb-3">
-              <ListTodo className="size-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold">Tasks</span>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-1.5">
+                <ListTodo className="size-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold">Tasks</span>
+                {tasksData && (
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">({tasksData.total})</span>
+                )}
+              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-6"
+                onClick={handleRefreshTasks}
+                title="Refresh tasks"
+              >
+                <RefreshCw className="size-3" />
+              </Button>
             </div>
-            <div className="text-center py-10">
-              <ListTodo className="mx-auto size-6 text-muted-foreground/20 mb-2" />
-              <p className="text-[10px] text-muted-foreground/50">No tasks yet</p>
-            </div>
+            {tasksLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-muted-foreground/40" />
+              </div>
+            ) : tasksData?.items && tasksData.items.length > 0 ? (
+              <div className="space-y-1">
+                {tasksData.items.map((task) => (
+                  <div
+                    key={task.id}
+                    className="rounded-lg border border-border bg-card px-3 py-2 space-y-1"
+                  >
+                    <div className="flex items-start gap-2">
+                      {TASK_STATUS_ICON[task.status] ?? <Circle className="size-3 shrink-0" />}
+                      <span className="text-xs font-medium leading-tight flex-1 min-w-0 break-words">
+                        {task.title}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 pl-5">
+                      <span className={cn(
+                        'text-[10px] px-1.5 py-0.5 rounded-full',
+                        task.status === 'done'        ? 'bg-green-500/10 text-green-400' :
+                        task.status === 'in_progress' ? 'bg-yellow-500/10 text-yellow-400' :
+                        task.status === 'failed'      ? 'bg-red-500/10 text-red-400' :
+                        task.status === 'cancelled'   ? 'bg-muted text-muted-foreground' :
+                                                        'bg-muted text-muted-foreground/60'
+                      )}>
+                        {TASK_STATUS_TEXT[task.status] ?? task.status}
+                      </span>
+                      {task.assignee && (
+                        <span className="text-[10px] text-muted-foreground/50 truncate">{task.assignee}</span>
+                      )}
+                      {task.run_id && (
+                        <span className="text-[10px] text-muted-foreground/30 font-mono ml-auto">
+                          {task.run_id.slice(0, 8)}
+                        </span>
+                      )}
+                    </div>
+                    {task.description && (
+                      <p className="text-[10px] text-muted-foreground/60 pl-5 line-clamp-2 leading-relaxed">
+                        {task.description}
+                      </p>
+                    )}
+                    {task.result && task.status === 'done' && (
+                      <p className="text-[10px] text-green-400/70 pl-5 line-clamp-2 leading-relaxed">
+                        {task.result}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-10">
+                <ListTodo className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+                <p className="text-[10px] text-muted-foreground/50">No tasks yet</p>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="results" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center gap-1.5 mb-3">
-              <FileOutput className="size-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold">Results</span>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-1.5">
+                <FileOutput className="size-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold">Artifacts</span>
+                {artifactsData && (
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">({artifactsData.total})</span>
+                )}
+              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-6"
+                onClick={handleRefreshArtifacts}
+                title="Refresh artifacts"
+              >
+                <RefreshCw className="size-3" />
+              </Button>
             </div>
-            <div className="text-center py-10">
-              <FileOutput className="mx-auto size-6 text-muted-foreground/20 mb-2" />
-              <p className="text-[10px] text-muted-foreground/50">No results yet</p>
-            </div>
+            {artifactsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-muted-foreground/40" />
+              </div>
+            ) : artifactsData?.items && artifactsData.items.length > 0 ? (
+              <div className="space-y-1.5">
+                {artifactsData.items.map((artifact) => (
+                  <ArtifactCard
+                    key={artifact.id}
+                    artifact={artifact}
+                    workspaceId={currentWorkspaceId || ''}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-10">
+                <FileOutput className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+                <p className="text-[10px] text-muted-foreground/50">No artifacts yet</p>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="settings" className="flex-1 overflow-y-auto p-4 mt-0">

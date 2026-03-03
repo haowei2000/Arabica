@@ -33,10 +33,12 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from aiwen.routers.events.event_crud import router as event_crud_router
     from aiwen.routers.executor.app import router as agents_router
     from aiwen.routers.flush_redis import router as flush_redis_router
+    from aiwen.routers.runs.artifacts import router as artifacts_router
     from aiwen.routers.runs.runs import (
         router as runs_router,
         runs_standalone_router,
     )
+    from aiwen.routers.runs.tasks import router as tasks_router
     from aiwen.routers.streaming import router as streaming_router
     from aiwen.routers.triggers import router as triggers_router
     from aiwen.routers.user_triggers import router as user_triggers_router
@@ -62,6 +64,9 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (user_triggers_router, "/api"),
         (runs_router, "/api"),
         (runs_standalone_router, "/api"),
+        # Tasks & Artifacts
+        (tasks_router, "/api"),
+        (artifacts_router, "/api"),
         # Event CRUD & Search
         (event_crud_router, "/api"),
         # Unified Tool Management

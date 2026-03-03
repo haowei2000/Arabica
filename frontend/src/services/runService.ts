@@ -1,6 +1,7 @@
 import { apiClient } from '@/services/api';
 import { API_ENDPOINTS } from '@/constants/api';
 import type { Run, RunListResponse, RunStartRequest, RunState } from '@/types/run';
+import type { EventListResponse } from '@/types/event';
 
 export const runService = {
   async listRuns(
@@ -32,5 +33,9 @@ export const runService = {
 
   async getRunState(runId: string) {
     return apiClient.get<RunState>(API_ENDPOINTS.EVENTS.RUN_STATE(runId));
+  },
+
+  async getRunEvents(runId: string, params?: { from_sequence?: number; limit?: number }) {
+    return apiClient.get<EventListResponse>(API_ENDPOINTS.EVENTS.RUN_EVENTS(runId), { params });
   },
 };

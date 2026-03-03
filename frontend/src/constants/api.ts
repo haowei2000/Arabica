@@ -139,6 +139,18 @@ export const API_ENDPOINTS = {
         DELETE: (id: string) => `/triggers/${id}`,
     },
 
+    // Tasks
+    TASKS: {
+        LIST: (workspaceId: string) => `/workspaces/${workspaceId}/tasks`,
+    },
+
+    // Artifacts
+    ARTIFACTS: {
+        LIST: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts`,
+        GET: (workspaceId: string, artifactId: string) => `/workspaces/${workspaceId}/artifacts/${artifactId}`,
+        DOWNLOAD: (workspaceId: string, artifactId: string) => `/workspaces/${workspaceId}/artifacts/${artifactId}/download`,
+    },
+
     // Events 管理
     EVENTS: {
         GET: (id: string) => `/events/${id}`,
@@ -146,6 +158,7 @@ export const API_ENDPOINTS = {
         LIST_BY_RUN: (runId: string) => `/events/run/${runId}/list`,
         LIST_BY_USER: '/events/user/list',
         RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
+        RUN_EVENTS: (runId: string) => `/runs/${runId}/events`,
         RUN_STATE: (runId: string) => `/runs/${runId}/state`,
         WORKSPACE_STREAM: (workspaceId: string) => `/workspaces/${workspaceId}/events/stream`,
     },

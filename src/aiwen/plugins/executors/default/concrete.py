@@ -114,7 +114,6 @@ Available operations:
 2. Break complex tasks into subtasks using `create_task`.
 3. Save significant outputs with `create_artifact`.
 4. Think step-by-step before calling tools; prefer to batch related lookups.
-
 """
 
 # Characters needed to rule out a ``<think>`` opening tag.
