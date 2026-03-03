@@ -19,7 +19,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.workspaces.workspace_trigger import WorkspaceTrigger
@@ -51,18 +51,27 @@ class TriggerConditionEvaluator:
     """Pure condition evaluator - no I/O, no side effects.
 
     Supported condition types:
-    - always:   Always matches regardless of payload.
-    - keyword:  Checks if condition_value substring exists in the target field.
-    - regex:    Applies re.search on the target field string.
-    - jsonpath: Evaluates a JSONPath expression; matches when result is non-empty.
+    - always:     Always matches regardless of payload.
+    - keyword:    Checks if condition_value substring exists in the target field.
+    - regex:      Applies re.search on the target field string.
+    - jsonpath:   Evaluates a JSONPath expression; matches when result is non-empty.
+    - first_run:  Matches only when the workspace is on its first run ever.
+                  Requires ``context["is_first_run"]`` to be pre-computed by the
+                  caller (TriggerProcessor) and passed in via the context arg.
     """
 
-    def evaluate(self, trigger: WorkspaceTrigger, event_payload: dict[str, Any]) -> bool:
+    def evaluate(
+        self,
+        trigger: WorkspaceTrigger,
+        event_payload: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> bool:
         """Evaluate whether the trigger condition matches the event payload.
 
         Args:
             trigger: The WorkspaceTrigger ORM instance.
             event_payload: The raw event payload dict.
+            context: Optional pre-computed workspace context (e.g. ``is_first_run``).
 
         Returns:
             True if the trigger should fire, False otherwise.
@@ -71,6 +80,9 @@ class TriggerConditionEvaluator:
 
         if condition_type == "always":
             return True
+
+        if condition_type == "first_run":
+            return bool((context or {}).get("is_first_run", False))
 
         # Extract the target field value
         field = trigger.condition_field or "message"
@@ -180,10 +192,16 @@ class TriggerProcessor:
         if not triggers:
             return []
 
+        # Lazily compute workspace context required by stateful condition types.
+        # Currently only "first_run" needs DB access; other types are pure.
+        context: dict[str, Any] = {}
+        if any(t.condition_type == "first_run" for t in triggers):
+            context["is_first_run"] = await self._is_first_run()
+
         results = []
         for trigger in triggers:
             try:
-                matched = self._evaluator.evaluate(trigger, payload)
+                matched = self._evaluator.evaluate(trigger, payload, context)
                 logger.debug(
                     "Trigger '%s' (id=%s) condition=%s matched=%s",
                     trigger.name,
@@ -232,6 +250,21 @@ class TriggerProcessor:
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def _is_first_run(self) -> bool:
+        """Return True if this workspace has exactly one run (the current one).
+
+        Called lazily only when at least one ``first_run`` trigger exists.
+        The run is already persisted when ``user.message`` is processed, so a
+        count of 1 means no previous runs have ever been created.
+        """
+        from aiwen.models.runs.run import Run  # local import to avoid circular deps
+
+        stmt = select(func.count()).select_from(Run).where(
+            Run.workspace_id == self.workspace_id
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one() == 1
 
     async def _execute_action(self, trigger: WorkspaceTrigger) -> Any:
         """Execute the trigger action by invoking a registered tool by name.
