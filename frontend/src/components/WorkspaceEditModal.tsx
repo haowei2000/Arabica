@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2, Save, Cpu } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2, Save, Cpu, Globe } from 'lucide-react';
 import { useToolList } from '@/hooks/useTools';
 import { useKnowledgeList } from '@/hooks/useKnowledge';
 import { useSkills } from '@/hooks/useSkills';
@@ -119,6 +119,14 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   const [description, setDescription] = useState(workspace.description ?? '');
   const [selectedExecutorCode, setSelectedExecutorCode] = useState<string>(workspace.executor_code ?? '');
 
+  const existingConfig = workspace.executor_config as Record<string, unknown> | null;
+  const existingModel = existingConfig?.model as { name?: string; provider?: string } | undefined;
+  const [modelName, setModelName] = useState<string>(existingModel?.name ?? '');
+  const [modelProvider, setModelProvider] = useState<string>(existingModel?.provider ?? 'tongyi');
+  const [globalEvent, setGlobalEvent] = useState<boolean>(
+    existingConfig?.global_event !== undefined ? Boolean(existingConfig.global_event) : true
+  );
+
   const { data: templates = [] } = useTemplates();
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [selectedKnowledge, setSelectedKnowledge] = useState<Set<string>>(new Set());
@@ -226,20 +234,21 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
 
   const handleSave = async () => {
     try {
-      // Update name/description/executor if changed
-      const nameChanged = name.trim() !== workspace.name;
-      const descChanged = description !== (workspace.description ?? '');
-      const executorChanged = selectedExecutorCode !== (workspace.executor_code ?? '');
-      if (nameChanged || descChanged || executorChanged) {
-        await updateWorkspace.mutateAsync({
-          workspaceId: workspace.id,
-          data: {
-            name: name.trim() || workspace.name,
-            description: description || undefined,
-            executor_code: selectedExecutorCode || undefined,
-          },
-        });
+      // Build executor_config from model + global_event
+      const executorConfig: Record<string, unknown> = { global_event: globalEvent };
+      if (modelName.trim()) {
+        executorConfig.model = { name: modelName.trim(), provider: modelProvider };
       }
+
+      await updateWorkspace.mutateAsync({
+        workspaceId: workspace.id,
+        data: {
+          name: name.trim() || workspace.name,
+          description: description || undefined,
+          executor_code: selectedExecutorCode || undefined,
+          executor_config: executorConfig,
+        },
+      });
 
       // Reinit context with new selection
       const config: WorkspaceContextConfig = {
@@ -338,6 +347,47 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
                     Current: <span className="font-mono">{workspace.executor_code}</span>
                   </p>
                 )}
+              </div>
+
+              {/* Model */}
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5 text-sm font-medium">
+                  Model
+                </Label>
+                <div className="flex gap-2">
+                  <select
+                    value={modelProvider}
+                    onChange={(e) => setModelProvider(e.target.value)}
+                    className="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-32 shrink-0"
+                  >
+                    <option value="tongyi">tongyi</option>
+                    <option value="ollama">ollama</option>
+                  </select>
+                  <Input
+                    value={modelName}
+                    onChange={(e) => setModelName(e.target.value)}
+                    placeholder="e.g. qwen-plus"
+                    className="flex-1"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">Leave blank to use the executor default.</p>
+              </div>
+
+              {/* Global Event */}
+              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <Globe size={13} className="text-muted-foreground shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium leading-none">Global Event</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Load conversation history from all runs in this workspace.
+                    </p>
+                  </div>
+                </div>
+                <Checkbox
+                  checked={globalEvent}
+                  onCheckedChange={(v) => setGlobalEvent(Boolean(v))}
+                />
               </div>
             </div>
           ) : (

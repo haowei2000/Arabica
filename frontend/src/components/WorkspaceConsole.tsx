@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
+import { useWorkspaces, useUpdateWorkspace } from '@/hooks/useWorkspaces';
+import { useTemplates } from '@/hooks/useApps';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
 import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard } from '@/components/AgentEvents';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -313,6 +318,52 @@ export default function WorkspaceConsole() {
 
   const latestRunEvents = useRunEventsStore((s) => s.latestEvents);
 
+  // ── Settings tab state ────────────────────────────────────────────────────
+  const { data: workspacesData } = useWorkspaces({ page: 1, page_size: 50 });
+  const { data: templates = [] } = useTemplates();
+  const updateWorkspace = useUpdateWorkspace();
+
+  const currentWorkspace = workspacesData?.items?.find((w) => w.id === currentWorkspaceId);
+  const wsConfig = currentWorkspace?.executor_config as Record<string, unknown> | null | undefined;
+  const wsModel = wsConfig?.model as { name?: string; provider?: string } | undefined;
+
+  const [sExecutorCode, setSExecutorCode] = useState('');
+  const [sModelName, setSModelName] = useState('');
+  const [sModelProvider, setSModelProvider] = useState('tongyi');
+  const [sGlobalEvent, setSGlobalEvent] = useState(true);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
+  // Sync settings state when workspace loads or changes
+  useEffect(() => {
+    if (!currentWorkspace) return;
+    setSExecutorCode(currentWorkspace.executor_code ?? '');
+    setSModelName(wsModel?.name ?? '');
+    setSModelProvider(wsModel?.provider ?? 'tongyi');
+    setSGlobalEvent(wsConfig?.global_event !== undefined ? Boolean(wsConfig.global_event) : true);
+  }, [currentWorkspaceId, currentWorkspace?.executor_code, wsConfig?.global_event, wsModel?.name, wsModel?.provider]);
+
+  const handleSettingsSave = async () => {
+    if (!currentWorkspaceId) return;
+    setSettingsSaving(true);
+    try {
+      const executorConfig: Record<string, unknown> = { global_event: sGlobalEvent };
+      if (sModelName.trim()) {
+        executorConfig.model = { name: sModelName.trim(), provider: sModelProvider };
+      }
+      await updateWorkspace.mutateAsync({
+        workspaceId: currentWorkspaceId,
+        data: {
+          executor_code: sExecutorCode || undefined,
+          executor_config: executorConfig,
+        },
+      });
+    } catch (err) {
+      alert(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   const { sendMessage, stopStreaming, approveToolCall } = useStreamingChat(
     currentWorkspaceId || '',
     currentWorkspaceAppId
@@ -535,6 +586,7 @@ export default function WorkspaceConsole() {
               <TabsTrigger value="context" className="flex-1 gap-1" title="Context"><Layers className="size-3" /><span className="hidden sm:inline text-xs">Context</span></TabsTrigger>
               <TabsTrigger value="tasks" className="flex-1 gap-1" title="Tasks"><ListTodo className="size-3" /><span className="hidden sm:inline text-xs">Tasks</span></TabsTrigger>
               <TabsTrigger value="results" className="flex-1 gap-1" title="Results"><FileOutput className="size-3" /><span className="hidden sm:inline text-xs">Results</span></TabsTrigger>
+              <TabsTrigger value="settings" className="flex-1 gap-1" title="Settings"><Settings className="size-3" /><span className="hidden sm:inline text-xs">Settings</span></TabsTrigger>
             </TabsList>
           </div>
 
@@ -593,6 +645,88 @@ export default function WorkspaceConsole() {
             <div className="text-center py-10">
               <FileOutput className="mx-auto size-6 text-muted-foreground/20 mb-2" />
               <p className="text-[10px] text-muted-foreground/50">No results yet</p>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="settings" className="flex-1 overflow-y-auto p-4 mt-0">
+            <div className="flex items-center gap-1.5 mb-4">
+              <Settings className="size-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold">Workspace Settings</span>
+            </div>
+
+            <div className="space-y-4">
+              {/* Executor */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Executor</Label>
+                <select
+                  value={sExecutorCode}
+                  onChange={(e) => setSExecutorCode(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <option value="">— default —</option>
+                  {templates.map((t: any) => (
+                    <option key={t.executor_code} value={t.executor_code}>
+                      {t.executor_name || t.executor_code}
+                    </option>
+                  ))}
+                </select>
+                {currentWorkspace?.executor_code && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Current: <span className="font-mono">{currentWorkspace.executor_code}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Model */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Model</Label>
+                <div className="flex gap-2">
+                  <select
+                    value={sModelProvider}
+                    onChange={(e) => setSModelProvider(e.target.value)}
+                    className="rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-24 shrink-0"
+                  >
+                    <option value="tongyi">tongyi</option>
+                    <option value="ollama">ollama</option>
+                  </select>
+                  <Input
+                    value={sModelName}
+                    onChange={(e) => setSModelName(e.target.value)}
+                    placeholder="e.g. qwen-plus"
+                    className="flex-1 text-sm h-9"
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground">Leave blank to use executor default.</p>
+              </div>
+
+              {/* Global Event */}
+              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <Globe className="size-3.5 text-muted-foreground shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium leading-none">Global Event</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Load history from all runs in workspace.
+                    </p>
+                  </div>
+                </div>
+                <Checkbox
+                  checked={sGlobalEvent}
+                  onCheckedChange={(v) => setSGlobalEvent(Boolean(v))}
+                />
+              </div>
+
+              {/* Save */}
+              <Button
+                size="sm"
+                className="w-full gap-1.5"
+                onClick={handleSettingsSave}
+                disabled={settingsSaving}
+              >
+                {settingsSaving
+                  ? <><Loader2 className="size-3.5 animate-spin" />Saving…</>
+                  : <><Save className="size-3.5" />Save Settings</>}
+              </Button>
             </div>
           </TabsContent>
         </Tabs>

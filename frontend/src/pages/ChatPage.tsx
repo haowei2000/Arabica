@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, ArrowLeft, Bot } from 'lucide-react';
+import { Moon, Sun, ArrowLeft, Bot, Home } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -21,6 +21,7 @@ export default function ChatPage() {
 
   const handleLogout = () => { authService.logout(); reset(); clearCurrentWorkspace(); navigate('/login'); };
   const handleBackToWorkspaces = () => { reset(); clearCurrentWorkspace(); navigate('/app'); };
+  const handleGoHome = () => navigate('/home');
 
   if (!currentWorkspaceId) return null;
 
@@ -31,6 +32,9 @@ export default function ChatPage() {
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="size-7" onClick={handleBackToWorkspaces} title="Back to workspaces">
               <ArrowLeft className="size-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="size-7" onClick={handleGoHome} title="Home">
+              <Home className="size-3.5" />
             </Button>
             <div className="h-4 w-px bg-border" />
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">

@@ -100,10 +100,12 @@ class StreamService {
     options: StreamOptions,
   ): Promise<'completed' | 'exhausted'> {
     let reconnectAttempts = 0;
+    // Persists across reconnects so agent.message is not re-applied after tokens already received
+    const tokenState = { hasTokens: false };
 
     while (true) {
       const lastId = this.lastEventId ?? '$';
-      const result = await this.readSSEStream(runId, lastId, options);
+      const result = await this.readSSEStream(runId, lastId, options, tokenState);
 
       if (result === 'terminal') {
         return 'completed';
@@ -144,6 +146,7 @@ class StreamService {
     runId: string,
     lastId: string,
     options: StreamOptions,
+    tokenState: { hasTokens: boolean },
   ): Promise<'terminal' | 'disconnected'> {
     const { onChunk, onComplete, onError } = options;
     const token = localStorage.getItem('access_token');
@@ -177,7 +180,6 @@ class StreamService {
       let buffer = '';
       let eventName: string | null = null;
       let dataLines: string[] = [];
-      let hasTokens = false;
       let finished = false;
 
       const handleEvent = () => {
@@ -223,7 +225,7 @@ class StreamService {
         if (eventType === 'agent.token') {
           const tokenValue = eventPayload?.token as string | undefined;
           if (tokenValue) {
-            hasTokens = true;
+            tokenState.hasTokens = true;
             onChunk(tokenValue);
           }
           return;
@@ -231,7 +233,7 @@ class StreamService {
 
         if (eventType === 'agent.message') {
           const content = eventPayload?.content as string | undefined;
-          if (content && !hasTokens) {
+          if (content && !tokenState.hasTokens) {
             onChunk(content);
           }
           return;

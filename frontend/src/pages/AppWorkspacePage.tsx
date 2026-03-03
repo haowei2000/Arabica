@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Moon, Sun, Trash2, Plus,
   ChevronLeft, ChevronRight, Pencil,
-  Bot, LogOut, Play, FolderKanban, Cpu,
+  Bot, LogOut, Play, FolderKanban, Cpu, Home,
 } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useUIStore } from '@/stores/useUIStore';
@@ -118,6 +118,12 @@ export default function AppWorkspacePage() {
           </div>
 
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost" size="icon" className="size-7"
+              onClick={() => navigate('/home')} title="Home"
+            >
+              <Home className="size-3.5 text-muted-foreground" />
+            </Button>
             <Button
               variant="ghost" size="icon" className="size-7"
               onClick={toggleTheme}
