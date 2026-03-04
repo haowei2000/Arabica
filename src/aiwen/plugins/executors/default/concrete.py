@@ -138,8 +138,8 @@ class DefaultExecutor(Executor):
     """
 
     TEMPLATE: ClassVar[dict[str, Any]] = {
-        "executor_code": "DefaultExecutor",
-        "executor_name": "DefaultExecutor",
+        "executor_code": "SimpleAgent",
+        "executor_name": "SimpleAgent",
         "enabled": True,
         "version": 1,
         "config": AppConfig(
