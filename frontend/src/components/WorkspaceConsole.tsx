@@ -746,7 +746,10 @@ export default function WorkspaceConsole() {
               </div>
             ) : runsData?.items && runsData.items.length > 0 ? (
               <div className="space-y-1">
-                {runsData.items.map((run) => (
+                {[
+                  ...runsData.items.filter((r) => r.id === currentRunId),
+                  ...runsData.items.filter((r) => r.id !== currentRunId),
+                ].map((run) => (
                   <RunTimelineItem
                     key={run.id}
                     run={run}
