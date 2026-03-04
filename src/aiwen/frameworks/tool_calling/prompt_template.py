@@ -79,6 +79,7 @@ def format_tool_description(tool_class: type) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_INJECTION = """\
+<platform-injection>
 ## Available Tools
 
 You have access to the following tools. When you need to use a tool, \
@@ -96,7 +97,8 @@ Rules:
 - If you do NOT need to call a tool, simply respond with normal text (no <tool_call> tags).
 - Always provide required parameters. Optional parameters can be omitted.
 
-{tool_descriptions}"""
+{tool_descriptions}
+</platform-injection>"""
 
 
 def build_tools_system_prompt(tool_classes: list[type]) -> str:
