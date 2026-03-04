@@ -12,11 +12,11 @@ class EventType(StrEnum):
     # User events
     USER_MESSAGE = "user.message"
     USER_FEEDBACK = "user.feedback"
-
     # Agent events
     AGENT_TOKEN = "agent.token"
     AGENT_MESSAGE = "agent.message"
     AGENT_PLAN_STEP = "agent.plan.step"
+    AGENT_QUERY = "agent.query"
     AGENT_THINKING = "agent.thinking"
     AGENT_HEARTBEAT = "agent.heartbeat"
 

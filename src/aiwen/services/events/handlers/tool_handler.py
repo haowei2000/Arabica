@@ -9,12 +9,15 @@ This decouples tool execution from the executor, allowing:
 
 import logging
 import time
+from collections.abc import Callable, Coroutine
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.enums.events import EventType
+from aiwen.core.interfaces.executor import WaitingForUserInput
 from aiwen.models.app import App
 from aiwen.models.events.event import Event
 from aiwen.models.runs.run import Run
@@ -31,6 +34,7 @@ async def handle_tool_call(
     event_publisher: EventPublisher,
     state_machine: RunStateMachine,
     tool_caller: RegistryToolCaller | None = None,
+    flush_run_buffer: Callable[[str, AsyncSession], Coroutine[Any, Any, None]] | None = None,
 ):
     """Execute a tool and publish result/error event.
 
@@ -41,6 +45,11 @@ async def handle_tool_call(
         state_machine: Run state machine
         tool_caller: Reusable RegistryToolCaller instance; a new one is created
             if not provided (fallback for callers without a shared instance).
+        flush_run_buffer: Optional async callback ``(run_id_str, db) -> None``
+            that drains the in-memory event buffer for the run into the DB
+            session before ``pause_for_tool`` commits.  Only needed when the
+            run is being buffered (i.e. inside the worker).  Callers outside
+            the worker (e.g. tests) can omit this.
     """
     try:
         if not event.run_id:
@@ -138,6 +147,46 @@ async def handle_tool_call(
             )
 
             logger.info(f"Tool '{tool_name}' completed successfully in {elapsed_ms}ms for run {run_id}")
+
+        except WaitingForUserInput as wui:
+            # The tool needs a response from the user before it can return.
+            # Pause the run and broadcast the question via agent.query.
+            logger.info(
+                f"Tool '{tool_name}' is waiting for user input for run {run_id}"
+            )
+
+            # Flush in-memory event buffer to DB so that when _on_user_feedback
+            # later calls _load_last_exchange(), the AGENT_MESSAGE (containing
+            # the ask_for_user tool call) is already persisted and visible.
+            if flush_run_buffer is not None:
+                try:
+                    await flush_run_buffer(str(run_id), db)
+                except Exception as flush_err:
+                    logger.warning(f"Failed to flush run buffer for {run_id}: {flush_err}")
+
+            await state_machine.pause_for_tool(
+                run_id,
+                waiting_for={
+                    "type": "user_input",
+                    "tool_name": tool_name,
+                    "tool_id": tool_id,
+                    "question": wui.question,
+                    "executor_code": event.executor_code,
+                },
+                auto_commit=True,
+            )
+
+            await event_publisher.publish(
+                event_type=EventType.AGENT_QUERY,
+                workspace_id=str(run.workspace_id),
+                run_id=str(run_id),
+                payload={
+                    "question": wui.question,
+                    "tool_name": tool_name,
+                    "tool_id": tool_id,
+                },
+                auto_commit=True,
+            )
 
         except Exception as tool_error:
             elapsed_ms = int((time.time() - start_time) * 1000)

@@ -29,6 +29,7 @@ export const EventType = {
   AGENT_THINKING: 'agent.thinking',
   AGENT_HEARTBEAT: 'agent.heartbeat',
   AGENT_PLAN_STEP: 'agent.plan.step',
+  AGENT_QUERY: 'agent.query',
 
   // Tool events
   TOOL_CALL: 'tool.call',
@@ -95,6 +96,12 @@ export interface ToolPendingPayload {
   reason: string;
   requires_approval: boolean;
   arguments: Record<string, unknown>;
+}
+
+export interface AgentQueryPayload {
+  question: string;
+  tool_name: string;
+  tool_id: string;
 }
 
 export interface UsingContextPayload {
@@ -199,6 +206,15 @@ export interface ToolPendingState {
   tool_name: string;
   arguments: Record<string, unknown>;
   reason: string;
+}
+
+/**
+ * Runtime state for a pending user-input query (ask_for_user).
+ */
+export interface AgentQueryState {
+  tool_id: string;
+  tool_name: string;
+  question: string;
 }
 
 /**

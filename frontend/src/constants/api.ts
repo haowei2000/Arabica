@@ -39,6 +39,8 @@ export const API_ENDPOINTS = {
           `/workspaces/${workspaceId}/runs/${runId}/cancel`,
       RUN_RESUME: (workspaceId: string, runId: string) =>
           `/workspaces/${workspaceId}/runs/${runId}/resume`,
+      RUN_FEEDBACK: (workspaceId: string, runId: string) =>
+          `/workspaces/${workspaceId}/runs/${runId}/feedback`,
       CONTEXTS: (workspaceId: string) => `/workspaces/${workspaceId}/contexts`,
       CONTEXTS_COPY: (workspaceId: string) => `/workspaces/${workspaceId}/contexts/copy`,
       CONTEXT_DELETE: (workspaceId: string, contextId: string) =>

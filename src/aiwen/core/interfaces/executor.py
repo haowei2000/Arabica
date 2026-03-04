@@ -15,11 +15,29 @@ from typing import Any, ClassVar
 from uuid import uuid4
 
 from aiwen.core.interfaces.protocols import ExecutorProtocol
+from aiwen.core.interfaces.tool import ToolControlFlow
 from aiwen.models.events import Event
 from aiwen.schemas.events.event_payloads import (
     BaseEventSchema,
     EventType,
 )
+
+
+class WaitingForUserInput(ToolControlFlow):
+    """Raised by a tool to pause execution and ask the user a question.
+
+    Inherits from ``ToolControlFlow`` so that ``BaseTool.__call__`` lets it
+    propagate without invoking ``on_error``.  The tool handler catches this,
+    transitions the run to ``waiting`` state, and publishes an ``AGENT_QUERY``
+    event so the frontend can display the question.  Execution resumes when the
+    user submits a response via the ``/runs/{run_id}/feedback`` endpoint.
+
+    ``question`` is the text to show the user.
+    """
+
+    def __init__(self, question: str):
+        self.question = question
+        super().__init__(f"Waiting for user input: {question[:80]}")
 
 
 class WaitingForTool(Exception):
@@ -77,9 +95,10 @@ class Executor(ABC, ExecutorProtocol):
 
     TEMPLATE: ClassVar[dict[str, Any]]
 
-    # Re-export so ``except executor.WaitingForTool`` resolves on instances
-    # (the worker currently references it that way).
+    # Re-export exceptions so ``except executor.WaitingForTool`` resolves on
+    # instances (the worker currently references it that way).
     WaitingForTool = WaitingForTool
+    WaitingForUserInput = WaitingForUserInput
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -144,6 +163,10 @@ class Executor(ABC, ExecutorProtocol):
 
     async def _process_agent_plan_step(self, payload: dict[str, Any]) -> None:
         """Handle an incoming AGENT_PLAN_STEP event."""
+        ...
+
+    async def _process_agent_query(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming AGENT_QUERY event."""
         ...
 
     async def _process_agent_heartbeat(self, payload: dict[str, Any]) -> None:

@@ -1,5 +1,5 @@
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
-import type { AgentPlanStepPayload, ToolCallPayload, ToolPendingPayload, ToolResultPayload, UsingContextPayload, PutOutcomePayload } from '@/types/events';
+import type { AgentPlanStepPayload, AgentQueryPayload, ToolCallPayload, ToolPendingPayload, ToolResultPayload, UsingContextPayload, PutOutcomePayload } from '@/types/events';
 import { useChatStore } from '@/stores/useChatStore';
 
 export interface StreamOptions {
@@ -21,6 +21,8 @@ export interface StreamOptions {
   onPlanStep?: (event: AgentPlanStepPayload) => void;
   /** A tool requires human approval before it can execute. */
   onToolPending?: (event: ToolPendingPayload) => void;
+  /** The agent is asking the user a question (ask_for_user tool). */
+  onAgentQuery?: (event: AgentQueryPayload) => void;
   /** The agent is retrieving context (knowledge, memory, etc.). */
   onUsingContext?: (event: UsingContextPayload) => void;
   /** The agent produced an outcome (file, artifact, result). */
@@ -282,6 +284,16 @@ class StreamService {
           return;
         }
 
+        // ── agent query (ask_for_user) ────────────────────
+        if (eventType === 'agent.query') {
+          options.onAgentQuery?.({
+            question: eventPayload?.question as string,
+            tool_name: eventPayload?.tool_name as string,
+            tool_id: eventPayload?.tool_id as string,
+          });
+          return;
+        }
+
         // ── plan steps ────────────────────────────────────
         if (eventType === 'agent.plan.step') {
           options.onPlanStep?.({
@@ -411,6 +423,29 @@ class StreamService {
     if (this.controller) {
       this.controller.abort();
       this.controller = null;
+    }
+  }
+
+  /** POST the user's answer to an agent.query back to the backend. */
+  async submitFeedback(
+    workspaceId: string,
+    runId: string,
+    feedback: string,
+  ): Promise<void> {
+    const token = localStorage.getItem('access_token');
+    const res = await fetch(
+      `${API_BASE_URL}${API_ENDPOINTS.WORKSPACES.RUN_FEEDBACK(workspaceId, runId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ feedback }),
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`Feedback submission failed: ${res.status}`);
     }
   }
 

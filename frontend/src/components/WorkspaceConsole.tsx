@@ -9,7 +9,7 @@ import { useWorkspaces, useUpdateWorkspace } from '@/hooks/useWorkspaces';
 import { useTemplates } from '@/hooks/useApps';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
-import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard } from '@/components/AgentEvents';
+import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard, QueryCard } from '@/components/AgentEvents';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -422,6 +422,7 @@ export default function WorkspaceConsole() {
     activeToolCalls,
     planSteps,
     pendingApprovals,
+    pendingQueries,
     startNewRun,
   } = useChatStore();
 
@@ -478,7 +479,7 @@ export default function WorkspaceConsole() {
     }
   };
 
-  const { sendMessage, stopStreaming, approveToolCall } = useStreamingChat(
+  const { sendMessage, stopStreaming, approveToolCall, respondToQuery } = useStreamingChat(
     currentWorkspaceId || '',
     currentWorkspaceAppId
   );
@@ -513,7 +514,7 @@ export default function WorkspaceConsole() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, pendingApprovals]);
+  }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, pendingApprovals, pendingQueries]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -640,6 +641,9 @@ export default function WorkspaceConsole() {
                   {pendingApprovals.map((pending) => (
                     <ApprovalCard key={pending.tool_id} pending={pending} onApprove={approveToolCall} />
                   ))}
+                  {pendingQueries.map((query) => (
+                    <QueryCard key={query.tool_id} query={query} onRespond={respondToQuery} />
+                  ))}
                   {streamingMessage && (
                     <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm">
                       <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -648,15 +652,17 @@ export default function WorkspaceConsole() {
                     </div>
                   )}
                   <div className="flex items-center gap-2 text-muted-foreground px-1">
-                    <span className={cn('w-2 h-2 rounded-full animate-pulse', pendingApprovals.length > 0 ? 'bg-amber-500' : 'bg-primary')} />
+                    <span className={cn('w-2 h-2 rounded-full animate-pulse', pendingApprovals.length > 0 ? 'bg-amber-500' : pendingQueries.length > 0 ? 'bg-indigo-500' : 'bg-primary')} />
                     <span className="text-xs">
                       {pendingApprovals.length > 0
                         ? 'Waiting for your approval...'
-                        : activeToolCalls.some((tc) => tc.status === 'pending')
-                          ? 'Executing tools...'
-                          : streamingMessage
-                            ? 'Assistant is typing...'
-                            : 'Preparing response...'}
+                        : pendingQueries.length > 0
+                          ? 'Waiting for your answer...'
+                          : activeToolCalls.some((tc) => tc.status === 'pending')
+                            ? 'Executing tools...'
+                            : streamingMessage
+                              ? 'Assistant is typing...'
+                              : 'Preparing response...'}
                     </span>
                   </div>
                 </div>

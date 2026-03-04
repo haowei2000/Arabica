@@ -124,11 +124,24 @@ Available operations:
   create_context | update_context | delete_context
 </capability_guide>
 
+<interaction_guide>
+When you need information from the user before you can proceed — ambiguous intent,
+missing parameters, a choice between options — call `ask_for_user` with a concise,
+specific question.  The run will pause and the user will be prompted to reply; their
+answer arrives as the tool result so you can continue with full context.
+
+Guidelines:
+- Ask one focused question per call; if you have several unknowns, ask the most
+  blocking one first.
+</interaction_guide>
+
 <working_approach>
 1. Start by checking available knowledge and skills relevant to the request.
-2. Break complex tasks into subtasks using `create_task`.
-3. Save significant outputs with `create_artifact`.
-4. Think step-by-step before calling tools; prefer to batch related lookups.
+2. If the request is ambiguous or key parameters are missing, use `ask_for_user`
+   to clarify before starting work.
+3. Break complex tasks into subtasks using `create_task`.
+4. Save significant outputs with `create_artifact`.
+5. Think step-by-step before calling tools; prefer to batch related lookups.
 </working_approach>
 """
 
@@ -204,6 +217,10 @@ class DefaultExecutor(Executor):
         # resuming the agentic loop.
         self._pending_tool_ids: set[str] = set()
 
+        # Set when the LLM calls ask_for_user; cleared once USER_FEEDBACK
+        # arrives so _on_user_feedback can inject the answer as a tool result.
+        self._pending_user_input: dict[str, str] | None = None
+
     # ── abstract method ───────────────────────────────────────────
 
     async def setup(self) -> None:
@@ -270,16 +287,40 @@ class DefaultExecutor(Executor):
     ) -> AsyncGenerator[Event, None]:
         """Continue with user feedback — only last [user, agent] exchange as context.
 
-        Loads the most recent user + agent message from the current run,
-        then appends the feedback text as a new user turn.  This avoids
-        sending the entire conversation history to the LLM for a short
-        corrective reply.
+        If the payload contains ``tool_name`` (set by the feedback endpoint from
+        the run's ``waiting_for`` record), the feedback text is injected as a
+        ``<tool_result>`` into the last assistant message so the LLM sees the
+        answer in the proper structured format.  Using payload fields instead of
+        ``_pending_user_input`` instance state makes this handler resilient to
+        worker restarts between the ask and the answer.
+
+        Otherwise the feedback is appended as a new user turn (corrective
+        feedback on agent output).
         """
         feedback = payload.get("feedback", "")
+        tool_name = payload.get("tool_name", "")
+        tool_id = payload.get("tool_id", "") or ""
+
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_last_exchange())
-        if feedback:
+
+        if tool_name and feedback:
+            # User answered an ask_for_user query — inject as the tool result.
+            self._pending_tool_ids.discard(tool_id)
+            self._pending_user_input = None  # clear in-memory state if still set
+
+            tool_text = f'\n<tool_result name="{tool_name}">{feedback}</tool_result>'
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].role == "assistant":
+                    messages[i].content += tool_text
+                    break
+            else:
+                messages.append(ChatMessage(role="user", content=tool_text))
+        elif feedback:
+            # Generic corrective feedback — append as a new user turn.
             messages.append(ChatMessage(role="user", content=str(feedback)))
+
+        self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
 
@@ -455,6 +496,13 @@ class DefaultExecutor(Executor):
 
             elif event_type == str(EventType.AGENT_MESSAGE):
                 content = payload.get("content") or payload.get("message", "")
+                tool_calls = payload.get("tool_calls") or []
+                if tool_calls:
+                    calls_xml = "".join(
+                        f'\n<tool_call>{json.dumps({"name": tc["name"], "arguments": tc["arguments"]})}</tool_call>'
+                        for tc in tool_calls
+                    )
+                    content = (content or "") + calls_xml
                 if content:
                     messages.append(ChatMessage(role="assistant", content=str(content)))
 
@@ -480,6 +528,22 @@ class DefaultExecutor(Executor):
                         break
                 else:
                     messages.append(ChatMessage(role="user", content=tool_text))
+
+            elif event_type == str(EventType.USER_FEEDBACK):
+                # An ask_for_user answer — inject as tool result so the LLM sees
+                # the correct structured context when loading full history.
+                feedback = payload.get("feedback", "")
+                tool_name = payload.get("tool_name", "")
+                if tool_name and feedback:
+                    tool_text = f'\n<tool_result name="{tool_name}">{feedback}</tool_result>'
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].role == "assistant":
+                            messages[i].content += tool_text
+                            break
+                    else:
+                        messages.append(ChatMessage(role="user", content=tool_text))
+                elif feedback:
+                    messages.append(ChatMessage(role="user", content=str(feedback)))
 
             # TOOL_CALL: skip — content is embedded in AGENT_MESSAGE text.
 
@@ -537,6 +601,15 @@ class DefaultExecutor(Executor):
 
             elif event_type == str(EventType.AGENT_MESSAGE):
                 content = payload.get("content") or payload.get("message", "")
+                tool_calls = payload.get("tool_calls") or []
+                if tool_calls:
+                    # Reconstruct full assistant turn including tool call XML so the
+                    # LLM sees what it previously called when resuming.
+                    calls_xml = "".join(
+                        f'\n<tool_call>{json.dumps({"name": tc["name"], "arguments": tc["arguments"]})}</tool_call>'
+                        for tc in tool_calls
+                    )
+                    content = (content or "") + calls_xml
                 if content:
                     last_agent = ChatMessage(role="assistant", content=str(content))
 
@@ -648,6 +721,20 @@ class DefaultExecutor(Executor):
                 yield self._emit_message(llm_response.content or response_buf)
                 break
             else:
+                # Emit AGENT_MESSAGE carrying tool_calls metadata so that
+                # _load_last_exchange() can reconstruct the assistant turn
+                # (including the tool call XML) when resuming after user
+                # feedback or tool results.  Frontend displays only `content`.
+                yield self._make_event(
+                    EventType.AGENT_MESSAGE,
+                    {
+                        "content": llm_response.content or response_buf,
+                        "tool_calls": [
+                            {"name": tc.name, "arguments": tc.arguments}
+                            for tc in llm_response.tool_calls
+                        ],
+                    },
+                )
                 async for e in self._emit_tool_calls(llm_response.tool_calls):
                     yield e
 
@@ -671,6 +758,10 @@ class DefaultExecutor(Executor):
         """
         for tc in tool_calls:
             self._pending_tool_ids.add(tc.id)
+            if tc.name == "ask_for_user":
+                # Track so _on_user_feedback knows to inject the answer as a
+                # tool result rather than treating it as corrective feedback.
+                self._pending_user_input = {"tool_name": tc.name, "tool_id": tc.id}
             yield self._emit_tool_call(tc.name, tc.id, tc.arguments)
 
         raise WaitingForTool(

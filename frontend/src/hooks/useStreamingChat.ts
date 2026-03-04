@@ -41,6 +41,9 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     addPendingApproval,
     clearPendingApprovals,
     removePendingApproval,
+    addPendingQuery,
+    removePendingQuery,
+    clearPendingQueries,
     appendThinkingContent,
     addContextUsage,
     clearContextUsages,
@@ -80,9 +83,10 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     clearToolCalls();
     clearPlanSteps();
     clearPendingApprovals();
+    clearPendingQueries();
     clearContextUsages();
     clearOutcomes();
-  }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearContextUsages, clearOutcomes]);
+  }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearPendingQueries, clearContextUsages, clearOutcomes]);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -151,6 +155,15 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           });
         },
 
+        // ── agent query (ask_for_user) ──────────────────
+        onAgentQuery: (event) => {
+          addPendingQuery({
+            tool_id: event.tool_id,
+            tool_name: event.tool_name,
+            question: event.question,
+          });
+        },
+
         // ── run status ─────────────────────────────────
         onStatus: () => {
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
@@ -187,6 +200,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
       updateToolCall,
       addOrUpdatePlanStep,
       addPendingApproval,
+      addPendingQuery,
       appendThinkingContent,
       addContextUsage,
       addOutcome,
@@ -217,11 +231,21 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     [workspaceId, currentRunId, removePendingApproval]
   );
 
+  /** Submit the user's answer to an agent.query (ask_for_user) prompt. */
+  const respondToQuery = useCallback(
+    async (toolId: string, answer: string) => {
+      if (!currentRunId) return;
+      removePendingQuery(toolId);
+      await streamService.submitFeedback(workspaceId, currentRunId, answer);
+    },
+    [workspaceId, currentRunId, removePendingQuery]
+  );
+
   const retryLastMessage = useCallback(() => {
     if (lastUserMessageRef.current) {
       sendMessage(lastUserMessageRef.current);
     }
   }, [sendMessage]);
 
-  return { sendMessage, stopStreaming, approveToolCall, streamError, retryLastMessage };
+  return { sendMessage, stopStreaming, approveToolCall, respondToQuery, streamError, retryLastMessage };
 };

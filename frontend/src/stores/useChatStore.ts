@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { MessageRoleType, SimpleMessage } from '@/types/message';
-import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState } from '@/types/events';
+import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState, AgentQueryState } from '@/types/events';
 import { runService } from '@/services/runService';
 
 interface ChatState {
@@ -15,6 +15,7 @@ interface ChatState {
   activeToolCalls: ToolCallState[];
   planSteps: AgentPlanStepPayload[];
   pendingApprovals: ToolPendingState[];
+  pendingQueries: AgentQueryState[];
   contextUsages: ContextUsageState[];
   outcomes: OutcomeState[];
 
@@ -54,6 +55,11 @@ interface ChatState {
   removePendingApproval: (toolId: string) => void;
   clearPendingApprovals: () => void;
 
+  // ── query actions (ask_for_user) ──────────────────────────
+  addPendingQuery: (query: AgentQueryState) => void;
+  removePendingQuery: (toolId: string) => void;
+  clearPendingQueries: () => void;
+
   // ── reconnect & error actions ───────────────────────────
   setLastEventTimestamp: (ts: number | null) => void;
   setReconnecting: (reconnecting: boolean) => void;
@@ -72,6 +78,7 @@ export const useChatStore = create<ChatState>((set) => ({
   activeToolCalls: [],
   planSteps: [],
   pendingApprovals: [],
+  pendingQueries: [],
   contextUsages: [],
   outcomes: [],
 
@@ -122,6 +129,7 @@ export const useChatStore = create<ChatState>((set) => ({
         activeToolCalls: [],
         planSteps: [],
         pendingApprovals: [],
+        pendingQueries: [],
         contextUsages: [],
         outcomes: [],
         lastEventTimestamp: null,
@@ -144,6 +152,7 @@ export const useChatStore = create<ChatState>((set) => ({
       activeToolCalls: [],
       planSteps: [],
       pendingApprovals: [],
+      pendingQueries: [],
       contextUsages: [],
       outcomes: [],
       lastEventTimestamp: null,
@@ -163,6 +172,7 @@ export const useChatStore = create<ChatState>((set) => ({
       activeToolCalls: [],
       planSteps: [],
       pendingApprovals: [],
+      pendingQueries: [],
       contextUsages: [],
       outcomes: [],
       lastEventTimestamp: null,
@@ -232,6 +242,19 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
 
   clearPendingApprovals: () => set({ pendingApprovals: [] }),
+
+  // ── query actions (ask_for_user) ──────────────────────────
+  addPendingQuery: (query) =>
+    set((state) => ({
+      pendingQueries: [...state.pendingQueries, query],
+    })),
+
+  removePendingQuery: (toolId) =>
+    set((state) => ({
+      pendingQueries: state.pendingQueries.filter((q) => q.tool_id !== toolId),
+    })),
+
+  clearPendingQueries: () => set({ pendingQueries: [] }),
 
   // ── reconnect & error actions ───────────────────────────
   setLastEventTimestamp: (ts) => set({ lastEventTimestamp: ts }),

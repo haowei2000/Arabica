@@ -170,6 +170,20 @@ class Worker:
         self._run_seq_cursors.pop(run_id, None)
         return self._run_event_buffers.pop(run_id, [])
 
+    async def _flush_buffer_to_db(self, run_id: str, db: AsyncSession) -> None:
+        """Drain the in-memory event buffer into *db* without committing.
+
+        Called just before ``pause_for_tool`` when the run is waiting for user
+        input so that the AGENT_MESSAGE (with ask_for_user tool call) is
+        persisted in the same transaction as the run state change.  The
+        subsequent ``auto_commit=True`` in ``pause_for_tool`` then commits
+        both the buffered events and the waiting state atomically.
+        """
+        buffered = self._pop_run_buffer(run_id)
+        if buffered:
+            db.add_all(buffered)
+            logger.debug(f"Flushed {len(buffered)} buffered events to DB for run {run_id}")
+
     async def _run_triggers(self, event: Event, ctx: _Ctx) -> None:
         """Check workspace triggers and embed formatted results into the event payload.
 
@@ -547,6 +561,7 @@ class Worker:
                     await handle_tool_call(
                         event, ctx.db, ctx.publisher, ctx.state_machine,
                         tool_caller=self._tool_caller,
+                        flush_run_buffer=self._flush_buffer_to_db,
                     )
 
                 case EventType.RUN_CANCELLED:

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, BookOpen, Package } from 'lucide-react';
-import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState } from '@/types/events';
+import { ChevronDown, ChevronRight, BookOpen, Package, MessageCircleQuestion } from 'lucide-react';
+import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState, AgentQueryState } from '@/types/events';
 import { ErrorCategory } from '@/types/events';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -157,6 +157,47 @@ export function ApprovalCard({ pending, onApprove }: { pending: ToolPendingState
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── QueryCard ────────────────────────────────────────────────────────────────
+
+export function QueryCard({ query, onRespond }: { query: AgentQueryState; onRespond: (toolId: string, answer: string) => void }) {
+  const [answer, setAnswer] = useState('');
+
+  const handleSubmit = () => {
+    const trimmed = answer.trim();
+    if (!trimmed) return;
+    onRespond(query.tool_id, trimmed);
+    setAnswer('');
+  };
+
+  return (
+    <div className="rounded-lg border border-indigo-300 dark:border-indigo-700 overflow-hidden bg-indigo-50 dark:bg-indigo-900/20">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-indigo-200 dark:border-indigo-700/50">
+        <MessageCircleQuestion className="size-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+        <span className="text-sm font-semibold text-indigo-800 dark:text-indigo-200 flex-1">Agent is asking a question</span>
+        <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+      </div>
+      <div className="px-3 py-3 space-y-3">
+        <p className="text-sm text-indigo-900 dark:text-indigo-100">{query.question}</p>
+        <textarea
+          className="w-full rounded-md border border-indigo-200 dark:border-indigo-700 bg-white dark:bg-indigo-950/40 text-sm text-foreground px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 placeholder:text-muted-foreground"
+          rows={3}
+          placeholder="Type your answer..."
+          value={answer}
+          onChange={(e) => setAnswer(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit();
+          }}
+        />
+        <div className="flex justify-end">
+          <Button type="button" onClick={handleSubmit} disabled={!answer.trim()} size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+            Submit
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

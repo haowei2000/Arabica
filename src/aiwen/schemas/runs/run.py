@@ -77,3 +77,9 @@ class RunResumeRequest(BaseModel):
     tool_result: dict[str, Any] | None = Field(None, description="工具执行结果")
     user_input: str | None = Field(None, description="用户输入")
     approval: bool | None = Field(None, description="审批结果")
+
+
+class RunFeedbackRequest(BaseModel):
+    """Schema for submitting user feedback / response to an agent.query."""
+
+    feedback: str = Field(..., description="User's response text")

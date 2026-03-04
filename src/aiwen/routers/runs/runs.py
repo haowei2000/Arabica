@@ -21,6 +21,7 @@ from aiwen.models.executor.executor import ExecutorTemplate
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.events.event_payloads import EventType, UserMessageEventSchema
 from aiwen.schemas.runs.run import (
+    RunFeedbackRequest,
     RunListResponse,
     RunResponse,
     RunResumeRequest,
@@ -410,6 +411,77 @@ async def resume_run(
                 "triggered_by": "resume",
             },
         )
+
+    return run
+
+
+@router.post("/{run_id}/feedback", response_model=RunResponse)
+async def submit_feedback(
+    workspace_id: str,
+    run_id: str,
+    data: RunFeedbackRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    run_crud: RunCRUDDep,
+    state_machine: RunStateMachineDep,
+    event_publisher: EventPublisherDep,
+):
+    """Submit user feedback in response to an agent.query event.
+
+    Used when the agent called ``ask_for_user`` and the run is waiting for
+    the user's answer.  This endpoint:
+
+    1. Transitions the run from ``waiting`` back to ``running``.
+    2. Publishes a ``user.feedback`` event carrying the user's text so the
+       executor can inject it as the tool result and resume the loop.
+    """
+    workspace = await workspace_crud.get_by_id_and_user(workspace_id, current_user.id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace {workspace_id} not found or access denied",
+        )
+
+    run = await run_crud.get_by_id(run_id)
+    if not run or str(run.workspace_id) != workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run {run_id} not found",
+        )
+
+    if run.status != RunStatus.WAITING.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run is not in waiting state (current: {run.status})",
+        )
+
+    waiting_info = run.waiting_for or {}
+    if waiting_info.get("type") != "user_input":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Run is not waiting for user input",
+        )
+
+    # Transition: waiting → running
+    try:
+        run = await state_machine.resume_from_tool(run_id=run_id, auto_commit=True)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Publish user.feedback — the executor stream consumer will pick this up
+    # and forward it to the executor's _on_user_feedback handler.
+    await event_publisher.publish(
+        event_type=EventType.USER_FEEDBACK,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        user_id=str(current_user.id),
+        payload={
+            "feedback": data.feedback,
+            "tool_name": waiting_info.get("tool_name", "ask_for_user"),
+            "tool_id": waiting_info.get("tool_id"),
+        },
+        auto_commit=True,
+    )
 
     return run
 

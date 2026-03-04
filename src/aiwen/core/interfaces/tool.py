@@ -17,6 +17,18 @@ from aiwen.core.interfaces.protocols import ToolProtocol
 
 T = TypeVar("T", bound="BaseTool")
 
+
+class ToolControlFlow(Exception):
+    """Base class for control-flow exceptions raised inside tool ``execute()``.
+
+    Subclasses are used as signals (not real errors): ``BaseTool.__call__``
+    re-raises them so they bypass the ``on_error`` handler and propagate to
+    the caller (e.g. ``tool_handler``) that knows how to act on them.
+
+    Current subclasses:
+      - ``WaitingForUserInput`` — pause execution, ask the user a question.
+    """
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -294,6 +306,9 @@ class BaseTool(ABC,ToolProtocol):
                 tool_name, elapsed_ms, result.get("success"),
             )
             return result
+
+        except ToolControlFlow:
+            raise  # Control-flow signals (e.g. WaitingForUserInput) bypass on_error
 
         except Exception as e:
             elapsed_ms = (time.monotonic() - start_time) * 1000
