@@ -17,6 +17,9 @@ from aiwen.core.interfaces.tool import (
 _IMPORTANT_TYPES: list[str] = [
     EventType.USER_MESSAGE,
     EventType.AGENT_MESSAGE,
+    EventType.TOOL_RESULT,
+    EventType.TOOL_ERROR,
+    EventType.USER_FEEDBACK,
 ]
 
 
@@ -65,7 +68,7 @@ class GetWorkspaceHistoryTool(InnerTool):
                             Event.event_type.in_(_IMPORTANT_TYPES),
                         )
                     )
-                    .order_by(Event.sequence.asc())
+                    .order_by(Event.created_at.asc())
                     .limit(input_data.limit)
                 )
                 result = await db.execute(stmt)
