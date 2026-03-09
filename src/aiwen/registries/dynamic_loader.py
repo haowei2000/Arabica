@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.core.interfaces.tool import (
     ChainStep,
     ExternalTool,
+    InnerTool,
     ToolInputSchema,
     ToolMetadata,
 )
@@ -122,13 +123,16 @@ def _build_input_schema(
 
 _CacheKey = tuple[UUID, UUID | None]  # (user_id, workspace_id)
 
+# tool_types handled by DynamicToolLoader
+_DYNAMIC_TOOL_TYPES = ("external", "mcp")
+
 
 @dataclass(slots=True)
 class _CacheEntry:
     """Cached tool classes with the DB fingerprint that produced them."""
 
     fingerprint: tuple[int, datetime | None]  # (count, max_updated_at)
-    tool_classes: list[type[ExternalTool]]
+    tool_classes: list[type[ExternalTool] | type[InnerTool]]
 
 
 class DynamicToolLoader:
@@ -203,7 +207,7 @@ class DynamicToolLoader:
         db: AsyncSession,
         user_id: UUID,
         workspace_id: UUID | None = None,
-    ) -> list[type[ExternalTool]]:
+    ) -> list[type[ExternalTool] | type[InnerTool]]:
         """Load all enabled external tools for a user from the database.
 
         Uses a lightweight fingerprint (COUNT + MAX(updated_at)) to skip
@@ -236,12 +240,20 @@ class DynamicToolLoader:
         from aiwen.services.context.tools.tool_crud import ToolCRUD
 
         crud = ToolCRUD(db)
+        # Load both external (user-defined delegations) and mcp (imported from MCP servers).
         tool_records = await crud.list_user_tools(
             user_id=user_id,
             workspace_id=workspace_id,
             enabled_only=True,
             tool_type="external",
         )
+        mcp_records = await crud.list_user_tools(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            enabled_only=True,
+            tool_type="mcp",
+        )
+        tool_records = list(tool_records) + list(mcp_records)
 
         # Collect InnerTool names for collision detection
         inner_names: set[str] = set(ToolRegistry.list_tools())
@@ -286,15 +298,20 @@ class DynamicToolLoader:
                     continue
 
             try:
-                tool_cls = cls.create_tool_class(record)
+                if record.tool_type == "mcp":
+                    from aiwen.registries.mcp_loader import build_mcp_tool_class
+                    tool_cls = build_mcp_tool_class(record)
+                else:
+                    tool_cls = cls.create_tool_class(record)
                 tool_classes.append(tool_cls)
                 seen_names[name] = record.user_id
                 logger.debug(
-                    "Loaded external tool: %s (id=%s)", name, record.id,
+                    "Loaded %s tool: %s (id=%s)", record.tool_type, name, record.id,
                 )
             except Exception as e:
                 logger.error(
-                    "Failed to load external tool '%s': %s",
+                    "Failed to load %s tool '%s': %s",
+                    record.tool_type,
                     name,
                     e,
                     exc_info=True,
@@ -356,7 +373,7 @@ class DynamicToolLoader:
             func.count(ToolModel.id),
             func.max(ToolModel.updated_at),
         ).where(
-            ToolModel.tool_type == "external",
+            ToolModel.tool_type.in_(list(_DYNAMIC_TOOL_TYPES)),
             ToolModel.enabled == True,  # noqa: E712
             (ToolModel.user_id == user_id) | (ToolModel.is_public == True),  # noqa: E712
         )

@@ -43,12 +43,57 @@ from aiwen.schemas.context.tools.user_tool import (
 )
 from aiwen.services.context.tools.tool_crud import ToolCRUD
 
+from typing import Literal
+
+from pydantic import BaseModel, model_validator
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
 # Tool types that cannot be created or modified via API
 PROTECTED_TOOL_TYPES = {"inner"}
+
+
+# ─── MCP schemas ──────────────────────────────────────────────────────────────
+
+class MCPServerConfig(BaseModel):
+    transport: Literal["sse", "stdio"] = "sse"
+    url: str | None = None
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "MCPServerConfig":
+        if self.transport == "sse" and not self.url:
+            raise ValueError("url is required for sse transport")
+        if self.transport == "stdio" and not self.command:
+            raise ValueError("command is required for stdio transport")
+        return self
+
+
+class MCPToolInfo(BaseModel):
+    name: str
+    description: str
+    input_schema: dict | None = None
+
+
+class MCPProbeResponse(BaseModel):
+    success: bool
+    tools: list[MCPToolInfo] = []
+    error: str | None = None
+
+
+class MCPImportRequest(MCPServerConfig):
+    tool_names: list[str]
+    is_public: bool = False
+
+
+class MCPImportResponse(BaseModel):
+    imported: list[str]
+    skipped: list[str]
+    failed: list[str]
 
 
 def _build_user_tool_response(tool) -> UserToolResponse:
@@ -784,6 +829,12 @@ async def test_tool(
                     detail=f"Inner tool '{tool.name}' not found in registry",
                 )
             result = await tool_instance(**test_request.parameters)
+        elif tool.tool_type == "mcp":
+            from aiwen.registries.mcp_loader import build_mcp_tool_class
+
+            tool_cls = build_mcp_tool_class(tool)
+            tool_instance = tool_cls()
+            result = await tool_instance(**test_request.parameters)
         else:
             # External tool: create dynamic class and execute
             from aiwen.registries.dynamic_loader import DynamicToolLoader
@@ -822,3 +873,144 @@ async def test_tool(
             tool_name=tool.name,
             tool_id=str(tool.id),
         )
+
+
+# ============================================================================
+# MCP — Probe & Import
+# ============================================================================
+
+
+def _mcp_client_config(req: MCPServerConfig) -> str | dict:
+    from aiwen.registries.mcp_loader import client_config_from_tool_config
+    cfg = {
+        "mcp_transport": req.transport,
+        "mcp_url": req.url,
+        "mcp_command": req.command,
+        "mcp_args": req.args,
+        "mcp_env": req.env,
+    }
+    return client_config_from_tool_config(cfg)
+
+
+@router.post(
+    "/probe-mcp",
+    response_model=MCPProbeResponse,
+    summary="Probe an MCP server and list its tools",
+)
+async def probe_mcp(
+    body: MCPServerConfig,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+) -> MCPProbeResponse:
+    """Connect to an MCP server and return all tools it exposes.
+
+    Use this endpoint before importing to preview what will be added.
+    """
+    from aiwen.registries.mcp_loader import probe_mcp_server
+
+    try:
+        raw_tools = await probe_mcp_server(_mcp_client_config(body))
+        return MCPProbeResponse(
+            success=True,
+            tools=[MCPToolInfo(**t) for t in raw_tools],
+        )
+    except Exception as exc:
+        logger.warning("MCP probe failed: %s", exc)
+        return MCPProbeResponse(success=False, error=str(exc))
+
+
+@router.post(
+    "/import-from-mcp",
+    response_model=MCPImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Import selected MCP tools into the tool library",
+)
+async def import_from_mcp(
+    body: MCPImportRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+) -> MCPImportResponse:
+    """Probe the MCP server, then bulk-create Tool records for the requested tools.
+
+    Each imported tool gets ``tool_type="mcp"`` and stores the connection
+    details in ``config``.  After import the tool is available to any
+    executor via ``DynamicToolLoader`` — no workspace binding required.
+    """
+    from aiwen.registries.mcp_loader import probe_mcp_server
+    from aiwen.models.context.tools.tool import Tool as ToolModel
+
+    client_config = _mcp_client_config(body)
+
+    # Probe the server to get schemas
+    try:
+        raw_tools = await probe_mcp_server(client_config)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to connect to MCP server: {exc}",
+        )
+
+    tool_map = {t["name"]: t for t in raw_tools}
+    requested = set(body.tool_names)
+    unknown = requested - tool_map.keys()
+
+    imported: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+
+    # Build mcp_config (stored in Tool.config)
+    base_cfg: dict = {"mcp_transport": body.transport}
+    if body.transport == "sse":
+        base_cfg["mcp_url"] = body.url
+    else:
+        base_cfg["mcp_command"] = body.command
+        if body.args:
+            base_cfg["mcp_args"] = body.args
+        if body.env:
+            base_cfg["mcp_env"] = body.env
+
+    for name in body.tool_names:
+        if name in unknown:
+            failed.append(name)
+            continue
+
+        mcp_tool = tool_map[name]
+
+        # Skip if a tool with this name already belongs to this user
+        from sqlalchemy import select as sa_select
+        exists_stmt = sa_select(ToolModel.id).where(
+            ToolModel.name == name,
+            ToolModel.tool_type == "mcp",
+            ToolModel.user_id == current_user.id,
+        )
+        existing = (await db.execute(exists_stmt)).first()
+        if existing:
+            skipped.append(name)
+            continue
+
+        try:
+            tool_cfg = {**base_cfg, "mcp_tool_name": name}
+            record = ToolModel(
+                name=name,
+                tool_code=f"mcp__{name}",
+                display_name=name,
+                description=mcp_tool.get("description") or "",
+                tool_type="mcp",
+                input_schema=mcp_tool.get("input_schema"),
+                config=tool_cfg,
+                category="mcp",
+                tags=["mcp"],
+                user_id=current_user.id,
+                is_public=body.is_public,
+                enabled=True,
+            )
+            db.add(record)
+            imported.append(name)
+        except Exception as exc:
+            logger.error("Failed to create MCP tool '%s': %s", name, exc)
+            failed.append(name)
+
+    if imported:
+        await db.commit()
+
+    return MCPImportResponse(imported=imported, skipped=skipped, failed=failed)
+

@@ -126,3 +126,38 @@ export interface InnerToolListResponse {
   inner_tools: InnerToolInfo[];
   total: number;
 }
+
+// ─── MCP Import ───────────────────────────────────────────────────────────────
+
+export type MCPTransport = 'sse' | 'stdio';
+
+export interface MCPServerConfig {
+  transport: MCPTransport;
+  url?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+}
+
+export interface MCPToolInfo {
+  name: string;
+  description: string;
+  input_schema?: Record<string, unknown> | null;
+}
+
+export interface MCPProbeResponse {
+  success: boolean;
+  tools: MCPToolInfo[];
+  error?: string | null;
+}
+
+export interface MCPImportRequest extends MCPServerConfig {
+  tool_names: string[];
+  is_public?: boolean;
+}
+
+export interface MCPImportResponse {
+  imported: string[];
+  skipped: string[];
+  failed: string[];
+}

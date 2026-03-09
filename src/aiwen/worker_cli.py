@@ -146,6 +146,12 @@ async def run_workers(num_workers: int, name_prefix: str) -> None:
             except Exception as e:
                 logger.error(f"⚠️  Error during cleanup: {e}")
 
+        try:
+            from aiwen.registries.mcp_loader import close_all_clients
+            await close_all_clients()
+        except Exception as e:
+            logger.debug(f"MCP client cleanup: {e}")
+
         logger.info("=" * 60)
         logger.info("✅ Agent Worker shutdown completed")
         logger.info("=" * 60)

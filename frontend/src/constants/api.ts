@@ -112,6 +112,8 @@ export const API_ENDPOINTS = {
         EXPORT: (id: string) => `/tools/${id}/export`,
         IMPORT: '/tools/import',
         INNER_TOOLS: '/tools/registry/inner-tools',
+        PROBE_MCP: '/tools/probe-mcp',
+        IMPORT_FROM_MCP: '/tools/import-from-mcp',
     },
 
     // Skills 管理

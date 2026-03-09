@@ -10,6 +10,10 @@ import type {
   UserToolListResponse,
   UserToolTestResponse,
   InnerToolListResponse,
+  MCPServerConfig,
+  MCPProbeResponse,
+  MCPImportRequest,
+  MCPImportResponse,
 } from '@/types/tool';
 
 export const toolService = {
@@ -70,5 +74,13 @@ export const toolService = {
 
   async importTool(data: ToolExportData): Promise<UserTool> {
     return apiClient.post(API_ENDPOINTS.TOOLS.IMPORT, data);
+  },
+
+  async probeMcp(data: MCPServerConfig): Promise<MCPProbeResponse> {
+    return apiClient.post(API_ENDPOINTS.TOOLS.PROBE_MCP, data);
+  },
+
+  async importFromMcp(data: MCPImportRequest): Promise<MCPImportResponse> {
+    return apiClient.post(API_ENDPOINTS.TOOLS.IMPORT_FROM_MCP, data);
   },
 };

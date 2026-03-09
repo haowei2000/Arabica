@@ -9,6 +9,7 @@ import {
 import {
   useToolList, useCreateTool, useUpdateTool, useDeleteTool,
   useToggleTool, useInnerTools, useTestTool, useExportTool, useImportTool,
+  useProbeMcp, useImportFromMcp,
 } from '@/hooks/useTools';
 import { toolService } from '@/services/toolService';
 import { Button } from '@/components/ui/button';
@@ -25,7 +26,7 @@ import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
-import type { UserTool, UserToolCreate, InnerToolInfo, ToolExportData } from '@/types/tool';
+import type { UserTool, UserToolCreate, InnerToolInfo, ToolExportData, MCPServerConfig, MCPTransport, MCPToolInfo } from '@/types/tool';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -141,6 +142,18 @@ export default function ToolPage() {
   const [testingTool, setTestingTool] = useState<UserTool | null>(null);
   const [testParamsJson, setTestParamsJson] = useState('{}');
 
+  // ── MCP import dialog state ──
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [mcpTransport, setMcpTransport] = useState<MCPTransport>('sse');
+  const [mcpUrl, setMcpUrl] = useState('');
+  const [mcpCommand, setMcpCommand] = useState('');
+  const [mcpArgsText, setMcpArgsText] = useState('');
+  const [mcpEnvText, setMcpEnvText] = useState('');
+  const [mcpDiscovered, setMcpDiscovered] = useState<MCPToolInfo[]>([]);
+  const [mcpSelected, setMcpSelected] = useState<Set<string>>(new Set());
+  const [mcpProbeError, setMcpProbeError] = useState<string | null>(null);
+  const [mcpIsPublic, setMcpIsPublic] = useState(false);
+
   // ── Queries & mutations ──
   const { data: toolData, isLoading: toolsLoading } = useToolList({
     enabled_only: false,
@@ -154,6 +167,8 @@ export default function ToolPage() {
   const testMutation = useTestTool();
   const exportMutation = useExportTool();
   const importMutation = useImportTool();
+  const probeMcpMutation = useProbeMcp();
+  const importFromMcpMutation = useImportFromMcp();
 
   // ── Derived data ──
   const allInnerTools = innerToolData?.inner_tools ?? [];
@@ -486,6 +501,59 @@ export default function ToolPage() {
     reader.readAsText(file);
     // Reset so the same file can be re-imported
     e.target.value = '';
+  };
+
+  // ── MCP helpers ──
+  const mcpClientConfig = (): MCPServerConfig => ({
+    transport: mcpTransport,
+    url: mcpTransport === 'sse' ? mcpUrl : undefined,
+    command: mcpTransport === 'stdio' ? mcpCommand : undefined,
+    args: mcpTransport === 'stdio' ? mcpArgsText.split('\n').map(s => s.trim()).filter(Boolean) : undefined,
+    env: mcpTransport === 'stdio'
+      ? Object.fromEntries(mcpEnvText.split('\n').filter(l => l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim()]; }))
+      : undefined,
+  });
+
+  const handleProbeMcp = async () => {
+    setMcpProbeError(null);
+    setMcpDiscovered([]);
+    setMcpSelected(new Set());
+    try {
+      const res = await probeMcpMutation.mutateAsync(mcpClientConfig());
+      if (res.success) {
+        setMcpDiscovered(res.tools);
+      } else {
+        setMcpProbeError(res.error ?? 'Unknown error');
+      }
+    } catch (err) {
+      setMcpProbeError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleImportFromMcp = async () => {
+    if (mcpSelected.size === 0) return;
+    try {
+      const res = await importFromMcpMutation.mutateAsync({
+        ...mcpClientConfig(),
+        tool_names: [...mcpSelected],
+        is_public: mcpIsPublic,
+      });
+      const summary = [`Imported: ${res.imported.length}`];
+      if (res.skipped.length) summary.push(`Skipped (already exist): ${res.skipped.join(', ')}`);
+      if (res.failed.length) summary.push(`Failed: ${res.failed.join(', ')}`);
+      alert(summary.join('\n'));
+      setShowMcpModal(false);
+    } catch (err) {
+      alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const toggleMcpTool = (name: string) => {
+    setMcpSelected(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
   };
 
   // ── Loading ──
@@ -1046,6 +1114,10 @@ export default function ToolPage() {
         </div>
         <div className="flex items-center gap-2">
           <ViewToggle mode={viewMode} onToggle={(m) => { setViewMode(m); if (m !== 'drawer') setOpenItemId(null); }} />
+          <Button size="sm" variant="outline" className="gap-1.5"
+            onClick={() => { setShowMcpModal(true); setMcpDiscovered([]); setMcpSelected(new Set()); setMcpProbeError(null); }}>
+            <Link2 className="size-3" /> From MCP
+          </Button>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => importFileRef.current?.click()}>
             <Upload className="size-3" /> Import
           </Button>
@@ -1517,6 +1589,156 @@ export default function ToolPage() {
                 </Button>
               )}
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── MCP Import Dialog ── */}
+      <Dialog open={showMcpModal} onOpenChange={(open) => { if (!open) setShowMcpModal(false); }}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Link2 className="size-4" /> Import Tools from MCP Server
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            {/* Transport */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Transport</Label>
+              <div className="flex gap-2">
+                {(['sse', 'stdio'] as MCPTransport[]).map((t) => (
+                  <button key={t} type="button"
+                    className={cn(
+                      'flex-1 py-2 rounded-lg border text-xs font-mono transition-colors',
+                      mcpTransport === t
+                        ? 'border-primary bg-primary/10 text-primary font-semibold'
+                        : 'border-border bg-muted/30 text-muted-foreground hover:bg-muted/60'
+                    )}
+                    onClick={() => { setMcpTransport(t); setMcpDiscovered([]); setMcpSelected(new Set()); }}>
+                    {t === 'sse' ? 'SSE / HTTP' : 'stdio (local process)'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* SSE */}
+            {mcpTransport === 'sse' && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Server URL <span className="text-destructive">*</span></Label>
+                <Input value={mcpUrl} onChange={e => setMcpUrl(e.target.value)}
+                  placeholder="http://localhost:8000/mcp" className="font-mono text-sm" />
+              </div>
+            )}
+
+            {/* stdio */}
+            {mcpTransport === 'stdio' && (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Command <span className="text-destructive">*</span></Label>
+                  <Input value={mcpCommand} onChange={e => setMcpCommand(e.target.value)}
+                    placeholder="uvx" className="font-mono text-sm" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium flex justify-between">
+                    <span>Arguments</span><span className="font-normal text-muted-foreground">one per line</span>
+                  </Label>
+                  <textarea value={mcpArgsText} onChange={e => setMcpArgsText(e.target.value)}
+                    rows={3} placeholder={"mcp-server-github\n--token\nabc123"}
+                    className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium flex justify-between">
+                    <span>Env variables</span><span className="font-normal text-muted-foreground">KEY=VALUE per line</span>
+                  </Label>
+                  <textarea value={mcpEnvText} onChange={e => setMcpEnvText(e.target.value)}
+                    rows={3} placeholder={"GITHUB_TOKEN=ghp_xxx"}
+                    className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
+              </div>
+            )}
+
+            {/* Probe */}
+            <Button size="sm" variant="outline" className="w-full gap-1.5"
+              disabled={probeMcpMutation.isPending || (mcpTransport === 'sse' ? !mcpUrl : !mcpCommand)}
+              onClick={handleProbeMcp}>
+              {probeMcpMutation.isPending
+                ? <><Loader2 className="size-3.5 animate-spin" />Connecting…</>
+                : <><Search className="size-3.5" />Discover Tools</>}
+            </Button>
+
+            {/* Error */}
+            {mcpProbeError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs font-mono text-destructive break-all">
+                {mcpProbeError}
+              </div>
+            )}
+
+            {/* Discovered tools list */}
+            {mcpDiscovered.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium">
+                    {mcpDiscovered.length} tool{mcpDiscovered.length !== 1 ? 's' : ''} discovered
+                  </Label>
+                  <div className="flex gap-2">
+                    <button type="button" className="text-[10px] text-primary hover:underline"
+                      onClick={() => setMcpSelected(new Set(mcpDiscovered.map(t => t.name)))}>
+                      Select all
+                    </button>
+                    <button type="button" className="text-[10px] text-muted-foreground hover:underline"
+                      onClick={() => setMcpSelected(new Set())}>
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                  {mcpDiscovered.map(tool => (
+                    <label key={tool.name}
+                      className={cn(
+                        'flex items-start gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors',
+                        mcpSelected.has(tool.name)
+                          ? 'border-primary/50 bg-primary/5'
+                          : 'border-border bg-muted/20 hover:bg-muted/40'
+                      )}>
+                      <input type="checkbox" className="mt-0.5 accent-primary"
+                        checked={mcpSelected.has(tool.name)}
+                        onChange={() => toggleMcpTool(tool.name)} />
+                      <div className="min-w-0">
+                        <p className="text-xs font-mono font-semibold">{tool.name}</p>
+                        {tool.description && (
+                          <p className="text-[10px] text-muted-foreground leading-snug mt-0.5 line-clamp-2">{tool.description}</p>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+
+                {/* Public toggle */}
+                <div className="flex items-center gap-2 pt-1">
+                  <button type="button"
+                    className={cn('relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                      mcpIsPublic ? 'bg-primary' : 'bg-muted-foreground/30')}
+                    onClick={() => setMcpIsPublic(p => !p)}>
+                    <span className={cn('inline-block size-3.5 rounded-full bg-white shadow transition-transform',
+                      mcpIsPublic ? 'translate-x-[18px]' : 'translate-x-[2px]')} />
+                  </button>
+                  <Label className="text-xs cursor-pointer select-none">
+                    Make imported tools public (visible to all users)
+                  </Label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setShowMcpModal(false)}>Cancel</Button>
+            <Button size="sm" disabled={mcpSelected.size === 0 || importFromMcpMutation.isPending}
+              onClick={handleImportFromMcp}>
+              {importFromMcpMutation.isPending
+                ? <><Loader2 className="size-3.5 animate-spin mr-1" />Importing…</>
+                : `Import ${mcpSelected.size > 0 ? `${mcpSelected.size} ` : ''}Tool${mcpSelected.size !== 1 ? 's' : ''}`}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
