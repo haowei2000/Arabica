@@ -209,7 +209,7 @@ def build_mcp_tool_class(record: Any) -> type[InnerTool]:
         InputSchema = input_schema_cls
 
         async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:  # type: ignore[override]
-            arguments = input_data.model_dump(exclude_none=False)
+            arguments = input_data.model_dump(exclude_none=True)
             try:
                 client = await _get_client(_client_config)
                 result = await client.call_tool(_mcp_tool_name, arguments)

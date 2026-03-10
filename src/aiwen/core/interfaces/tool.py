@@ -292,11 +292,16 @@ class BaseTool(ABC,ToolProtocol):
         logger.info("Tool call started: %s | args: %s", tool_name, kwargs)
         start_time = time.monotonic()
 
+        import asyncio as _asyncio
+        timeout_s = getattr(self.METADATA, "timeout", 60) or 60
+
         input_data = None
         try:
             input_data = await self.validate_input(kwargs)
             await self.before_execute(input_data)
-            output = await self.execute(input_data)
+            output = await _asyncio.wait_for(
+                self.execute(input_data), timeout=timeout_s
+            )
             await self.after_execute(input_data, output)
 
             elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -309,6 +314,18 @@ class BaseTool(ABC,ToolProtocol):
 
         except ToolControlFlow:
             raise  # Control-flow signals (e.g. WaitingForUserInput) bypass on_error
+
+        except _asyncio.TimeoutError:
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            logger.error(
+                "Tool call timed out: %s | %.1fms | timeout=%ss",
+                tool_name, elapsed_ms, timeout_s,
+            )
+            error_output = await self.on_error(
+                input_data,
+                TimeoutError(f"Tool '{tool_name}' timed out after {timeout_s}s"),
+            )
+            return self.format_output(error_output)
 
         except Exception as e:
             elapsed_ms = (time.monotonic() - start_time) * 1000
