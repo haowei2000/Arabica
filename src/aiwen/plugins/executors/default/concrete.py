@@ -6,8 +6,10 @@ abstractions (``ToolProvider`` / ``ToolCaller``).  The executor never
 imports concrete tool registries or tool modules directly – all
 dependencies are injected via config by the Worker (composition root).
 
-Tool calling is delegated to ``PromptCallingStrategy`` (tool descriptions
-in system prompt + XML-tagged output parsing).
+Tool calling defaults to ``FunctionCallingStrategy`` (OpenAI-compatible
+native ``tools`` parameter).  Set ``config["calling_strategy"] = "prompt"``
+to fall back to ``PromptCallingStrategy`` (XML-tagged output) for models
+that do not support function calling.
 
 Event-driven execution flow:
     USER_MESSAGE  -> load full event history, start agentic loop
@@ -45,6 +47,7 @@ from aiwen.core.interfaces import (
 )
 from aiwen.frameworks.tool_calling import (
     ChatMessage,
+    FunctionCallingStrategy,
     LLMResponse,
     PromptCallingStrategy,
     ToolCallRequest,
@@ -151,6 +154,30 @@ _THINK_TAG_LEN = len(_THINK_TAG)  # 7
 _THINK_CLOSE = "</think>"
 
 
+def _strip_orphaned_tool_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """Remove role='tool' messages that have no matching tool_call_id in the
+    preceding assistant message.  Prevents the API 400 error caused by old
+    DB events where tool_call IDs were not stored.
+    """
+    result: list[ChatMessage] = []
+    for msg in messages:
+        if msg.role == "tool":
+            # Find the most recent assistant message that declared tool_calls
+            valid_ids: set[str] = set()
+            for prev in reversed(result):
+                if prev.role == "assistant" and prev.tool_calls:
+                    valid_ids = {tc.id for tc in prev.tool_calls}
+                    break
+                if prev.role in ("user", "system"):
+                    break
+            if msg.tool_call_id and msg.tool_call_id in valid_ids:
+                result.append(msg)
+            # else: drop orphaned tool message
+        else:
+            result.append(msg)
+    return result
+
+
 @register_executor
 class DefaultExecutor(Executor):
     """Default agent with conversation context and structured event streaming.
@@ -191,7 +218,14 @@ class DefaultExecutor(Executor):
         self._api_key, self._base_url = self._resolve_llm_config()
 
         # ── Tool calling strategy ────────────────────────────────
-        self.strategy = PromptCallingStrategy()
+        # Default: OpenAI-compatible native function calling.
+        # Fall back to prompt calling only when explicitly configured.
+        strategy_name = config.get("calling_strategy", "function")
+        self.strategy = (
+            PromptCallingStrategy()
+            if strategy_name == "prompt"
+            else FunctionCallingStrategy()
+        )
 
         # Use pre-computed tools_info from Worker cache when available
         # (avoids Pydantic schema generation for 150+ tools on every run).
@@ -285,41 +319,20 @@ class DefaultExecutor(Executor):
     async def _on_user_feedback(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Continue with user feedback — only last [user, agent] exchange as context.
+        """Continue after user feedback (corrective reply or ask_for_user answer).
 
-        If the payload contains ``tool_name`` (set by the feedback endpoint from
-        the run's ``waiting_for`` record), the feedback text is injected as a
-        ``<tool_result>`` into the last assistant message so the LLM sees the
-        answer in the proper structured format.  Using payload fields instead of
-        ``_pending_user_input`` instance state makes this handler resilient to
-        worker restarts between the ask and the answer.
-
-        Otherwise the feedback is appended as a new user turn (corrective
-        feedback on agent output).
+        The USER_FEEDBACK event is persisted to the DB before this handler runs,
+        so ``_load_last_exchange`` already includes it as a ``role="tool"``
+        message (ask_for_user answer) or ``role="user"`` message (corrective
+        feedback).  No manual injection required.
         """
-        feedback = payload.get("feedback", "")
-        tool_name = payload.get("tool_name", "")
         tool_id = payload.get("tool_id", "") or ""
+        if payload.get("tool_name") and tool_id:
+            self._pending_tool_ids.discard(tool_id)
+            self._pending_user_input = None
 
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_last_exchange())
-
-        if tool_name and feedback:
-            # User answered an ask_for_user query — inject as the tool result.
-            self._pending_tool_ids.discard(tool_id)
-            self._pending_user_input = None  # clear in-memory state if still set
-
-            tool_text = f'\n<tool_result name="{tool_name}">{feedback}</tool_result>'
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i].role == "assistant":
-                    messages[i].content += tool_text
-                    break
-            else:
-                messages.append(ChatMessage(role="user", content=tool_text))
-        elif feedback:
-            # Generic corrective feedback — append as a new user turn.
-            messages.append(ChatMessage(role="user", content=str(feedback)))
-
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -327,32 +340,18 @@ class DefaultExecutor(Executor):
     async def _on_tool_result(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Resume the loop with last [user, agent] exchange + this tool result.
+        """Resume the agentic loop after a tool result.
 
-        Instead of reloading the full event history, we reconstruct only the
-        minimal context: the last user message and the agent message that
-        triggered the tool call (which already embeds the XML call), then
-        append the tool result directly from the event payload.
+        The TOOL_RESULT event is persisted to the DB before this handler runs,
+        so ``_load_last_exchange`` already returns the full exchange including
+        all tool results for parallel calls.
         """
         self._pending_tool_ids.discard(payload.get("tool_id", ""))
         if self._pending_tool_ids:
-            return  # Still waiting for other tool results
+            return  # Still waiting for other parallel tool results
 
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_last_exchange())
-
-        # Append the tool result to the last assistant message.
-        tool_name = payload.get("tool_name", "")
-        result_data = payload.get("result")
-        result_str = json.dumps(result_data, ensure_ascii=False, default=str)
-        tool_text = f'\n<tool_result name="{tool_name}">\n{result_str}\n</tool_result>'
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].role == "assistant":
-                messages[i].content += tool_text
-                break
-        else:
-            messages.append(ChatMessage(role="user", content=tool_text))
-
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -360,30 +359,16 @@ class DefaultExecutor(Executor):
     async def _on_tool_error(
         self, payload: dict[str, Any]
     ) -> AsyncGenerator[Event, None]:
-        """Resume the loop with last [user, agent] exchange + this tool error.
+        """Resume the agentic loop after a tool error.
 
-        The agent message already contains the tool call XML (including the
-        specific call that failed), so we only need to append the error
-        text.  Loading just the last exchange keeps the LLM context minimal.
+        Same DB-first approach as ``_on_tool_result``.
         """
         self._pending_tool_ids.discard(payload.get("tool_id", ""))
         if self._pending_tool_ids:
-            return  # Still waiting for other tool results
+            return  # Still waiting for other parallel tool results
 
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_last_exchange())
-
-        # Append the tool error to the last assistant message.
-        tool_name = payload.get("tool_name", "")
-        error = payload.get("error_message", "Unknown error")
-        tool_text = f'\n<tool_error name="{tool_name}">{error}</tool_error>'
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].role == "assistant":
-                messages[i].content += tool_text
-                break
-        else:
-            messages.append(ChatMessage(role="user", content=tool_text))
-
         self._reset_token_index()
         async for event in self._agentic_loop(messages):
             yield event
@@ -469,14 +454,16 @@ class DefaultExecutor(Executor):
     def _events_to_messages(self, raw_events: list[dict]) -> list[ChatMessage]:
         """Convert raw event dicts to a full LLM-ready ChatMessage list.
 
-        Mapping rules (PromptCallingStrategy — no native tool_calls role):
-          USER_MESSAGE  -> optional system msg for ``_context``, then user msg
-          AGENT_MESSAGE -> assistant message
-          TOOL_RESULT   -> appended to the preceding assistant message
-          TOOL_ERROR    -> appended to the preceding assistant message
-          TOOL_CALL     -> skipped (content is embedded in AGENT_MESSAGE text)
+        Mapping rules (FunctionCallingStrategy — native tool_calls / tool roles):
+          USER_MESSAGE  -> optional workspace-context system msg, then user msg
+          AGENT_MESSAGE -> assistant msg; if tool_calls present, uses tool_calls field
+          TOOL_RESULT   -> role="tool" message with tool_call_id
+          TOOL_ERROR    -> role="tool" message with error JSON and tool_call_id
+          USER_FEEDBACK -> role="tool" (ask_for_user answer) or role="user" (corrective)
+          TOOL_CALL     -> skipped (captured in AGENT_MESSAGE.tool_calls)
         """
         messages: list[ChatMessage] = []
+        last_tc_id_map: dict[str, str] = {}  # maps raw id / tool name → assigned tc id
         for e in raw_events:
             event_type = e.get("event_type", "")
             payload = e.get("payload") or {}
@@ -496,58 +483,62 @@ class DefaultExecutor(Executor):
 
             elif event_type == str(EventType.AGENT_MESSAGE):
                 content = payload.get("content") or payload.get("message", "")
-                tool_calls = payload.get("tool_calls") or []
-                if tool_calls:
-                    calls_xml = "".join(
-                        f'\n<tool_call>{json.dumps({"name": tc["name"], "arguments": tc["arguments"]})}</tool_call>'
-                        for tc in tool_calls
-                    )
-                    content = (content or "") + calls_xml
-                if content:
-                    messages.append(ChatMessage(role="assistant", content=str(content)))
+                tc_data = payload.get("tool_calls") or []
+                if tc_data:
+                    import uuid as _uuid
+                    tool_calls = []
+                    # Reset ID map for this assistant turn
+                    last_tc_id_map = {}
+                    for tc in tc_data:
+                        assigned_id = tc.get("id") or str(_uuid.uuid4())
+                        tool_calls.append(ToolCallRequest(
+                            id=assigned_id,
+                            name=tc["name"],
+                            arguments=tc.get("arguments", {}),
+                        ))
+                        # Map original stored id AND tool name → assigned id
+                        if tc.get("id"):
+                            last_tc_id_map[tc["id"]] = assigned_id
+                        last_tc_id_map[tc["name"]] = assigned_id
+                    messages.append(ChatMessage(role="assistant", content=content or "", tool_calls=tool_calls))
+                else:
+                    last_tc_id_map = {}
+                    if content:
+                        messages.append(ChatMessage(role="assistant", content=str(content)))
 
             elif event_type == str(EventType.TOOL_RESULT):
+                raw_id = payload.get("tool_id", "")
                 tool_name = payload.get("tool_name", "")
+                resolved_id = last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
                 result_data = payload.get("result")
                 result_str = json.dumps(result_data, ensure_ascii=False, default=str)
-                tool_text = f'\n<tool_result name="{tool_name}">\n{result_str}\n</tool_result>'
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].role == "assistant":
-                        messages[i].content += tool_text
-                        break
-                else:
-                    messages.append(ChatMessage(role="user", content=tool_text))
+                messages.append(ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id))
 
             elif event_type == str(EventType.TOOL_ERROR):
+                raw_id = payload.get("tool_id", "")
                 tool_name = payload.get("tool_name", "")
+                resolved_id = last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
                 error = payload.get("error_message", "Unknown error")
-                tool_text = f'\n<tool_error name="{tool_name}">{error}</tool_error>'
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].role == "assistant":
-                        messages[i].content += tool_text
-                        break
-                else:
-                    messages.append(ChatMessage(role="user", content=tool_text))
+                messages.append(ChatMessage(
+                    role="tool",
+                    content=json.dumps({"error": error}, ensure_ascii=False),
+                    tool_call_id=resolved_id,
+                ))
 
             elif event_type == str(EventType.USER_FEEDBACK):
-                # An ask_for_user answer — inject as tool result so the LLM sees
-                # the correct structured context when loading full history.
                 feedback = payload.get("feedback", "")
+                raw_id = payload.get("tool_id", "")
                 tool_name = payload.get("tool_name", "")
+                resolved_id = last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
                 if tool_name and feedback:
-                    tool_text = f'\n<tool_result name="{tool_name}">{feedback}</tool_result>'
-                    for i in range(len(messages) - 1, -1, -1):
-                        if messages[i].role == "assistant":
-                            messages[i].content += tool_text
-                            break
-                    else:
-                        messages.append(ChatMessage(role="user", content=tool_text))
+                    # ask_for_user answer — inject as tool result
+                    messages.append(ChatMessage(role="tool", content=feedback, tool_call_id=resolved_id))
                 elif feedback:
                     messages.append(ChatMessage(role="user", content=str(feedback)))
 
-            # TOOL_CALL: skip — content is embedded in AGENT_MESSAGE text.
+            # TOOL_CALL: skip — captured in AGENT_MESSAGE.tool_calls field.
 
-        return messages
+        return _strip_orphaned_tool_messages(messages)
 
     async def _load_event_history(self) -> list[ChatMessage]:
         """Full history load for the USER_MESSAGE path.
@@ -562,14 +553,14 @@ class DefaultExecutor(Executor):
         return self._events_to_messages(raw_events)
 
     async def _load_last_exchange(self) -> list[ChatMessage]:
-        """Load only the last [user message, agent message] from the current run.
+        """Load the last [user, assistant, tool…] exchange from the current run.
 
-        Used for USER_FEEDBACK, TOOL_RESULT, and TOOL_ERROR paths where the
-        full conversation history is not needed — only the immediate prior
-        exchange matters.  Always scoped to the current run (tool calls and
-        feedback always belong to the run in progress).
+        Used for TOOL_RESULT, TOOL_ERROR, and USER_FEEDBACK paths where only
+        the immediate prior exchange is needed.  Includes TOOL_RESULT/TOOL_ERROR
+        events that have already been persisted to the DB (important for parallel
+        tool calls — earlier results appear here so the LLM sees the full set).
 
-        Returns at most ``[user_msg, agent_msg]``; absent elements are omitted.
+        Returns ``[user_msg?, assistant_msg?, tool_msg…]``; absent elements omitted.
         """
         raw_events = await self._fetch_events(global_scope=False)
         if not raw_events:
@@ -577,6 +568,8 @@ class DefaultExecutor(Executor):
 
         last_user: ChatMessage | None = None
         last_agent: ChatMessage | None = None
+        tool_messages: list[ChatMessage] = []
+        tc_id_map: dict[str, str] = {}  # maps raw id / tool name → assigned tc id
 
         for e in raw_events:
             event_type = e.get("event_type", "")
@@ -597,28 +590,67 @@ class DefaultExecutor(Executor):
                     parts.append(str(msg))
                 if parts:
                     last_user = ChatMessage(role="user", content="\n\n".join(parts))
-                last_agent = None  # reset: each user turn begins a new exchange
+                last_agent = None
+                tool_messages = []
+                tc_id_map = {}
 
             elif event_type == str(EventType.AGENT_MESSAGE):
                 content = payload.get("content") or payload.get("message", "")
-                tool_calls = payload.get("tool_calls") or []
-                if tool_calls:
-                    # Reconstruct full assistant turn including tool call XML so the
-                    # LLM sees what it previously called when resuming.
-                    calls_xml = "".join(
-                        f'\n<tool_call>{json.dumps({"name": tc["name"], "arguments": tc["arguments"]})}</tool_call>'
-                        for tc in tool_calls
-                    )
-                    content = (content or "") + calls_xml
-                if content:
-                    last_agent = ChatMessage(role="assistant", content=str(content))
+                tc_data = payload.get("tool_calls") or []
+                tc_id_map = {}
+                if tc_data:
+                    import uuid as _uuid
+                    tool_calls = []
+                    for tc in tc_data:
+                        assigned_id = tc.get("id") or str(_uuid.uuid4())
+                        tool_calls.append(ToolCallRequest(
+                            id=assigned_id,
+                            name=tc["name"],
+                            arguments=tc.get("arguments", {}),
+                        ))
+                        if tc.get("id"):
+                            tc_id_map[tc["id"]] = assigned_id
+                        tc_id_map[tc["name"]] = assigned_id
+                    last_agent = ChatMessage(role="assistant", content=content or "", tool_calls=tool_calls)
+                else:
+                    last_agent = ChatMessage(role="assistant", content=str(content or ""))
+                tool_messages = []
+
+            elif event_type == str(EventType.TOOL_RESULT) and last_agent is not None:
+                raw_id = payload.get("tool_id", "")
+                tool_name = payload.get("tool_name", "")
+                resolved_id = tc_id_map.get(raw_id) or tc_id_map.get(tool_name) or raw_id
+                result_str = json.dumps(payload.get("result"), ensure_ascii=False, default=str)
+                tool_messages.append(ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id))
+
+            elif event_type == str(EventType.TOOL_ERROR) and last_agent is not None:
+                raw_id = payload.get("tool_id", "")
+                tool_name = payload.get("tool_name", "")
+                resolved_id = tc_id_map.get(raw_id) or tc_id_map.get(tool_name) or raw_id
+                error = payload.get("error_message", "Unknown error")
+                tool_messages.append(ChatMessage(
+                    role="tool",
+                    content=json.dumps({"error": error}, ensure_ascii=False),
+                    tool_call_id=resolved_id,
+                ))
+
+            elif event_type == str(EventType.USER_FEEDBACK):
+                feedback = payload.get("feedback", "")
+                raw_id = payload.get("tool_id", "")
+                tool_name = payload.get("tool_name", "")
+                resolved_id = tc_id_map.get(raw_id) or tc_id_map.get(tool_name) or raw_id
+                if tool_name and feedback:
+                    tool_messages.append(ChatMessage(role="tool", content=feedback, tool_call_id=resolved_id))
+                elif feedback:
+                    tool_messages.append(ChatMessage(role="user", content=str(feedback)))
 
         result: list[ChatMessage] = []
         if last_user:
             result.append(last_user)
         if last_agent:
             result.append(last_agent)
-        return result
+        result.extend(tool_messages)
+        return _strip_orphaned_tool_messages(result)
 
     # ── agentic loop (core streaming logic) ──────────────────────
 
@@ -721,16 +753,15 @@ class DefaultExecutor(Executor):
                 yield self._emit_message(llm_response.content or response_buf)
                 break
             else:
-                # Emit AGENT_MESSAGE carrying tool_calls metadata so that
-                # _load_last_exchange() can reconstruct the assistant turn
-                # (including the tool call XML) when resuming after user
-                # feedback or tool results.  Frontend displays only `content`.
+                # Emit AGENT_MESSAGE with tool_calls including IDs so that
+                # _load_last_exchange() can reconstruct proper tool_call_id
+                # linkage when resuming with function-calling format.
                 yield self._make_event(
                     EventType.AGENT_MESSAGE,
                     {
                         "content": llm_response.content or response_buf,
                         "tool_calls": [
-                            {"name": tc.name, "arguments": tc.arguments}
+                            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in llm_response.tool_calls
                         ],
                     },

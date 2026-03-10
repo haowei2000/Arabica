@@ -6,6 +6,7 @@ export interface StreamOptions {
   workspaceId: string;
   appId?: string;
   message: string;
+  forcedTools?: string[];
   onRunStart: (runId: string) => void;
   onChunk: (content: string) => void;
   onComplete: () => void;
@@ -45,7 +46,7 @@ class StreamService {
   private lastEventId: string | null = null;
 
   async sendStreamingMessage(options: StreamOptions): Promise<void> {
-    const { workspaceId, appId, message, onChunk, onComplete, onError } = options;
+    const { workspaceId, appId, message, forcedTools, onChunk, onComplete, onError } = options;
     const token = localStorage.getItem('access_token');
 
     try {
@@ -63,6 +64,7 @@ class StreamService {
             app_id: appId,
             payload: {
               message: message,
+              ...(forcedTools && forcedTools.length > 0 ? { forced_tools: forcedTools } : {}),
             },
           }),
         }

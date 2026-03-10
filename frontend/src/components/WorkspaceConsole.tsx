@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle, Wrench } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
 import { useStreamingChat } from '@/hooks/useStreamingChat';
+import { useToolList } from '@/hooks/useTools';
 import { useWorkspaces, useUpdateWorkspace } from '@/hooks/useWorkspaces';
 import { useTemplates } from '@/hooks/useApps';
 import { MessageRole } from '@/types/message';
@@ -408,6 +409,8 @@ function RunTimelineItem({
 
 export default function WorkspaceConsole() {
   const [input, setInput] = useState('');
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -484,6 +487,45 @@ export default function WorkspaceConsole() {
     currentWorkspaceAppId
   );
 
+  // ── Tool mention (@) ──────────────────────────────────────────────────────
+  const { data: toolListData } = useToolList({ enabled_only: true });
+  const allTools = toolListData?.tools ?? [];
+
+  const mentionMatches = mentionQuery !== null
+    ? allTools.filter((t) =>
+        t.name.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+        t.display_name.toLowerCase().includes(mentionQuery.toLowerCase())
+      ).slice(0, 8)
+    : [];
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInput(value);
+    const cursor = e.target.selectionStart ?? value.length;
+    const before = value.slice(0, cursor);
+    const atMatch = before.match(/@(\w*)$/);
+    if (atMatch) {
+      setMentionQuery(atMatch[1]);
+      setMentionIndex(0);
+    } else {
+      setMentionQuery(null);
+    }
+  };
+
+  const insertMention = (toolName: string) => {
+    const cursor = textareaRef.current?.selectionStart ?? input.length;
+    const before = input.slice(0, cursor);
+    const atIdx = before.lastIndexOf('@');
+    const newVal = input.slice(0, atIdx) + `@${toolName} ` + input.slice(cursor);
+    setInput(newVal);
+    setMentionQuery(null);
+    setTimeout(() => {
+      textareaRef.current?.focus();
+      const pos = atIdx + toolName.length + 2;
+      textareaRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  };
+
   useWorkspaceStream(currentWorkspaceId);
 
   const queryClient = useQueryClient();
@@ -528,12 +570,20 @@ export default function WorkspaceConsole() {
     e.preventDefault();
     if (!input.trim() || isStreaming || !currentWorkspaceId) return;
     const message = input.trim();
+    const forcedTools = [...message.matchAll(/@(\w+)/g)].map((m) => m[1]);
     setInput('');
+    setMentionQuery(null);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    await sendMessage(message);
+    await sendMessage(message, forcedTools.length > 0 ? forcedTools : undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionQuery !== null && mentionMatches.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, mentionMatches.length - 1)); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertMention(mentionMatches[mentionIndex].name); return; }
+      if (e.key === 'Escape')    { e.preventDefault(); setMentionQuery(null); return; }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -553,7 +603,7 @@ export default function WorkspaceConsole() {
     <style>{SHIMMER_STYLE}</style>
     <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-background">
       {/* ── Chat Column ── */}
-      <div className="flex flex-col flex-1 lg:border-r border-border">
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden lg:border-r border-border">
         <ScrollArea className="flex-1 px-4 sm:px-6 py-4">
           <div className="max-w-3xl mx-auto space-y-5">
             {isLoadingConversation ? (
@@ -677,13 +727,41 @@ export default function WorkspaceConsole() {
         <div className="border-t border-border/60 bg-gradient-to-t from-background to-background/80 px-4 sm:px-6 py-4">
           <div className="max-w-3xl mx-auto">
             <form onSubmit={handleSubmit} className="relative">
+              {/* @ mention dropdown */}
+              {mentionQuery !== null && mentionMatches.length > 0 && (
+                <div className="absolute bottom-full mb-1 left-0 right-0 z-50 rounded-xl border border-border bg-card shadow-lg shadow-black/10 overflow-hidden">
+                  <div className="px-3 py-1.5 border-b border-border/40 flex items-center gap-1.5">
+                    <Wrench className="size-3 text-muted-foreground/50" />
+                    <span className="text-[10px] text-muted-foreground/60 font-medium">Tools</span>
+                  </div>
+                  <div className="max-h-52 overflow-y-auto">
+                    {mentionMatches.map((tool, i) => (
+                      <button
+                        key={tool.name}
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); insertMention(tool.name); }}
+                        className={cn(
+                          'w-full flex items-start gap-2 px-3 py-2 text-left transition-colors',
+                          i === mentionIndex ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/50 text-foreground/80',
+                        )}
+                      >
+                        <Wrench className="size-3 shrink-0 mt-0.5 text-muted-foreground/50" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate">{tool.display_name}</p>
+                          <p className="text-[10px] text-muted-foreground/60 font-mono">{tool.name}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex items-end gap-2 rounded-2xl border border-border/80 bg-card shadow-sm focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all duration-200">
                 <textarea
                   ref={textareaRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  placeholder="Type a message... (Shift+Enter for new line)"
+                  placeholder="Type a message… use @tool_name to invoke a tool (Shift+Enter for new line)"
                   disabled={isStreaming}
                   rows={1}
                   className="flex-1 resize-none bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50 max-h-40"
@@ -724,7 +802,7 @@ export default function WorkspaceConsole() {
       </div>
 
       {/* ── Right Panel ── */}
-      <aside className="w-full lg:w-96 border-t lg:border-t-0 border-border bg-card flex flex-col">
+      <aside className="w-full lg:w-96 border-t lg:border-t-0 border-border bg-card flex flex-col overflow-hidden">
         <Tabs defaultValue="runs" className="flex flex-col flex-1 min-h-0">
           <div className="px-4 pt-3 border-b border-border shrink-0">
             <TabsList className="w-full">

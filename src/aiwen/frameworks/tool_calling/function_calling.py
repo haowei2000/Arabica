@@ -45,6 +45,11 @@ class FunctionCallingStrategy(ToolCallingStrategy):
     # -- helpers -------------------------------------------------------------
 
     @staticmethod
+    def build_client(api_key: str, base_url: str) -> AsyncOpenAI:
+        """Create an AsyncOpenAI client. Call once and reuse across iterations."""
+        return AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+    @staticmethod
     def _build_client(api_key: str, base_url: str) -> AsyncOpenAI:
         return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
@@ -113,8 +118,10 @@ class FunctionCallingStrategy(ToolCallingStrategy):
         model: str,
         api_key: str,
         base_url: str,
+        client: AsyncOpenAI | None = None,
     ) -> AsyncGenerator[str | LLMResponse, None]:
-        client = self._build_client(api_key, base_url)
+        if client is None:
+            client = self._build_client(api_key, base_url)
         api_messages = self._to_api_messages(messages)
 
         kwargs: dict[str, Any] = {

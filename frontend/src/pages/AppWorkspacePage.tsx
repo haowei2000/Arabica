@@ -106,9 +106,9 @@ export default function AppWorkspacePage() {
   const workspaces = workspacesData?.items ?? [];
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0 sticky top-0 z-30">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
@@ -147,8 +147,8 @@ export default function AppWorkspacePage() {
         {/* Workspace Sidebar */}
         <aside
           className={cn(
-            'border-r border-border bg-card flex flex-col transition-all duration-200 shrink-0',
-            historyOpen ? 'lg:w-64 w-full' : 'lg:w-0 overflow-hidden w-full'
+            'border-r border-border bg-card flex flex-col transition-all duration-200 shrink-0 overflow-hidden',
+            historyOpen ? 'lg:w-64 w-full' : 'lg:w-0 w-full'
           )}
         >
           <div className="flex flex-col h-full">

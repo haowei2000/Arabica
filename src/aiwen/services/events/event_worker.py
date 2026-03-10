@@ -129,11 +129,19 @@ class Worker:
         # subsequent per-dispatch publishers don't re-query a stale DB value.
         self._run_seq_cursors: dict[str, int] = {}
 
-        # ── Tool prompt cache ──
+        # ── Tool schema cache ──
         # Keyed by executor_code (default tools only, no user tools).
-        # Avoids re-generating Pydantic JSON schemas + markdown for 150+
-        # tools on every run.
-        self._tools_info_cache: dict[str, str] = {}
+        # Avoids re-generating Pydantic JSON schemas for 150+ tools on every run.
+        # Value is whatever the strategy's format_tools() returns:
+        # list[dict] for FunctionCallingStrategy, str for PromptCallingStrategy.
+        self._tools_info_cache: dict[str, object] = {}
+
+        # ── Per-run tool callers ──
+        # When a run has user-defined tools (external/mcp), a per-run
+        # RegistryToolCaller is created with those tools as extra_instances.
+        # TOOL_CALL events are routed outside the executor so we store the
+        # caller here keyed by run_id string to pass it to handle_tool_call.
+        self._run_tool_callers: dict[str, RegistryToolCaller] = {}
 
         # Register this worker's Redis client so workspace_context_cache can
         # reuse it for dirty-flag checks instead of opening a new connection
@@ -379,7 +387,12 @@ class Worker:
 
         if user_tool_classes:
             user_instances = {cls.METADATA.name: cls() for cls in user_tool_classes}
-            config["tool_caller"] = RegistryToolCaller(extra_instances=user_instances)
+            per_run_caller = RegistryToolCaller(extra_instances=user_instances)
+            config["tool_caller"] = per_run_caller
+            # Store so TOOL_CALL events (routed outside the executor) can use
+            # the same caller that knows about user/MCP tools.
+            if run_id:
+                self._run_tool_callers[run_id] = per_run_caller
 
             base_extra = list(self._default_tool_provider._extra_tool_classes)
             if not config.get("enable_browser_tools", True):
@@ -558,9 +571,14 @@ class Worker:
                     await self._forward_to_executor(event, ctx)
 
                 case EventType.TOOL_CALL:
+                    # Use per-run caller (has user/MCP tools) if available,
+                    # otherwise fall back to the shared default caller.
+                    run_tool_caller = self._run_tool_callers.get(
+                        str(event.run_id)
+                    ) if event.run_id else None
                     await handle_tool_call(
                         event, ctx.db, ctx.publisher, ctx.state_machine,
-                        tool_caller=self._tool_caller,
+                        tool_caller=run_tool_caller or self._tool_caller,
                         flush_run_buffer=self._flush_buffer_to_db,
                     )
 
@@ -612,6 +630,7 @@ class Worker:
                     if buffered:
                         ctx.db.add_all(buffered)
                     await ctx.state_machine.fail(run_id, error=str(e), auto_commit=True)
+                    self._run_tool_callers.pop(run_id_str, None)
                     self.runtime.release(run_id)
                 except Exception as fail_err:
                     logger.error(f"Failed to mark run as failed: {fail_err}")
@@ -651,6 +670,7 @@ class Worker:
                     logger.error(f"Failed to complete run {run_id}: {complete_err}")
 
                 self._executor_locks.pop(run_id, None)
+                self._run_tool_callers.pop(run_id_str, None)
                 self.runtime.release(run_id)
                 ctx.publisher.release_sequence_counter(run_id_str)
                 logger.debug(f"Run {run_id} finished and executor released")

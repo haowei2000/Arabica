@@ -80,22 +80,30 @@ def format_tool_description(tool_class: type) -> str:
 
 _SYSTEM_INJECTION = """\
 <platform-injection>
-## Available Tools
+## Tool Calling — MANDATORY FORMAT
 
-You have access to the following tools. When you need to use a tool, \
-output ONE OR MORE tool call blocks in the following XML format (each on its own line):
+You have access to the following tools.
 
-```
+**ABSOLUTE RULE**: To call a tool you MUST output a `<tool_call>` XML block.
+No other format is accepted. Do NOT use markdown code fences, raw JSON, Python
+dicts, or any other representation — ONLY the XML block shown below.
+
+### Correct format (REQUIRED)
+
 <tool_call>
 {{"name": "tool_name", "arguments": {{"param1": "value1", "param2": "value2"}}}}
 </tool_call>
-```
 
-Rules:
-- The JSON inside <tool_call> must be valid JSON.
-- You may output multiple <tool_call> blocks if you want to call several tools.
-- If you do NOT need to call a tool, simply respond with normal text (no <tool_call> tags).
-- Always provide required parameters. Optional parameters can be omitted.
+### Additional rules
+
+- The content inside `<tool_call>` must be a single valid JSON object with keys
+  `"name"` (string) and `"arguments"` (object).
+- To call multiple tools, output multiple `<tool_call>` blocks, one after another.
+- Required parameters must always be provided. Optional parameters may be omitted.
+- To NOT call a tool, simply write normal text — do not output `<tool_call>` tags.
+- Never wrap the `<tool_call>` block in markdown fences or any other tag.
+
+### Available tools
 
 {tool_descriptions}
 </platform-injection>"""

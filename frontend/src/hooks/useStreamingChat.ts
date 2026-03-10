@@ -89,7 +89,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
   }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearPendingQueries, clearContextUsages, clearOutcomes]);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, forcedTools?: string[]) => {
       if (!workspaceId) {
         console.error('No workspace selected');
         return;
@@ -114,6 +114,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         workspaceId,
         appId: appId || undefined,
         message: content,
+        forcedTools,
 
         // ── run lifecycle ───────────────────────────────
         onRunStart: (runId) => setCurrentRun(runId),
