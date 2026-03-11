@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.schemas.auth.auth import Token, TokenRefresh
-from aiwen.schemas.auth.user import UserCreate, UserResponse
+from aiwen.schemas.auth.user import EmailRegisterRequest, UserCreate, UserResponse
 from aiwen.services.auth.auth_service import AuthService
 from aiwen.services.auth.token_service import TokenService
 
@@ -65,6 +65,44 @@ async def register_user(
     # Create user
     user = await auth_service.create_user(user_data, default_tenant.id)
 
+    return user
+
+
+@router.post(
+    "/register/email",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_user_by_email(
+    register_data: EmailRegisterRequest,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
+    """
+    Register a new user using email and password.
+
+    The username is auto-generated from the email address local part.
+
+    Args:
+        register_data: Email and password
+        auth_service: Authentication service dependency
+
+    Returns:
+        Created user information
+    """
+    existing_user = await auth_service.get_user_by_email(register_data.email)
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    default_tenant = await auth_service.get_tenant_by_name("default")
+    if not default_tenant:
+        default_tenant = await auth_service.create_tenant("default", "Default tenant")
+
+    user = await auth_service.create_user_by_email(
+        register_data.email, register_data.password, default_tenant.id
+    )
     return user
 
 

@@ -20,6 +20,13 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8, description="密码")
 
 
+class EmailRegisterRequest(BaseModel):
+    """Email-based registration model."""
+
+    email: EmailStr = Field(..., description="邮箱地址")
+    password: str = Field(..., min_length=8, description="密码")
+
+
 class UserLogin(BaseModel):
     """User login model."""
 
