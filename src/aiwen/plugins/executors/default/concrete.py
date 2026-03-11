@@ -178,13 +178,9 @@ class DefaultExecutor(Executor):
             else FunctionCallingStrategy()
         )
 
-        # Use pre-computed tools_info from Worker cache when available
-        # (avoids Pydantic schema generation for 150+ tools on every run).
-        if "tools_info" in config:
-            self.tools_info: Any = config["tools_info"]
-        else:
-            tool_classes = self._collect_tool_classes()
-            self.tools_info = self.strategy.format_tools(tool_classes)
+        # Tools are resolved per-message from XML tags (<tools> / <tool>).
+        # No global tool loading — self.tools_info stays empty by default.
+        self.tools_info: Any = self.strategy.format_tools([])
 
         # Cache the LLM client so it is not recreated for every LLM call
         # within the same run (saves connection overhead on multi-iteration loops).
@@ -389,25 +385,6 @@ class DefaultExecutor(Executor):
 
     # ── tool loading (via injected ToolProvider) ──────────────────
 
-    def _collect_tool_classes(self) -> list[type]:
-        """Collect tool classes from the injected ToolProvider."""
-        if self.tool_provider is None:
-            logger.warning("No ToolProvider injected; executor has no tools")
-            return []
-
-        classes: list[type] = []
-        for tool_class in self.tool_provider.get_tool_classes():
-            try:
-                if not isinstance(tool_class, type):
-                    tool_class = type(tool_class)
-                classes.append(tool_class)
-            except Exception as e:
-                name = getattr(getattr(tool_class, "METADATA", None), "name", tool_class)
-                logger.error(f"Failed to collect tool {name}: {e}", exc_info=True)
-
-        logger.info(f"Collected {len(classes)} tool classes via ToolProvider")
-        return classes
-
     def _collect_tool_classes_by_names(self, tool_names: list[str]) -> list[type]:
         """Return only the tool classes whose METADATA.name appears in *tool_names*."""
         if self.tool_provider is None:
@@ -434,11 +411,12 @@ class DefaultExecutor(Executor):
     def _build_tools_info_from_text(self, text: str) -> Any:
         """Parse XML tool tags in *text* and return formatted tools_info.
 
-        Falls back to ``self.tools_info`` (full set) when no XML tags are found.
+        Returns empty tools when no ``<tools>`` / ``<tool>`` tags are found —
+        loading from the full registry is intentionally prohibited.
         """
         tool_names = _parse_tool_names_from_xml(text)
         if not tool_names:
-            return self.tools_info
+            return self.tools_info  # empty — no XML tags means no tools
         tool_classes = self._collect_tool_classes_by_names(tool_names)
         return self.strategy.format_tools(tool_classes)
 
