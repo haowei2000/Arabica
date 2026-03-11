@@ -15,6 +15,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         List of tuples (router, prefix)
     """
     from aiwen.routers.auth.auth import router as auth_router
+    from aiwen.routers.auth.friends import router as friends_router
 
     # User management
     from aiwen.routers.auth.users.user_examples import router as user_examples_router
@@ -50,6 +51,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (auth_router, "/api"),
         (user_examples_router, "/api"),
         (user_management_router, "/api"),
+        (friends_router, "/api"),
         # Core Features
         (flush_redis_router, "/api"),
         # Agent System
