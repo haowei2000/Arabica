@@ -46,6 +46,7 @@ class SkillResponse(SkillBase):
     glance: str | None = Field(None, description="One-line summary")
     summary: str | None = Field(None, description="Structured summary")
     has_embedding: bool = Field(False, description="Whether embeddings have been generated")
+    files: dict[str, Any] | None = Field(None, description="Supplementary files as {path: content}")
     created_at: datetime
     updated_at: datetime | None
 

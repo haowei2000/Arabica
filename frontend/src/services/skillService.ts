@@ -45,4 +45,18 @@ export const skillService = {
       params: embedding_model ? { embedding_model } : undefined,
     });
   },
+
+  async uploadSkillFolder(
+    files: File[],
+    paths: string[],
+    tags?: string,
+  ): Promise<Skill> {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append('files', file);
+    }
+    const params: Record<string, string> = { paths: JSON.stringify(paths) };
+    if (tags) params['tags'] = tags;
+    return apiClient.post(API_ENDPOINTS.SKILLS.UPLOAD_FOLDER, formData, { params });
+  },
 };

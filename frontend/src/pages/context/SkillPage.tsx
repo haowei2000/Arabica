@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle } from 'lucide-react';
-import { useSkills, useCreateSkill, useUpdateSkill, useDeleteSkill } from '@/hooks/useSkills';
+import { useRef, useState } from 'react';
+import { FolderOpen, Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle } from 'lucide-react';
+import { useSkills, useCreateSkill, useUpdateSkill, useDeleteSkill, useUploadSkillFolder } from '@/hooks/useSkills';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,11 +13,35 @@ import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
 import type { SkillCreate, Skill } from '@/types/skill';
 
+// Parse YAML frontmatter from SKILL.md content
+function parseFrontmatter(content: string): { name?: string; description?: string; tags?: string[] } {
+  if (!content.startsWith('---')) return {};
+  const end = content.indexOf('\n---', 3);
+  if (end === -1) return {};
+  const fmStr = content.slice(3, end).trim();
+  const result: { name?: string; description?: string; tags?: string[] } = {};
+  for (const line of fmStr.split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const val = line.slice(colonIdx + 1).trim();
+    if (key === 'name' || key === 'title') result.name = val.replace(/^["']|["']$/g, '');
+    else if (key === 'description') result.description = val.replace(/^["']|["']$/g, '');
+    else if (key === 'tags') {
+      // handle "tags: [a, b]" or "tags: a, b"
+      const cleaned = val.replace(/^\[|\]$/g, '');
+      result.tags = cleaned.split(',').map((t) => t.trim()).filter(Boolean);
+    }
+  }
+  return result;
+}
+
 const INITIAL_FORM: SkillCreate = { name: '', description: '', content: '', tags: [] };
 
 export default function SkillPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showFolderModal, setShowFolderModal] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [formData, setFormData] = useState<SkillCreate>(INITIAL_FORM);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -25,12 +49,21 @@ export default function SkillPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
 
+  // Folder upload state
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const [folderFiles, setFolderFiles] = useState<File[]>([]);
+  const [folderPaths, setFolderPaths] = useState<string[]>([]);
+  const [folderMeta, setFolderMeta] = useState<{ name?: string; description?: string; tags?: string[] }>({});
+  const [folderTagInput, setFolderTagInput] = useState('');
+  const [folderExtraTags, setFolderExtraTags] = useState<string[]>([]);
+
   const { data: skillData, isLoading } = useSkills({
     tags: selectedTags.length > 0 ? selectedTags.join(',') : undefined,
   });
   const createMutation = useCreateSkill();
   const updateMutation = useUpdateSkill();
   const deleteMutation = useDeleteSkill();
+  const uploadFolderMutation = useUploadSkillFolder();
 
   const skills = skillData?.items ?? [];
   const allTags = Array.from(new Set(skills.flatMap((s) => s.tags ?? []))).sort();
@@ -78,6 +111,47 @@ export default function SkillPage() {
     if (m === 'list') setOpenItemId(null);
   };
 
+  const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files ?? []);
+    if (selected.length === 0) return;
+    const paths = selected.map((f) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
+    setFolderFiles(selected);
+    setFolderPaths(paths);
+    setFolderExtraTags([]);
+    setFolderTagInput('');
+
+    // Find SKILL.md and parse frontmatter
+    const skillMdIdx = paths.findIndex((p) => p.split('/').pop()?.toUpperCase() === 'SKILL.MD');
+    if (skillMdIdx !== -1) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target?.result as string;
+        setFolderMeta(parseFrontmatter(text));
+      };
+      reader.readAsText(selected[skillMdIdx]);
+    } else {
+      setFolderMeta({});
+    }
+  };
+
+  const handleFolderUpload = async () => {
+    if (folderFiles.length === 0) return;
+    const allTags = [...(folderMeta.tags ?? []), ...folderExtraTags];
+    try {
+      await uploadFolderMutation.mutateAsync({
+        files: folderFiles,
+        paths: folderPaths,
+        tags: allTags.length > 0 ? allTags.join(',') : undefined,
+      });
+      setShowFolderModal(false);
+      setFolderFiles([]);
+      setFolderPaths([]);
+      setFolderMeta({});
+    } catch (error) {
+      alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   if (isLoading) {
     return <div className="flex items-center justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
   }
@@ -97,6 +171,9 @@ export default function SkillPage() {
         </div>
         <div className="flex items-center gap-2">
           <ViewToggle mode={viewMode} onToggle={handleModeToggle} />
+          <Button size="sm" variant="outline" onClick={() => setShowFolderModal(true)}>
+            <FolderOpen className="size-3.5 mr-1" />Folder
+          </Button>
           <Button size="sm" onClick={openCreateModal}>+ New</Button>
         </div>
       </div>
@@ -249,6 +326,16 @@ export default function SkillPage() {
                       <span className="text-muted-foreground">Created</span>
                       <span>{formatRelativeTime(skill.created_at)}</span>
                     </div>
+                    {skill.files && Object.keys(skill.files).length > 0 && (
+                      <div className="pt-2 border-t border-border/40">
+                        <p className="text-xs text-muted-foreground mb-1.5">Supplementary files</p>
+                        <div className="flex flex-wrap gap-1">
+                          {Object.keys(skill.files).map((path) => (
+                            <span key={path} className="text-[10px] px-1.5 py-0.5 rounded bg-muted font-mono text-muted-foreground">{path}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex gap-2 pt-2 border-t border-border/40">
                       <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(skill)}>
                         <Pencil className="size-3.5" />Edit
@@ -271,6 +358,122 @@ export default function SkillPage() {
           <Button size="sm" onClick={openCreateModal}>Create Skill</Button>
         </div>
       )}
+
+      {/* Folder Upload Dialog */}
+      <Dialog open={showFolderModal} onOpenChange={(open) => { if (!open) { setShowFolderModal(false); setFolderFiles([]); setFolderPaths([]); setFolderMeta({}); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Upload Skill Folder</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-1">
+            <p className="text-xs text-muted-foreground">
+              Select a folder containing a <code className="bg-muted px-1 rounded">SKILL.md</code> file.
+              The YAML frontmatter (<code className="bg-muted px-1 rounded">name</code>, <code className="bg-muted px-1 rounded">description</code>, <code className="bg-muted px-1 rounded">tags</code>) will be extracted automatically.
+              Other files (.md, .py, etc.) will be stored as supplementary references.
+            </p>
+            <div>
+              <input
+                ref={folderInputRef}
+                type="file"
+                className="hidden"
+                // @ts-expect-error webkitdirectory is not in typings
+                webkitdirectory=""
+                multiple
+                onChange={handleFolderSelect}
+              />
+              <Button variant="outline" className="w-full" onClick={() => folderInputRef.current?.click()}>
+                <FolderOpen className="size-4 mr-2" />
+                {folderFiles.length > 0 ? `${folderFiles.length} files selected` : 'Choose Folder'}
+              </Button>
+            </div>
+
+            {folderFiles.length > 0 && (
+              <>
+                {/* File tree preview */}
+                <div className="rounded-lg border border-border bg-muted/30 p-3 max-h-40 overflow-y-auto">
+                  <p className="text-[10px] font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">Files</p>
+                  {folderPaths.map((p) => {
+                    const basename = p.split('/').pop() ?? p;
+                    const isSkillMd = basename.toUpperCase() === 'SKILL.MD';
+                    return (
+                      <div key={p} className={cn('text-[11px] font-mono py-0.5', isSkillMd ? 'text-foreground font-semibold' : 'text-muted-foreground')}>
+                        {p.split('/').slice(1).join('/') || basename}
+                        {isSkillMd && <span className="ml-1.5 text-[9px] bg-primary/10 text-primary px-1 rounded">main</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Extracted metadata */}
+                {folderMeta.name && (
+                  <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Extracted from SKILL.md</p>
+                    <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                      <span className="text-muted-foreground">Name</span>
+                      <span className="font-medium">{folderMeta.name}</span>
+                      {folderMeta.description && (
+                        <><span className="text-muted-foreground">Description</span><span>{folderMeta.description}</span></>
+                      )}
+                      {folderMeta.tags && folderMeta.tags.length > 0 && (
+                        <><span className="text-muted-foreground">Tags</span>
+                        <div className="flex flex-wrap gap-1">
+                          {folderMeta.tags.map((t) => <span key={t} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{t}</span>)}
+                        </div></>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {!folderMeta.name && (
+                  <p className="text-xs text-destructive">No SKILL.md found or missing <code>name</code> frontmatter field.</p>
+                )}
+
+                {/* Extra tags */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Additional Tags</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={folderTagInput}
+                      onChange={(e) => setFolderTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const t = folderTagInput.trim();
+                          if (t && !folderExtraTags.includes(t)) setFolderExtraTags([...folderExtraTags, t]);
+                          setFolderTagInput('');
+                        }
+                      }}
+                      placeholder="Add tag..."
+                      className="flex-1"
+                    />
+                    <Button type="button" variant="secondary" size="sm" onClick={() => {
+                      const t = folderTagInput.trim();
+                      if (t && !folderExtraTags.includes(t)) setFolderExtraTags([...folderExtraTags, t]);
+                      setFolderTagInput('');
+                    }}>Add</Button>
+                  </div>
+                  {folderExtraTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {folderExtraTags.map((t) => (
+                        <Badge key={t} variant="secondary" className="gap-1 text-xs">{t}
+                          <button type="button" onClick={() => setFolderExtraTags(folderExtraTags.filter((x) => x !== t))} className="ml-1 hover:text-foreground">×</button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowFolderModal(false); setFolderFiles([]); setFolderPaths([]); setFolderMeta({}); }}>Cancel</Button>
+            <Button
+              disabled={!folderMeta.name || uploadFolderMutation.isPending}
+              onClick={handleFolderUpload}
+            >
+              {uploadFolderMutation.isPending ? <><Loader2 className="size-4 animate-spin mr-2" />Uploading...</> : 'Upload Skill'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create / Edit Dialog */}
       <Dialog open={isModalOpen} onOpenChange={(open) => { if (!open) closeModal(); }}>

@@ -78,3 +78,15 @@ export const useProcessSkill = () => {
     },
   });
 };
+
+export const useUploadSkillFolder = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ files, paths, tags }: { files: File[]; paths: string[]; tags?: string }) =>
+      skillService.uploadSkillFolder(files, paths, tags),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skills'] });
+    },
+  });
+};

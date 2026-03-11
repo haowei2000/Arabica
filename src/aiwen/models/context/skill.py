@@ -36,6 +36,7 @@ class Skill(Base):  # ty:ignore[unsupported-base]
 
     tags: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    files: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

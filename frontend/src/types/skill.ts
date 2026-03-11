@@ -15,6 +15,7 @@ export interface Skill {
   summary?: string | null;
   tags?: string[] | null;
   has_embedding: boolean;
+  files?: Record<string, string> | null;
   created_at: string;
   updated_at?: string | null;
 }
