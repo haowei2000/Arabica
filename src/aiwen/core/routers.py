@@ -28,6 +28,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
 
     # Unified tool management (inner + external tools + templates)
     from aiwen.routers.context.tools.tools import router as tools_router
+    from aiwen.routers.context.tools.bundles import router as tool_bundles_router
 
     # Event and run routers
     from aiwen.routers.events.event_crud import router as event_crud_router
@@ -71,6 +72,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (event_crud_router, "/api"),
         # Unified Tool Management
         (tools_router, "/api"),
+        (tool_bundles_router, "/api"),
     ]
 
 

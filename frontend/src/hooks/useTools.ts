@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toolService } from '@/services/toolService';
-import type { UserToolCreate, UserToolUpdate, ToolTemplate, ToolExportData, InnerToolListResponse, MCPServerConfig, MCPImportRequest } from '@/types/tool';
+import type { UserToolCreate, UserToolUpdate, ToolTemplate, ToolExportData, InnerToolListResponse, MCPServerConfig, MCPImportRequest, ToolBundleListResponse } from '@/types/tool';
 
 export const useTemplates = (params?: {
   execution_mode?: string;
@@ -123,6 +123,15 @@ export const useImportFromMcp = () => {
     mutationFn: (data: MCPImportRequest) => toolService.importFromMcp(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tools'] });
+      queryClient.invalidateQueries({ queryKey: ['tool-bundles'] });
     },
+  });
+};
+
+export const useToolBundles = (params?: { include_public?: boolean }) => {
+  return useQuery<ToolBundleListResponse>({
+    queryKey: ['tool-bundles', params],
+    queryFn: () => toolService.getToolBundles(params),
+    staleTime: 30_000,
   });
 };

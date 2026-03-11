@@ -14,6 +14,7 @@ import type {
   MCPProbeResponse,
   MCPImportRequest,
   MCPImportResponse,
+  ToolBundleListResponse,
 } from '@/types/tool';
 
 export const toolService = {
@@ -82,5 +83,9 @@ export const toolService = {
 
   async importFromMcp(data: MCPImportRequest): Promise<MCPImportResponse> {
     return apiClient.post(API_ENDPOINTS.TOOLS.IMPORT_FROM_MCP, data);
+  },
+
+  async getToolBundles(params?: { include_public?: boolean; tags?: string }): Promise<ToolBundleListResponse> {
+    return apiClient.get(API_ENDPOINTS.TOOL_BUNDLES.LIST, { params });
   },
 };

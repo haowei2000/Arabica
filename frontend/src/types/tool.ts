@@ -161,3 +161,25 @@ export interface MCPImportResponse {
   skipped: string[];
   failed: string[];
 }
+
+// ─── Tool Bundles ─────────────────────────────────────────────────────────────
+
+export interface ToolBundle {
+  id: string;
+  bundle_type: string; // "inner" | "mcp" | "user"
+  source: string | null;
+  user_id: string | null;
+  name: string;
+  description: string | null;
+  tags: string[] | null;
+  is_public: boolean;
+  tool_ids: string[];
+  tool_count: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface ToolBundleListResponse {
+  bundles: ToolBundle[];
+  total: number;
+}

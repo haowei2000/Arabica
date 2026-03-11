@@ -439,6 +439,54 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             broken_count,
         )
 
+        # ── Phase 4: Sync inner tool toolsets by category ─────────────
+        try:
+            from aiwen.models.context.tools.tool_bundle import ToolBundle, ToolBundleItem
+            from sqlalchemy.orm import selectinload
+
+            inner_tools_stmt = select(ToolModel).where(
+                ToolModel.tool_type == "inner",
+                ToolModel.enabled == True,  # noqa: E712
+            )
+            inner_tools = (await db.execute(inner_tools_stmt)).scalars().all()
+
+            category_map: dict[str, list] = {}
+            for t in inner_tools:
+                cat = t.category or "general"
+                category_map.setdefault(cat, []).append(t)
+
+            for category, tools in category_map.items():
+                bundle_stmt = (
+                    select(ToolBundle)
+                    .options(selectinload(ToolBundle.items))
+                    .where(
+                        ToolBundle.bundle_type == "inner",
+                        ToolBundle.source == category,
+                    )
+                )
+                bundle = (await db.execute(bundle_stmt)).scalar_one_or_none()
+                if not bundle:
+                    bundle = ToolBundle(
+                        bundle_type="inner",
+                        source=category,
+                        name=category,
+                        description=f"Built-in {category} tools",
+                        is_public=True,
+                    )
+                    db.add(bundle)
+                    await db.flush()
+                    existing_tool_ids: set = set()  # new bundle, no items yet
+                else:
+                    existing_tool_ids = {item.tool_id for item in bundle.items}
+                for idx, tool in enumerate(tools):
+                    if tool.id not in existing_tool_ids:
+                        db.add(ToolBundleItem(bundle_id=bundle.id, tool_id=tool.id, position=idx))
+
+            await db.commit()
+            self.logger.info("Synced %d inner tool toolsets by category", len(category_map))
+        except Exception as e:
+            self.logger.error("Failed to sync inner tool toolsets: %s", e)
+
     @staticmethod
     def _find_broken_reference(
         tool_record, registered_names: set[str]

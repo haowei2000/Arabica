@@ -116,6 +116,11 @@ export const API_ENDPOINTS = {
         IMPORT_FROM_MCP: '/tools/import-from-mcp',
     },
 
+    // Tool Bundles
+    TOOL_BUNDLES: {
+        LIST: '/tool-bundles',
+    },
+
     // Skills 管理
     SKILLS: {
         LIST: '/agent/skills',

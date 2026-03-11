@@ -4,12 +4,12 @@ import {
   MoveRight, Search, Copy, Play, X, Plus, ChevronRight, ChevronDown,
   ArrowRight, Check, CircleDot, Circle, Zap, ArrowLeft, Settings2,
   Link2, Type, Hash, ToggleLeft as ToggleIcon, List, Box, Braces,
-  Download, Upload, Code2, FormInput, AlertCircle,
+  Download, Upload, Code2, FormInput, AlertCircle, Layers,
 } from 'lucide-react';
 import {
   useToolList, useCreateTool, useUpdateTool, useDeleteTool,
   useToggleTool, useInnerTools, useTestTool, useExportTool, useImportTool,
-  useProbeMcp, useImportFromMcp,
+  useProbeMcp, useImportFromMcp, useToolBundles,
 } from '@/hooks/useTools';
 import { toolService } from '@/services/toolService';
 import { Button } from '@/components/ui/button';
@@ -119,6 +119,8 @@ export default function ToolPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [groupByBundle, setGroupByBundle] = useState(true);
+  const [collapsedBundles, setCollapsedBundles] = useState<Set<string>>(new Set());
 
   // ── Create / Edit state ──
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -160,6 +162,7 @@ export default function ToolPage() {
     tags: selectedTags.length > 0 ? selectedTags.join(',') : undefined,
   });
   const { data: innerToolData } = useInnerTools();
+  const { data: bundleData } = useToolBundles({ include_public: true });
   const createMutation = useCreateTool();
   const updateMutation = useUpdateTool();
   const deleteMutation = useDeleteTool();
@@ -565,6 +568,33 @@ export default function ToolPage() {
   const isInner = (t: UserTool) => t.tool_type === 'inner';
   const allTags = Array.from(new Set(tools.flatMap(t => t.tags ?? []))).sort();
   const isEditing = !!editingTool;
+
+  // ── Bundle grouping ──
+  const bundles = bundleData?.bundles ?? [];
+  const toolById = new Map(tools.map(t => [t.id, t]));
+  let bundleGroups: { groups: { bundle: typeof bundles[0]; tools: UserTool[] }[]; unassigned: UserTool[] } | null = null;
+  if (groupByBundle && bundles.length > 0) {
+    const assignedIds = new Set<string>();
+    const groups: { bundle: typeof bundles[0]; tools: UserTool[] }[] = [];
+    for (const bundle of bundles) {
+      const bundleTools = bundle.tool_ids.flatMap(id => {
+        const t = toolById.get(id);
+        return t ? [t] : [];
+      });
+      if (bundleTools.length > 0) {
+        bundleTools.forEach(t => assignedIds.add(t.id));
+        groups.push({ bundle, tools: bundleTools });
+      }
+    }
+    const unassigned = tools.filter(t => !assignedIds.has(t.id));
+    bundleGroups = { groups, unassigned };
+  }
+
+  const toggleBundle = (id: string) => setCollapsedBundles(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const dialogOpen = showCreateModal || isEditing;
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1097,6 +1127,184 @@ export default function ToolPage() {
     </div>
   );
 
+  // ─── Per-tool renderer (card / list / drawer) ─────────────────────────────
+
+  const renderTool = (tool: UserTool): JSX.Element => {
+    const inner = isInner(tool);
+    const modeKey = inner ? 'inner' : (tool.inner_tool_name ? 'inner' : (tool.execution_mode || 'http'));
+
+    if (viewMode === 'card') {
+      return (
+        <div key={tool.id} className={cn(
+          'rounded-xl border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors',
+          inner ? 'border-border' : tool.enabled ? 'border-green-200/70 dark:border-green-800/40' : 'border-amber-200/70 dark:border-amber-800/40',
+          !inner && !tool.enabled && 'opacity-70')}>
+          <div className="flex items-start gap-2.5">
+            <span className={cn('size-2 rounded-full mt-1 shrink-0',
+              inner ? 'bg-muted-foreground/40' : tool.enabled ? 'bg-green-500' : 'bg-amber-400')} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold leading-snug truncate">{tool.display_name || tool.name}</p>
+              {tool.display_name && <p className="text-[10px] text-muted-foreground/60 font-mono truncate">{tool.name}</p>}
+            </div>
+            {!inner && (
+              <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full border shrink-0 font-medium',
+                tool.enabled
+                  ? 'bg-green-50 text-green-700 border-green-200/70 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800/50'
+                  : 'bg-amber-50 text-amber-700 border-amber-200/70 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/50')}>
+                {tool.enabled ? 'on' : 'off'}
+              </span>
+            )}
+          </div>
+          {tool.description && <p className="text-xs text-muted-foreground line-clamp-2">{tool.description}</p>}
+          <div className="flex flex-wrap gap-1.5">
+            <span className={cn('text-[10px] px-2 py-0.5 rounded-full border', MODE_COLOR[modeKey] ?? MODE_COLOR.inner)}>
+              {inner ? 'built-in' : modeKey}
+            </span>
+            {tool.category && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50">{tool.category}</span>
+            )}
+            {!inner && tool.inner_tool_name && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-50 text-primary-600 border border-primary-200/50 dark:bg-primary-900/20 dark:text-primary-400 dark:border-primary-800/40 font-mono">
+                {tool.inner_tool_name}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
+            {!inner && <span className="tabular-nums">{tool.usage_count ?? 0} calls</span>}
+            <span className="ml-auto">{formatRelativeTime(tool.created_at)}</span>
+          </div>
+          <div className="flex gap-2 pt-2 border-t border-border/40">
+            {inner ? (
+              <>
+                <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}>
+                  <Copy className="size-3.5" />Use as Template
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}>
+                  <Play className="size-3.5" />Test
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}>
+                  <Download className="size-3.5" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" className={cn('gap-1.5',
+                  tool.enabled ? 'text-green-700 border-green-200/70' : 'text-amber-700 border-amber-200/70')}
+                  disabled={toggleMutation.isPending} onClick={(e) => handleToggle(tool.id, tool.enabled, e)}>
+                  {tool.enabled ? <ToggleRight className="size-3.5" /> : <ToggleLeft className="size-3.5" />}
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openEditModal(tool); }}>
+                  <Pencil className="size-3.5" />
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}>
+                  <Play className="size-3.5" />
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}>
+                  <Copy className="size-3.5" />
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}>
+                  <Download className="size-3.5" />
+                </Button>
+                <Button size="sm" variant="outline" className="text-destructive border-destructive/30"
+                  disabled={deleteMutation.isPending} onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}>
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const statusDot = <span className={cn('size-2 rounded-full shrink-0', inner ? 'bg-muted-foreground/40' : tool.enabled ? 'bg-green-500' : 'bg-amber-400')} />;
+    const modeChip = <span className={cn('text-[10px] px-2 py-0.5 rounded-full border shrink-0', MODE_COLOR[modeKey] ?? MODE_COLOR.inner)}>{inner ? 'built-in' : modeKey}</span>;
+
+    const rowHeader = (
+      <>
+        {statusDot}
+        <div className="flex-1 min-w-0 flex items-baseline gap-2">
+          <span className="text-sm font-medium truncate">{tool.display_name || tool.name}</span>
+          {tool.display_name && <span className="text-[10px] text-muted-foreground/60 font-mono truncate hidden sm:block">{tool.name}</span>}
+        </div>
+        {tool.category && <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0">{tool.category}</span>}
+        {modeChip}
+        {!inner && tool.inner_tool_name && <span className="text-[10px] text-primary-600 dark:text-primary-400 font-mono shrink-0">{tool.inner_tool_name}</span>}
+      </>
+    );
+
+    if (viewMode === 'list') {
+      return (
+        <div key={tool.id} className={cn('group relative flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 transition-colors', !inner && !tool.enabled && 'opacity-60')}>
+          {statusDot}
+          <div className="flex-1 min-w-0 flex items-baseline gap-2">
+            <span className="text-sm font-medium truncate">{tool.display_name || tool.name}</span>
+            {tool.display_name && <span className="text-[10px] text-muted-foreground/60 font-mono truncate hidden sm:block">{tool.name}</span>}
+          </div>
+          {tool.category && <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0">{tool.category}</span>}
+          {modeChip}
+          {!inner && tool.inner_tool_name && <span className="text-[10px] text-primary-600 dark:text-primary-400 font-mono shrink-0">{tool.inner_tool_name}</span>}
+          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+            <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}><Play className="size-3.5 text-muted-foreground" /></button>
+            {!inner && (
+              <>
+                <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => handleToggle(tool.id, tool.enabled, e)}>
+                  {tool.enabled ? <ToggleRight className="size-4 text-green-600" /> : <ToggleLeft className="size-4 text-amber-500" />}
+                </button>
+                <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); openEditModal(tool); }}><Pencil className="size-3.5 text-muted-foreground" /></button>
+              </>
+            )}
+            <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}><Copy className="size-3.5 text-muted-foreground" /></button>
+            <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => handleExportTool(tool, e)}><Download className="size-3.5 text-muted-foreground" /></button>
+            {!inner && <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-destructive/10" onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}><Trash2 className="size-3.5 text-destructive/70" /></button>}
+          </div>
+        </div>
+      );
+    }
+
+    // Drawer
+    return (
+      <AccordionItem key={tool.id} isOpen={openItemId === tool.id}
+        onToggle={() => setOpenItemId(openItemId === tool.id ? null : tool.id)}
+        header={rowHeader}
+        detail={
+          <div className="space-y-3">
+            {tool.description && <p className="text-xs text-foreground/80 leading-relaxed">{tool.description}</p>}
+            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+              {tool.inner_tool_name && <><span className="text-muted-foreground">Wraps</span><span className="font-mono">{tool.inner_tool_name}</span></>}
+              {tool.category && <><span className="text-muted-foreground">Category</span><span>{tool.category}</span></>}
+              {!inner && <><span className="text-muted-foreground">Timeout</span><span className="tabular-nums">{tool.timeout ?? 30}s</span></>}
+            </div>
+            {tool.parameter_mapping && Object.keys(tool.parameter_mapping).length > 0 && (
+              <div>
+                <p className="text-[10px] text-muted-foreground mb-1 font-semibold uppercase tracking-wide">Parameter Mapping</p>
+                <div className="rounded border border-primary-200/40 dark:border-primary-800/30 divide-y divide-primary-100/60 dark:divide-primary-800/20">
+                  {Object.entries(tool.parameter_mapping).map(([k, v]) => (
+                    <div key={k} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                      <code className="font-mono text-foreground/70">{k}</code>
+                      <MoveRight className="size-3 text-primary-400 shrink-0" />
+                      <code className={cn('font-mono', String(v).includes('{{') ? 'text-primary-700 dark:text-primary-300' : 'text-foreground')}>{v}</code>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2 pt-2 border-t border-border/40">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}><Play className="size-3.5" />Test</Button>
+              {!inner && (
+                <>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openEditModal(tool); }}><Pencil className="size-3.5" />Edit</Button>
+                  <Button size="sm" variant="outline" className="text-destructive border-destructive/30" onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}><Trash2 className="size-3.5" /></Button>
+                </>
+              )}
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}><Copy className="size-3.5" />{inner ? 'Use as Template' : ''}</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}><Download className="size-3.5" />Export</Button>
+            </div>
+          </div>
+        }
+      />
+    );
+  };
+
   // ═══════════════════════════════════════════════════════════════════════════
   // ─── Main Render ──────────────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1113,6 +1321,18 @@ export default function ToolPage() {
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">{tools.length}</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            title="Group by bundle"
+            onClick={() => setGroupByBundle(v => !v)}
+            className={cn(
+              'size-7 flex items-center justify-center rounded border transition-colors',
+              groupByBundle
+                ? 'bg-foreground text-background border-foreground'
+                : 'bg-muted text-muted-foreground border-border hover:text-foreground'
+            )}>
+            <Layers className="size-3.5" />
+          </button>
           <ViewToggle mode={viewMode} onToggle={(m) => { setViewMode(m); if (m !== 'drawer') setOpenItemId(null); }} />
           <Button size="sm" variant="outline" className="gap-1.5"
             onClick={() => { setShowMcpModal(true); setMcpDiscovered([]); setMcpSelected(new Set()); setMcpProbeError(null); }}>
@@ -1147,187 +1367,67 @@ export default function ToolPage() {
       )}
 
       {/* ── Tool List ── */}
-      {tools.length > 0 ? viewMode === 'card' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {tools.map(tool => {
-            const inner = isInner(tool);
-            const modeKey = inner ? 'inner' : (tool.inner_tool_name ? 'inner' : (tool.execution_mode || 'http'));
+      {tools.length > 0 && bundleGroups ? (
+        /* ── Grouped by bundle ── */
+        <div className="space-y-3">
+          {bundleGroups.groups.map(({ bundle, tools: bTools }) => {
+            const collapsed = collapsedBundles.has(bundle.id);
+            const typeColor: Record<string, string> = {
+              inner: 'bg-muted text-muted-foreground border-border/50',
+              mcp:   'bg-blue-50 text-blue-700 border-blue-200/70 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/50',
+              user:  'bg-purple-50 text-purple-700 border-purple-200/70 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800/50',
+            };
             return (
-              <div key={tool.id} className={cn(
-                'rounded-xl border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors',
-                inner ? 'border-border' : tool.enabled ? 'border-green-200/70 dark:border-green-800/40' : 'border-amber-200/70 dark:border-amber-800/40',
-                !inner && !tool.enabled && 'opacity-70')}>
-                <div className="flex items-start gap-2.5">
-                  <span className={cn('size-2 rounded-full mt-1 shrink-0',
-                    inner ? 'bg-muted-foreground/40' : tool.enabled ? 'bg-green-500' : 'bg-amber-400')} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold leading-snug truncate">{tool.display_name || tool.name}</p>
-                    {tool.display_name && <p className="text-[10px] text-muted-foreground/60 font-mono truncate">{tool.name}</p>}
-                  </div>
-                  {!inner && (
-                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full border shrink-0 font-medium',
-                      tool.enabled
-                        ? 'bg-green-50 text-green-700 border-green-200/70 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800/50'
-                        : 'bg-amber-50 text-amber-700 border-amber-200/70 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/50')}>
-                      {tool.enabled ? 'on' : 'off'}
-                    </span>
-                  )}
-                </div>
-                {tool.description && <p className="text-xs text-muted-foreground line-clamp-2">{tool.description}</p>}
-                <div className="flex flex-wrap gap-1.5">
-                  <span className={cn('text-[10px] px-2 py-0.5 rounded-full border', MODE_COLOR[modeKey] ?? MODE_COLOR.inner)}>
-                    {inner ? 'built-in' : modeKey}
+              <div key={bundle.id} className="rounded-xl border border-border bg-card overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => toggleBundle(bundle.id)}
+                  className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-muted/40 transition-colors text-left"
+                >
+                  {collapsed ? <ChevronRight className="size-3.5 text-muted-foreground shrink-0" /> : <ChevronDown className="size-3.5 text-muted-foreground shrink-0" />}
+                  <span className="text-sm font-semibold flex-1 truncate">{bundle.name}</span>
+                  <span className={cn('text-[10px] px-2 py-0.5 rounded-full border shrink-0', typeColor[bundle.bundle_type] ?? typeColor.user)}>
+                    {bundle.bundle_type}
                   </span>
-                  {tool.category && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50">{tool.category}</span>
-                  )}
-                  {!inner && tool.inner_tool_name && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-50 text-primary-600 border border-primary-200/50 dark:bg-primary-900/20 dark:text-primary-400 dark:border-primary-800/40 font-mono">
-                      {tool.inner_tool_name}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
-                  {!inner && <span className="tabular-nums">{tool.usage_count ?? 0} calls</span>}
-                  <span className="ml-auto">{formatRelativeTime(tool.created_at)}</span>
-                </div>
-                <div className="flex gap-2 pt-2 border-t border-border/40">
-                  {inner ? (
-                    <>
-                      <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}>
-                        <Copy className="size-3.5" />Use as Template
-                      </Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}>
-                        <Play className="size-3.5" />Test
-                      </Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}>
-                        <Download className="size-3.5" />
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button size="sm" variant="outline" className={cn('gap-1.5',
-                        tool.enabled ? 'text-green-700 border-green-200/70' : 'text-amber-700 border-amber-200/70')}
-                        disabled={toggleMutation.isPending} onClick={(e) => handleToggle(tool.id, tool.enabled, e)}>
-                        {tool.enabled ? <ToggleRight className="size-3.5" /> : <ToggleLeft className="size-3.5" />}
-                      </Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openEditModal(tool); }}>
-                        <Pencil className="size-3.5" />
-                      </Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}>
-                        <Play className="size-3.5" />
-                      </Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}>
-                        <Copy className="size-3.5" />
-                      </Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}>
-                        <Download className="size-3.5" />
-                      </Button>
-                      <Button size="sm" variant="outline" className="text-destructive border-destructive/30"
-                        disabled={deleteMutation.isPending} onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </>
-                  )}
-                </div>
+                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{bTools.length}</span>
+                </button>
+                {!collapsed && (
+                  <div className={cn('border-t border-border/50',
+                    viewMode === 'card' ? 'p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3' : 'divide-y divide-border/50')}>
+                    {bTools.map(tool => renderTool(tool))}
+                  </div>
+                )}
               </div>
             );
           })}
+          {bundleGroups.unassigned.length > 0 && (
+            <div className="rounded-xl border border-dashed border-border bg-card overflow-hidden">
+              <button
+                type="button"
+                onClick={() => toggleBundle('__unassigned__')}
+                className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-muted/40 transition-colors text-left"
+              >
+                {collapsedBundles.has('__unassigned__') ? <ChevronRight className="size-3.5 text-muted-foreground shrink-0" /> : <ChevronDown className="size-3.5 text-muted-foreground shrink-0" />}
+                <span className="text-sm font-semibold flex-1 text-muted-foreground">Other</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{bundleGroups.unassigned.length}</span>
+              </button>
+              {!collapsedBundles.has('__unassigned__') && (
+                <div className={cn('border-t border-border/50',
+                  viewMode === 'card' ? 'p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3' : 'divide-y divide-border/50')}>
+                  {bundleGroups.unassigned.map(tool => renderTool(tool))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : tools.length > 0 ? viewMode === 'card' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {tools.map(renderTool)}
         </div>
       ) : (
         /* ── List / Drawer view ── */
         <div className="rounded-xl border border-border bg-card overflow-visible divide-y divide-border/50">
-          {tools.map(tool => {
-            const inner = isInner(tool);
-            const modeKey = inner ? 'inner' : (tool.inner_tool_name ? 'inner' : (tool.execution_mode || 'http'));
-            const statusDot = <span className={cn('size-2 rounded-full shrink-0', inner ? 'bg-muted-foreground/40' : tool.enabled ? 'bg-green-500' : 'bg-amber-400')} />;
-            const modeChip = <span className={cn('text-[10px] px-2 py-0.5 rounded-full border shrink-0', MODE_COLOR[modeKey] ?? MODE_COLOR.inner)}>{inner ? 'built-in' : modeKey}</span>;
-
-            const rowHeader = (
-              <>
-                {statusDot}
-                <div className="flex-1 min-w-0 flex items-baseline gap-2">
-                  <span className="text-sm font-medium truncate">{tool.display_name || tool.name}</span>
-                  {tool.display_name && <span className="text-[10px] text-muted-foreground/60 font-mono truncate hidden sm:block">{tool.name}</span>}
-                </div>
-                {tool.category && <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0">{tool.category}</span>}
-                {modeChip}
-                {!inner && tool.inner_tool_name && <span className="text-[10px] text-primary-600 dark:text-primary-400 font-mono shrink-0">{tool.inner_tool_name}</span>}
-              </>
-            );
-
-            if (viewMode === 'list') {
-              return (
-                <div key={tool.id} className={cn('group relative flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 transition-colors', !inner && !tool.enabled && 'opacity-60')}>
-                  {statusDot}
-                  <div className="flex-1 min-w-0 flex items-baseline gap-2">
-                    <span className="text-sm font-medium truncate">{tool.display_name || tool.name}</span>
-                    {tool.display_name && <span className="text-[10px] text-muted-foreground/60 font-mono truncate hidden sm:block">{tool.name}</span>}
-                  </div>
-                  {tool.category && <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 shrink-0">{tool.category}</span>}
-                  {modeChip}
-                  {!inner && tool.inner_tool_name && <span className="text-[10px] text-primary-600 dark:text-primary-400 font-mono shrink-0">{tool.inner_tool_name}</span>}
-                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}><Play className="size-3.5 text-muted-foreground" /></button>
-                    {!inner && (
-                      <>
-                        <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => handleToggle(tool.id, tool.enabled, e)}>
-                          {tool.enabled ? <ToggleRight className="size-4 text-green-600" /> : <ToggleLeft className="size-4 text-amber-500" />}
-                        </button>
-                        <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); openEditModal(tool); }}><Pencil className="size-3.5 text-muted-foreground" /></button>
-                      </>
-                    )}
-                    <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}><Copy className="size-3.5 text-muted-foreground" /></button>
-                    <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => handleExportTool(tool, e)}><Download className="size-3.5 text-muted-foreground" /></button>
-                    {!inner && <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-destructive/10" onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}><Trash2 className="size-3.5 text-destructive/70" /></button>}
-                  </div>
-                </div>
-              );
-            }
-
-            // Drawer
-            return (
-              <AccordionItem key={tool.id} isOpen={openItemId === tool.id}
-                onToggle={() => setOpenItemId(openItemId === tool.id ? null : tool.id)}
-                header={rowHeader}
-                detail={
-                  <div className="space-y-3">
-                    {tool.description && <p className="text-xs text-foreground/80 leading-relaxed">{tool.description}</p>}
-                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-                      {tool.inner_tool_name && <><span className="text-muted-foreground">Wraps</span><span className="font-mono">{tool.inner_tool_name}</span></>}
-                      {tool.category && <><span className="text-muted-foreground">Category</span><span>{tool.category}</span></>}
-                      {!inner && <><span className="text-muted-foreground">Timeout</span><span className="tabular-nums">{tool.timeout ?? 30}s</span></>}
-                    </div>
-                    {tool.parameter_mapping && Object.keys(tool.parameter_mapping).length > 0 && (
-                      <div>
-                        <p className="text-[10px] text-muted-foreground mb-1 font-semibold uppercase tracking-wide">Parameter Mapping</p>
-                        <div className="rounded border border-primary-200/40 dark:border-primary-800/30 divide-y divide-primary-100/60 dark:divide-primary-800/20">
-                          {Object.entries(tool.parameter_mapping).map(([k, v]) => (
-                            <div key={k} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                              <code className="font-mono text-foreground/70">{k}</code>
-                              <MoveRight className="size-3 text-primary-400 shrink-0" />
-                              <code className={cn('font-mono', String(v).includes('{{') ? 'text-primary-700 dark:text-primary-300' : 'text-foreground')}>{v}</code>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex gap-2 pt-2 border-t border-border/40">
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openTestDialog(tool); }}><Play className="size-3.5" />Test</Button>
-                      {!inner && (
-                        <>
-                          <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); openEditModal(tool); }}><Pencil className="size-3.5" />Edit</Button>
-                          <Button size="sm" variant="outline" className="text-destructive border-destructive/30" onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}><Trash2 className="size-3.5" /></Button>
-                        </>
-                      )}
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}><Copy className="size-3.5" />{inner ? 'Use as Template' : ''}</Button>
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}><Download className="size-3.5" />Export</Button>
-                    </div>
-                  </div>
-                }
-              />
-            );
-          })}
+          {tools.map(renderTool)}
         </div>
       ) : (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">

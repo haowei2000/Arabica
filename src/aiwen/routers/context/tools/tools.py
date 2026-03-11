@@ -1012,5 +1012,55 @@ async def import_from_mcp(
     if imported:
         await db.commit()
 
+        # Auto-create/update MCP toolset for this server
+        try:
+            from aiwen.models.context.tools.tool_bundle import ToolBundle, ToolBundleItem
+            from sqlalchemy import select as sa_select
+            from sqlalchemy.orm import selectinload
+
+            if body.transport == "sse":
+                server_id = body.url
+                server_name = body.url.rstrip("/").split("/")[-1] or body.url
+            else:
+                server_id = body.command
+                server_name = body.args[0] if body.args else body.command
+
+            bundle_stmt = (
+                sa_select(ToolBundle)
+                .options(selectinload(ToolBundle.items))
+                .where(
+                    ToolBundle.bundle_type == "mcp",
+                    ToolBundle.source == server_id,
+                    ToolBundle.user_id == current_user.id,
+                )
+            )
+            bundle = (await db.execute(bundle_stmt)).scalar_one_or_none()
+            if not bundle:
+                bundle = ToolBundle(
+                    bundle_type="mcp",
+                    source=server_id,
+                    name=server_name,
+                    user_id=current_user.id,
+                    is_public=body.is_public,
+                    tags=["mcp"],
+                )
+                db.add(bundle)
+                await db.flush()
+
+            tools_stmt = sa_select(ToolModel).where(
+                ToolModel.name.in_(imported),
+                ToolModel.user_id == current_user.id,
+            )
+            tools = (await db.execute(tools_stmt)).scalars().all()
+
+            existing_item_ids = {item.tool_id for item in bundle.items}
+            for idx, tool in enumerate(tools):
+                if tool.id not in existing_item_ids:
+                    db.add(ToolBundleItem(bundle_id=bundle.id, tool_id=tool.id, position=idx))
+
+            await db.commit()
+        except Exception as exc:
+            logger.error("Failed to create MCP toolset: %s", exc)
+
     return MCPImportResponse(imported=imported, skipped=skipped, failed=failed)
 
