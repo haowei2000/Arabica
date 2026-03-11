@@ -1,5 +1,6 @@
 """Authentication service for user management."""
 
+import re
 from uuid import UUID
 
 from sqlalchemy import select
@@ -129,6 +130,39 @@ class AuthService:
         await self.db.refresh(user)
 
         return user
+
+    async def create_user_by_email(
+        self, email: str, password: str, tenant_id: UUID, auto_commit: bool = True
+    ) -> User:
+        """
+        Create a new user using only email and password.
+
+        A username is auto-generated from the local part of the email address.
+        If the generated username already exists, a numeric suffix is appended
+        until a unique name is found.
+
+        Args:
+            email: User's email address
+            password: Plain text password
+            tenant_id: Tenant ID for the user
+            auto_commit: If True (default), immediately commit the transaction.
+
+        Returns:
+            Created user object
+        """
+        # Derive a username from the email local part
+        local_part = email.split("@")[0]
+        base_username = re.sub(r"[^a-zA-Z0-9_]", "_", local_part)[:40]
+
+        # Ensure the username is unique
+        username = base_username
+        counter = 1
+        while await self.get_user_by_username(username):
+            username = f"{base_username}_{counter}"
+            counter += 1
+
+        user_data = UserCreate(username=username, email=email, password=password)
+        return await self.create_user(user_data, tenant_id, auto_commit)
 
     async def get_tenant_by_name(self, name: str) -> Tenant | None:
         """
