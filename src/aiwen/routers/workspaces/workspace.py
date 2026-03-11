@@ -36,6 +36,8 @@ from aiwen.schemas.workspaces.workspace_context import (
     CopyContextsResponse,
     WorkspaceContextListResponse,
 )
+from aiwen.schemas.auth.friend import FriendUserInfo
+from aiwen.services.auth.friend_crud import FriendCRUD
 from aiwen.services.context.process import copy_contexts_to_workspace
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -623,3 +625,41 @@ async def reinit_workspace_context(
         config=config,
     )
     return {"success": True, "counts": counts}
+
+
+@router.get(
+    "/{workspace_id}/invitable-friends",
+    response_model=list[FriendUserInfo],
+    summary="List friends who can be invited to this workspace",
+)
+async def list_invitable_friends(
+    workspace_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: WorkspaceCRUDDep,
+    member_crud: WorkspaceMemberCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+):
+    """List the current user's friends who are not yet members of this workspace.
+
+    This is a convenience endpoint to make workspace invitation easier.
+    """
+    workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace {workspace_id} not found or access denied",
+        )
+
+    friend_crud = FriendCRUD(db)
+    _, all_friends = await friend_crud.list_friends(user_id=current_user.id, page=1, page_size=1000)
+
+    # Get existing member user IDs
+    existing_members, _ = await member_crud.list_members(workspace_id=workspace_id, skip=0, limit=10000)
+    existing_member_ids = {str(m.user_id) for m in existing_members}
+
+    invitable = [
+        FriendUserInfo(**f)
+        for f in all_friends
+        if str(f["id"]) not in existing_member_ids
+    ]
+    return invitable
