@@ -178,9 +178,13 @@ class DefaultExecutor(Executor):
             else FunctionCallingStrategy()
         )
 
-        # Tools are resolved per-message from XML tags (<tools> / <tool>).
-        # No global tool loading — self.tools_info stays empty by default.
-        self.tools_info: Any = self.strategy.format_tools([])
+        # Pre-collect tool classes marked always_load=True so they are merged
+        # into every LLM call regardless of the XML tag selection in the message.
+        self._always_load_classes: list[type] = self._collect_always_load_classes()
+
+        # Base tools_info (always-load only); XML-specified tools are appended
+        # at call time inside _build_tools_info_from_text().
+        self.tools_info: Any = self.strategy.format_tools(self._always_load_classes)
 
         # Cache the LLM client so it is not recreated for every LLM call
         # within the same run (saves connection overhead on multi-iteration loops).
@@ -385,6 +389,24 @@ class DefaultExecutor(Executor):
 
     # ── tool loading (via injected ToolProvider) ──────────────────
 
+    def _collect_always_load_classes(self) -> list[type]:
+        """Return all tool classes whose METADATA.always_load is True."""
+        if self.tool_provider is None:
+            return []
+
+        classes: list[type] = []
+        for tool_class in self.tool_provider.get_tool_classes():
+            try:
+                if not isinstance(tool_class, type):
+                    tool_class = type(tool_class)
+                if getattr(getattr(tool_class, "METADATA", None), "always_load", False):
+                    classes.append(tool_class)
+            except Exception as e:
+                logger.error(f"Failed to inspect tool class for always_load: {e}", exc_info=True)
+
+        logger.info(f"Collected {len(classes)} always-load tool classes")
+        return classes
+
     def _collect_tool_classes_by_names(self, tool_names: list[str]) -> list[type]:
         """Return only the tool classes whose METADATA.name appears in *tool_names*."""
         if self.tool_provider is None:
@@ -411,14 +433,21 @@ class DefaultExecutor(Executor):
     def _build_tools_info_from_text(self, text: str) -> Any:
         """Parse XML tool tags in *text* and return formatted tools_info.
 
-        Returns empty tools when no ``<tools>`` / ``<tool>`` tags are found —
-        loading from the full registry is intentionally prohibited.
+        Always-load tools are merged in unconditionally.  XML-specified tools
+        are appended on top.  When no XML tags are found only always-load tools
+        are passed to the LLM (loading the full registry is prohibited).
         """
         tool_names = _parse_tool_names_from_xml(text)
         if not tool_names:
-            return self.tools_info  # empty — no XML tags means no tools
-        tool_classes = self._collect_tool_classes_by_names(tool_names)
-        return self.strategy.format_tools(tool_classes)
+            return self.tools_info  # always-load only; no XML tags
+
+        xml_classes = self._collect_tool_classes_by_names(tool_names)
+
+        # Merge always-load + XML classes, preserving order and deduplicating.
+        seen: set[type] = set(self._always_load_classes)
+        extra = [c for c in xml_classes if c not in seen]
+        merged = self._always_load_classes + extra
+        return self.strategy.format_tools(merged)
 
     @staticmethod
     def _extract_last_user_message_text(raw_events: list[dict]) -> str | None:

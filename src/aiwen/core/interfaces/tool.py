@@ -44,6 +44,7 @@ class ToolMetadata:
     category: str = "general"  # Category
     enabled: bool = True  # Whether enabled
     timeout: int = 30  # Timeout in seconds
+    always_load: bool = False  # Always include this tool regardless of XML tag selection
 
 class ToolInputSchema(BaseModel):
     """Base class for tool input parameters (auto-generate schema using Pydantic)"""
