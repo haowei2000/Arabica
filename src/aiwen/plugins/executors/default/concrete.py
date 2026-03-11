@@ -37,6 +37,7 @@ Streaming event map:
 from collections.abc import AsyncGenerator
 import json
 import logging
+import re
 from typing import Any, ClassVar
 
 from aiwen.core.interfaces import (
@@ -59,6 +60,33 @@ from aiwen.schemas.events.event_payloads import EventType
 from aiwen.schemas.llm.chat_llm import ChatLLM
 
 logger = logging.getLogger(__name__)
+
+# ── XML tool-selection parsing ─────────────────────────────────────────────
+# Supported formats in user messages:
+#   <tools>tool_name_1, tool_name_2, tool_name_3</tools>
+#   <tool>tool_name_1</tool> <tool>tool_name_2</tool>
+_TOOLS_XML_RE = re.compile(r"<tools>(.*?)</tools>", re.DOTALL | re.IGNORECASE)
+_TOOL_XML_RE = re.compile(r"<tool>(.*?)</tool>", re.DOTALL | re.IGNORECASE)
+
+
+def _parse_tool_names_from_xml(text: str) -> list[str] | None:
+    """Extract tool names declared in XML tags inside a message.
+
+    Returns a deduplicated list of names when tags are found, or ``None``
+    when no tool-selection XML is present (signals "use all tools").
+    """
+    match = _TOOLS_XML_RE.search(text)
+    if match:
+        names = [n.strip() for n in match.group(1).split(",") if n.strip()]
+        if names:
+            return list(dict.fromkeys(names))  # preserve order, deduplicate
+
+    names = [m.group(1).strip() for m in _TOOL_XML_RE.finditer(text) if m.group(1).strip()]
+    if names:
+        return list(dict.fromkeys(names))
+
+    return None
+
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are an intelligent AI assistant.
@@ -202,7 +230,7 @@ class DefaultExecutor(Executor):
             match event.event_type:
                 case EventType.USER_MESSAGE:
                     self._reset_token_index()
-                    async for e in self._on_user_message():
+                    async for e in self._on_user_message(event.payload):
                         yield e
 
                 case EventType.USER_FEEDBACK:
@@ -228,17 +256,34 @@ class DefaultExecutor(Executor):
 
     # ── streaming event handlers ──────────────────────────────────
 
-    async def _on_user_message(self) -> AsyncGenerator[Event, None]:
+    async def _on_user_message(
+        self, payload: dict[str, Any] | None = None
+    ) -> AsyncGenerator[Event, None]:
         """Start a fresh agentic loop for a new user message.
 
         Full conversation is reconstructed from the event stream via
         _load_event_history so the executor is stateless across events.
         Trigger context injected by the event worker (payload["_context"])
         is embedded naturally when the USER_MESSAGE event is converted.
+
+        When *payload* contains a ``message`` field with XML ``<tools>`` /
+        ``<tool>`` tags, only those named tools are passed to the LLM instead
+        of the full tool set.
         """
+        tools_info = self.tools_info
+        if payload:
+            msg = payload.get("message", "")
+            if isinstance(msg, list):
+                msg = " ".join(
+                    p.get("text", "") if isinstance(p, dict) else str(p)
+                    for p in msg
+                )
+            if msg:
+                tools_info = self._build_tools_info_from_text(str(msg))
+
         messages = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(await self._load_event_history())
-        async for event in self._agentic_loop(messages):
+        async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
     async def _on_user_feedback(
@@ -256,10 +301,16 @@ class DefaultExecutor(Executor):
             self._pending_tool_ids.discard(tool_id)
             self._pending_user_input = None
 
+        raw_events = await self._fetch_events(global_scope=False)
+        tools_info = self.tools_info
+        last_user_text = self._extract_last_user_message_text(raw_events)
+        if last_user_text:
+            tools_info = self._build_tools_info_from_text(last_user_text)
+
         messages = [ChatMessage(role="system", content=self.system_prompt)]
-        messages.extend(await self._load_last_exchange())
+        messages.extend(await self._load_last_exchange(raw_events))
         self._reset_token_index()
-        async for event in self._agentic_loop(messages):
+        async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
     async def _on_tool_result(
@@ -275,10 +326,16 @@ class DefaultExecutor(Executor):
         if self._pending_tool_ids:
             return  # Still waiting for other parallel tool results
 
+        raw_events = await self._fetch_events(global_scope=False)
+        tools_info = self.tools_info
+        last_user_text = self._extract_last_user_message_text(raw_events)
+        if last_user_text:
+            tools_info = self._build_tools_info_from_text(last_user_text)
+
         messages = [ChatMessage(role="system", content=self.system_prompt)]
-        messages.extend(await self._load_last_exchange())
+        messages.extend(await self._load_last_exchange(raw_events))
         self._reset_token_index()
-        async for event in self._agentic_loop(messages):
+        async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
     async def _on_tool_error(
@@ -292,10 +349,16 @@ class DefaultExecutor(Executor):
         if self._pending_tool_ids:
             return  # Still waiting for other parallel tool results
 
+        raw_events = await self._fetch_events(global_scope=False)
+        tools_info = self.tools_info
+        last_user_text = self._extract_last_user_message_text(raw_events)
+        if last_user_text:
+            tools_info = self._build_tools_info_from_text(last_user_text)
+
         messages = [ChatMessage(role="system", content=self.system_prompt)]
-        messages.extend(await self._load_last_exchange())
+        messages.extend(await self._load_last_exchange(raw_events))
         self._reset_token_index()
-        async for event in self._agentic_loop(messages):
+        async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
     # ── LLM config ────────────────────────────────────────────────
@@ -344,6 +407,56 @@ class DefaultExecutor(Executor):
 
         logger.info(f"Collected {len(classes)} tool classes via ToolProvider")
         return classes
+
+    def _collect_tool_classes_by_names(self, tool_names: list[str]) -> list[type]:
+        """Return only the tool classes whose METADATA.name appears in *tool_names*."""
+        if self.tool_provider is None:
+            return []
+
+        name_set = set(tool_names)
+        classes: list[type] = []
+        for tool_class in self.tool_provider.get_tool_classes():
+            try:
+                if not isinstance(tool_class, type):
+                    tool_class = type(tool_class)
+                tool_name = getattr(getattr(tool_class, "METADATA", None), "name", None)
+                if tool_name and tool_name in name_set:
+                    classes.append(tool_class)
+            except Exception as e:
+                logger.error(f"Failed to inspect tool class: {e}", exc_info=True)
+
+        logger.info(
+            f"Filtered to {len(classes)} tool classes from XML spec "
+            f"({len(tool_names)} requested: {tool_names})"
+        )
+        return classes
+
+    def _build_tools_info_from_text(self, text: str) -> Any:
+        """Parse XML tool tags in *text* and return formatted tools_info.
+
+        Falls back to ``self.tools_info`` (full set) when no XML tags are found.
+        """
+        tool_names = _parse_tool_names_from_xml(text)
+        if not tool_names:
+            return self.tools_info
+        tool_classes = self._collect_tool_classes_by_names(tool_names)
+        return self.strategy.format_tools(tool_classes)
+
+    @staticmethod
+    def _extract_last_user_message_text(raw_events: list[dict]) -> str | None:
+        """Return the content of the most recent USER_MESSAGE in *raw_events*."""
+        for e in reversed(raw_events):
+            if e.get("event_type") == str(EventType.USER_MESSAGE):
+                payload = e.get("payload") or {}
+                msg = payload.get("message", "")
+                if isinstance(msg, list):
+                    msg = " ".join(
+                        p.get("text", "") if isinstance(p, dict) else str(p)
+                        for p in msg
+                    )
+                if msg:
+                    return str(msg)
+        return None
 
     # ── event fetch / history helpers ─────────────────────────────
 
@@ -477,7 +590,9 @@ class DefaultExecutor(Executor):
         )
         return self._events_to_messages(raw_events)
 
-    async def _load_last_exchange(self) -> list[ChatMessage]:
+    async def _load_last_exchange(
+        self, raw_events: list[dict] | None = None
+    ) -> list[ChatMessage]:
         """Load the last [user, assistant, tool…] exchange from the current run.
 
         Used for TOOL_RESULT, TOOL_ERROR, and USER_FEEDBACK paths where only
@@ -485,9 +600,14 @@ class DefaultExecutor(Executor):
         events that have already been persisted to the DB (important for parallel
         tool calls — earlier results appear here so the LLM sees the full set).
 
+        Pass *raw_events* to reuse an already-fetched event list and avoid a
+        second DB round-trip (e.g. when the caller also needs them for tool
+        filtering).
+
         Returns ``[user_msg?, assistant_msg?, tool_msg…]``; absent elements omitted.
         """
-        raw_events = await self._fetch_events(global_scope=False)
+        if raw_events is None:
+            raw_events = await self._fetch_events(global_scope=False)
         if not raw_events:
             return []
 
@@ -611,6 +731,7 @@ class DefaultExecutor(Executor):
     async def _agentic_loop(
         self,
         messages: list[ChatMessage],
+        tools_info: Any = None,
     ) -> AsyncGenerator[Event, None]:
         """Run the agentic loop: call LLM, process tool calls, repeat.
 
@@ -618,7 +739,12 @@ class DefaultExecutor(Executor):
         (system prompt + long-term history + event history).  No additional
         history loading happens inside the loop; the caller is responsible
         for passing an up-to-date message list.
+
+        ``tools_info`` overrides ``self.tools_info`` when provided, allowing
+        callers that parsed tool names from message XML to pass a filtered set.
         """
+        active_tools_info = tools_info if tools_info is not None else self.tools_info
+
         for _iteration in range(self.max_iterations):
             # ── per-iteration state ──────────────────────────────
             response_buf = ""
@@ -633,7 +759,7 @@ class DefaultExecutor(Executor):
             # ── stream LLM response tokens ───────────────────────
             stream = self.strategy.call_llm_stream(
                 messages,
-                self.tools_info,
+                active_tools_info,
                 model=self.model_name,
                 api_key=self._api_key,
                 base_url=self._base_url,
