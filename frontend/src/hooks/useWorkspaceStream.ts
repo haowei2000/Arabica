@@ -94,6 +94,8 @@ export function useWorkspaceStream(workspaceId: string | null) {
               sequence: (payload.sequence as number) || 0,
               event_type: type,
               payload: (payload.payload as Record<string, unknown>) || {},
+              input_tokens: (payload.input_tokens as number) || 0,
+              output_tokens: (payload.output_tokens as number) || 0,
               created_at: (payload.created_at as string) || new Date().toISOString(),
             };
             const store = useRunEventsStore.getState();

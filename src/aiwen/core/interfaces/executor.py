@@ -104,6 +104,9 @@ class Executor(ABC, ExecutorProtocol):
         self.config = config
         self._token_index: int = 0
         self._event_queue: list[Event] = []
+        # Per-event-invocation token accumulator (reset on each process_event call).
+        self._current_input_tokens: int = 0
+        self._current_output_tokens: int = 0
 
     # ── core contract ────────────────────────────────────────────
     @abstractmethod
@@ -311,6 +314,16 @@ class Executor(ABC, ExecutorProtocol):
         """Reset the per-stream token counter.  Call at stream start."""
         self._token_index = 0
 
+    def _reset_token_counters(self) -> None:
+        """Reset per-event-invocation token accumulators.  Call at event entry."""
+        self._current_input_tokens = 0
+        self._current_output_tokens = 0
+
+    def _accumulate_tokens(self, input_tokens: int, output_tokens: int) -> None:
+        """Add tokens from one LLM call into the per-event accumulators."""
+        self._current_input_tokens += input_tokens
+        self._current_output_tokens += output_tokens
+
     # ── Event factory helpers ─────────────────────────────────────
 
     def _make_event(self, event_type: EventType, payload: dict[str, Any]) -> Event:
@@ -330,9 +343,17 @@ class Executor(ABC, ExecutorProtocol):
         self._token_index += 1
         return event
 
-    def _emit_message(self, content: str) -> Event:
+    def _emit_message(
+        self, content: str, *, context_breakdown: dict[str, Any] | None = None
+    ) -> Event:
         """Emit a complete message event (AGENT_MESSAGE)."""
-        return self._make_event(EventType.AGENT_MESSAGE, {"content": content})
+        payload: dict[str, Any] = {"content": content}
+        if context_breakdown is not None:
+            payload["_ctx"] = context_breakdown
+        event = self._make_event(EventType.AGENT_MESSAGE, payload)
+        event.input_tokens = self._current_input_tokens
+        event.output_tokens = self._current_output_tokens
+        return event
 
     def _emit_thinking(self, content: str) -> Event:
         """Emit a reasoning/thinking trace event (AGENT_THINKING)."""

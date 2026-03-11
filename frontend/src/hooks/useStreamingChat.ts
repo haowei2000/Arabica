@@ -49,6 +49,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     clearContextUsages,
     addOutcome,
     clearOutcomes,
+    setStreamingTokens,
+    clearStreamingTokens,
     setStreamError,
     streamError,
     currentRunId,
@@ -72,6 +74,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         planSteps: state.planSteps.length > 0 ? [...state.planSteps] : undefined,
         contextUsages: state.contextUsages.length > 0 ? [...state.contextUsages] : undefined,
         outcomes: state.outcomes.length > 0 ? [...state.outcomes] : undefined,
+        inputTokens: state.streamingInputTokens || undefined,
+        outputTokens: state.streamingOutputTokens || undefined,
       });
     }
   }, [addMessage]);
@@ -86,7 +90,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     clearPendingQueries();
     clearContextUsages();
     clearOutcomes();
-  }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearPendingQueries, clearContextUsages, clearOutcomes]);
+    clearStreamingTokens();
+  }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearPendingQueries, clearContextUsages, clearOutcomes, clearStreamingTokens]);
 
   const sendMessage = useCallback(
     async (content: string, forcedTools?: string[]) => {
@@ -174,6 +179,10 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         onUsingContext: (event) => addContextUsage(event),
         onPutOutcome: (event) => addOutcome(event),
 
+        // ── token usage ───────────────────────────────
+        onAgentMessage: ({ inputTokens, outputTokens }) =>
+          setStreamingTokens(inputTokens, outputTokens),
+
         // ── stream finished ─────────────────────────────
         onComplete: () => {
           saveStreamingStateAsMessage();
@@ -205,6 +214,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
       appendThinkingContent,
       addContextUsage,
       addOutcome,
+      setStreamingTokens,
       setStreamError,
       saveStreamingStateAsMessage,
       clearStreamingState,

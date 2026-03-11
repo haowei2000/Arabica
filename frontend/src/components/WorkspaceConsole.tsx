@@ -264,13 +264,59 @@ function RunEventRow({
             {summary}
           </span>
         )}
-        <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums ml-auto">
+        {!summary && <span className="flex-1" />}
+        {((event.input_tokens ?? 0) > 0 || (event.output_tokens ?? 0) > 0) && (
+          <span className="text-[9px] text-sky-400/70 shrink-0 tabular-nums font-mono bg-sky-500/8 px-1 py-0.5 rounded">
+            ↑{event.input_tokens ?? 0} ↓{event.output_tokens ?? 0}
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums">
           {formatRelativeTime(event.created_at)}
         </span>
       </button>
 
       {expanded && hasPayload && (
-        <div className="px-3 pb-2 pt-1 bg-muted/30">
+        <div className="px-3 pb-2 pt-1 bg-muted/30 space-y-1.5">
+          {/* Token source breakdown — only for agent.message events */}
+          {event.event_type === 'agent.message' && (event.input_tokens ?? 0) > 0 && (() => {
+            const ctx = event.payload?._ctx as { total_messages?: number; by_role?: Record<string, { count: number; chars: number }> } | undefined;
+            if (!ctx) return null;
+            const ROLE_LABEL: Record<string, string> = {
+              system: 'System prompt',
+              user: 'User',
+              assistant: 'Assistant history',
+              tool: 'Tool results',
+            };
+            const totalChars = Object.values(ctx.by_role ?? {}).reduce((s, v) => s + v.chars, 0) || 1;
+            return (
+              <div className="rounded-md bg-card border border-border/50 p-2">
+                <div className="text-[9px] text-muted-foreground/60 uppercase tracking-wide mb-1.5 font-medium">
+                  Input token sources · {ctx.total_messages} msgs · {event.input_tokens ?? 0} tokens
+                </div>
+                <div className="space-y-1">
+                  {Object.entries(ctx.by_role ?? {}).map(([role, stat]) => {
+                    const pct = Math.round((stat.chars / totalChars) * 100);
+                    return (
+                      <div key={role} className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground/70 w-28 shrink-0">
+                          {ROLE_LABEL[role] ?? role}
+                        </span>
+                        <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-sky-500/50 rounded-full"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="text-[9px] text-muted-foreground/50 tabular-nums w-12 text-right shrink-0">
+                          {stat.count}× ~{(stat.chars / 4).toFixed(0)}t
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
           <div className="rounded-md bg-card border border-border/50 p-2">
             <div className="text-[9px] text-muted-foreground/60 uppercase tracking-wide mb-1 font-medium">Payload</div>
             <pre className="text-[10px] text-foreground/80 font-mono overflow-x-auto leading-relaxed whitespace-pre-wrap break-all max-h-60 overflow-y-auto">
@@ -333,6 +379,11 @@ function RunTimelineItem({
             {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
           </span>
         )}
+        {!isRunning && ((run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
+          <span className="text-[9px] text-sky-400/60 shrink-0 tabular-nums font-mono hidden sm:block">
+            ↑{run.input_tokens ?? 0} ↓{run.output_tokens ?? 0}
+          </span>
+        )}
         <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums">
           {formatRelativeTime(run.created_at)}
         </span>
@@ -358,6 +409,14 @@ function RunTimelineItem({
               isRunning ? 'text-yellow-400' : isFailed ? 'text-red-500' : run.status === 'finished' ? 'text-green-500' : 'text-foreground'
             )}>{run.status}</span>
             <span>Events</span><span className="text-foreground tabular-nums">{run.last_event_sequence ?? 0}</span>
+            {((run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
+              <>
+                <span>Tokens</span>
+                <span className="text-sky-400 tabular-nums font-mono">
+                  ↑{run.input_tokens ?? 0} ↓{run.output_tokens ?? 0}
+                </span>
+              </>
+            )}
             <span>Created</span><span className="text-foreground">{formatRelativeTime(run.created_at)}</span>
           </div>
           {validPreview && (
@@ -426,6 +485,8 @@ export default function WorkspaceConsole() {
     planSteps,
     pendingApprovals,
     pendingQueries,
+    streamingInputTokens,
+    streamingOutputTokens,
     startNewRun,
   } = useChatStore();
 
@@ -662,6 +723,13 @@ export default function WorkspaceConsole() {
                         </div>
                       </div>
                     )}
+                    {(message.inputTokens || message.outputTokens) && (
+                      <div className="flex items-center gap-1.5 px-1">
+                        <span className="text-[10px] text-muted-foreground/40 tabular-nums font-mono">
+                          ↑{message.inputTokens ?? 0} ↓{message.outputTokens ?? 0} tokens
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -714,6 +782,11 @@ export default function WorkspaceConsole() {
                               ? 'Assistant is typing...'
                               : 'Preparing response...'}
                     </span>
+                    {(streamingInputTokens > 0 || streamingOutputTokens > 0) && (
+                      <span className="text-[10px] text-sky-400/70 tabular-nums font-mono ml-auto">
+                        ↑{streamingInputTokens} ↓{streamingOutputTokens}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

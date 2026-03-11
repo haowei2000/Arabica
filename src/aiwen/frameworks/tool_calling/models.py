@@ -25,11 +25,15 @@ class LLMResponse:
         content: Text content from the LLM.
         tool_calls: Parsed tool calls (empty list if none).
         raw: Raw API response object for debugging.
+        input_tokens: Number of prompt tokens consumed.
+        output_tokens: Number of completion tokens generated.
     """
 
     content: str
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     raw: Any = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass

@@ -271,6 +271,8 @@ class DefaultExecutor(Executor):
         yielded to the worker and will be published normally.
         """
         self._event_queue.clear()
+        # Reset per-event token accumulators so each incoming event starts fresh.
+        self._reset_token_counters()
         if not event.payload:
             raise ValueError("Event payload is empty")
         try:
@@ -652,6 +654,35 @@ class DefaultExecutor(Executor):
         result.extend(tool_messages)
         return _strip_orphaned_tool_messages(result)
 
+    # ── context breakdown helper ──────────────────────────────────
+
+    @staticmethod
+    def _context_breakdown(messages: list[ChatMessage]) -> dict:
+        """Summarise what is in the context window before an LLM call.
+
+        Returns a dict with per-role message counts and character lengths so
+        callers can attribute input-token cost to its sources (system prompt,
+        history, tool results, etc.).
+        """
+        roles: dict[str, dict[str, int]] = {}
+        for msg in messages:
+            role = msg.role
+            if role not in roles:
+                roles[role] = {"count": 0, "chars": 0}
+            roles[role]["count"] += 1
+            content = msg.content or ""
+            # tool_calls also contribute tokens
+            if msg.tool_calls:
+                content += json.dumps(
+                    [{"name": tc.name, "arguments": tc.arguments} for tc in msg.tool_calls],
+                    ensure_ascii=False,
+                )
+            roles[role]["chars"] += len(content)
+        return {
+            "total_messages": len(messages),
+            "by_role": roles,
+        }
+
     # ── agentic loop (core streaming logic) ──────────────────────
 
     async def _agentic_loop(
@@ -671,6 +702,10 @@ class DefaultExecutor(Executor):
             think_buf = ""
             in_thinking: bool | None = None
             llm_response: LLMResponse | None = None
+
+            # Snapshot the context makeup before the LLM call so we can
+            # attribute input-token cost to its sources in the emitted event.
+            ctx_breakdown = self._context_breakdown(messages)
 
             # ── stream LLM response tokens ───────────────────────
             stream = self.strategy.call_llm_stream(
@@ -740,6 +775,9 @@ class DefaultExecutor(Executor):
             if llm_response is None:
                 break
 
+            # Accumulate tokens from this LLM call into the per-event counter.
+            self._accumulate_tokens(llm_response.input_tokens, llm_response.output_tokens)
+
             ai_message = ChatMessage(
                 role="assistant",
                 content=llm_response.content or "",
@@ -747,16 +785,18 @@ class DefaultExecutor(Executor):
             )
             messages.append(ai_message)
 
-            # ── no tool calls -> final text response ─────────────
             if not llm_response.tool_calls:
                 yield self._emit_token("", is_final=True)
-                yield self._emit_message(llm_response.content or response_buf)
+                yield self._emit_message(
+                    llm_response.content or response_buf,
+                    context_breakdown=ctx_breakdown,
+                )
                 break
             else:
                 # Emit AGENT_MESSAGE with tool_calls including IDs so that
                 # _load_last_exchange() can reconstruct proper tool_call_id
                 # linkage when resuming with function-calling format.
-                yield self._make_event(
+                tc_event = self._make_event(
                     EventType.AGENT_MESSAGE,
                     {
                         "content": llm_response.content or response_buf,
@@ -764,8 +804,12 @@ class DefaultExecutor(Executor):
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in llm_response.tool_calls
                         ],
+                        "_ctx": ctx_breakdown,
                     },
                 )
+                tc_event.input_tokens = self._current_input_tokens
+                tc_event.output_tokens = self._current_output_tokens
+                yield tc_event
                 async for e in self._emit_tool_calls(llm_response.tool_calls):
                     yield e
 

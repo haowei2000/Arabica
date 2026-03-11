@@ -19,6 +19,10 @@ interface ChatState {
   contextUsages: ContextUsageState[];
   outcomes: OutcomeState[];
 
+  // ── token usage for current streaming turn ───────────────
+  streamingInputTokens: number;
+  streamingOutputTokens: number;
+
   // ── reconnect & error state ─────────────────────────────
   lastEventTimestamp: number | null;
   reconnecting: boolean;
@@ -60,6 +64,10 @@ interface ChatState {
   removePendingQuery: (toolId: string) => void;
   clearPendingQueries: () => void;
 
+  // ── token actions ─────────────────────────────────────
+  setStreamingTokens: (inputTokens: number, outputTokens: number) => void;
+  clearStreamingTokens: () => void;
+
   // ── reconnect & error actions ───────────────────────────
   setLastEventTimestamp: (ts: number | null) => void;
   setReconnecting: (reconnecting: boolean) => void;
@@ -81,6 +89,9 @@ export const useChatStore = create<ChatState>((set) => ({
   pendingQueries: [],
   contextUsages: [],
   outcomes: [],
+
+  streamingInputTokens: 0,
+  streamingOutputTokens: 0,
 
   lastEventTimestamp: null,
   reconnecting: false,
@@ -155,6 +166,8 @@ export const useChatStore = create<ChatState>((set) => ({
       pendingQueries: [],
       contextUsages: [],
       outcomes: [],
+      streamingInputTokens: 0,
+      streamingOutputTokens: 0,
       lastEventTimestamp: null,
       reconnecting: false,
       reconnectAttempt: 0,
@@ -255,6 +268,11 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
 
   clearPendingQueries: () => set({ pendingQueries: [] }),
+
+  // ── token actions ─────────────────────────────────────
+  setStreamingTokens: (inputTokens, outputTokens) =>
+    set({ streamingInputTokens: inputTokens, streamingOutputTokens: outputTokens }),
+  clearStreamingTokens: () => set({ streamingInputTokens: 0, streamingOutputTokens: 0 }),
 
   // ── reconnect & error actions ───────────────────────────
   setLastEventTimestamp: (ts) => set({ lastEventTimestamp: ts }),

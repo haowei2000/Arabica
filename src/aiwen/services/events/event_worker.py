@@ -663,6 +663,19 @@ class Worker:
                 buffered = self._pop_run_buffer(run_id_str)
                 if buffered:
                     ctx.db.add_all(buffered)
+                    # Accumulate token usage from all buffered events into Run.
+                    total_input = sum(e.input_tokens or 0 for e in buffered)
+                    total_output = sum(e.output_tokens or 0 for e in buffered)
+                    if total_input or total_output:
+                        from sqlalchemy import update as sa_update
+                        await ctx.db.execute(
+                            sa_update(Run)
+                            .where(Run.id == str(run_id))
+                            .values(
+                                input_tokens=Run.input_tokens + total_input,
+                                output_tokens=Run.output_tokens + total_output,
+                            )
+                        )
 
                 try:
                     await ctx.state_machine.complete(run_id, auto_commit=True)
@@ -727,6 +740,8 @@ class Worker:
                 workspace_id=workspace_id,
                 run_id=str(run_id),
                 payload=event.payload,
+                input_tokens=event.input_tokens,
+                output_tokens=event.output_tokens,
                 auto_commit=False,
             )
         except Exception as e:

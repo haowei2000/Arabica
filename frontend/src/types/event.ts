@@ -11,6 +11,8 @@ export interface Event {
   sequence: number;
   event_type: string;
   payload: Record<string, any>;
+  input_tokens?: number;
+  output_tokens?: number;
   metadata?: Record<string, any> | null;
   executor_code?: string | null;
   created_at: string;

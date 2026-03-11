@@ -105,6 +105,8 @@ class EventPublisher:
         executor_code: str | None = None,
         parent_event_id: UUID | str | None = None,
         app_id: UUID | str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
         auto_commit: bool = False,
     ) -> Event:
         """Publish an event to PostgreSQL and Redis.
@@ -140,6 +142,8 @@ class EventPublisher:
         # Get the next sequence number for this run (or workspace if no run)
         sequence = await self._get_next_sequence(workspace_id_str, run_id_str)
 
+        jsonable_payload = _to_jsonable(payload)
+
         # Build the event with explicit Python-side defaults so the object is
         # fully usable (including .id) without a DB flush or refresh.
         event = Event(
@@ -150,10 +154,12 @@ class EventPublisher:
             run_id=run_id_str,
             app_id=app_id_str,
             user_id=user_id_str,
-            payload=_to_jsonable(payload),
+            payload=jsonable_payload,
             sequence=sequence,
             parent_event_id=parent_event_id_str,
             executor_code=executor_code,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
         # Check if this run is in buffered mode (Redis-only during execution).
@@ -178,7 +184,10 @@ class EventPublisher:
                 await self.db.flush()
 
             if run_id_str:
-                await self._update_run_sequence(run_id_str, sequence, auto_commit)
+                await self._update_run_sequence(
+                    run_id_str, sequence, auto_commit,
+                    input_tokens=input_tokens, output_tokens=output_tokens,
+                )
             if self.redis:
                 await self._broadcast_to_redis(event)
 
@@ -271,18 +280,28 @@ class EventPublisher:
         self._seq_counters.pop(run_id, None)
 
     async def _update_run_sequence(
-        self, run_id: str, sequence: int, auto_commit: bool
+        self,
+        run_id: str,
+        sequence: int,
+        auto_commit: bool,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
     ) -> None:
-        """Update the run's last_event_sequence using a direct UPDATE statement.
+        """Update the run's last_event_sequence (and optionally token totals).
 
         Avoids the SELECT + ORM-update pattern (two round-trips) by issuing a
         single UPDATE statement directly.
         """
-        stmt = (
-            update(Run)
-            .where(Run.id == run_id)
-            .values(last_event_sequence=sequence, updated_at=datetime.now(UTC))
-        )
+        values: dict[str, Any] = {
+            "last_event_sequence": sequence,
+            "updated_at": datetime.now(UTC),
+        }
+        if input_tokens or output_tokens:
+            values["input_tokens"] = Run.input_tokens + input_tokens
+            values["output_tokens"] = Run.output_tokens + output_tokens
+
+        stmt = update(Run).where(Run.id == run_id).values(**values)
         await self.db.execute(stmt)
 
         if auto_commit:

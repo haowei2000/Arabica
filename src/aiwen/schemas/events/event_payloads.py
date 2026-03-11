@@ -154,6 +154,8 @@ class EventResponse(BaseModel):
     payload: dict[str, Any] | None = None
     sequence: int
     parent_event_id: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
     created_at: datetime
 
     @model_validator(mode="before")

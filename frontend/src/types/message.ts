@@ -76,4 +76,7 @@ export interface SimpleMessage {
   contextUsages?: import('@/types/events').ContextUsageState[];
   /** Outcomes captured from PUT_OUTCOME (assistant only). */
   outcomes?: import('@/types/events').OutcomeState[];
+  /** LLM token usage for this message (assistant only). */
+  inputTokens?: number;
+  outputTokens?: number;
 }

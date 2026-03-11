@@ -339,10 +339,13 @@ class PromptCallingStrategy(ToolCallingStrategy):
         tool_calls = _parse_tool_calls_from_text(raw_content)
         clean_content = _strip_tool_call_blocks(raw_content) if tool_calls else raw_content
 
+        usage = response.usage
         return LLMResponse(
             content=clean_content,
             tool_calls=tool_calls,
             raw=response,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
         )
 
     # -- call_llm_stream (streaming) ----------------------------------------
@@ -365,6 +368,7 @@ class PromptCallingStrategy(ToolCallingStrategy):
             model=model,
             messages=api_messages,
             stream=True,
+            stream_options={"include_usage": True},
         )
 
         full_content = ""
@@ -373,8 +377,15 @@ class PromptCallingStrategy(ToolCallingStrategy):
         hold_buf = ""
         # Whether we are inside a tool_call block region.
         in_tool_block = False
+        input_tokens: int = 0
+        output_tokens: int = 0
 
         async for chunk in stream:
+            # Usage arrives in the final chunk (choices may be empty).
+            if chunk.usage:
+                input_tokens = chunk.usage.prompt_tokens or 0
+                output_tokens = chunk.usage.completion_tokens or 0
+
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
@@ -444,4 +455,6 @@ class PromptCallingStrategy(ToolCallingStrategy):
             content=clean_content,
             tool_calls=tool_calls,
             raw=None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )

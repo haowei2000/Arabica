@@ -47,6 +47,8 @@ class RunResponse(ResponseMixin, BaseModel):
     error_code: str | None = None
     waiting_for: dict[str, Any] | None = None
     last_event_sequence: int
+    input_tokens: int = 0
+    output_tokens: int = 0
     legacy_task_id: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None

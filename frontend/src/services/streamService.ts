@@ -28,6 +28,8 @@ export interface StreamOptions {
   onUsingContext?: (event: UsingContextPayload) => void;
   /** The agent produced an outcome (file, artifact, result). */
   onPutOutcome?: (event: PutOutcomePayload) => void;
+  /** Token usage reported with an agent.message (input + output counts). */
+  onAgentMessage?: (tokens: { inputTokens: number; outputTokens: number }) => void;
 }
 
 interface StreamEventPayload {
@@ -239,6 +241,11 @@ class StreamService {
           const content = eventPayload?.content as string | undefined;
           if (content && !tokenState.hasTokens) {
             onChunk(content);
+          }
+          const inputTokens = (payload as any)?.input_tokens as number | undefined;
+          const outputTokens = (payload as any)?.output_tokens as number | undefined;
+          if ((inputTokens ?? 0) > 0 || (outputTokens ?? 0) > 0) {
+            options.onAgentMessage?.({ inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 });
           }
           return;
         }

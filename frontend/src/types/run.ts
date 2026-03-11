@@ -12,6 +12,8 @@ export interface Run {
   error_code?: string | null;
   waiting_for?: Record<string, any> | null;
   last_event_sequence: number;
+  input_tokens?: number;
+  output_tokens?: number;
   legacy_task_id?: string | null;
   created_at: string;
   started_at?: string | null;

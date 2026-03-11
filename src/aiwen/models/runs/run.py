@@ -112,6 +112,14 @@ class Run(Base):
         Integer, default=0, comment="最后事件序列号"
     )
 
+    # Token usage tracking
+    input_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="累计输入 token 数"
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="累计输出 token 数"
+    )
+
     # Migration support - link to legacy AgentTask
     legacy_task_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="关联的旧任务ID(迁移支持)"

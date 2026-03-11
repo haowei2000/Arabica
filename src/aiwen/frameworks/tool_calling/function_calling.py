@@ -102,10 +102,13 @@ class FunctionCallingStrategy(ToolCallingStrategy):
         choice = response.choices[0]
         msg = choice.message
 
+        usage = response.usage
         return LLMResponse(
             content=msg.content or "",
             tool_calls=self._parse_tool_calls(msg.tool_calls),
             raw=response,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
         )
 
     # -- call_llm_stream (streaming) ----------------------------------------
@@ -128,6 +131,7 @@ class FunctionCallingStrategy(ToolCallingStrategy):
             "model": model,
             "messages": api_messages,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools_info:
             kwargs["tools"] = tools_info
@@ -137,8 +141,15 @@ class FunctionCallingStrategy(ToolCallingStrategy):
         content_buf = ""
         # Accumulate tool call deltas keyed by index.
         tc_buffers: dict[int, dict[str, Any]] = {}
+        input_tokens: int = 0
+        output_tokens: int = 0
 
         async for chunk in stream:
+            # Usage arrives in the final chunk (choices may be empty).
+            if chunk.usage:
+                input_tokens = chunk.usage.prompt_tokens or 0
+                output_tokens = chunk.usage.completion_tokens or 0
+
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
@@ -188,4 +199,6 @@ class FunctionCallingStrategy(ToolCallingStrategy):
             content=content_buf,
             tool_calls=tool_calls,
             raw=None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )

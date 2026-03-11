@@ -189,9 +189,13 @@ class EventConsumer:
             except json.JSONDecodeError:
                 pass
 
-        # Convert sequence to int
-        if "sequence" in decoded:
-            decoded["sequence"] = int(decoded["sequence"])
+        # Convert numeric fields to int
+        for key in ("sequence", "input_tokens", "output_tokens"):
+            if key in decoded:
+                try:
+                    decoded[key] = int(decoded[key])
+                except (ValueError, TypeError):
+                    decoded[key] = 0
 
         return decoded
 

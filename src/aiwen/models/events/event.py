@@ -84,6 +84,14 @@ class Event(Base):
     # Event payload (flexible JSON structure)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, comment="事件数据")
 
+    # Token usage for LLM-generated events (e.g. agent.message)
+    input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0", comment="本次 LLM 调用的输入 token 数"
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0", comment="本次 LLM 调用的输出 token 数"
+    )
+
     # Sequence number for ordering within run/workspace
     sequence: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, comment="事件序列号"
@@ -156,6 +164,11 @@ class Event(Base):
         if "sequence" in decoded:
             decoded["sequence"] = int(decoded["sequence"])
 
+        # Convert token fields to int
+        for key in ("input_tokens", "output_tokens"):
+            if key in decoded:
+                decoded[key] = int(decoded[key])
+
         # Convert created_at to datetime
         if decoded.get("created_at"):
             decoded["created_at"] = datetime.fromisoformat(decoded["created_at"])
@@ -174,6 +187,7 @@ class Event(Base):
             "id", "event_type", "workspace_id", "run_id", "app_id",
             "user_id", "executor_code", "payload", "sequence",
             "parent_event_id", "created_at",
+            "input_tokens", "output_tokens",
         ):
             value = getattr(self, key, None)
             if value is None:
