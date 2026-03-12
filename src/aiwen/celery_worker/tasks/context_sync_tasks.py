@@ -418,6 +418,173 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
 
 @celery_app.task(
     bind=True,
+    name="context_sync.sync_always_load_tool",
+    max_retries=3,
+    default_retry_delay=30,
+    queue="default",
+)
+def sync_always_load_tool_to_workspace_contexts(self, tool_id: str):
+    """Sync an always_load InnerTool to all active workspace contexts.
+
+    Called automatically during ToolRegistry database sync for every InnerTool
+    whose ``METADATA.always_load=True``.  Writes a structured entry at path
+    ``tools/{tool_name}`` inside every active workspace so the executor can
+    surface it in workspace context queries.
+
+    Unlike ``sync_tool_to_contexts`` (which targets user-owned tools with a
+    specific user_id), this task operates system-wide — no user scope.
+    """
+    async def _execute():
+        from sqlalchemy import select
+
+        from aiwen.extensions.database import get_session
+        from aiwen.models.context.tools.tool import Tool
+        from aiwen.models.workspaces.workspace import Workspace
+
+        # ── 1. Read InnerTool record from DB ─────────────────────────────
+        async with get_session("aiwen") as session:
+            tool = await session.get(Tool, UUID(tool_id))
+            if not tool:
+                logger.warning(f"sync_always_load_tool: tool {tool_id} not found")
+                return
+            if not tool.enabled:
+                logger.info(
+                    f"sync_always_load_tool: tool '{tool.name}' disabled, skipping"
+                )
+                return
+
+            overview = {
+                "name": tool.name,
+                "display_name": tool.display_name,
+                "description": tool.description,
+                "category": tool.category,
+                "tags": tool.tags or [],
+            }
+            overview_str = json.dumps(overview, ensure_ascii=False)
+            schema_str = (
+                json.dumps(tool.input_schema, ensure_ascii=False)
+                if tool.input_schema
+                else ""
+            )
+            glance = (
+                f"{tool.display_name or tool.name}"
+                f" — {tool.description[:60]}"
+                if tool.description
+                else tool.display_name or tool.name
+            )
+            tool_name = tool.name
+            tool_code = tool.tool_code
+            tool_tags = list(tool.tags or [])
+            embed_text = " ".join(
+                filter(None, [tool.display_name or tool.name, tool.description, schema_str])
+            )
+
+            # Collect all active workspace IDs
+            from aiwen.core.enums.workspaces import WorkspaceStatus
+
+            ws_result = await session.execute(
+                select(Workspace).where(
+                    Workspace.status == WorkspaceStatus.ACTIVE,
+                    Workspace.is_deleted.is_(False),
+                )
+            )
+            workspace_ids = [str(ws.id) for ws in ws_result.scalars().all()]
+
+        logger.info(
+            f"sync_always_load_tool: syncing '{tool_name}' to "
+            f"{len(workspace_ids)} workspace(s)"
+        )
+
+        # ── 2. Upsert WorkspaceContext at tools/{tool_name} for each workspace ─
+        ws_count = 0
+        dirty_ws_ids: list[str] = []
+        for ws_id in workspace_ids:
+            try:
+                async with get_session("aiwen") as session:
+                    from aiwen.services.workspace_context.workspace_context_service import (
+                        WorkspaceContextService,
+                    )
+
+                    svc = WorkspaceContextService(session, ws_id)
+                    await svc.set(
+                        path=f"tools/{tool_name}",
+                        glance=glance,
+                        overview=overview_str,
+                        detail=schema_str,
+                        tags=["tool", "always_load"] + tool_tags,
+                        meta={
+                            "tool_id": tool_id,
+                            "tool_code": tool_code,
+                            "always_load": True,
+                        },
+                    )
+                ws_count += 1
+                dirty_ws_ids.append(ws_id)
+            except Exception as e:
+                logger.warning(
+                    f"sync_always_load_tool: failed to sync '{tool_name}' "
+                    f"to workspace {ws_id}: {e}"
+                )
+
+        # ── 3. Invalidate API-process in-memory cache via Redis dirty-flag ─
+        if dirty_ws_ids:
+            try:
+                import redis.asyncio as redis_async
+
+                from aiwen.config.factory import get_settings
+
+                cfg = get_settings().redis
+                auth = f":{cfg.password}@" if cfg.password else ""
+                r = redis_async.from_url(
+                    f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
+                    decode_responses=True,
+                )
+                async with r.pipeline(transaction=False) as pipe:
+                    for ws_id in dirty_ws_ids:
+                        pipe.setex(f"workspace_context_dirty:{ws_id}", 600, "1")
+                    await pipe.execute()
+                await r.aclose()
+            except Exception as e:
+                logger.warning(
+                    f"sync_always_load_tool: failed to set Redis dirty flags: {e}"
+                )
+
+        # ── 4. Generate embedding (outside session, blocking HTTP) ─────────
+        if embed_text.strip():
+            vector, field = _generate_embedding(embed_text)
+            async with get_session("aiwen") as session:
+                # Re-fetch the Tool record to store the embedding in its Context row.
+                # (InnerTools have no user_id, so we store the vector directly on
+                # the Tool's dedicated context entry if one exists.)
+                from aiwen.models.context.context import Context
+
+                ctx_result = await session.execute(
+                    select(Context).where(
+                        Context.meta["tool_id"].astext == tool_id,
+                        Context.context_type == "tool",
+                    )
+                )
+                ctx = ctx_result.scalar_one_or_none()
+                if ctx:
+                    setattr(ctx, field, vector)
+                    await session.commit()
+                    logger.info(
+                        f"sync_always_load_tool: embedded Context for '{tool_name}'"
+                    )
+
+        logger.info(
+            f"sync_always_load_tool: '{tool_name}' synced to {ws_count} workspace(s)"
+        )
+
+    try:
+        run_async(_execute())
+    except Exception as e:
+        logger.error(f"sync_always_load_tool failed for {tool_id}: {e}")
+        self.retry(exc=e)
+
+
+@celery_app.task(
+    bind=True,
     name="context_sync.sync_memory",
     max_retries=3,
     default_retry_delay=30,

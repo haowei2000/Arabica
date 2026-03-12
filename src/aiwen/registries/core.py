@@ -329,6 +329,8 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         # ── Phase 1: Upsert InnerTools ────────────────────────────
         synced_count = 0
         skipped_count = 0
+        # Collect names of always_load tools to fire Celery tasks after commit.
+        always_load_names: list[str] = []
 
         for tool_name, tool_class in self._registry.items():
             if not issubclass(tool_class, InnerTool):
@@ -336,6 +338,9 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                 continue
 
             registered_names.add(tool_name)
+
+            if getattr(tool_class.METADATA, "always_load", False):
+                always_load_names.append(tool_name)
 
             try:
                 stmt = select(ToolModel).where(
@@ -438,6 +443,32 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             orphan_count,
             broken_count,
         )
+
+        # ── Fire Celery tasks for always_load InnerTools ───────────────
+        # Re-query IDs after commit so the UUIDs are guaranteed to be persisted.
+        if always_load_names:
+            try:
+                id_result = await db.execute(
+                    select(ToolModel.id, ToolModel.name).where(
+                        ToolModel.name.in_(always_load_names),
+                        ToolModel.tool_type == "inner",
+                    )
+                )
+                id_rows = id_result.all()
+                from aiwen.celery_worker.tasks.context_sync_tasks import (
+                    sync_always_load_tool_to_workspace_contexts,
+                )
+
+                for row in id_rows:
+                    sync_always_load_tool_to_workspace_contexts.delay(str(row.id))
+                    self.logger.info(
+                        "Queued workspace-context sync for always_load tool '%s'",
+                        row.name,
+                    )
+            except Exception as e:
+                self.logger.error(
+                    "Failed to queue always_load tool context sync: %s", e
+                )
 
         # ── Phase 4: Sync inner tool toolsets by category ─────────────
         try:
