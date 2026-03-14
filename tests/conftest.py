@@ -28,6 +28,13 @@ os.environ["MYSQL__MES_DBNAME"] = "mes_test"
 os.environ["REDIS__HOST"] = "localhost"
 os.environ["REDIS__PORT"] = "6379"
 os.environ["REDIS__DB"] = "1"
+os.environ["AUTH__JWT_SECRET_KEY"] = "test-secret-key-for-unit-tests"
+os.environ["AUTH__ADMIN_USERNAME"] = "admin"
+os.environ["AUTH__ADMIN_PASSWORD"] = "admin123"
+os.environ["RUSTFS__HOST"] = "localhost"
+os.environ["RUSTFS__PORT"] = "9000"
+os.environ["RUSTFS__ACCESS_KEY"] = "test_key"
+os.environ["RUSTFS__SECRET_KEY"] = "test_secret"
 
 from collections.abc import AsyncGenerator
 from typing import Any, Dict, List
