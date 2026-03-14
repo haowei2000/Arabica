@@ -22,7 +22,7 @@ services:
       - all
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
@@ -108,7 +108,7 @@ services:
       - all
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
@@ -163,7 +163,7 @@ services:
       - all
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
@@ -201,7 +201,7 @@ services:
       - tools
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
@@ -269,41 +269,7 @@ services:
           memory: 256M
         reservations:
           memory: 64M
-  
-  # Nginx reverse proxy
-  nginx:
-    profiles:
-      - nginx
-      - app
-      - all
-    image: nginx:alpine
-    container_name: aiwen-nginx
-    ports:
-      - "${NGINX_EXPOSE_PORT:-80}:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    environment:
-      <<: *common-env
-    #    depends_on:
-    #      aiwen-app:
-    #        condition: service_started
-    #      aiwen-frontend:
-    #        condition: service_healthy
-    healthcheck:
-      <<: *healthcheck-defaults
-      test: [ "CMD-SHELL", "wget -qO- http://localhost:80/health || exit 1" ]
-      start_period: 10s
-    restart: unless-stopped
-    logging: *default-logging
-    networks:
-      - aiwen-network
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-        reservations:
-          memory: 32M
-  
+
   # PostgreSQL Database with pgvector
   postgres:
     profiles:
@@ -395,7 +361,9 @@ services:
     volumes:
       - ./rustfs/data:/data
       - ./rustfs/logs:/logs
-  
+    networks:
+      - aiwen-network
+
   # Redis Cache
   redis:
     profiles:
@@ -437,8 +405,6 @@ services:
     container_name: aiwen-ollama
     profiles:
       - ollama
-      - llm
-      - all
     ports:
       - "${EXPOSE_PORT_OLLAMA:-11434}:11434"
     volumes:

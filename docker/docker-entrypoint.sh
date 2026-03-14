@@ -7,7 +7,7 @@ terminate() {
     echo "==> Received termination signal"
     echo "==> Stopping services..."
 
-    kill -TERM "$API_PID" "$MCP_PID" 2>/dev/null || true
+    kill -TERM "$API_PID" "$WORKER_PID" 2>/dev/null || true
     wait
     exit 0
 }
@@ -31,7 +31,7 @@ if [ -n "$CURRENT_VERSION" ]; then
     echo "==> Current database version: $CURRENT_VERSION"
     echo "==> Upgrading to head..."
 
-    uv run alembic upgrade head 2>&1
+    uv run alembic upgrade heads 2>&1
     if [ $? -eq 0 ]; then
         echo "==> Database migrations completed successfully"
     else
@@ -56,7 +56,7 @@ else
             echo "==> Tables already exist but no version recorded"
             echo "==> Stamping database as current version..."
 
-            if uv run alembic stamp head; then
+            if uv run alembic stamp heads; then
                 echo "==> Database stamped as head"
                 echo "==> Applying any new migrations..."
 
@@ -86,8 +86,10 @@ set -e
 # ----------------------
 cd /app/src
 
-uv run aiwen-mcp &
-MCP_PID=$!
+# uv run aiwen-mcp &
+# MCP_PID=$!
+
+cd /app/src
 
 uv run aiwen-api &
 API_PID=$!
@@ -95,7 +97,7 @@ API_PID=$!
 uv run aiwen-worker &
 WORKER_PID=$!
 
-echo "==> All services started (MCP PID: $MCP_PID, API PID: $API_PID)"
+echo "==> All services started (API PID: $API_PID, Worker PID: $WORKER_PID)"
 
 # ----------------------
 # POSIX-compatible wait
@@ -106,10 +108,10 @@ while true; do
         break
     fi
 
-    if ! kill -0 "$MCP_PID" 2>/dev/null; then
-        echo "==> MCP exited"
-        break
-    fi
+    # if ! kill -0 "$MCP_PID" 2>/dev/null; then
+    #     echo "==> MCP exited"
+    #     break
+    # fi
     if ! kill -0 "$WORKER_PID" 2>/dev/null; then
         echo "==> Worker exited"
         break

@@ -86,7 +86,7 @@ RUN python -m compileall -b src/
 # ============================================================================
 FROM base AS runtime
 
-# Install only runtime dependencies
+# Install runtime and build dependencies (needed for compiled packages like asyncmy)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     set -eux; \
@@ -95,7 +95,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
         libglib2.0-0 \
         postgresql-client \
-        curl; \
+        curl \
+        build-essential \
+        python3-dev \
+        rustc \
+        cargo; \
     rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment and application from builder
