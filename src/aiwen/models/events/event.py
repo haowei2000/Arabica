@@ -204,5 +204,179 @@ class Event(Base):
                 fields[key] = str(value)
         return fields
 
+    def to_context(self) -> str | None:
+        """Render this event as a human-readable text context string.
+
+        Returns a concise, role-prefixed line suitable for inclusion in a
+        conversation history or context window.  Returns ``None`` for
+        high-frequency noise events (tokens, heartbeats) that carry no
+        durable information.
+        """
+        p: dict[str, Any] = self.payload or {}
+
+        def _trim(text: Any, limit: int = 200) -> str:
+            s = str(text) if not isinstance(text, str) else text
+            return s[:limit] + "…" if len(s) > limit else s
+
+        match str(self.event_type):
+            # ── User ──────────────────────────────────────────────────────
+            case EventType.USER_MESSAGE:
+                msg = p.get("message") or p.get("content") or ""
+                return f"User: {_trim(msg)}" if msg else "User: (empty message)"
+
+            case EventType.USER_FEEDBACK:
+                feedback = p.get("feedback") or p.get("content") or p.get("rating") or ""
+                return f"User feedback: {_trim(feedback)}"
+
+            # ── Agent ─────────────────────────────────────────────────────
+            case EventType.AGENT_TOKEN | EventType.AGENT_HEARTBEAT:
+                # Too noisy — skip
+                return None
+
+            case EventType.AGENT_MESSAGE:
+                msg = p.get("message") or p.get("content") or ""
+                return f"Assistant: {_trim(msg)}" if msg else "Assistant: (empty message)"
+
+            case EventType.AGENT_THINKING:
+                content = p.get("content") or p.get("thinking") or ""
+                return f"Thinking: {_trim(content)}" if content else None
+
+            case EventType.AGENT_PLAN_STEP:
+                step = p.get("step") or p.get("index", "")
+                title = p.get("title") or p.get("name") or ""
+                content = p.get("content") or p.get("description") or ""
+                parts = [f"Plan step {step}" if step else "Plan step", title, content]
+                return " — ".join(filter(None, parts))[:300]
+
+            case EventType.AGENT_QUERY:
+                query = p.get("query") or p.get("content") or ""
+                return f"Agent query: {_trim(query)}" if query else None
+
+            # ── Tool ──────────────────────────────────────────────────────
+            case EventType.TOOL_CALL:
+                name = p.get("tool_name") or p.get("name") or "unknown"
+                args = p.get("arguments") or p.get("args") or {}
+                args_str = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
+                return f"Tool call: {name}({_trim(args_str, 120)})"
+
+            case EventType.TOOL_RESULT:
+                name = p.get("tool_name") or p.get("name") or "unknown"
+                result = p.get("result") or p.get("output") or p.get("content") or ""
+                result_str = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
+                return f"Tool result [{name}]: {_trim(result_str, 160)}"
+
+            case EventType.TOOL_ERROR:
+                name = p.get("tool_name") or p.get("name") or "unknown"
+                error = p.get("error") or p.get("message") or "unknown error"
+                return f"Tool error [{name}]: {_trim(error)}"
+
+            case EventType.TOOL_PENDING:
+                name = p.get("tool_name") or p.get("name") or "unknown"
+                return f"Tool pending: {name}"
+
+            case EventType.TOOL_CLIENT_REQUEST:
+                name = p.get("tool_name") or p.get("name") or "unknown"
+                return f"Tool client request: {name}"
+
+            # ── Context ───────────────────────────────────────────────────
+            case EventType.USING_CONTEXT:
+                path = p.get("path") or p.get("context_path") or ""
+                return f"Using context: {path}" if path else "Using context"
+
+            # ── Run lifecycle ─────────────────────────────────────────────
+            case EventType.RUN_CREATED:
+                return "Run created"
+
+            case EventType.RUN_STATE_CHANGE:
+                prev = p.get("previous_state") or "?"
+                new = p.get("new_state") or "?"
+                reason = p.get("reason")
+                line = f"Run state: {prev} → {new}"
+                return f"{line} ({reason})" if reason else line
+
+            case EventType.RUN_COMPLETED:
+                return "Run completed"
+
+            case EventType.RUN_FAILED:
+                error = p.get("error") or p.get("message") or ""
+                return f"Run failed: {_trim(error)}" if error else "Run failed"
+
+            case EventType.RUN_CANCELLED:
+                reason = p.get("reason") or ""
+                return f"Run cancelled: {reason}" if reason else "Run cancelled"
+
+            # ── Workspace ─────────────────────────────────────────────────
+            case EventType.WORKSPACE_CREATED:
+                name = p.get("name") or p.get("workspace_name") or ""
+                return f"Workspace created: {name}" if name else "Workspace created"
+
+            case EventType.WORKSPACE_UPDATED:
+                return "Workspace updated"
+
+            case EventType.WORKSPACE_MEMBER_JOIN:
+                user = p.get("user_id") or p.get("username") or "unknown"
+                return f"Member joined: {user}"
+
+            case EventType.WORKSPACE_MEMBER_LEAVE:
+                user = p.get("user_id") or p.get("username") or "unknown"
+                return f"Member left: {user}"
+
+            case EventType.WORKSPACE_MEMBER_ROLE_CHANGE:
+                user = p.get("user_id") or p.get("username") or "unknown"
+                role = p.get("role") or p.get("new_role") or "unknown"
+                return f"Role changed: {user} → {role}"
+
+            # ── Task ──────────────────────────────────────────────────────
+            case EventType.TASK_CREATE:
+                title = p.get("title") or p.get("name") or ""
+                return f"Task created: {_trim(title)}" if title else "Task created"
+
+            case EventType.TASK_UPDATE:
+                title = p.get("title") or p.get("name") or ""
+                return f"Task updated: {_trim(title)}" if title else "Task updated"
+
+            case EventType.TASK_DELETE:
+                return "Task deleted"
+
+            case EventType.TASK_COMPLETE:
+                title = p.get("title") or p.get("name") or ""
+                return f"Task completed: {_trim(title)}" if title else "Task completed"
+
+            case EventType.TASK_ASSIGN:
+                user = p.get("assignee") or p.get("user_id") or "unknown"
+                return f"Task assigned to: {user}"
+
+            # ── Artifact ──────────────────────────────────────────────────
+            case EventType.ARTIFACT_CREATE:
+                name = p.get("name") or p.get("artifact_name") or ""
+                return f"Artifact created: {_trim(name)}" if name else "Artifact created"
+
+            case EventType.ARTIFACT_UPDATE:
+                name = p.get("name") or p.get("artifact_name") or ""
+                return f"Artifact updated: {_trim(name)}" if name else "Artifact updated"
+
+            case EventType.ARTIFACT_DELETE:
+                return "Artifact deleted"
+
+            case EventType.ARTIFACT_VERSION:
+                version = p.get("version") or p.get("version_id") or ""
+                return f"Artifact version: {version}" if version else "Artifact version created"
+
+            # ── System ────────────────────────────────────────────────────
+            case EventType.SYSTEM_ERROR:
+                error = p.get("error") or p.get("message") or ""
+                return f"System error: {_trim(error)}" if error else "System error"
+
+            case EventType.SYSTEM_NOTIFICATION:
+                msg = p.get("message") or p.get("content") or ""
+                return f"System: {_trim(msg)}" if msg else "System notification"
+
+            # ── Fallback ──────────────────────────────────────────────────
+            case _:
+                # Unknown event type — emit a generic line so nothing is silently dropped
+                preview = _trim(json.dumps(p, ensure_ascii=False), 120) if p else ""
+                label = str(self.event_type)
+                return f"[{label}]{': ' + preview if preview else ''}"
+
     def __repr__(self) -> str:
         return f"<Event(id={self.id}, type='{self.event_type}', workspace_id='{self.workspace_id}', run_id='{self.run_id}')>"

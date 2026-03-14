@@ -811,17 +811,9 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
 
             lines = []
             for ev in events:
-                preview = ""
-                if ev.payload:
-                    p = ev.payload
-                    if "message" in p:
-                        preview = f": {str(p['message'])[:120]}"
-                    elif "content" in p:
-                        preview = f": {str(p['content'])[:120]}"
-                    elif p:
-                        first_key = next(iter(p))
-                        preview = f": {first_key}={str(p[first_key])[:80]}"
-                lines.append(f"[{ev.sequence:03d}] {ev.event_type}{preview}")
+                text = ev.to_context()
+                if text is not None:
+                    lines.append(f"[{ev.sequence:03d}] {text}")
 
             content = "\n".join(lines)
             glance = f"{len(events)} events — run {run_id[:8]}"
