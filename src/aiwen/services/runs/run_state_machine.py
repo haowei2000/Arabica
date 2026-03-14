@@ -175,6 +175,30 @@ class RunStateMachine:
             + (f" (reason: {reason})" if reason else "")
         )
 
+        # Dispatch context sync tasks when a run reaches a terminal state.
+        # Only when auto_commit=True so the DB data is already committed.
+        if auto_commit and target_state_str in (
+            RunStatus.FINISHED.value,
+            RunStatus.FAILED.value,
+            RunStatus.CANCELLED.value,
+        ):
+            try:
+                from aiwen.celery_worker.tasks.context_sync_tasks import (
+                    sync_run_events_to_context,
+                    sync_run_to_contexts,
+                )
+
+                user_id = str(run.user_id)
+                sync_run_to_contexts.delay(run_id_str, user_id)
+                sync_run_events_to_context.delay(run_id_str, user_id)
+                logger.debug(
+                    f"Dispatched context sync tasks for terminal run {run_id_str} ({target_state_str})"
+                )
+            except Exception as celery_err:
+                logger.warning(
+                    f"Failed to dispatch context sync for run {run_id_str}: {celery_err}"
+                )
+
         return run
 
     def _is_valid_transition(self, current_state: str, target_state: str) -> bool:

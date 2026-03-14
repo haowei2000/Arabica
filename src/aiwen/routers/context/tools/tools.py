@@ -411,6 +411,8 @@ async def update_tool(
             detail="Tool not found or you don't have permission",
         )
 
+    from aiwen.celery_worker.tasks.context_sync_tasks import sync_tool_to_contexts
+    sync_tool_to_contexts.delay(str(tool.id), str(current_user.id))
     return _build_user_tool_response(tool)
 
 

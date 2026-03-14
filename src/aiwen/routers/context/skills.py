@@ -2,10 +2,8 @@
 
 import logging
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.dependencies.auth import get_current_user
@@ -23,62 +21,6 @@ from aiwen.services.context.skill_processor import SkillProcessor
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/skills", tags=["skills"])
-
-
-async def _sync_skill_to_workspace_contexts(
-    db: AsyncSession,
-    skill,
-    user_id: str,
-) -> int:
-    """Write skill into WorkspaceContext for every active workspace owned by the user.
-
-    This runs synchronously in the API process so that `list_context(path="./skills")`
-    returns results immediately after create/update — without waiting for Celery.
-
-    Returns:
-        Number of workspaces successfully updated.
-    """
-    from aiwen.core.enums.workspaces import WorkspaceStatus
-    from aiwen.models.workspaces.workspace import Workspace
-    from aiwen.services.workspace_context.workspace_context_service import (
-        WorkspaceContextService,
-    )
-    from aiwen.utils.workspace_context_cache import invalidate_workspace_context_cache
-
-    skill_id = str(skill.id)
-    glance = skill.glance or (skill.description[:80] if skill.description else skill.name)
-
-    # Query all active workspaces for this user
-    ws_result = await db.execute(
-        select(Workspace).where(
-            Workspace.owner_id == UUID(user_id),
-            Workspace.status == WorkspaceStatus.ACTIVE,
-            Workspace.is_deleted.is_(False),
-        )
-    )
-    workspaces = ws_result.scalars().all()
-
-    count = 0
-    for ws in workspaces:
-        ws_id = str(ws.id)
-        try:
-            svc = WorkspaceContextService(db, ws_id)
-            await svc.set(
-                path=f"skills/{skill_id}",
-                glance=glance,
-                overview=skill.summary,
-                detail=skill.content,
-                tags=["skills"] + list(skill.tags or []),
-                meta={"skill_id": skill_id},
-                created_by=user_id,
-                content_type="text/plain",
-            )
-            invalidate_workspace_context_cache(ws_id)
-            count += 1
-        except Exception as e:
-            logger.warning(f"_sync_skill_to_workspace_contexts: failed for workspace {ws_id}: {e}")
-
-    return count
 
 
 def _build_skill_response(skill) -> SkillResponse:
@@ -156,11 +98,6 @@ async def create_skill(
             detail=f"Failed to process skill: {e!s}",
         )
 
-    # Sync to WorkspaceContext in-process so list_context returns it immediately
-    ws_count = await _sync_skill_to_workspace_contexts(db, skill, str(current_user.id))
-    logger.info(f"create_skill: synced skill {skill.id} to {ws_count} workspace(s)")
-
-    # Celery handles embedding generation only
     from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)
@@ -257,11 +194,6 @@ async def update_skill(
         await db.commit()
         await db.refresh(skill)
 
-    # Sync to WorkspaceContext in-process so list_context returns it immediately
-    ws_count = await _sync_skill_to_workspace_contexts(db, skill, str(current_user.id))
-    logger.info(f"update_skill: synced skill {skill.id} to {ws_count} workspace(s)")
-
-    # Celery handles embedding generation only
     from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)
@@ -443,11 +375,6 @@ async def process_skill(
             detail=f"Failed to process skill: {e!s}",
         )
 
-    # Sync to WorkspaceContext in-process so list_context returns it immediately
-    ws_count = await _sync_skill_to_workspace_contexts(db, skill, str(current_user.id))
-    logger.info(f"process_skill: synced skill {skill.id} to {ws_count} workspace(s)")
-
-    # Celery handles embedding generation only
     from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)
@@ -593,9 +520,6 @@ async def upload_skill_folder(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process skill: {e!s}",
         )
-
-    ws_count = await _sync_skill_to_workspace_contexts(db, skill, str(current_user.id))
-    logger.info(f"upload_skill_folder: synced skill {skill.id} to {ws_count} workspace(s)")
 
     from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
