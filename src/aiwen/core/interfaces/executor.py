@@ -107,6 +107,10 @@ class Executor(ABC, ExecutorProtocol):
         # Per-event-invocation token accumulator (reset on each process_event call).
         self._current_input_tokens: int = 0
         self._current_output_tokens: int = 0
+        # Run-lifetime token accumulator (never reset; read by _handle_to_executor
+        # after the executor loop finishes to attribute totals to the TO_EXECUTOR event).
+        self._total_input_tokens: int = 0
+        self._total_output_tokens: int = 0
 
     # ── core contract ────────────────────────────────────────────
     @abstractmethod
@@ -139,6 +143,21 @@ class Executor(ABC, ExecutorProtocol):
         # Yield all events that were emitted during processing
         for emitted_event in self._event_queue:
             yield emitted_event
+
+    async def process_events(
+        self, events: list[Event]
+    ) -> AsyncGenerator[Event, None]:  # ty:ignore[invalid-method-override]
+        """Process a pre-fetched run event history list.
+
+        The last triggering event drives handler dispatch.  Subclasses
+        should override this method to consume *events* directly and skip
+        their internal DB fetch, eliminating the round-trip that would
+        otherwise be performed inside ``process_event``.
+        """
+        # Default: find the last event and delegate to process_event.
+        if events:
+            async for e in self.process_event(events[-1]):
+                yield e
 
     # -- User event handlers --
 
@@ -304,6 +323,14 @@ class Executor(ABC, ExecutorProtocol):
         """Handle an incoming SYSTEM_NOTIFICATION event."""
         ...
 
+    async def _process_to_executor(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming TO_EXECUTOR routing event.
+
+        This is an internal worker-routing event and is never processed by
+        concrete executors; the base implementation is intentionally a no-op.
+        """
+        ...
+
     # -- Dispatch table (event_type.value -> handler method) --
 
     _EVENT_HANDLERS: ClassVar[dict[str, Any]] = {}  # populated after class body
@@ -320,9 +347,11 @@ class Executor(ABC, ExecutorProtocol):
         self._current_output_tokens = 0
 
     def _accumulate_tokens(self, input_tokens: int, output_tokens: int) -> None:
-        """Add tokens from one LLM call into the per-event accumulators."""
+        """Add tokens from one LLM call into both the per-event and run-lifetime accumulators."""
         self._current_input_tokens += input_tokens
         self._current_output_tokens += output_tokens
+        self._total_input_tokens += input_tokens
+        self._total_output_tokens += output_tokens
 
     # ── Event factory helpers ─────────────────────────────────────
 
@@ -350,10 +379,7 @@ class Executor(ABC, ExecutorProtocol):
         payload: dict[str, Any] = {"content": content}
         if context_breakdown is not None:
             payload["_ctx"] = context_breakdown
-        event = self._make_event(EventType.AGENT_MESSAGE, payload)
-        event.input_tokens = self._current_input_tokens
-        event.output_tokens = self._current_output_tokens
-        return event
+        return self._make_event(EventType.AGENT_MESSAGE, payload)
 
     def _emit_thinking(self, content: str) -> Event:
         """Emit a reasoning/thinking trace event (AGENT_THINKING)."""

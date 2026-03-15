@@ -62,6 +62,7 @@ const EVENT_LABEL: Record<string, string> = {
   'tool.error':       'Tool error',
   'run.state.change': 'State',
   'run.created':      'Run created',
+  'to.executor':      'Tokens',
   'context.using':    'Context',
   'agent.plan.step':  'Plan step',
 };
@@ -277,8 +278,8 @@ function RunEventRow({
 
       {expanded && hasPayload && (
         <div className="px-3 pb-2 pt-1 bg-muted/30 space-y-1.5">
-          {/* Token source breakdown — only for agent.message events */}
-          {event.event_type === 'agent.message' && (event.input_tokens ?? 0) > 0 && (() => {
+          {/* Context breakdown — agent.message events carry _ctx from the executor */}
+          {event.event_type === 'agent.message' && (() => {
             const ctx = event.payload?._ctx as { total_messages?: number; by_role?: Record<string, { count: number; chars: number }> } | undefined;
             if (!ctx) return null;
             const ROLE_LABEL: Record<string, string> = {
@@ -291,7 +292,7 @@ function RunEventRow({
             return (
               <div className="rounded-md bg-card border border-border/50 p-2">
                 <div className="text-[9px] text-muted-foreground/60 uppercase tracking-wide mb-1.5 font-medium">
-                  Input token sources · {ctx.total_messages} msgs · {event.input_tokens ?? 0} tokens
+                  Context window · {ctx.total_messages} msgs
                 </div>
                 <div className="space-y-1">
                   {Object.entries(ctx.by_role ?? {}).map(([role, stat]) => {
@@ -317,6 +318,24 @@ function RunEventRow({
               </div>
             );
           })()}
+          {/* Token usage summary — to.executor events carry run-lifetime token totals */}
+          {event.event_type === 'to.executor' && ((event.input_tokens ?? 0) > 0 || (event.output_tokens ?? 0) > 0) && (
+            <div className="rounded-md bg-card border border-border/50 p-2">
+              <div className="text-[9px] text-muted-foreground/60 uppercase tracking-wide mb-1.5 font-medium">
+                Token usage · this run turn
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground/70">Input</span>
+                  <span className="text-[10px] text-sky-400 tabular-nums font-mono">{event.input_tokens ?? 0}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground/70">Output</span>
+                  <span className="text-[10px] text-sky-400 tabular-nums font-mono">{event.output_tokens ?? 0}</span>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="rounded-md bg-card border border-border/50 p-2">
             <div className="text-[9px] text-muted-foreground/60 uppercase tracking-wide mb-1 font-medium">Payload</div>
             <pre className="text-[10px] text-foreground/80 font-mono overflow-x-auto leading-relaxed whitespace-pre-wrap break-all max-h-60 overflow-y-auto">

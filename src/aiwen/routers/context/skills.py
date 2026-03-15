@@ -298,6 +298,9 @@ async def delete_skill(
             detail=f"Skill {skill_id} not found",
         )
 
+    from aiwen.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    delete_resource_contexts.delay(skill_id, "SKILL", "skill_id")
+
 
 @router.get(
     "",

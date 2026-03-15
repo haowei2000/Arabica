@@ -54,7 +54,7 @@ class ReadContextTool(InnerTool):
                 message=f"Retrieved context: {input_data.path}",
                 data={
                     "path": input_data.path,
-                    "context": ctx.disclose("detail"),
+                    "content": ctx.content,
                 },
             )
 

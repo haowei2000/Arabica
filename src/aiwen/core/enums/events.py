@@ -59,3 +59,8 @@ class EventType(StrEnum):
     # System events
     SYSTEM_ERROR = "system.error"
     SYSTEM_NOTIFICATION = "system.notification"
+
+    # Internal worker-routing event: carries the original event to the executor.
+    # Published by the worker after sequence validation; consumed by the same worker
+    # to actually call _forward_to_executor.  Not intended for external clients.
+    TO_EXECUTOR = "to.executor"

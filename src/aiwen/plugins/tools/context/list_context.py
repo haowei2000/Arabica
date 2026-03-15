@@ -1,6 +1,35 @@
 """List context tool - list direct children or all descendants."""
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from aiwen.models.context.workspace_context import WorkspaceContext
+
+
+def _build_md_tree(contexts: list[WorkspaceContext], root_path: str) -> str:
+    """Build a markdown tree string from a list of contexts.
+
+    Example output:
+        - tools/
+          - web_search
+          - code_exec
+        - knowledge/
+          - python_guide
+    """
+    lines: list[str] = []
+    root_depth = root_path.rstrip("/").count("/")
+
+    for ctx in contexts:
+        path = (ctx.path or "").rstrip("/")
+        depth = path.count("/") - root_depth - 1
+        indent = "  " * depth
+        name = path.rsplit("/", 1)[-1]
+        lines.append(f"{indent}- {name}")
+
+    return "\n".join(lines)
+
 
 from pydantic import Field
 
@@ -82,19 +111,12 @@ class ListContextTool(InnerTool):
 
             contexts = contexts[: input_data.limit]
 
-            items = [ctx.disclose("glance") for ctx in contexts]
-            paths = [(ctx.path or "").lstrip("/") for ctx in contexts]
+            tree = _build_md_tree(contexts, normalized_path)
 
             return ToolOutputSchema(
                 success=True,
-                message=f"Found {len(items)} {input_data.mode} under: {input_data.path}",
-                data={
-                    "path": input_data.path,
-                    "mode": input_data.mode,
-                    "count": len(items),
-                    "paths": paths,
-                    "contexts": items,
-                },
+                message=f"Found {len(contexts)} {input_data.mode} under: {input_data.path}",
+                data={"tree": tree},
             )
 
         except Exception as e:

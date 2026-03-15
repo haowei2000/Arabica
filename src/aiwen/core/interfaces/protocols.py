@@ -241,6 +241,15 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Dispatch an incoming event to the matching _process_* handler."""
         yield  # pragma: no cover – protocol stub
 
+    async def process_events(self, events: list[Event]) -> AsyncGenerator[Event, None]:
+        """Process a pre-fetched run event history list.
+
+        The last triggering event in the list drives handler dispatch.
+        Implementations should use the list as the conversation history to
+        avoid an extra DB round-trip inside the executor.
+        """
+        yield  # pragma: no cover – protocol stub
+
     # User event handlers
 
     async def _process_user_message(self, payload: dict[str, Any]) -> None:

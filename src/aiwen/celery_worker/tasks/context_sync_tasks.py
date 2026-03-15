@@ -11,6 +11,7 @@ All vector embeddings live exclusively in the Context table — subsystem models
 
 import json
 import logging
+import re
 from uuid import UUID, uuid4
 
 from aiwen.celery_worker.celery_app import celery_app
@@ -25,6 +26,94 @@ _DEFAULT_DIMENSION = 1024
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
+
+def _slugify(name: str) -> str:
+    """Convert a human-readable name to a safe path segment (lowercase, underscores)."""
+    slug = name.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s\-]+", "_", slug)
+    return slug or "unnamed"
+
+
+async def _invalidate_workspace_caches(ws_ids: list[str]) -> None:
+    """Set Redis dirty-flags for the given workspace IDs so in-memory caches refresh."""
+    if not ws_ids:
+        return
+    try:
+        import redis.asyncio as redis_async
+
+        from aiwen.config.factory import get_settings
+
+        cfg = get_settings().redis
+        auth = f":{cfg.password}@" if cfg.password else ""
+        r = redis_async.from_url(
+            f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
+            decode_responses=True,
+        )
+        async with r.pipeline(transaction=False) as pipe:
+            for ws_id in ws_ids:
+                pipe.setex(f"workspace_context_dirty:{ws_id}", 600, "1")
+            await pipe.execute()
+        await r.aclose()
+    except Exception as exc:
+        logger.warning(f"_invalidate_workspace_caches: failed to set dirty flags: {exc}")
+
+
+async def _get_user_workspace_ids(session, user_id: str) -> list[str]:
+    """Return all active workspace IDs owned by *user_id*."""
+    from sqlalchemy import select
+
+    from aiwen.core.enums.workspaces import WorkspaceStatus
+    from aiwen.models.workspaces.workspace import Workspace
+
+    result = await session.execute(
+        select(Workspace).where(
+            Workspace.owner_id == UUID(user_id),
+            Workspace.status == WorkspaceStatus.ACTIVE,
+            Workspace.is_deleted.is_(False),
+        )
+    )
+    return [str(ws.id) for ws in result.scalars().all()]
+
+
+async def _sync_path_to_workspaces(
+    workspace_ids: list[str],
+    *,
+    path: str,
+    glance: str,
+    overview: str | None,
+    detail: str | None,
+    tags: list[str],
+    meta: dict,
+    created_by: str | None = None,
+) -> list[str]:
+    """Write a WorkspaceContext entry at *path* for each workspace; return dirty IDs."""
+    from aiwen.extensions.database import get_session
+    from aiwen.services.workspace_context.workspace_context_service import (
+        WorkspaceContextService,
+    )
+
+    dirty: list[str] = []
+    for ws_id in workspace_ids:
+        try:
+            async with get_session("aiwen") as session:
+                svc = WorkspaceContextService(session, ws_id)
+                kwargs: dict = {}
+                if created_by:
+                    kwargs["created_by"] = created_by
+                await svc.set(
+                    path=path,
+                    glance=glance,
+                    overview=overview,
+                    detail=detail,
+                    tags=tags,
+                    meta=meta,
+                    **kwargs,
+                )
+            dirty.append(ws_id)
+        except Exception as exc:
+            logger.warning(f"_sync_path_to_workspaces: failed for workspace {ws_id} path={path}: {exc}")
+    return dirty
 
 async def _upsert_context(session, *, user_id: str, context_type: str, source_id: str,
                            name: str, glance: str | None, summary: str | None,
@@ -136,12 +225,12 @@ async def _store_embedding(session, ctx_id: str, vector: list[float], field: str
     queue="default",
 )
 def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
-    """Upsert Knowledge into the Context table, embed, and update WorkspaceContext entries."""
+    """Upsert Knowledge into the Context table, embed, and sync to all user workspaces."""
     async def _execute():
         from aiwen.extensions.database import get_session
         from aiwen.models.context.knowledge.knowledge import Knowledge
 
-        # ── 1. Read knowledge and upsert Context row ──────────────────────
+        # ── 1. Read knowledge and upsert global Context row ───────────────
         async with get_session("aiwen") as session:
             kb = await session.get(Knowledge, knowledge_id)
             if not kb:
@@ -149,39 +238,58 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
                 return
 
             glance = (kb.description[:80] if kb.description else None) or kb.name
+            kb_name = kb.name
+            kb_description = kb.description
+            kb_tags = list(kb.tags or []) if hasattr(kb, "tags") else []
 
             ctx = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="knowledge",
                 source_id=knowledge_id,
-                name=kb.name,
+                name=kb_name,
                 glance=glance,
-                summary=kb.description,
-                content=kb.description,
-                tags=["knowledge"],
+                summary=kb_description,
+                content=kb_description,
+                tags=["knowledge"] + kb_tags,
                 meta={"knowledge_id": knowledge_id},
             )
 
-            count = await _update_workspace_contexts(
+            await _update_workspace_contexts(
                 session,
                 meta_key="knowledge_id",
                 resource_id=knowledge_id,
                 glance=glance,
-                summary=kb.description,
+                summary=kb_description,
+                content=kb_description,
             )
 
+            workspace_ids = await _get_user_workspace_ids(session, user_id)
             await session.flush()
             ctx_id = str(ctx.id)
-            embed_text = " ".join(filter(None, [kb.name, kb.description]))
+            embed_text = " ".join(filter(None, [kb_name, kb_description]))
             await session.commit()
 
+        # ── 2. Sync WorkspaceContext at knowledge/{name} for each workspace ─
+        path = f"knowledge/{_slugify(kb_name)}"
+        dirty_ids = await _sync_path_to_workspaces(
+            workspace_ids,
+            path=path,
+            glance=glance,
+            overview=kb_description,
+            detail=kb_description,
+            tags=["knowledge"] + kb_tags,
+            meta={"knowledge_id": knowledge_id},
+            created_by=user_id,
+        )
+        await _invalidate_workspace_caches(dirty_ids)
+
         logger.info(
-            f"sync_knowledge: upserted Context + updated {count} WorkspaceContext(s) "
-            f"for knowledge {knowledge_id}"
+            f"sync_knowledge: upserted Context + synced to {len(dirty_ids)} workspace(s) "
+            f"at '{path}' for knowledge {knowledge_id}"
         )
 
-        # ── 2. Generate embedding (outside session, blocking HTTP) ─────────
+        # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
         if embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
@@ -206,11 +314,8 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
 def sync_skill_to_contexts(self, skill_id: str, user_id: str):
     """Upsert Skill into Context table, embed, and sync to all user workspaces."""
     async def _execute():
-        from sqlalchemy import select
-
         from aiwen.extensions.database import get_session
         from aiwen.models.context.skill import Skill
-        from aiwen.models.workspaces.workspace import Workspace
 
         # ── 1. Read skill and upsert global Context row ───────────────────
         async with get_session("aiwen") as session:
@@ -234,7 +339,6 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
                 meta={"skill_id": skill_id},
             )
 
-            # Update any existing WorkspaceContext entries that reference this skill
             count = await _update_workspace_contexts(
                 session,
                 meta_key="skill_id",
@@ -244,79 +348,33 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
                 content=skill.content,
             )
 
-            # ── 2. Upsert into WorkspaceContext for ALL user workspaces ────
-            # Query all active workspaces owned by this user
-            from aiwen.core.enums.workspaces import WorkspaceStatus
-            ws_result = await session.execute(
-                select(Workspace).where(
-                    Workspace.owner_id == UUID(user_id),
-                    Workspace.status == WorkspaceStatus.ACTIVE,
-                    Workspace.is_deleted.is_(False),
-                )
-            )
-            workspaces = ws_result.scalars().all()
-
+            workspace_ids = await _get_user_workspace_ids(session, user_id)
             await session.flush()
             ctx_id = str(ctx.id)
-            # Capture values before session closes to avoid detached-instance errors
+            skill_name = skill.name
             skill_summary = skill.summary
             skill_content = skill.content
             skill_tags = list(skill.tags or [])
             embed_text = skill_content or glance or ""
-            workspace_ids = [str(ws.id) for ws in workspaces]
             await session.commit()
 
-        # Write WorkspaceContext entries outside the first session to avoid
-        # holding a long transaction while iterating workspaces.
-        # Note: svc.set() → _sync_to_db() already commits internally; no outer commit needed.
-        ws_count = 0
-        dirty_ws_ids: list[str] = []
-        for ws_id in workspace_ids:
-            try:
-                async with get_session("aiwen") as session:
-                    from aiwen.services.workspace_context.workspace_context_service import (
-                        WorkspaceContextService,
-                    )
-                    svc = WorkspaceContextService(session, ws_id)
-                    await svc.set(
-                        path=f"skills/{skill_id}",
-                        glance=glance,
-                        overview=skill_summary,
-                        detail=skill_content,
-                        tags=["skills"] + skill_tags,
-                        meta={"skill_id": skill_id},
-                        created_by=user_id,
-                        content_type="text/plain",
-                    )
-                    # _sync_to_db already committed; no extra commit here
-                ws_count += 1
-                dirty_ws_ids.append(ws_id)
-            except Exception as e:
-                logger.warning(f"sync_skill: failed to sync to workspace {ws_id}: {e}")
-
-        # Invalidate API-process in-memory cache via Redis dirty-flag
-        if dirty_ws_ids:
-            try:
-                import redis.asyncio as redis_async
-
-                from aiwen.config.factory import get_settings
-                cfg = get_settings().redis
-                auth = f":{cfg.password}@" if cfg.password else ""
-                r = redis_async.from_url(
-                    f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
-                    decode_responses=True,
-                )
-                async with r.pipeline(transaction=False) as pipe:
-                    for ws_id in dirty_ws_ids:
-                        pipe.setex(f"workspace_context_dirty:{ws_id}", 600, "1")
-                    await pipe.execute()
-                await r.aclose()
-            except Exception as e:
-                logger.warning(f"sync_skill: failed to set Redis dirty flags: {e}")
+        # ── 2. Upsert WorkspaceContext at skills/{name} for each workspace ─
+        path = f"skills/{_slugify(skill_name)}"
+        dirty_ids = await _sync_path_to_workspaces(
+            workspace_ids,
+            path=path,
+            glance=glance,
+            overview=skill_summary,
+            detail=skill_content,
+            tags=["skills"] + skill_tags,
+            meta={"skill_id": skill_id},
+            created_by=user_id,
+        )
+        await _invalidate_workspace_caches(dirty_ids)
 
         logger.info(
             f"sync_skill: upserted Context + updated {count} WorkspaceContext row(s) "
-            f"+ synced to {ws_count} workspace(s) for skill {skill_id}"
+            f"+ synced to {len(dirty_ids)} workspace(s) at '{path}' for skill {skill_id}"
         )
 
         # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
@@ -342,66 +400,89 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
     queue="default",
 )
 def sync_tool_to_contexts(self, tool_id: str, user_id: str):
-    """Upsert Tool into Context table, embed, and update WorkspaceContext entries."""
+    """Upsert Tool into Context table, embed, and sync to all user workspaces."""
     async def _execute():
         from aiwen.extensions.database import get_session
         from aiwen.models.context.tools.tool import Tool
 
-        # ── 1. Read tool and upsert Context row ───────────────────────────
+        # ── 1. Read tool and upsert global Context row ────────────────────
         async with get_session("aiwen") as session:
             tool = await session.get(Tool, tool_id)
             if not tool:
                 logger.warning(f"sync_tool: tool {tool_id} not found")
                 return
 
-            glance = f"{tool.display_name or tool.name} — {tool.description[:60] if tool.description else ''}"
-            overview = {
-                "name": tool.name,
-                "display_name": tool.display_name,
-                "description": tool.description,
-                "tool_type": tool.tool_type,
-                "tags": tool.tags or [],
+            tool_name = tool.tool_code or tool.name
+            display_name = tool.display_name or tool.name
+            glance = f"{display_name} — {tool.description[:60]}" if tool.description else display_name
+            tool_tags = list(tool.tags or [])
+
+            # Store the full OpenAI function-calling schema so read_context results
+            # can be directly parsed by _extract_context_tool_schemas without needing
+            # to reconstruct the description from scattered fields.
+            # TODO: existing WorkspaceContext rows still hold the old raw input_schema format.
+            #       Run a one-off migration or re-trigger sync_tool_to_contexts for all tools
+            #       to update them. Until then _extract_context_tool_schemas handles both formats.
+            input_schema = tool.input_schema or {}
+            full_schema = {
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": tool.description or display_name,
+                    "parameters": input_schema,
+                },
             }
-            overview_str = json.dumps(overview, ensure_ascii=False)
-            schema_str = json.dumps(tool.input_schema, ensure_ascii=False) if tool.input_schema else ""
+            schema_str = json.dumps(full_schema, ensure_ascii=False)
 
             ctx = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="tool",
                 source_id=tool_id,
-                name=tool.display_name or tool.name,
+                name=display_name,
                 glance=glance,
-                summary=overview_str,
+                summary=tool.description,
                 content=schema_str,
-                tags=["tool"] + (tool.tags or []),
-                meta={"tool_id": tool_id, "tool_code": tool.tool_code},
+                tags=["tool"] + tool_tags,
+                meta={"tool_id": tool_id, "tool_code": tool_name},
             )
 
-            count = await _update_workspace_contexts(
+            await _update_workspace_contexts(
                 session,
                 meta_key="tool_id",
                 resource_id=tool_id,
                 glance=glance,
-                summary=overview_str,
+                summary=tool.description,
+                content=schema_str,
             )
 
+            workspace_ids = await _get_user_workspace_ids(session, user_id)
             await session.flush()
             ctx_id = str(ctx.id)
-            # Embed name + description + schema for rich tool retrieval
-            embed_text = " ".join(filter(None, [
-                tool.display_name or tool.name,
-                tool.description,
-                schema_str,
-            ]))
+            tool_description = tool.description
+            embed_text = " ".join(filter(None, [display_name, tool_description, schema_str]))
             await session.commit()
 
+        # ── 2. Sync WorkspaceContext at tools/{name} for each workspace ───
+        path = f"tools/{_slugify(tool_name)}"
+        dirty_ids = await _sync_path_to_workspaces(
+            workspace_ids,
+            path=path,
+            glance=glance,
+            overview=tool_description,
+            detail=schema_str,
+            tags=["tool"] + tool_tags,
+            meta={"tool_id": tool_id, "tool_code": tool_name},
+            created_by=user_id,
+        )
+        await _invalidate_workspace_caches(dirty_ids)
+
         logger.info(
-            f"sync_tool: upserted Context + updated {count} WorkspaceContext(s) "
-            f"for tool {tool_id}"
+            f"sync_tool: upserted Context + synced to {len(dirty_ids)} workspace(s) "
+            f"at '{path}' for tool {tool_id}"
         )
 
-        # ── 2. Generate embedding (outside session, blocking HTTP) ─────────
+        # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
         if embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
@@ -416,170 +497,66 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
         self.retry(exc=e)
 
 
+
 @celery_app.task(
     bind=True,
-    name="context_sync.sync_always_load_tool",
+    name="context_sync.delete_resource_contexts",
     max_retries=3,
     default_retry_delay=30,
     queue="default",
 )
-def sync_always_load_tool_to_workspace_contexts(self, tool_id: str):
-    """Sync an always_load InnerTool to all active workspace contexts.
+def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key: str):
+    """Delete Context and WorkspaceContext entries for a removed resource.
 
-    Called automatically during ToolRegistry database sync for every InnerTool
-    whose ``METADATA.always_load=True``.  Writes a structured entry at path
-    ``tools/{tool_name}`` inside every active workspace so the executor can
-    surface it in workspace context queries.
-
-    Unlike ``sync_tool_to_contexts`` (which targets user-owned tools with a
-    specific user_id), this task operates system-wide — no user scope.
+    Args:
+        resource_id: UUID string of the deleted skill / tool / knowledge.
+        context_type: Value stored in Context.context_type (e.g. "SKILL", "tool", "knowledge").
+        meta_key: JSON meta field used to locate WorkspaceContext rows (e.g. "skill_id").
     """
     async def _execute():
-        from sqlalchemy import select
+        from sqlalchemy import delete, select
 
         from aiwen.extensions.database import get_session
-        from aiwen.models.context.tools.tool import Tool
-        from aiwen.models.workspaces.workspace import Workspace
+        from aiwen.models.context.context import Context
+        from aiwen.models.context.workspace_context import WorkspaceContext
 
-        # ── 1. Read InnerTool record from DB ─────────────────────────────
         async with get_session("aiwen") as session:
-            tool = await session.get(Tool, UUID(tool_id))
-            if not tool:
-                logger.warning(f"sync_always_load_tool: tool {tool_id} not found")
-                return
-            if not tool.enabled:
-                logger.info(
-                    f"sync_always_load_tool: tool '{tool.name}' disabled, skipping"
-                )
-                return
-
-            overview = {
-                "name": tool.name,
-                "display_name": tool.display_name,
-                "description": tool.description,
-                "category": tool.category,
-                "tags": tool.tags or [],
-            }
-            overview_str = json.dumps(overview, ensure_ascii=False)
-            schema_str = (
-                json.dumps(tool.input_schema, ensure_ascii=False)
-                if tool.input_schema
-                else ""
-            )
-            glance = (
-                f"{tool.display_name or tool.name}"
-                f" — {tool.description[:60]}"
-                if tool.description
-                else tool.display_name or tool.name
-            )
-            tool_name = tool.name
-            tool_code = tool.tool_code
-            tool_tags = list(tool.tags or [])
-            embed_text = " ".join(
-                filter(None, [tool.display_name or tool.name, tool.description, schema_str])
-            )
-
-            # Collect all active workspace IDs
-            from aiwen.core.enums.workspaces import WorkspaceStatus
-
-            ws_result = await session.execute(
-                select(Workspace).where(
-                    Workspace.status == WorkspaceStatus.ACTIVE,
-                    Workspace.is_deleted.is_(False),
+            # Delete global Context rows
+            ctx_result = await session.execute(
+                select(Context).where(
+                    Context.source_id == UUID(resource_id),
+                    Context.context_type == context_type,
                 )
             )
-            workspace_ids = [str(ws.id) for ws in ws_result.scalars().all()]
+            ctx_rows = ctx_result.scalars().all()
+            for ctx in ctx_rows:
+                await session.delete(ctx)
+
+            # Soft-delete WorkspaceContext rows that reference this resource
+            wc_result = await session.execute(
+                select(WorkspaceContext).where(
+                    WorkspaceContext.is_deleted.is_(False),
+                    WorkspaceContext.meta[meta_key].astext == resource_id,
+                )
+            )
+            wc_rows = wc_result.scalars().all()
+            for row in wc_rows:
+                row.is_deleted = True
+
+            await session.commit()
+
+        dirty_ids = list({str(row.workspace_id) for row in wc_rows})
+        await _invalidate_workspace_caches(dirty_ids)
 
         logger.info(
-            f"sync_always_load_tool: syncing '{tool_name}' to "
-            f"{len(workspace_ids)} workspace(s)"
-        )
-
-        # ── 2. Upsert WorkspaceContext at tools/{tool_name} for each workspace ─
-        ws_count = 0
-        dirty_ws_ids: list[str] = []
-        for ws_id in workspace_ids:
-            try:
-                async with get_session("aiwen") as session:
-                    from aiwen.services.workspace_context.workspace_context_service import (
-                        WorkspaceContextService,
-                    )
-
-                    svc = WorkspaceContextService(session, ws_id)
-                    await svc.set(
-                        path=f"tools/{tool_name}",
-                        glance=glance,
-                        overview=overview_str,
-                        detail=schema_str,
-                        tags=["tool", "always_load"] + tool_tags,
-                        meta={
-                            "tool_id": tool_id,
-                            "tool_code": tool_code,
-                            "always_load": True,
-                        },
-                    )
-                ws_count += 1
-                dirty_ws_ids.append(ws_id)
-            except Exception as e:
-                logger.warning(
-                    f"sync_always_load_tool: failed to sync '{tool_name}' "
-                    f"to workspace {ws_id}: {e}"
-                )
-
-        # ── 3. Invalidate API-process in-memory cache via Redis dirty-flag ─
-        if dirty_ws_ids:
-            try:
-                import redis.asyncio as redis_async
-
-                from aiwen.config.factory import get_settings
-
-                cfg = get_settings().redis
-                auth = f":{cfg.password}@" if cfg.password else ""
-                r = redis_async.from_url(
-                    f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
-                    decode_responses=True,
-                )
-                async with r.pipeline(transaction=False) as pipe:
-                    for ws_id in dirty_ws_ids:
-                        pipe.setex(f"workspace_context_dirty:{ws_id}", 600, "1")
-                    await pipe.execute()
-                await r.aclose()
-            except Exception as e:
-                logger.warning(
-                    f"sync_always_load_tool: failed to set Redis dirty flags: {e}"
-                )
-
-        # ── 4. Generate embedding (outside session, blocking HTTP) ─────────
-        if embed_text.strip():
-            vector, field = _generate_embedding(embed_text)
-            async with get_session("aiwen") as session:
-                # Re-fetch the Tool record to store the embedding in its Context row.
-                # (InnerTools have no user_id, so we store the vector directly on
-                # the Tool's dedicated context entry if one exists.)
-                from aiwen.models.context.context import Context
-
-                ctx_result = await session.execute(
-                    select(Context).where(
-                        Context.meta["tool_id"].astext == tool_id,
-                        Context.context_type == "tool",
-                    )
-                )
-                ctx = ctx_result.scalar_one_or_none()
-                if ctx:
-                    setattr(ctx, field, vector)
-                    await session.commit()
-                    logger.info(
-                        f"sync_always_load_tool: embedded Context for '{tool_name}'"
-                    )
-
-        logger.info(
-            f"sync_always_load_tool: '{tool_name}' synced to {ws_count} workspace(s)"
+            f"delete_resource_contexts: removed {len(ctx_rows)} Context row(s) and "
+            f"soft-deleted {len(wc_rows)} WorkspaceContext row(s) for {context_type}/{resource_id}"
         )
 
     try:
         run_async(_execute())
     except Exception as e:
-        logger.error(f"sync_always_load_tool failed for {tool_id}: {e}")
+        logger.error(f"delete_resource_contexts failed for {resource_id}: {e}")
         self.retry(exc=e)
 
 

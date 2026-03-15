@@ -145,7 +145,9 @@ async def delete_knowledge(
         )
 
     await crud.delete(knowledge_id)
-    return
+
+    from aiwen.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    delete_resource_contexts.delay(knowledge_id, "knowledge", "knowledge_id")
 
 
 @router.get("/query", response_model=KnowledgeListResponse)

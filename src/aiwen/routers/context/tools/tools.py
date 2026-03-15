@@ -456,6 +456,9 @@ async def delete_tool(
             detail="Tool not found or you don't have permission",
         )
 
+    from aiwen.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    delete_resource_contexts.delay(str(tool_id), "tool", "tool_id")
+
 
 @router.post(
     "/{tool_id}/toggle",

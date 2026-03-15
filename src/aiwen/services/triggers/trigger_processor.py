@@ -311,8 +311,6 @@ class TriggerProcessor:
         tool_id = str(uuid4())
 
         # Publish TOOL_CALL for real-time observability.
-        # "_source": "trigger" prevents the worker from re-executing the tool
-        # when it consumes this event from the executor stream.
         if self._publisher and self._run_id:
             try:
                 await self._publisher.publish(

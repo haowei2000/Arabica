@@ -455,14 +455,9 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     )
                 )
                 id_rows = id_result.all()
-                from aiwen.celery_worker.tasks.context_sync_tasks import (
-                    sync_always_load_tool_to_workspace_contexts,
-                )
-
                 for row in id_rows:
-                    sync_always_load_tool_to_workspace_contexts.delay(str(row.id))
                     self.logger.info(
-                        "Queued workspace-context sync for always_load tool '%s'",
+                        "always_load tool '%s' registered (no workspace-context sync)",
                         row.name,
                     )
             except Exception as e:

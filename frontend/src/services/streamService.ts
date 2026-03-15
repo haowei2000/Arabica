@@ -242,6 +242,11 @@ class StreamService {
           if (content && !tokenState.hasTokens) {
             onChunk(content);
           }
+          return;
+        }
+
+        // ── to.executor: token usage summary for the completed run turn ──
+        if (eventType === 'to.executor') {
           const inputTokens = (payload as any)?.input_tokens as number | undefined;
           const outputTokens = (payload as any)?.output_tokens as number | undefined;
           if ((inputTokens ?? 0) > 0 || (outputTokens ?? 0) > 0) {

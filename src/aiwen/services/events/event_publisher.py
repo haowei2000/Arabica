@@ -29,12 +29,18 @@ REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 # Event types that workers must consume from the executor stream.
 # Defined at module level to avoid recreating the set on every publish() call.
 _EXECUTOR_STREAM_TYPES: frozenset[str] = frozenset({
+    # External input events that the worker must receive to validate + re-publish
+    # as TO_EXECUTOR.
     EventType.USER_MESSAGE,
     EventType.USER_FEEDBACK,
-    EventType.TOOL_CALL,
     EventType.TOOL_RESULT,
     EventType.TOOL_ERROR,
+    # TOOL_CALL is dispatched directly to handle_tool_call (no TO_EXECUTOR hop).
+    EventType.TOOL_CALL,
+    # Infrastructure events handled before executor routing.
     EventType.RUN_CANCELLED,
+    # Internal worker-routing event: carries validated events to the executor.
+    EventType.TO_EXECUTOR,
 })
 
 

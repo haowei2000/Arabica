@@ -46,6 +46,10 @@ export const EventType = {
   RUN_FAILED: 'run.failed',
   RUN_CANCELLED: 'run.cancelled',
   RUN_COMPLETED: 'run.completed',
+
+  // Internal worker-routing event; carries the original event to the executor.
+  // Bears the run's total token usage in its input_tokens / output_tokens fields.
+  TO_EXECUTOR: 'to.executor',
 } as const;
 
 export type EventType = (typeof EventType)[keyof typeof EventType];

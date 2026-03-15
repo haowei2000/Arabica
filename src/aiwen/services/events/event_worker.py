@@ -21,7 +21,6 @@ DB session / EventPublisher / RunStateMachine。这样多个 run 的 LLM 调用
 
 import asyncio
 import contextlib
-import json
 import logging
 from dataclasses import dataclass
 from uuid import UUID
@@ -41,16 +40,28 @@ from aiwen.models.workspaces.workspace import Workspace
 from aiwen.registries.core import ExecutorRegistry
 from aiwen.registries.dynamic_loader import DynamicToolLoader
 from aiwen.registries.tool_service import RegistryToolCaller, RegistryToolProvider
-from aiwen.services.events.event_publisher import EventPublisher
+from aiwen.services.events.event_publisher import EventPublisher, REDIS_STREAM_EVENTS_SUFFIX
 from aiwen.services.events.handlers import (
     handle_artifact_event,
     handle_run_cancellation,
     handle_task_event,
     handle_tool_call,
 )
+from aiwen.services.events.event_codec import (
+    RE_CODE_ARTIFACT,
+    RE_CODE_FORWARD,
+    RE_CODE_NOOP,
+    RE_CODE_SKIP_SRC,
+    RE_CODE_TASK,
+    RE_CODE_WORKSPACE,
+    RE_TERMINAL,
+    RE_USER_MSG,
+    encode,
+    encode_sequence,
+)
 from aiwen.services.triggers.trigger_processor import process_event_triggers
 from aiwen.services.executor.runtime import ExecutorInstanceManager
-from aiwen.services.runs.run_state_machine import RunStateMachine, RunStatus
+from aiwen.services.runs.run_state_machine import RunStateMachine
 from aiwen.services.runs.stuck_run_detector import StuckRunDetector
 from aiwen.utils.workspace_context_cache import set_shared_redis_client
 
@@ -62,15 +73,8 @@ REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
 
-# Event types that should be checked against workspace triggers before processing.
-# Only USER_MESSAGE is included because it is the only event type whose downstream
-# handler (_on_user_message) actually reads _trigger_context from the payload.
-# TOOL_CALL goes to handle_tool_call (never reads _trigger_context) and
-# TOOL_RESULT goes to _on_tool_result (also never reads it), so running triggers
-# for those types would be wasted DB queries and tool executions.
-_TRIGGER_EVENT_TYPES: frozenset[str] = frozenset({
-    EventType.USER_MESSAGE,
-})
+# Event type codec (encode/decode + routing patterns) lives in event_codec.py.
+# All routing decisions use the imported names directly.
 
 
 @dataclass(slots=True)
@@ -193,18 +197,12 @@ class Worker:
             logger.debug(f"Flushed {len(buffered)} buffered events to DB for run {run_id}")
 
     async def _run_triggers(self, event: Event, ctx: _Ctx) -> None:
-        """Check workspace triggers and embed formatted results into the event payload.
+        """Execute workspace triggers for the event and publish their tool call events.
 
-        Queries enabled triggers for the event's workspace that match
-        ``event.event_type``.  Each matched trigger's tool is executed and the
-        aggregated results are formatted into a ready-to-use context string stored
-        in ``event.payload["_context"]``.  All trigger-specific logic is completed
-        here; the downstream executor treats ``_context`` as generic extra context
-        with no knowledge of triggers.
-
-        Only called for USER_MESSAGE events (the only type whose handler uses _context).
-        Failures are logged and silently swallowed to avoid interrupting the
-        main event processing pipeline.
+        Each matched trigger runs its configured tool and publishes
+        AGENT_MESSAGE + TOOL_CALL + TOOL_RESULT/TOOL_ERROR events directly to
+        the run stream.  The executor receives these as first-class conversation
+        events — no separate context injection is needed.
         """
         if not event.workspace_id:
             return
@@ -218,35 +216,15 @@ class Worker:
                 run_id=run_id_str,
             )
             if results:
-                lines = ["[Workspace context retrieved by triggers]"]
-                for item in results:
-                    name = item.get("trigger_name", "trigger")
-                    action = item.get("tool_name", "")
-                    result = item.get("result")
-                    lines.append(f"\n### {name} ({action})")
-                    if result is None:
-                        lines.append("(no result)")
-                    elif isinstance(result, (dict, list)):
-                        lines.append(json.dumps(result, ensure_ascii=False, indent=2))
-                    else:
-                        lines.append(str(result))
-
-                payload = dict(event.payload or {})
-                payload["_context"] = "\n".join(lines)
-                event.payload = payload
                 logger.info(
-                    "Triggers fired: workspace=%s event=%s run=%s triggers=%s",
-                    workspace_id,
-                    event.event_type,
-                    event.run_id,
+                    "Triggers fired: workspace=%s run=%s triggers=%s",
+                    workspace_id, event.run_id,
                     [r["trigger_name"] for r in results],
                 )
         except Exception as e:
             logger.error(
                 "Trigger processing failed for %s run=%s: %s",
-                event.event_type,
-                event.run_id,
-                e,
+                event.event_type, event.run_id, e,
                 exc_info=True,
             )
 
@@ -328,11 +306,29 @@ class Worker:
     ) -> None:
         """Process one Redis stream message in an isolated DB session.
 
-        Creates a fresh session / EventPublisher / RunStateMachine so this
-        task never shares mutable state with sibling tasks.  xack is sent
-        only on success; failed messages re-enter the pending queue.
+        Run events are loaded from Redis once before opening the DB session and
+        reused throughout the entire handling chain (seq computation, executor
+        forwarding) to avoid repeated round-trips.  xack is sent only on
+        success; failed messages re-enter the pending queue for retry.
         """
         try:
+            event = self._parse_redis_event(event_data)
+            code = encode(event.event_type)
+
+            # Load run events from Redis before opening the DB session.
+            # Infrastructure events (noop / task / artifact / workspace / cancel)
+            # don't need run context so we skip the read for them.
+            run_events: list[Event] = []
+            if (
+                event.run_id
+                and not RE_CODE_NOOP.match(code)
+                and not RE_CODE_TASK.match(code)
+                and not RE_CODE_ARTIFACT.match(code)
+                and not RE_CODE_WORKSPACE.match(code)
+                and code != "4"
+            ):
+                run_events = await self._load_run_events(UUID(str(event.run_id)))
+
             async with get_session("aiwen") as db:
                 publisher = EventPublisher(
                     db,
@@ -342,15 +338,11 @@ class Worker:
                 )
                 state_machine = RunStateMachine(db, self.redis, publisher)
                 ctx = _Ctx(db=db, publisher=publisher, state_machine=state_machine)
-
-                parsed_event = self._parse_redis_event(event_data)
-                await self.handle_event(parsed_event, ctx)
+                await self.handle_event(event, ctx, run_events)
 
             await self.redis.xack(stream_name, REDIS_CONSUMER_GROUP, event_id)
         except Exception as e:
-            logger.error(
-                f"Failed to process message {event_id}: {e}", exc_info=True
-            )
+            logger.error("Failed to process message %s: %s", event_id, e, exc_info=True)
             # Not acked → enters pending queue for retry
 
     def prepare_executor(
@@ -421,25 +413,28 @@ class Worker:
     async def _get_or_create_executor(
         self, event: Event, ctx: _Ctx
     ) -> ExecutorProtocol | None:
-        """Get existing executor or create new one for the event's run."""
+        """Get existing executor or create a new one for the event's run.
+
+        For TO_EXECUTOR envelopes, restores executor_code from the envelope
+        payload so _create_executor_for_run receives the original value.
+        """
         run_id = event.run_id
         if not run_id:
-            logger.debug(f"Event {event.event_type} has no run_id, skipping")
+            logger.debug("Event %s has no run_id, skipping", event.event_type)
             return None
 
         run_id = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
 
-        existing_executor = self.runtime.get(run_id)
-        if existing_executor:
-            return existing_executor
+        existing = self.runtime.get(run_id)
+        if existing:
+            return existing
 
-        if event.event_type == EventType.USER_MESSAGE:
-            return await self._create_executor_for_run(event, run_id, ctx)
+        # Restore executor_code from TO_EXECUTOR envelope payload.
+        if str(event.event_type) == EventType.TO_EXECUTOR and not event.executor_code:
+            event.executor_code = (event.payload or {}).get("_original_executor_code")  # type: ignore[assignment]
 
-        logger.warning(
-            f"No executor found for run {run_id}, event {event.event_type} cannot be processed"
-        )
-        return None
+        return await self._create_executor_for_run(event, run_id, ctx)
+
 
     async def _create_executor_for_run(
         self, event: Event, run_id: UUID, ctx: _Ctx
@@ -519,104 +514,86 @@ class Worker:
                 await ctx.state_machine.fail(run_id, error=str(e), auto_commit=True)
             return None
 
-    async def handle_event(self, event: Event, ctx: _Ctx) -> None:
-        """Route events to appropriate handlers."""
+    async def handle_event(self, event: Event, ctx: _Ctx, run_events: list[Event]) -> None:
+        """Route events using the run's seq string for all dispatch decisions.
+
+        *run_events* is pre-loaded by _dispatch (single Redis read).  The seq
+        string is derived inline from that list so no further Redis reads are
+        needed here or in downstream handlers.
+
+          seq ends with "b" → TO_EXECUTOR        → _handle_to_executor
+          seq ends with "0" → USER_MESSAGE        → run triggers + forward
+          seq ends with "5" → TOOL_CALL           → handle_tool_call
+          seq ends with [6789a] + has user msg    → forward to executor
+          terminal in seq   → skip (run finished)
+          otherwise         → skip (stale / unrecognised)
+        """
         ctx.db.expire_all()
 
         try:
-            event_type = event.event_type
+            code = encode(event.event_type)
 
-            # Run workspace triggers before routing so the downstream handler
-            # receives an event enriched with trigger results in _trigger_context.
-            if event_type in _TRIGGER_EVENT_TYPES:
-                await self._run_triggers(event, ctx)
-
-            # Trigger-sourced TOOL_CALL / TOOL_RESULT / TOOL_ERROR events carry
-            # "_source": "trigger" to signal they were already executed by the
-            # trigger processor.  Skip normal routing so the tool is not
-            # re-executed and the executor loop is not re-entered.
-            if (event.payload or {}).get("_source") == "trigger" and event_type in (
-                EventType.TOOL_CALL,
-                EventType.TOOL_RESULT,
-                EventType.TOOL_ERROR,
-            ):
+            # ── Infrastructure: no seq needed ────────────────────────────────
+            if RE_CODE_NOOP.match(code):
+                return
+            if code == "4":
+                await handle_run_cancellation(event, self.runtime)
+                return
+            if RE_CODE_TASK.match(code):
+                await handle_task_event(event)
+                return
+            if RE_CODE_ARTIFACT.match(code):
+                await handle_artifact_event(event)
+                return
+            if RE_CODE_WORKSPACE.match(code):
                 return
 
-            match event_type:
-                case (
-                    EventType.AGENT_TOKEN
-                    | EventType.AGENT_MESSAGE
-                    | EventType.AGENT_THINKING
-                    | EventType.AGENT_PLAN_STEP
-                    | EventType.AGENT_HEARTBEAT
-                ):
-                    return
+            run_id = event.run_id
+            if not run_id:
+                logger.debug("Event %s has no run_id, skipping", event.event_type)
+                return
 
-                case (
-                    EventType.RUN_CREATED
-                    | EventType.RUN_STATE_CHANGE
-                    | EventType.RUN_COMPLETED
-                    | EventType.RUN_FAILED
-                ):
-                    return
+            # Skip trigger-sourced tool events (already executed by trigger processor).
+            if (event.payload or {}).get("_source") == "trigger" and RE_CODE_SKIP_SRC.match(code):
+                return
 
-                case (
-                    EventType.USER_MESSAGE
-                    | EventType.USER_FEEDBACK
-                    | EventType.TOOL_RESULT
-                    | EventType.TOOL_ERROR
-                    | EventType.TOOL_PENDING
-                    | EventType.TOOL_CLIENT_REQUEST
-                ):
-                    await self._forward_to_executor(event, ctx)
+            # Derive seq from pre-loaded events (no Redis call).
+            seq = encode_sequence((str(e.event_type),) for e in run_events)
+            logger.debug("handle_event: run=%s seq=%r", run_id, seq)
 
-                case EventType.TOOL_CALL:
-                    # Use per-run caller (has user/MCP tools) if available,
-                    # otherwise fall back to the shared default caller.
-                    run_tool_caller = self._run_tool_callers.get(
-                        str(event.run_id)
-                    ) if event.run_id else None
+            match seq:
+                case s if RE_TERMINAL.search(s):
+                    logger.debug("Skipping %s for run %s: terminal (%s)", event.event_type, run_id, s)
+
+                case s if s.endswith("b"):
+                    await self._handle_to_executor(event, run_events, ctx)
+
+                case s if s.endswith("0"):
+                    # Triggers fire first so their TOOL_CALL/TOOL_RESULT events land in
+                    # the Redis stream before the TO_EXECUTOR event.  The executor then
+                    # reads the full stream (including trigger results) in one pass.
+                    # TODO: if a trigger tool is slow the TO_EXECUTOR publish is delayed;
+                    #       consider running triggers in the background and waiting with
+                    #       a timeout so slow triggers don't stall message processing.
+                    await self._run_triggers(event, ctx)
+                    await self._publish_to_executor_event(event, ctx)
+
+                case s if s.endswith("5"):
+                    run_tool_caller = self._run_tool_callers.get(str(run_id))
                     await handle_tool_call(
                         event, ctx.db, ctx.publisher, ctx.state_machine,
                         tool_caller=run_tool_caller or self._tool_caller,
                         flush_run_buffer=self._flush_buffer_to_db,
                     )
 
-                case EventType.RUN_CANCELLED:
-                    await handle_run_cancellation(event, self.runtime)
-
-                case (
-                    EventType.TASK_CREATE
-                    | EventType.TASK_UPDATE
-                    | EventType.TASK_DELETE
-                    | EventType.TASK_COMPLETE
-                    | EventType.TASK_ASSIGN
-                ):
-                    await handle_task_event(event)
-
-                case (
-                    EventType.ARTIFACT_CREATE
-                    | EventType.ARTIFACT_UPDATE
-                    | EventType.ARTIFACT_DELETE
-                    | EventType.ARTIFACT_VERSION
-                ):
-                    await handle_artifact_event(event)
-
-                case (
-                    EventType.WORKSPACE_CREATED
-                    | EventType.WORKSPACE_UPDATED
-                    | EventType.WORKSPACE_MEMBER_JOIN
-                    | EventType.WORKSPACE_MEMBER_LEAVE
-                    | EventType.WORKSPACE_MEMBER_ROLE_CHANGE
-                    | EventType.USING_CONTEXT
-                ):
-                    pass
+                case s if RE_CODE_FORWARD.match(s[-1]) and RE_USER_MSG.search(s):
+                    await self._publish_to_executor_event(event, ctx)
 
                 case _:
-                    logger.warning(f"Unknown event type {event_type}, skipping")
+                    logger.debug("No handler for event=%s run=%s seq=%s", event.event_type, run_id, seq)
 
         except Exception as e:
-            logger.error(f"handle_event error for {event.event_type}: {e}", exc_info=True)
+            logger.error("handle_event error for %s: %s", event.event_type, e, exc_info=True)
             if event.run_id:
                 try:
                     run_id = (
@@ -625,7 +602,6 @@ class Worker:
                         else UUID(str(event.run_id))
                     )
                     run_id_str = str(run_id)
-                    # Flush buffered events so the run history is not lost on failure.
                     buffered = self._pop_run_buffer(run_id_str)
                     if buffered:
                         ctx.db.add_all(buffered)
@@ -633,60 +609,168 @@ class Worker:
                     self._run_tool_callers.pop(run_id_str, None)
                     self.runtime.release(run_id)
                 except Exception as fail_err:
-                    logger.error(f"Failed to mark run as failed: {fail_err}")
+                    logger.error("Failed to mark run as failed: %s", fail_err)
 
-    async def _forward_to_executor(self, event: Event, ctx: _Ctx) -> None:
-        """Forward event to executor for processing and publish emitted events."""
-        executor = await self._get_or_create_executor(event, ctx)
-        if not executor:
+    async def _publish_to_executor_event(self, event: Event, ctx: _Ctx) -> None:
+        """Publish a TO_EXECUTOR routing event to trigger executor dispatch.
+
+        Carries only the executor_code so _get_or_create_executor can
+        resolve the correct executor class for new runs.
+        """
+        await ctx.publisher.publish(
+            event_type=EventType.TO_EXECUTOR,
+            workspace_id=str(event.workspace_id),
+            run_id=str(event.run_id) if event.run_id else None,
+            payload={"_original_executor_code": event.executor_code},
+            auto_commit=False,
+        )
+        logger.debug("Published TO_EXECUTOR for original=%s run=%s", event.event_type, event.run_id)
+
+    async def _load_run_events(self, run_id: UUID) -> list[Event]:
+        """Load all events for *run_id* from the Redis run stream.
+
+        Returns the full event list including TO_EXECUTOR events so the seq
+        string computed by _dispatch ends with "b" when a TO_EXECUTOR is the
+        latest event.  Only TO_EXECUTOR routing events are stripped before
+        forwarding to the executor; trigger events flow through as normal
+        conversation events.
+        Falls back to an empty list on Redis error.
+        """
+        run_stream = f"{REDIS_RUN_LABEL}:{run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        try:
+            messages = await self.redis.xrange(run_stream)
+        except Exception as e:
+            logger.warning("_load_run_events: redis error for run %s: %s", run_id, e)
+            return []
+
+        return [Event.from_redis_fields(fields) for _, fields in messages]
+
+    async def _handle_to_executor(
+        self, envelope: Event, run_events: list[Event], ctx: _Ctx
+    ) -> None:
+        """Forward pre-loaded run events to the executor.
+
+        Flow:
+          1. Restore trigger context (_context) from the envelope payload into
+             the last USER_MESSAGE (trigger results are in-memory only).
+          2. Forward events to the executor via _forward_to_executor.
+          3. On completion: flush event buffer to DB, update token counts,
+             finalize run state, and release all resources.
+        """
+        run_id = envelope.run_id
+        if not run_id:
+            return
+        run_id_uuid = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
+
+        # Strip only routing events — trigger TOOL_CALL/TOOL_RESULT/AGENT_MESSAGE
+        # are kept as first-class conversation events for the executor.
+        events = [e for e in run_events if str(e.event_type) != EventType.TO_EXECUTOR]
+        logger.info("_handle_to_executor: %d events for run %s", len(events), run_id_uuid)
+
+        logger.info("_handle_to_executor: forwarding to executor for run %s", run_id_uuid)
+        run_id, run_id_str, has_pending_tools = await self._forward_to_executor(envelope, events, ctx)
+        if run_id is None:
             return
 
+        if not has_pending_tools:
+            # ── Token accounting (TO_EXECUTOR level) ─────────────────────────
+            executor = self.runtime.get(run_id)
+            total_input = getattr(executor, "_total_input_tokens", 0) if executor else 0
+            total_output = getattr(executor, "_total_output_tokens", 0) if executor else 0
+
+            # ── Flush in-memory buffer ───────────────────────────────────────
+            buffered = self._pop_run_buffer(run_id_str)
+            logger.info(
+                "_handle_to_executor: flushing %d buffered events for run %s",
+                len(buffered), run_id,
+            )
+            if buffered:
+                to_exec_event = next(
+                    (e for e in reversed(buffered)
+                     if str(e.event_type) == EventType.TO_EXECUTOR),
+                    None,
+                )
+                if to_exec_event is not None:
+                    to_exec_event.input_tokens = total_input
+                    to_exec_event.output_tokens = total_output
+
+                ctx.db.add_all(buffered)
+
+            # Write token totals into Run in the same transaction.
+            if total_input or total_output:
+                logger.info(
+                    "_handle_to_executor: updating run token counts in=%d out=%d run=%s",
+                    total_input, total_output, run_id,
+                )
+                from sqlalchemy import update as sa_update
+                await ctx.db.execute(
+                    sa_update(Run)
+                    .where(Run.id == run_id_str)
+                    .values(
+                        input_tokens=Run.input_tokens + total_input,
+                        output_tokens=Run.output_tokens + total_output,
+                    )
+                )
+
+            # ── Finalize run ─────────────────────────────────────────────────
+            logger.info("_handle_to_executor: completing run %s", run_id)
+            try:
+                await ctx.state_machine.complete(run_id, auto_commit=True)
+            except Exception as complete_err:
+                logger.error(f"Failed to complete run {run_id}: {complete_err}")
+
+            self._executor_locks.pop(run_id, None)
+            self._run_tool_callers.pop(run_id_str, None)
+            self.runtime.release(run_id)
+            ctx.publisher.release_sequence_counter(run_id_str)
+            logger.info("_handle_to_executor: run %s finished and released", run_id)
+
+    async def _forward_to_executor(
+        self, envelope: Event, events: list[Event], ctx: _Ctx
+    ) -> tuple[UUID | None, str, bool]:
+        """Run the executor loop for the event list and publish all output events.
+
+        Uses *envelope* (the TO_EXECUTOR event) for run_id / workspace_id /
+        executor creation so the caller does not need to inspect the events list.
+        Returns ``(run_id, run_id_str, has_pending_tools)``.  The caller
+        (_handle_to_executor) is responsible for buffer flushing, token
+        accounting, and run completion based on ``has_pending_tools``.
+        """
+        if not envelope.run_id:
+            return None, "", False
+
+        executor = await self._get_or_create_executor(envelope, ctx)
+        if not executor:
+            return None, "", False
+
         run_id = (
-            event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+            envelope.run_id if isinstance(envelope.run_id, UUID) else UUID(str(envelope.run_id))
         )
         run_id_str = str(run_id)
-        workspace_id = str(event.workspace_id)
+        workspace_id = str(envelope.workspace_id)
 
         if run_id not in self._executor_locks:
             self._executor_locks[run_id] = asyncio.Lock()
 
+        run_done = False
         async with self._executor_locks[run_id]:
-            async for output_event in executor.process_event(event):
+            logger.info(
+                "_forward_to_executor: starting process_events for run %s (%d events)",
+                run_id, len(events),
+            )
+            async for output_event in executor.process_events(events):
+                if str(output_event.event_type) == EventType.RUN_COMPLETED:
+                    # Internal completion signal from the executor — not published.
+                    run_done = True
+                    continue
                 await self._publish_event(output_event, run_id, workspace_id, ctx)
+            logger.info(
+                "_forward_to_executor: process_events complete for run %s (done=%s)",
+                run_id, run_done,
+            )
 
-            # Events are buffered in memory during execution; no per-iteration
-            # commit needed.  Flush everything atomically when the run ends.
-
-            if not getattr(executor, "_pending_tool_ids", None):
-                # Drain the in-memory buffer and persist all events together with
-                # the final run state change in a single DB commit.
-                buffered = self._pop_run_buffer(run_id_str)
-                if buffered:
-                    ctx.db.add_all(buffered)
-                    # Accumulate token usage from all buffered events into Run.
-                    total_input = sum(e.input_tokens or 0 for e in buffered)
-                    total_output = sum(e.output_tokens or 0 for e in buffered)
-                    if total_input or total_output:
-                        from sqlalchemy import update as sa_update
-                        await ctx.db.execute(
-                            sa_update(Run)
-                            .where(Run.id == str(run_id))
-                            .values(
-                                input_tokens=Run.input_tokens + total_input,
-                                output_tokens=Run.output_tokens + total_output,
-                            )
-                        )
-
-                try:
-                    await ctx.state_machine.complete(run_id, auto_commit=True)
-                except Exception as complete_err:
-                    logger.error(f"Failed to complete run {run_id}: {complete_err}")
-
-                self._executor_locks.pop(run_id, None)
-                self._run_tool_callers.pop(run_id_str, None)
-                self.runtime.release(run_id)
-                ctx.publisher.release_sequence_counter(run_id_str)
-                logger.debug(f"Run {run_id} finished and executor released")
+        has_pending_tools = not run_done
+        return run_id, run_id_str, has_pending_tools
 
     async def _fetch_run_data(
         self, run_id: UUID, db: AsyncSession
