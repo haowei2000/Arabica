@@ -107,6 +107,9 @@ start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
 	cd frontend && npm run dev & \
 	wait
 
+resync-tools: ## 重新同步所有工具到 Context/WorkspaceContext 表
+	cd src && uv run python -c "from aiwen.celery_worker.tasks.context_sync_tasks import resync_all_tools_to_contexts; resync_all_tools_to_contexts()"
+
 stop-all: ## 停止所有本地服务
 	@echo "$(YELLOW)停止所有服务...$(NC)"
 	@-pkill -f "aiwen-api" 2>/dev/null || true

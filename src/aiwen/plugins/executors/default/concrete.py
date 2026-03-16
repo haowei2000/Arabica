@@ -33,11 +33,12 @@ Streaming event map:
     LLM final response   ->  AGENT_MESSAGE   (no tool calls)
     Tool execution       ->  TOOL_CALL -> TOOL_RESULT / TOOL_ERROR
 """
+from aiwen.frameworks.tool_calling.prompt_calling import _try_loads
 
+from collections.abc import AsyncGenerator
 import json
 import logging
 import re
-from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
 from aiwen.core.interfaces import (
@@ -293,9 +294,6 @@ class DefaultExecutor(Executor):
         self.tool_caller = config.get("tool_caller")
         self.tool_provider = config.get("tool_provider")
 
-        # Base tools_info (always-load only); XML-specified tools are appended
-        # at call time inside _build_tools_info_from_text().
-        self.tools_info: Any = None
 
         # Cache the LLM client so it is not recreated for every LLM call
         # within the same run (saves connection overhead on multi-iteration loops).
@@ -443,7 +441,7 @@ class DefaultExecutor(Executor):
         """
         return [e for e in raw_events if e.get("event_type") in cls._CONVERSATION_EVENT_TYPES]
 
-    def get_last_exchange_and_tools(
+    def get_messages_and_tools(
             self, raw_events: list[dict]
     ) -> tuple[list[ChatMessage], Any]:
         """Build last-exchange messages + tools_info from *raw_events*.
@@ -457,73 +455,18 @@ class DefaultExecutor(Executor):
         conv_events: list[dict] = []
         for e in raw_events:
             if (e.get("event_type") == str(EventType.TOOL_RESULT)
-                    and (e.get("payload") or {}).get("tool_name") == "read_context"):
+                    and (e.get("payload") or {}).get("tool_name") == "read_context"
+                    and ((e.get("payload") or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")):
                 schema_events.append(e)
             else:
                 conv_events.append(e)
 
-        msg = self._extract_last_user_message_text(conv_events) or ""
-        tools_info = self.tools_info
-        extra_schemas = self._extract_context_tool_schemas(schema_events)
-        if extra_schemas:
-            tools_info = self._merge_extra_schemas(tools_info, extra_schemas)
+        tools_info= self._extract_context_tool_schemas(schema_events)
 
         messages: list[ChatMessage] = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(_events_to_messages(conv_events))
         return messages, tools_info
 
-    def get_message_tool_from_events(
-            self, raw_events: list[dict]
-    ) -> tuple[list[ChatMessage], Any]:
-        """Convert *raw_events* into an LLM-ready message list and available tools.
-
-        ``read_context`` TOOL_RESULT events are used only for tool-schema
-        extraction and are **excluded** from the conversation messages — they
-        are trigger-side context loaders, not real LLM tool calls.
-
-        Returns ``(messages, tools_info)`` where:
-          • ``messages`` — system prompt + conversation turns (no schema events).
-          • ``tools_info`` — always-load tools filtered by XML tags in the last
-            user message, with any read_context-embedded schemas merged in.
-        """
-        # Partition: schema-source events vs. conversation events.
-        schema_events: list[dict] = []
-        conv_events: list[dict] = []
-        # TODO: remove diagnostic logging below once tool-schema extraction is verified
-        logger.info(
-            "get_message_tool_from_events: raw_events=%d types=%s",
-            len(raw_events),
-            [e.get("event_type") for e in raw_events],
-        )
-        for e in raw_events:
-            etype = e.get("event_type")
-            tname = (e.get("payload") or {}).get("tool_name")
-            if etype == str(EventType.TOOL_RESULT):
-                logger.info("partition TOOL_RESULT: tool_name=%r → %s",
-                            tname, "schema" if tname == "read_context" else "conv")
-            if (etype == EventType.TOOL_RESULT and tname == "read_context"):
-                schema_events.append(e)
-            else:
-                conv_events.append(e)
-
-        logger.info(
-            "get_message_tool_from_events: schema_events=%d conv_events=%d",
-            len(schema_events), len(conv_events),
-        )
-
-        # Build tools_info: XML tag selection + extra schemas from read_context.
-        msg = self._extract_last_user_message_text(conv_events) or ""
-
-        tools_info = self.tools_info
-        extra_schemas = self._extract_context_tool_schemas(schema_events)
-        logger.info("get_message_tool_from_events: extra_schemas=%d", len(extra_schemas))
-        if extra_schemas:
-            tools_info = self._merge_extra_schemas(tools_info, extra_schemas)
-
-        # Build messages from conversation events only.
-        messages: list[ChatMessage] = [ChatMessage(role="system", content=self.system_prompt)]
-        messages.extend(_events_to_messages(conv_events))
-        return messages, tools_info
 
     async def _on_user_message(self, events: list[Event]) -> AsyncGenerator[Event, None]:
         """Start a fresh agentic loop for a new user message.
@@ -568,7 +511,7 @@ class DefaultExecutor(Executor):
             len(self.filter_events_for_user_msg(all_raw)),
         )
         raw_events = self.filter_events_for_user_msg(all_raw)
-        messages, tools_info = self.get_message_tool_from_events(raw_events)
+        messages, tools_info = self.get_messages_and_tools(raw_events)
         logger.info(
             "_on_user_message: run=%s built %d messages, starting agentic loop",
             self.run_id, len(messages),
@@ -593,7 +536,7 @@ class DefaultExecutor(Executor):
             self._pending_user_input = None
 
         raw_events = self.filter_events_for_user_msg(self._raw_events_cache or [])
-        messages, tools_info = self.get_last_exchange_and_tools(raw_events)
+        messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
@@ -609,7 +552,7 @@ class DefaultExecutor(Executor):
         # TODO: use the passed `events` list directly (same as _on_user_message) instead of
         #       _raw_events_cache, to stay consistent and avoid stale-cache edge cases.
         raw_events = self.filter_events_for_user_msg(self._raw_events_cache or [])
-        messages, tools_info = self.get_message_tool_from_events(raw_events)
+        messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
@@ -627,7 +570,7 @@ class DefaultExecutor(Executor):
             return  # Still waiting for other parallel tool results
 
         raw_events = self.filter_events_for_user_msg(self._raw_events_cache or [])
-        messages, tools_info = self.get_message_tool_from_events(raw_events)
+        messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
@@ -777,11 +720,12 @@ class DefaultExecutor(Executor):
         seen_names: set[str] = set()
 
         for e in raw_events:
-            payload = e.get("payload") or {}
-            if payload.get("tool_name") != "read_context":
+            try:
+                data = e["payload"]['result']['data']
+            except (KeyError, TypeError):
+                logger.warning("_extract_context_tool_schemas: failed to parse event")
                 continue
-
-            data = ReadContextResult.model_validate(payload.get("data") or {})
+            data = ReadContextResult.model_validate(data)
 
             if not data.path.startswith("tools/"):
                 continue
@@ -798,7 +742,7 @@ class DefaultExecutor(Executor):
             )
 
             try:
-                parsed = json.loads(content_raw) if isinstance(content_raw, str) else content_raw
+                parsed = OpenAITool.model_validate(content_raw)
             except (json.JSONDecodeError, TypeError):
                 logger.warning(
                     "_extract_context_tool_schemas: failed to parse content at %r", path
@@ -868,36 +812,12 @@ class DefaultExecutor(Executor):
             sum(
                 1 for e in raw_events
                 if (e.get("payload") or {}).get("tool_name") == "read_context"
+                and ((e.get("payload") or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")
             ),
         )
         return schemas
 
-    @staticmethod
-    def _merge_extra_schemas(tools_info: Any, extra_schemas: list[dict]) -> Any:
-        """Append *extra_schemas* to *tools_info*, skipping already-present names.
 
-        Only operates on list-typed tools_info (FunctionCallingStrategy format).
-        Returns *tools_info* unchanged for other formats or when nothing new is found.
-        """
-        if not extra_schemas or not isinstance(tools_info, list):
-            return tools_info
-
-        existing_names: set[str] = {
-            (s.get("function") or {}).get("name", "")
-            for s in tools_info
-            if isinstance(s, dict)
-        }
-        merged = list(tools_info)
-        added = 0
-        for schema in extra_schemas:
-            name = (schema.get("function") or {}).get("name", "")
-            if name and name not in existing_names:
-                existing_names.add(name)
-                merged.append(schema)
-                added += 1
-        if added:
-            logger.info("Merged %d tool schema(s) from read_context results", added)
-        return merged
 
     # ── event fetch / history helpers ─────────────────────────────
 
