@@ -420,9 +420,6 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             # Store the full OpenAI function-calling schema so read_context results
             # can be directly parsed by _extract_context_tool_schemas without needing
             # to reconstruct the description from scattered fields.
-            # TODO: existing WorkspaceContext rows still hold the old raw input_schema format.
-            #       Run a one-off migration or re-trigger sync_tool_to_contexts for all tools
-            #       to update them. Until then _extract_context_tool_schemas handles both formats.
             input_schema = tool.input_schema or {}
             full_schema = {
                 "type": "function",
@@ -868,4 +865,112 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
         run_async(_execute())
     except Exception as e:
         logger.error(f"sync_run_events failed for {run_id}: {e}")
+        self.retry(exc=e)
+
+
+@celery_app.task(
+    bind=True,
+    name="context_sync.resync_all_tools",
+    max_retries=1,
+    queue="default",
+)
+def resync_all_tools_to_contexts(self):
+    """Re-sync every enabled tool so its Context/WorkspaceContext content uses
+    the current full OpenAI function-calling schema format.
+
+    - ExternalTools: dispatched with their creator's user_id.
+    - InnerTools (user_id=NULL): content is rebuilt and all WorkspaceContext
+      rows are updated directly, without going through user workspace lookup.
+    """
+    async def _execute():
+        from sqlalchemy import select
+
+        from aiwen.core.enums.workspaces import WorkspaceStatus
+        from aiwen.extensions.database import get_session
+        from aiwen.models.context.tools.tool import Tool
+        from aiwen.models.workspaces.workspace import Workspace
+
+        async with get_session("aiwen") as session:
+            result = await session.execute(
+                select(Tool).where(Tool.enabled.is_(True))
+            )
+            tools = result.scalars().all()
+
+            # Fetch all active workspace IDs once (used for inner tools)
+            ws_result = await session.execute(
+                select(Workspace.id).where(
+                    Workspace.status == WorkspaceStatus.ACTIVE,
+                    Workspace.is_deleted.is_(False),
+                )
+            )
+            all_workspace_ids = [str(row) for row in ws_result.scalars().all()]
+
+        dispatched = 0
+        skipped = 0
+        for tool in tools:
+            tool_id = str(tool.id)
+            if tool.tool_type == "external" and tool.user_id:
+                sync_tool_to_contexts.delay(tool_id, str(tool.user_id))
+                dispatched += 1
+            elif tool.tool_type == "inner":
+                # InnerTools have no owner; rebuild content directly for all
+                # WorkspaceContext rows that already reference this tool.
+                try:
+                    tool_name = tool.tool_code or tool.name
+                    display_name = tool.display_name or tool.name
+                    input_schema = tool.input_schema or {}
+                    full_schema = {
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "description": tool.description or display_name,
+                            "parameters": input_schema,
+                        },
+                    }
+                    schema_str = json.dumps(full_schema, ensure_ascii=False)
+                    glance = (
+                        f"{display_name} — {tool.description[:60]}"
+                        if tool.description
+                        else display_name
+                    )
+
+                    async with get_session("aiwen") as session:
+                        await _update_workspace_contexts(
+                            session,
+                            meta_key="tool_id",
+                            resource_id=tool_id,
+                            glance=glance,
+                            summary=tool.description,
+                            content=schema_str,
+                        )
+                        await session.commit()
+
+                    tool_tags = list(tool.tags or [])
+                    dirty_ids = await _sync_path_to_workspaces(
+                        all_workspace_ids,
+                        path=f"tools/{_slugify(tool_name)}",
+                        glance=glance,
+                        overview=tool.description,
+                        detail=schema_str,
+                        tags=["tool"] + tool_tags,
+                        meta={"tool_id": tool_id, "tool_code": tool_name},
+                        created_by=None,
+                    )
+                    await _invalidate_workspace_caches(dirty_ids)
+                    dispatched += 1
+                except Exception as exc:
+                    logger.error(f"resync_all_tools: failed for inner tool {tool_id}: {exc}")
+                    skipped += 1
+            else:
+                skipped += 1
+
+        logger.info(
+            f"resync_all_tools: dispatched={dispatched}, skipped={skipped}, "
+            f"total_tools={len(tools)}"
+        )
+
+    try:
+        run_async(_execute())
+    except Exception as e:
+        logger.error(f"resync_all_tools failed: {e}")
         self.retry(exc=e)

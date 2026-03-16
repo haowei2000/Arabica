@@ -48,12 +48,16 @@ from aiwen.frameworks.tool_calling import (
     ChatMessage,
     FunctionCallingStrategy,
     LLMResponse,
+    OpenAIFunction,
+    OpenAIFunctionParameters,
+    OpenAITool,
     PromptCallingStrategy,
     ToolCallRequest,
 )
 from aiwen.models.events.event import Event
 from aiwen.registries.core import register_executor
 from aiwen.schemas.app import AppConfig
+from aiwen.schemas.context.tools.execution import ReadContextResult
 from aiwen.schemas.events.event_payloads import EventType
 from aiwen.schemas.llm.chat_llm import ChatLLM
 
@@ -497,7 +501,7 @@ class DefaultExecutor(Executor):
             if etype == str(EventType.TOOL_RESULT):
                 logger.info("partition TOOL_RESULT: tool_name=%r → %s",
                             tname, "schema" if tname == "read_context" else "conv")
-            if (etype == str(EventType.TOOL_RESULT) and tname == "read_context"):
+            if (etype == EventType.TOOL_RESULT and tname == "read_context"):
                 schema_events.append(e)
             else:
                 conv_events.append(e)
@@ -773,135 +777,89 @@ class DefaultExecutor(Executor):
         seen_names: set[str] = set()
 
         for e in raw_events:
-            if e.get("event_type") != str(EventType.TOOL_RESULT):
-                continue
             payload = e.get("payload") or {}
             if payload.get("tool_name") != "read_context":
                 continue
 
-            result = payload.get("result") or {}
-            if not isinstance(result, dict):
+            data = ReadContextResult.model_validate(payload.get("data") or {})
+
+            if not data.path.startswith("tools/"):
                 continue
 
-            # Support both flat result and nested ToolOutputSchema format
-            data: dict = result.get("data") or {}
-            if not data and result.get("success") is not None:
-                # result IS the ToolOutputSchema dict — data is nested under "data"
-                data = {}
-            elif not isinstance(data, dict):
-                data = {}
-
-            path: str = data.get("path") or result.get("path") or ""
-            content_raw = data.get("content") or result.get("content")
-            # summary holds the tool description (set by sync_tool_to_contexts)
-            description_hint: str = data.get("summary") or result.get("summary") or ""
+            tool_name_from_path = data.path.split("/")[-1]
+            content_raw = data.content
+            description_hint: str = data.summary or data.glance or ""
 
             logger.info(
                 "_extract_context_tool_schemas: path=%r content_type=%s content_preview=%r",
-                path,
+                data.path,
                 type(content_raw).__name__,
                 str(content_raw)[:150] if content_raw else None,
             )
 
-            # Only process /tools/* paths
-            norm_path = path.lstrip("/")
-            if not norm_path.startswith("tools/"):
-                logger.debug(
-                    "_extract_context_tool_schemas: skipping non-tool path %r", path
+            try:
+                parsed = json.loads(content_raw) if isinstance(content_raw, str) else content_raw
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    "_extract_context_tool_schemas: failed to parse content at %r", path
                 )
                 continue
 
-            tool_name_from_path = norm_path.split("/", 1)[1].rstrip("/") if "/" in norm_path else ""
-
-            # Parse content — accept str (JSON), dict, or None
-            if content_raw is None or content_raw == "":
-                logger.info(
-                    "_extract_context_tool_schemas: empty content at path %r, skipping", path
-                )
+            if not isinstance(parsed, dict):
                 continue
 
-            if isinstance(content_raw, dict):
-                parsed: dict = content_raw
-            elif isinstance(content_raw, str):
-                try:
-                    parsed = json.loads(content_raw)
-                except (json.JSONDecodeError, ValueError) as exc:
+            try:
+                if parsed.get("type") == "function" and isinstance(parsed.get("function"), dict):
+                    # Format 1: already a full OpenAI function-calling schema
+                    func_block = dict(parsed["function"])
+                    params = func_block.get("parameters") or {}
+                    if isinstance(params, dict):
+                        func_block["parameters"] = cls._clean_parameters_schema(params)
+                    tool = OpenAITool.model_validate({"type": "function", "function": func_block})
+
+                elif "properties" in parsed or parsed.get("type") == "object":
+                    # Format 2: Pydantic model_json_schema() or plain parameters schema
+                    tool = OpenAITool(
+                        function=OpenAIFunction(
+                            name=parsed.get("name") or tool_name_from_path,
+                            description=description_hint or parsed.get("description") or tool_name_from_path,
+                            parameters=OpenAIFunctionParameters.model_validate(
+                                cls._clean_parameters_schema(parsed)
+                            ),
+                        )
+                    )
+
+                elif parsed and all(isinstance(v, dict) for v in parsed.values()):
+                    # Format 3: flat {param_name: schema_dict, ...} — wrap in object
+                    auto = frozenset({"workspace_id", "run_id", "user_id"})
+                    clean_props = {k: v for k, v in parsed.items() if k not in auto}
+                    tool = OpenAITool(
+                        function=OpenAIFunction(
+                            name=tool_name_from_path,
+                            description=description_hint or tool_name_from_path,
+                            parameters=OpenAIFunctionParameters(properties=clean_props),
+                        )
+                    )
+
+                else:
                     logger.warning(
-                        "_extract_context_tool_schemas: JSON parse failed for %r: %s", path, exc
+                        "_extract_context_tool_schemas: unrecognised schema format at %r: keys=%s",
+                        data.path, list(parsed.keys())[:8],
                     )
                     continue
-                if not isinstance(parsed, dict):
-                    logger.warning(
-                        "_extract_context_tool_schemas: content at %r is not a dict (%s)",
-                        path, type(parsed).__name__,
-                    )
-                    continue
-            else:
+            except Exception:
                 logger.warning(
-                    "_extract_context_tool_schemas: unexpected content type %s at %r",
-                    type(content_raw).__name__, path,
+                    "_extract_context_tool_schemas: failed to build OpenAITool at %r",
+                    data.path, exc_info=True,
                 )
                 continue
 
-            # ── Determine schema format and build OpenAI envelope ──────────────
-            # TODO: consider adding Format 4 — plain list (array of param dicts),
-            #       e.g. [{"name": "query", "type": "string", "required": true}, ...]
-            #       if user-defined tools ever adopt that convention.
-
-            func_dict: dict = {}
-
-            if parsed.get("type") == "function" and isinstance(parsed.get("function"), dict):
-                # Format 1: already a full OpenAI function-calling schema
-                func_dict = dict(parsed["function"])
-                params = func_dict.get("parameters") or {}
-                if isinstance(params, dict):
-                    func_dict["parameters"] = cls._clean_parameters_schema(params)
-
-            elif "properties" in parsed or parsed.get("type") == "object":
-                # Format 2: Pydantic model_json_schema() or plain parameters schema
-                params = cls._clean_parameters_schema(parsed)
-                func_dict = {
-                    "name": parsed.get("name") or tool_name_from_path,
-                    "description": (
-                        description_hint
-                        or parsed.get("description")
-                        or tool_name_from_path
-                    ),
-                    "parameters": params,
-                }
-
-            elif all(isinstance(v, dict) for v in parsed.values()):
-                # Format 3: flat {param_name: schema_dict, ...} — wrap in object
-                auto = frozenset({"workspace_id", "run_id", "user_id"})
-                clean_props = {k: v for k, v in parsed.items() if k not in auto}
-                func_dict = {
-                    "name": tool_name_from_path,
-                    "description": description_hint or tool_name_from_path,
-                    "parameters": {
-                        "type": "object",
-                        "properties": clean_props,
-                    },
-                }
-
-            else:
-                logger.warning(
-                    "_extract_context_tool_schemas: unrecognised schema format at %r: keys=%s",
-                    path, list(parsed.keys())[:8],
-                )
-                continue
-
-            # Ensure name is set (fall back to path segment)
-            if not func_dict.get("name"):
-                func_dict["name"] = tool_name_from_path
-            if not func_dict.get("description"):
-                func_dict["description"] = func_dict["name"]
-
-            name = func_dict["name"]
+            name = tool.function.name or tool_name_from_path
             if name and name not in seen_names:
                 seen_names.add(name)
-                schemas.append({"type": "function", "function": func_dict})
+                schemas.append(tool.model_dump(exclude_none=True))
                 logger.info(
-                    "_extract_context_tool_schemas: added tool %r from path %r", name, path
+                    "_extract_context_tool_schemas: added tool %r from path %r", name, data.path
                 )
 
         logger.info(

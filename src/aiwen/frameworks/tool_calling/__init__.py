@@ -8,6 +8,9 @@ from aiwen.frameworks.tool_calling.function_calling import FunctionCallingStrate
 from aiwen.frameworks.tool_calling.models import (
     ChatMessage,
     LLMResponse,
+    OpenAIFunction,
+    OpenAIFunctionParameters,
+    OpenAITool,
     ToolCallRequest,
 )
 from aiwen.frameworks.tool_calling.prompt_calling import PromptCallingStrategy
@@ -17,6 +20,9 @@ __all__ = [
     "ChatMessage",
     "FunctionCallingStrategy",
     "LLMResponse",
+    "OpenAIFunction",
+    "OpenAIFunctionParameters",
+    "OpenAITool",
     "PromptCallingStrategy",
     "ToolCallRequest",
     "ToolCallingStrategy",

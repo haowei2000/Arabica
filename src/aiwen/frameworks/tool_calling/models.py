@@ -7,6 +7,49 @@ Provides default, JSON-serializable dataclasses that replace LangChain's
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel
+
+
+class OpenAIFunctionParameters(BaseModel):
+    """JSON Schema object describing a function's parameters."""
+
+    type: str = "object"
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    model_config = {"extra": "allow"}
+
+
+class OpenAIFunction(BaseModel):
+    """The ``function`` block inside an OpenAI tool definition."""
+
+    name: str
+    description: str = ""
+    parameters: OpenAIFunctionParameters = OpenAIFunctionParameters()
+    strict: bool | None = None
+
+
+class OpenAITool(BaseModel):
+    """Full OpenAI tool definition passed in the ``tools`` parameter.
+
+    Example::
+
+        OpenAITool(
+            type="function",
+            function=OpenAIFunction(
+                name="my_tool",
+                description="Does something",
+                parameters=OpenAIFunctionParameters(
+                    properties={"x": {"type": "string"}},
+                    required=["x"],
+                ),
+            ),
+        )
+    """
+
+    type: str = "function"
+    function: OpenAIFunction
+
 
 @dataclass
 class ToolCallRequest:

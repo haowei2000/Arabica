@@ -200,22 +200,25 @@ class BaseTool(ABC,ToolProtocol):
         Returns:
             dict: OpenAI function calling format JSON Schema
         """
+        from aiwen.frameworks.tool_calling.models import (
+            OpenAIFunction,
+            OpenAIFunctionParameters,
+            OpenAITool,
+        )
+
         metadata = cls.METADATA
         input_schema = cls.InputSchema.model_json_schema()
 
-        # Convert to OpenAI function calling format
-        return {
-            "type": "function",
-            "function": {
-                "name": metadata.name,
-                "description": metadata.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": input_schema.get("properties", {}),
-                    "required": input_schema.get("required", []),
-                },
-            },
-        }
+        return OpenAITool(
+            function=OpenAIFunction(
+                name=metadata.name,
+                description=metadata.description,
+                parameters=OpenAIFunctionParameters(
+                    properties=input_schema.get("properties", {}),
+                    required=input_schema.get("required", []),
+                ),
+            )
+        ).model_dump(exclude_none=True)
 
     @classmethod
     def get_langchain_schema(cls) -> dict[str, Any]:

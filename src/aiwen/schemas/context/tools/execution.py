@@ -9,6 +9,23 @@ from pydantic import BaseModel, Field
 from aiwen.schemas.events.event_payloads import BaseEventSchema
 
 
+class ReadContextResult(BaseModel):
+    """Data payload returned by the ``read_context`` tool.
+
+    Represents the ``data`` dict inside a TOOL_RESULT event payload when
+    ``tool_name == "read_context"``.  Used by
+    ``DefaultExecutor._extract_context_tool_schemas`` to parse tool schemas
+    stored at ``tools/*`` workspace context paths.
+    """
+
+    path: str = Field("", description="Workspace context path, e.g. 'tools/my_tool'")
+    content: str | None = Field(None, description="Raw JSON string of the stored schema")
+    summary: str | None = Field(None, description="Human-readable description of the context entry")
+    glance: str | None = Field(None, description="Short one-line summary")
+
+    model_config = {"extra": "allow"}
+
+
 class ExecutionContext(BaseModel):
     """ContextSchema information for tool execution."""
 
