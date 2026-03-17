@@ -741,11 +741,20 @@ class DefaultExecutor(Executor):
                 str(content_raw)[:150] if content_raw else None,
             )
 
-            try:
-                parsed = OpenAITool.model_validate(content_raw)
-            except (json.JSONDecodeError, TypeError):
+            if isinstance(content_raw, str):
+                try:
+                    parsed = json.loads(content_raw)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "_extract_context_tool_schemas: failed to parse content at %r", data.path
+                    )
+                    continue
+            elif isinstance(content_raw, dict):
+                parsed = content_raw
+            else:
                 logger.warning(
-                    "_extract_context_tool_schemas: failed to parse content at %r", path
+                    "_extract_context_tool_schemas: unexpected content type at %r: %s",
+                    data.path, type(content_raw).__name__,
                 )
                 continue
 

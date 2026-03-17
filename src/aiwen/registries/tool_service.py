@@ -35,7 +35,7 @@ class RegistryToolProvider(ToolProvider):
     ) -> None:
         self._extra_tool_classes: list[type[BaseTool]] = extra_tool_classes or []
 
-    def get_tool_classes(self) -> list[type[BaseTool]]:
+    def get_tool_classes(self) -> list[type[BaseTool]]:  # ty:ignore[invalid-method-override]
         """Return extra + registry tool classes."""
         from aiwen.registries.core import ToolRegistry
 
