@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.workspaces.workspace import Workspace
 from aiwen.models.workspaces.workspace_member import WorkspaceMember
+from aiwen.services.context.context_syncer import ContextSyncer
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -104,6 +105,8 @@ class WorkspaceCRUD:
             await self.db.commit()
         else:
             await self.db.flush()
+
+        await ContextSyncer(self.db).sync_workspace(workspace)
 
         return workspace
 
@@ -300,6 +303,7 @@ class WorkspaceCRUD:
             await self.db.flush()
 
         await self.db.refresh(workspace)
+        await ContextSyncer(self.db).sync_workspace(workspace)
         return workspace
 
     async def delete(
@@ -330,6 +334,8 @@ class WorkspaceCRUD:
         workspace.is_deleted = True
         workspace.status = "deleted"
         workspace.updated_at = datetime.now(UTC)
+
+        await ContextSyncer(self.db).remove_workspace(workspace)
 
         if auto_commit:
             await self.db.commit()

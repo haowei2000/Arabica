@@ -13,6 +13,10 @@ class ContextType(StrEnum):
     SKILL = "SKILL"
     TOOL = "tool"
     KNOWLEDGE = "knowledge"
+    WORKSPACE = "workspace"
+    TRIGGER = "trigger"
+    RUN = "run"
+
 
 class ContextPathSuffix:
     TOOLS = "tools"
@@ -20,4 +24,7 @@ class ContextPathSuffix:
     KNOWLEDGE = "knowledge"
     SHORT_MEMORY = "short_memory"
     LONG_MEMORY = "long_memory"
+    TRIGGERS = "triggers"
+    WORKSPACES = "workspaces"
+    RUNS = "runs"
 

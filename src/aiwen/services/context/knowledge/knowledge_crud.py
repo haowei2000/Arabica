@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.knowledge.knowledge import Knowledge
 from aiwen.schemas.context.knowledge.knowledge import KnowledgeCreate, KnowledgeUpdate
+from aiwen.services.context.context_syncer import ContextSyncer
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -79,6 +80,7 @@ class KnowledgeCRUD:
             await self.db.flush()
 
         await self.db.refresh(knowledge)
+        await ContextSyncer(self.db).sync_knowledge(knowledge)
         return knowledge
 
     async def get_by_id(self, knowledge_id: str | UUID) -> Knowledge | None:
@@ -155,6 +157,7 @@ class KnowledgeCRUD:
             await self.db.flush()
 
         await self.db.refresh(knowledge)
+        await ContextSyncer(self.db).sync_knowledge(knowledge)
         return knowledge
 
     async def delete(self, knowledge_id: str | UUID, auto_commit: bool = False) -> bool:
@@ -173,6 +176,7 @@ class KnowledgeCRUD:
         if not knowledge:
             return False
 
+        await ContextSyncer(self.db).remove_knowledge(knowledge)
         await self.db.delete(knowledge)
 
         if auto_commit:

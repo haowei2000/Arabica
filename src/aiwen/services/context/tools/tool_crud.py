@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.tools import Tool
 from aiwen.schemas.context.tools.user_tool import UserToolCreate, UserToolUpdate
+from aiwen.services.context.context_syncer import ContextSyncer
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,8 @@ class ToolCRUD:
             await self.db.refresh(tool)
         else:
             await self.db.flush()
+
+        await ContextSyncer(self.db).sync_tool(tool)
 
         logger.info(f"Created user tool: {tool.name} (id={tool.id}, user={user_id})")
         return tool
@@ -310,6 +313,8 @@ class ToolCRUD:
         else:
             await self.db.flush()
 
+        await ContextSyncer(self.db).sync_tool(tool)
+
         logger.info(f"Updated user tool: {tool.name} (id={tool_id})")
         return tool
 
@@ -331,6 +336,7 @@ class ToolCRUD:
         if not tool or tool.user_id != user_id:
             return False
 
+        await ContextSyncer(self.db).remove_tool(tool)
         await self.db.delete(tool)
 
         if auto_commit:
