@@ -513,6 +513,120 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         except Exception as e:
             self.logger.error("Failed to sync inner tool toolsets: %s", e)
 
+        # ── Phase 5: Upsert inner tools into context table for all users ─
+        # For every registered inner tool × every user: create or update a
+        # Context row (context_type="tool", source_id=tool.id, user_id=user.id).
+        try:
+            import json as _json
+            from uuid import uuid4 as _uuid4
+
+            from aiwen.models.auth.user import User
+            from aiwen.models.context.context import Context
+
+            # All registered inner tools (no enabled filter — sync all)
+            synced_tools = (await db.execute(
+                select(ToolModel).where(
+                    ToolModel.tool_type == "inner",
+                    ToolModel.tool_code.in_(registered_names),
+                )
+            )).scalars().all()
+
+            all_users = (await db.execute(select(User))).scalars().all()
+
+            self.logger.info(
+                "Phase 5: syncing %d inner tools for %d users",
+                len(synced_tools), len(all_users),
+            )
+
+            if not synced_tools or not all_users:
+                self.logger.info("Phase 5: nothing to sync, skipping")
+            else:
+                tool_ids = [t.id for t in synced_tools]
+                user_ids = [u.id for u in all_users]
+
+                # Load all existing (source_id, user_id) pairs in one shot
+                existing_pairs: set[tuple] = {
+                    (row.source_id, row.user_id)
+                    for row in (await db.execute(
+                        select(Context.source_id, Context.user_id).where(
+                            Context.context_type == "tool",
+                            Context.source_id.in_(tool_ids),
+                            Context.user_id.in_(user_ids),
+                        )
+                    ))
+                }
+
+                # Load existing Context objects that need updating
+                existing_ctx_map: dict[tuple, Context] = {
+                    (ctx.source_id, ctx.user_id): ctx
+                    for ctx in (await db.execute(
+                        select(Context).where(
+                            Context.context_type == "tool",
+                            Context.source_id.in_(tool_ids),
+                            Context.user_id.in_(user_ids),
+                        )
+                    )).scalars().all()
+                }
+
+                ctx_created = ctx_updated = 0
+                for tool in synced_tools:
+                    tool_name = tool.tool_code or tool.name
+                    display_name = tool.display_name or tool.name
+                    glance = f"{display_name} — {(tool.description or '')[:60]}"
+                    content = _json.dumps(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "description": tool.description or display_name,
+                                "parameters": tool.input_schema or {},
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                    tags = ["tool"] + (tool.tags or [])
+                    meta = {"tool_id": str(tool.id), "tool_code": tool_name, "name": display_name}
+
+                    for user in all_users:
+                        key = (tool.id, user.id)
+                        if key in existing_pairs:
+                            ctx = existing_ctx_map.get(key)
+                            if ctx:
+                                ctx.glance = glance
+                                ctx.summary = tool.description
+                                ctx.content = content
+                                ctx.tags = tags
+                                ctx.meta = {**(ctx.meta or {}), **meta}
+                                ctx.embedding_384 = None
+                                ctx.embedding_768 = None
+                                ctx.embedding_1024 = None
+                                ctx.embedding_1536 = None
+                            ctx_updated += 1
+                        else:
+                            db.add(Context(
+                                id=_uuid4(),
+                                user_id=user.id,
+                                context_type="tool",
+                                source_id=tool.id,
+                                glance=glance,
+                                summary=tool.description,
+                                content=content,
+                                tags=tags,
+                                meta=meta,
+                            ))
+                            ctx_created += 1
+
+                await db.commit()
+                self.logger.info(
+                    "Phase 5 done: created=%d updated=%d (%d tools × %d users)",
+                    ctx_created, ctx_updated, len(synced_tools), len(all_users),
+                )
+        except Exception as e:
+            self.logger.error(
+                "Phase 5 failed — inner tools not synced to context table: %s",
+                e, exc_info=True,
+            )
+
     @staticmethod
     def _find_broken_reference(
         tool_record, registered_names: set[str]

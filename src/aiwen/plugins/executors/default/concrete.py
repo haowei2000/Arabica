@@ -33,7 +33,6 @@ Streaming event map:
     LLM final response   ->  AGENT_MESSAGE   (no tool calls)
     Tool execution       ->  TOOL_CALL -> TOOL_RESULT / TOOL_ERROR
 """
-from aiwen.frameworks.tool_calling.prompt_calling import _try_loads
 
 from collections.abc import AsyncGenerator
 import json
@@ -70,6 +69,14 @@ logger = logging.getLogger(__name__)
 #   <tool>tool_name_1</tool> <tool>tool_name_2</tool>
 _TOOLS_XML_RE = re.compile(r"<tools>(.*?)</tools>", re.DOTALL | re.IGNORECASE)
 _TOOL_XML_RE = re.compile(r"<tool>(.*?)</tool>", re.DOTALL | re.IGNORECASE)
+# Event types kept by filter_events_for_user_msg (conversation-relevant only).
+_CONVERSATION_EVENT_TYPES = {
+    EventType.USER_MESSAGE,
+    EventType.AGENT_MESSAGE,
+    EventType.TOOL_RESULT,
+    EventType.TOOL_ERROR,
+   EventType.USER_FEEDBACK,
+}
 
 
 def _parse_tool_names_from_xml(text: str) -> list[str] | None:
@@ -155,7 +162,7 @@ def _strip_orphaned_tool_messages(messages: list[ChatMessage]) -> list[ChatMessa
     return result
 
 
-def _events_to_messages(raw_events: list[dict]) -> list[ChatMessage]:
+def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
     """Convert raw event dicts to a full LLM-ready ChatMessage list.
 
     Mapping rules (FunctionCallingStrategy — native tool_calls / tool roles):
@@ -169,8 +176,8 @@ def _events_to_messages(raw_events: list[dict]) -> list[ChatMessage]:
     messages: list[ChatMessage] = []
     last_tc_id_map: dict[str, str] = {}  # maps raw id / tool name → assigned tc id
     for e in raw_events:
-        event_type = e.get("event_type", "")
-        payload = e.get("payload") or {}
+        event_type = e.event_type
+        payload = e.payload or {}
 
         if event_type == str(EventType.USER_MESSAGE):
             msg = payload.get("message", "")
@@ -240,6 +247,229 @@ def _events_to_messages(raw_events: list[dict]) -> list[ChatMessage]:
         # TOOL_CALL: skip — captured in AGENT_MESSAGE.tool_calls field.
 
     return _strip_orphaned_tool_messages(messages)
+
+
+def _clean_parameters_schema(raw: dict) -> dict:
+    """Convert a raw JSON Schema dict to a clean OpenAI-compatible parameters object.
+
+    Handles Pydantic ``model_json_schema()`` output (which includes ``title``,
+    ``$defs``, nested ``$ref`` etc.) as well as hand-written schemas.
+
+    Steps:
+    1. Ensure top-level ``"type": "object"`` is present.
+    2. Resolve simple ``$ref`` pointers that reference ``$defs`` inline so the
+       LLM sees concrete property definitions rather than opaque references.
+    3. Remove ``title`` noise from every property.
+    4. Strip auto-injected fields (workspace_id, run_id, user_id) from both
+       ``properties`` and ``required`` — the executor injects them automatically.
+    5. Remove the now-used ``$defs`` key (keep it only if unresolved $ref remain).
+    """
+    _AUTO = frozenset({"workspace_id", "run_id", "user_id"})
+
+    schema = dict(raw)
+
+    # 1. Ensure an object type
+    if "properties" in schema and schema.get("type") != "object":
+        schema["type"] = "object"
+
+    # 2. Resolve $defs inline for simple (non-circular) references
+    defs: dict = schema.get("$defs") or {}
+    if defs:
+        props = dict(schema.get("properties") or {})
+        resolved_all = True
+        for prop_name, prop_schema in list(props.items()):
+            if not isinstance(prop_schema, dict):
+                continue
+            ref = prop_schema.get("$ref", "")
+            if ref.startswith("#/$defs/"):
+                def_key = ref[len("#/$defs/"):]
+                if def_key in defs:
+                    props[prop_name] = dict(defs[def_key])
+                else:
+                    resolved_all = False
+        schema["properties"] = props
+        if resolved_all:
+            schema.pop("$defs", None)
+
+    # 3. Strip "title" from every property (Pydantic adds these automatically)
+    props = dict(schema.get("properties") or {})
+    for prop_name, prop_schema in list(props.items()):
+        if isinstance(prop_schema, dict):
+            clean = {k: v for k, v in prop_schema.items() if k != "title"}
+            props[prop_name] = clean
+    schema["properties"] = props
+
+    # 4. Remove auto-injected fields
+    for field in _AUTO:
+        props.pop(field, None)
+    schema["properties"] = props
+    if "required" in schema:
+        schema["required"] = [f for f in schema["required"] if f not in _AUTO]
+        if not schema["required"]:
+            del schema["required"]
+
+    # 5. Clean top-level noise fields
+    for key in ("title", "description"):
+        schema.pop(key, None)
+
+    return schema
+
+
+def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
+    """Convert ``read_context`` TOOL_RESULT events at ``/tools/*`` paths into
+    OpenAI function-calling schemas ready to pass as the ``tools`` parameter.
+
+    Accepted content formats (tried in order):
+
+    1. Full OpenAI schema already stored:
+       ``{"type": "function", "function": {"name": ..., "description": ...,
+       "parameters": {...}}}``
+       → used directly after stripping auto-injected fields from parameters.
+
+    2. Pydantic ``model_json_schema()`` / plain JSON Schema parameters object:
+       ``{"type": "object", "properties": {...}, "required": [...], ...}``
+       ``{"properties": {...}, "required": [...]}``
+       → wrapped into the OpenAI envelope; description derived from ``summary``
+         field (WorkspaceContext.summary) if provided, otherwise falls back to
+         the tool name.
+
+    3. Flat properties dict (no outer ``type``/``properties`` wrapper):
+       ``{"param1": {"type": "string"}, "param2": {"type": "integer"}}``
+       → detected when every value is a dict, wrapped accordingly.
+
+    Paths that are not under ``/tools/`` are ignored so that non-tool
+    read_context calls (e.g. ``/knowledge/…``, ``/skills/…``) don't pollute
+    the tool list.
+
+    Returns a deduplicated list ordered by first occurrence.
+    """
+    schemas: list[dict] = []
+    seen_names: set[str] = set()
+
+    for e in raw_events:
+        try:
+            data = ReadContextResult.model_validate(
+                (e.payload or {}).get('result', {}).get('data', {})
+            )
+        except Exception:
+            logger.warning("_extract_context_tool_schemas: failed to parse event")
+            continue
+
+        if not data.path.startswith("tools/"):
+            continue
+
+        tool_name_from_path = data.path.split("/")[-1]
+        content_raw = data.content
+        description_hint: str = data.summary or data.glance or ""
+
+        logger.info(
+            "_extract_context_tool_schemas: path=%r content_type=%s content_preview=%r",
+            data.path,
+            type(content_raw).__name__,
+            str(content_raw)[:150] if content_raw else None,
+        )
+        if isinstance(content_raw, str):
+            try:
+                parsed = json.loads(content_raw)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "_extract_context_tool_schemas: failed to parse content at %r", data.path
+                )
+                continue
+        elif isinstance(content_raw, dict):
+            parsed = content_raw
+        else:
+            logger.warning(
+                "_extract_context_tool_schemas: unexpected content type at %r: %s",
+                data.path, type(content_raw).__name__,
+            )
+            continue
+
+        if not isinstance(parsed, dict):
+            continue
+
+        try:
+            if parsed.get("type") == "function" and isinstance(parsed.get("function"), dict):
+                # Format 1: already a full OpenAI function-calling schema
+                func_block = dict(parsed["function"])
+                params = func_block.get("parameters") or {}
+                if isinstance(params, dict):
+                    func_block["parameters"] = _clean_parameters_schema(params)
+                tool = OpenAITool.model_validate({"type": "function", "function": func_block})
+
+            elif "properties" in parsed or parsed.get("type") == "object":
+                # Format 2: Pydantic model_json_schema() or plain parameters schema
+                tool = OpenAITool(
+                    function=OpenAIFunction(
+                        name=parsed.get("name") or tool_name_from_path,
+                        description=description_hint or parsed.get("description") or tool_name_from_path,
+                        parameters=OpenAIFunctionParameters.model_validate(
+                            _clean_parameters_schema(parsed)
+                        ),
+                    )
+                )
+
+            elif parsed and all(isinstance(v, dict) for v in parsed.values()):
+                # Format 3: flat {param_name: schema_dict, ...} — wrap in object
+                auto = frozenset({"workspace_id", "run_id", "user_id"})
+                clean_props = {k: v for k, v in parsed.items() if k not in auto}
+                tool = OpenAITool(
+                    function=OpenAIFunction(
+                        name=tool_name_from_path,
+                        description=description_hint or tool_name_from_path,
+                        parameters=OpenAIFunctionParameters(properties=clean_props),
+                    )
+                )
+
+            else:
+                logger.warning(
+                    "_extract_context_tool_schemas: unrecognised schema format at %r: keys=%s",
+                    data.path, list(parsed.keys())[:8],
+                )
+                continue
+        except Exception:
+            logger.warning(
+                "_extract_context_tool_schemas: failed to build OpenAITool at %r",
+                data.path, exc_info=True,
+            )
+            continue
+
+        name = tool.function.name or tool_name_from_path
+        if name and name not in seen_names:
+            seen_names.add(name)
+            schemas.append(tool.model_dump(exclude_none=True))
+            logger.info(
+                "_extract_context_tool_schemas: added tool %r from path %r", name, data.path
+            )
+
+    logger.info(
+        "_extract_context_tool_schemas: extracted %d schema(s) from %d read_context event(s)",
+        len(schemas),
+        sum(
+            1 for e in raw_events
+            if (e.payload or {}).get("tool_name") == "read_context"
+            and ((e.payload or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")
+        ),
+    )
+    return schemas
+
+
+def filter_events_for_user_msg(raw_events: list[Event]) -> list[Event]:
+    """Keep only conversation-relevant events from *raw_events*.
+
+    Retains: USER_MESSAGE, AGENT_MESSAGE, TOOL_RESULT, TOOL_ERROR,
+    USER_FEEDBACK.
+
+    Discards: streaming tokens (AGENT_TOKEN), reasoning traces
+    (AGENT_THINKING, AGENT_PLAN_STEP), lifecycle events (RUN_*),
+    infrastructure events (TOOL_CALL, TOOL_PENDING, USING_CONTEXT,
+    WORKSPACE_*, TASK_*, ARTIFACT_*, …).
+
+    This reduces the list passed to ``_events_to_messages`` /
+    ``_load_last_exchange`` to only the entries they actually handle,
+    avoiding unnecessary iteration over large event histories.
+    """
+    return [e for e in raw_events if e.event_type in _CONVERSATION_EVENT_TYPES]
 
 
 @register_executor
@@ -414,36 +644,9 @@ class DefaultExecutor(Executor):
 
     # ── streaming event handlers ──────────────────────────────────
 
-    # Event types kept by filter_events_for_user_msg (conversation-relevant only).
-    _CONVERSATION_EVENT_TYPES: ClassVar[frozenset[str]] = frozenset({
-        str(EventType.USER_MESSAGE),
-        str(EventType.AGENT_MESSAGE),
-        str(EventType.TOOL_RESULT),
-        str(EventType.TOOL_ERROR),
-        str(EventType.USER_FEEDBACK),
-    })
-
-    @classmethod
-    def filter_events_for_user_msg(cls, raw_events: list[dict]) -> list[dict]:
-        """Keep only conversation-relevant events from *raw_events*.
-
-        Retains: USER_MESSAGE, AGENT_MESSAGE, TOOL_RESULT, TOOL_ERROR,
-        USER_FEEDBACK.
-
-        Discards: streaming tokens (AGENT_TOKEN), reasoning traces
-        (AGENT_THINKING, AGENT_PLAN_STEP), lifecycle events (RUN_*),
-        infrastructure events (TOOL_CALL, TOOL_PENDING, USING_CONTEXT,
-        WORKSPACE_*, TASK_*, ARTIFACT_*, …).
-
-        This reduces the list passed to ``_events_to_messages`` /
-        ``_load_last_exchange`` to only the entries they actually handle,
-        avoiding unnecessary iteration over large event histories.
-        """
-        return [e for e in raw_events if e.get("event_type") in cls._CONVERSATION_EVENT_TYPES]
-
     def get_messages_and_tools(
-            self, raw_events: list[dict]
-    ) -> tuple[list[ChatMessage], Any]:
+            self, raw_events: list[Event]
+    ) -> tuple[list[ChatMessage], list[OpenAITool]]:
         """Build last-exchange messages + tools_info from *raw_events*.
 
         Symmetric with ``get_message_tool_from_events`` but uses
@@ -451,17 +654,17 @@ class DefaultExecutor(Executor):
         Used by TOOL_RESULT / TOOL_ERROR / USER_FEEDBACK handlers that only
         need the most recent [user → assistant → tool…] turn.
         """
-        schema_events: list[dict] = []
-        conv_events: list[dict] = []
+        schema_events = []
+        conv_events = []
         for e in raw_events:
-            if (e.get("event_type") == str(EventType.TOOL_RESULT)
-                    and (e.get("payload") or {}).get("tool_name") == "read_context"
-                    and ((e.get("payload") or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")):
+            if (e.event_type == str(EventType.TOOL_RESULT)
+                    and (e.payload or {}).get("tool_name") == "read_context"
+                    and ((e.payload or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")):
                 schema_events.append(e)
             else:
                 conv_events.append(e)
 
-        tools_info= self._extract_context_tool_schemas(schema_events)
+        tools_info= _extract_context_tool_schemas(schema_events)
 
         messages: list[ChatMessage] = [ChatMessage(role="system", content=self.system_prompt)]
         messages.extend(_events_to_messages(conv_events))
@@ -495,22 +698,19 @@ class DefaultExecutor(Executor):
             [str(e.event_type) for e in events],
         )
         if self.global_event:
-            all_raw = await self._fetch_events(
+            all_events = await self._fetch_events(
                 global_scope=True,
                 limit=self.max_history_messages,
             )
         else:
-            all_raw = [
-                {"event_type": str(e.event_type), "payload": e.payload or {}}
-                for e in events
-            ]
+            all_events = events
         # TODO: remove diagnostic logging (end of block) once verified
-        logger.info(
+        logger.debug(
             "_on_user_message: all_raw=%d, after filter=%d",
-            len(all_raw),
-            len(self.filter_events_for_user_msg(all_raw)),
+            len(all_events),
+            len(filter_events_for_user_msg(all_events)),
         )
-        raw_events = self.filter_events_for_user_msg(all_raw)
+        raw_events = filter_events_for_user_msg(all_events)
         messages, tools_info = self.get_messages_and_tools(raw_events)
         logger.info(
             "_on_user_message: run=%s built %d messages, starting agentic loop",
@@ -535,7 +735,7 @@ class DefaultExecutor(Executor):
             self._pending_tool_ids.discard(tool_id)
             self._pending_user_input = None
 
-        raw_events = self.filter_events_for_user_msg(self._raw_events_cache or [])
+        raw_events = filter_events_for_user_msg(self._raw_events_cache or [])
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -551,7 +751,7 @@ class DefaultExecutor(Executor):
         """
         # TODO: use the passed `events` list directly (same as _on_user_message) instead of
         #       _raw_events_cache, to stay consistent and avoid stale-cache edge cases.
-        raw_events = self.filter_events_for_user_msg(self._raw_events_cache or [])
+        raw_events = filter_events_for_user_msg(self._raw_events_cache or [])
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -569,7 +769,7 @@ class DefaultExecutor(Executor):
         if self._pending_tool_ids:
             return  # Still waiting for other parallel tool results
 
-        raw_events = self.filter_events_for_user_msg(self._raw_events_cache or [])
+        raw_events = filter_events_for_user_msg(self._raw_events_cache or [])
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -600,239 +800,18 @@ class DefaultExecutor(Executor):
                 raise ValueError(f"Unsupported provider: {self.model_provider}")
         return api_key, base_url
 
-    @staticmethod
-    def _extract_last_user_message_text(raw_events: list[dict]) -> str | None:
-        """Return the content of the most recent USER_MESSAGE in *raw_events*."""
-        for e in reversed(raw_events):
-            if e.get("event_type") == str(EventType.USER_MESSAGE):
-                payload = e.get("payload") or {}
-                msg = payload.get("message", "")
-                if isinstance(msg, list):
-                    msg = " ".join(
-                        p.get("text", "") if isinstance(p, dict) else str(p)
-                        for p in msg
-                    )
-                if msg:
-                    return str(msg)
-        return None
+
 
     # Fields the executor always injects automatically — hide from the LLM.
     _AUTO_INJECTED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {"workspace_id", "run_id", "user_id"}
     )
 
-    @staticmethod
-    def _clean_parameters_schema(raw: dict) -> dict:
-        """Convert a raw JSON Schema dict to a clean OpenAI-compatible parameters object.
-
-        Handles Pydantic ``model_json_schema()`` output (which includes ``title``,
-        ``$defs``, nested ``$ref`` etc.) as well as hand-written schemas.
-
-        Steps:
-        1. Ensure top-level ``"type": "object"`` is present.
-        2. Resolve simple ``$ref`` pointers that reference ``$defs`` inline so the
-           LLM sees concrete property definitions rather than opaque references.
-        3. Remove ``title`` noise from every property.
-        4. Strip auto-injected fields (workspace_id, run_id, user_id) from both
-           ``properties`` and ``required`` — the executor injects them automatically.
-        5. Remove the now-used ``$defs`` key (keep it only if unresolved $ref remain).
-        """
-        _AUTO = frozenset({"workspace_id", "run_id", "user_id"})
-
-        schema = dict(raw)
-
-        # 1. Ensure object type
-        if "properties" in schema and schema.get("type") != "object":
-            schema["type"] = "object"
-
-        # 2. Resolve $defs inline for simple (non-circular) references
-        defs: dict = schema.get("$defs") or {}
-        if defs:
-            props = dict(schema.get("properties") or {})
-            resolved_all = True
-            for prop_name, prop_schema in list(props.items()):
-                if not isinstance(prop_schema, dict):
-                    continue
-                ref = prop_schema.get("$ref", "")
-                if ref.startswith("#/$defs/"):
-                    def_key = ref[len("#/$defs/"):]
-                    if def_key in defs:
-                        props[prop_name] = dict(defs[def_key])
-                    else:
-                        resolved_all = False
-            schema["properties"] = props
-            if resolved_all:
-                schema.pop("$defs", None)
-
-        # 3. Strip "title" from every property (Pydantic adds these automatically)
-        props = dict(schema.get("properties") or {})
-        for prop_name, prop_schema in list(props.items()):
-            if isinstance(prop_schema, dict):
-                clean = {k: v for k, v in prop_schema.items() if k != "title"}
-                props[prop_name] = clean
-        schema["properties"] = props
-
-        # 4. Remove auto-injected fields
-        for field in _AUTO:
-            props.pop(field, None)
-        schema["properties"] = props
-        if "required" in schema:
-            schema["required"] = [f for f in schema["required"] if f not in _AUTO]
-            if not schema["required"]:
-                del schema["required"]
-
-        # 5. Clean top-level noise fields
-        for key in ("title", "description"):
-            schema.pop(key, None)
-
-        return schema
-
-    @classmethod
-    def _extract_context_tool_schemas(cls, raw_events: list[dict]) -> list[dict]:
-        """Convert ``read_context`` TOOL_RESULT events at ``/tools/*`` paths into
-        OpenAI function-calling schemas ready to pass as the ``tools`` parameter.
-
-        Accepted content formats (tried in order):
-
-        1. Full OpenAI schema already stored:
-           ``{"type": "function", "function": {"name": ..., "description": ...,
-           "parameters": {...}}}``
-           → used directly after stripping auto-injected fields from parameters.
-
-        2. Pydantic ``model_json_schema()`` / plain JSON Schema parameters object:
-           ``{"type": "object", "properties": {...}, "required": [...], ...}``
-           ``{"properties": {...}, "required": [...]}``
-           → wrapped into the OpenAI envelope; description derived from ``summary``
-             field (WorkspaceContext.summary) if provided, otherwise falls back to
-             the tool name.
-
-        3. Flat properties dict (no outer ``type``/``properties`` wrapper):
-           ``{"param1": {"type": "string"}, "param2": {"type": "integer"}}``
-           → detected when every value is a dict, wrapped accordingly.
-
-        Paths that are not under ``/tools/`` are ignored so that non-tool
-        read_context calls (e.g. ``/knowledge/…``, ``/skills/…``) don't pollute
-        the tool list.
-
-        Returns a deduplicated list ordered by first occurrence.
-        """
-        schemas: list[dict] = []
-        seen_names: set[str] = set()
-
-        for e in raw_events:
-            try:
-                data = e["payload"]['result']['data']
-            except (KeyError, TypeError):
-                logger.warning("_extract_context_tool_schemas: failed to parse event")
-                continue
-            data = ReadContextResult.model_validate(data)
-
-            if not data.path.startswith("tools/"):
-                continue
-
-            tool_name_from_path = data.path.split("/")[-1]
-            content_raw = data.content
-            description_hint: str = data.summary or data.glance or ""
-
-            logger.info(
-                "_extract_context_tool_schemas: path=%r content_type=%s content_preview=%r",
-                data.path,
-                type(content_raw).__name__,
-                str(content_raw)[:150] if content_raw else None,
-            )
-
-            if isinstance(content_raw, str):
-                try:
-                    parsed = json.loads(content_raw)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "_extract_context_tool_schemas: failed to parse content at %r", data.path
-                    )
-                    continue
-            elif isinstance(content_raw, dict):
-                parsed = content_raw
-            else:
-                logger.warning(
-                    "_extract_context_tool_schemas: unexpected content type at %r: %s",
-                    data.path, type(content_raw).__name__,
-                )
-                continue
-
-            if not isinstance(parsed, dict):
-                continue
-
-            try:
-                if parsed.get("type") == "function" and isinstance(parsed.get("function"), dict):
-                    # Format 1: already a full OpenAI function-calling schema
-                    func_block = dict(parsed["function"])
-                    params = func_block.get("parameters") or {}
-                    if isinstance(params, dict):
-                        func_block["parameters"] = cls._clean_parameters_schema(params)
-                    tool = OpenAITool.model_validate({"type": "function", "function": func_block})
-
-                elif "properties" in parsed or parsed.get("type") == "object":
-                    # Format 2: Pydantic model_json_schema() or plain parameters schema
-                    tool = OpenAITool(
-                        function=OpenAIFunction(
-                            name=parsed.get("name") or tool_name_from_path,
-                            description=description_hint or parsed.get("description") or tool_name_from_path,
-                            parameters=OpenAIFunctionParameters.model_validate(
-                                cls._clean_parameters_schema(parsed)
-                            ),
-                        )
-                    )
-
-                elif parsed and all(isinstance(v, dict) for v in parsed.values()):
-                    # Format 3: flat {param_name: schema_dict, ...} — wrap in object
-                    auto = frozenset({"workspace_id", "run_id", "user_id"})
-                    clean_props = {k: v for k, v in parsed.items() if k not in auto}
-                    tool = OpenAITool(
-                        function=OpenAIFunction(
-                            name=tool_name_from_path,
-                            description=description_hint or tool_name_from_path,
-                            parameters=OpenAIFunctionParameters(properties=clean_props),
-                        )
-                    )
-
-                else:
-                    logger.warning(
-                        "_extract_context_tool_schemas: unrecognised schema format at %r: keys=%s",
-                        data.path, list(parsed.keys())[:8],
-                    )
-                    continue
-            except Exception:
-                logger.warning(
-                    "_extract_context_tool_schemas: failed to build OpenAITool at %r",
-                    data.path, exc_info=True,
-                )
-                continue
-
-            name = tool.function.name or tool_name_from_path
-            if name and name not in seen_names:
-                seen_names.add(name)
-                schemas.append(tool.model_dump(exclude_none=True))
-                logger.info(
-                    "_extract_context_tool_schemas: added tool %r from path %r", name, data.path
-                )
-
-        logger.info(
-            "_extract_context_tool_schemas: extracted %d schema(s) from %d read_context event(s)",
-            len(schemas),
-            sum(
-                1 for e in raw_events
-                if (e.get("payload") or {}).get("tool_name") == "read_context"
-                and ((e.get("payload") or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")
-            ),
-        )
-        return schemas
-
-
-
     # ── event fetch / history helpers ─────────────────────────────
 
     async def _fetch_events(
             self, *, global_scope: bool, limit: int = 200
-    ) -> list[dict]:
+    ) -> list[Event]:
         """Fetch raw event dicts from the DB.
 
         When ``_raw_events_cache`` is set (injected by ``process_events``),
@@ -872,11 +851,7 @@ class DefaultExecutor(Executor):
                     )
                 result = await db.execute(stmt)
                 rows = result.scalars().all()
-
-            return [
-                {"event_type": str(row.event_type), "payload": row.payload or {}}
-                for row in rows
-            ]
+            return list(rows)
         except Exception as e:
             logger.warning(f"Failed to fetch events for run {self.run_id}: {e}")
             return []
@@ -886,7 +861,7 @@ class DefaultExecutor(Executor):
     async def _agentic_loop(
             self,
             messages: list[ChatMessage],
-            tools_info: Any = None,
+            tools_info: list[OpenAITool]|None = None,
     ) -> AsyncGenerator[Event, None]:
         """Run the agentic loop: call LLM, process tool calls, repeat.
 

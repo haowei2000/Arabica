@@ -303,41 +303,7 @@ services:
         reservations:
           memory: 256M
 
-  # MySQL Database
-  mysql:
-    profiles:
-      - mysql
-      - db_session
-      - infra
-      - all
-    image: mysql:latest
-    container_name: aiwen-mysql
-    ports:
-      - "${EXPOSE_PORT_MYSQL:-3306}:3306"
-    volumes:
-      - ./mysql/data:/var/lib/mysql
-      - ./mysql/init-mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    env_file:
-      - ../.env
-    environment:
-      <<: *common-env
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
-      MYSQL_DATABASE: ${MYSQL__DBNAME:-default}
-      MYSQL_USER: ${MYSQL__USER:-default}
-      MYSQL_PASSWORD: ${MYSQL__PASSWORD:-123456}
-    healthcheck:
-      <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost --silent"]
-    restart: unless-stopped
-    logging: *default-logging
-    networks:
-      - aiwen-network
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 256M
+
   
   rustfs:
     image: rustfs/rustfs:latest

@@ -1,20 +1,42 @@
 """Initialize the workspace context with user-selected resources.
 
-Called after workspace creation to pre-populate WorkspaceContext with
-tools, knowledge bases, and skills chosen by the user.
+Called after workspace creation to pre-populate WorkspaceContext by copying
+entries from the global Context table, which is the single source of truth for
+tool/knowledge/skill/memory metadata.
 """
 
 import logging
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.core.enums.context import ContextType
+from aiwen.models.context.context import Context
 from aiwen.schemas.workspaces.workspace import WorkspaceContextConfig
 from aiwen.services.workspace_context.workspace_context_service import (
     WorkspaceContextService,
 )
 
 logger = logging.getLogger(__name__)
+
+# Maps context_type → workspace_context path prefix
+_CONTEXT_TYPE_PATH_PREFIX: dict[str, str] = {
+    ContextType.TOOL: "tools",
+    ContextType.SKILL: "skills",
+    ContextType.KNOWLEDGE: "knowledge",
+    ContextType.SHORT_MEMORY: "short_memory",
+}
+
+
+def _derive_path(ctx: Context) -> str:
+    """Derive workspace_context path from a Context row."""
+    prefix = _CONTEXT_TYPE_PATH_PREFIX.get(ctx.context_type, ctx.context_type)
+    if ctx.context_type == ContextType.TOOL:
+        # Prefer tool_code stored in meta for a human-readable path segment
+        tool_code = (ctx.meta or {}).get("tool_code") or str(ctx.source_id or ctx.id)
+        return f"{prefix}/{tool_code}"
+    return f"{prefix}/{ctx.source_id or ctx.id}"
 
 
 async def init_workspace_context(
@@ -23,306 +45,122 @@ async def init_workspace_context(
     user_id: str | UUID,
     config: WorkspaceContextConfig,
 ) -> dict[str, int]:
-    """Populate WorkspaceContext from user-selected resources.
+    """Populate WorkspaceContext by copying entries from the Context table.
 
-    Args:
-        db: Database session
-        workspace_id: Target workspace
-        user_id: Owner (used for created_by)
-        config: Resource IDs to pre-populate
+    For each resource type (tools, knowledge, skills, memories) the matching
+    Context rows for *user_id* are located and their content is written into
+    WorkspaceContext at the canonical path for that type.
 
-    Returns:
-        dict with counts: {"tools": n, "knowledge": n, "skills": n}
+    Triggers and history are not stored in the Context table and are handled
+    separately with their original logic.
     """
     workspace_id = str(workspace_id)
     user_id_str = str(user_id)
     service = WorkspaceContextService(db, workspace_id)
-    counts = {"tools": 0, "knowledge": 0, "skills": 0, "history": 0, "memories": 0, "triggers": 0}
+    counts: dict[str, int] = {
+        "tools": 0, "knowledge": 0, "skills": 0,
+        "history": 0, "memories": 0, "triggers": 0,
+    }
 
+    # ── tools ──────────────────────────────────────────────────────────────
     if config.tool_ids:
-        counts["tools"] = await _populate_tools(
-            db, service, user_id_str, config.tool_ids
+        counts["tools"] = await _copy_context_entries(
+            db, service, user_id_str,
+            context_type=ContextType.TOOL,
+            source_ids=[str(tid) for tid in config.tool_ids],
         )
 
+    # ── knowledge ──────────────────────────────────────────────────────────
     if config.knowledge_ids:
-        counts["knowledge"] = await _populate_knowledge(
-            db, service, user_id_str, config.knowledge_ids
+        counts["knowledge"] = await _copy_context_entries(
+            db, service, user_id_str,
+            context_type=ContextType.KNOWLEDGE,
+            source_ids=[str(kid) for kid in config.knowledge_ids],
         )
 
+    # ── skills ─────────────────────────────────────────────────────────────
     if config.skill_ids:
-        counts["skills"] = await _populate_skills(
-            db, service, user_id_str, config.skill_ids
+        counts["skills"] = await _copy_context_entries(
+            db, service, user_id_str,
+            context_type=ContextType.SKILL,
+            source_ids=[str(sid) for sid in config.skill_ids],
         )
 
+    # ── memories (matched by context.id, not source_id) ───────────────────
+    if config.memory_ids:
+        counts["memories"] = await _copy_context_entries(
+            db, service, user_id_str,
+            context_type=ContextType.SHORT_MEMORY,
+            source_ids=[str(mid) for mid in config.memory_ids],
+            match_by_id=True,
+        )
+
+    # ── history (not in context table — keep original logic) ───────────────
     if config.source_workspace_ids:
         counts["history"] = await _populate_history(
             db, service, user_id_str, config.source_workspace_ids
         )
 
-    if config.memory_ids:
-        counts["memories"] = await _populate_memories(
-            db, service, user_id_str, config.memory_ids
-        )
-
+    # ── triggers (not in context table — keep original logic) ──────────────
     if config.trigger_ids:
         counts["triggers"] = await _populate_triggers(
             db, UUID(workspace_id), UUID(user_id_str), config.trigger_ids
         )
 
-    # Create root "/" and first-level directory nodes so that glance_context
-    # and list_context on "/" return a meaningful directory structure.
     await _create_root_structure(service, user_id_str, counts)
 
     logger.info(
-        "init_workspace_context: workspace=%s tools=%d knowledge=%d skills=%d history=%d memories=%d triggers=%d",
+        "init_workspace_context: workspace=%s tools=%d knowledge=%d skills=%d "
+        "history=%d memories=%d triggers=%d",
         workspace_id, counts["tools"], counts["knowledge"], counts["skills"],
         counts["history"], counts["memories"], counts["triggers"],
     )
     return counts
 
 
-async def _populate_tools(
+async def _copy_context_entries(
     db: AsyncSession,
     service: WorkspaceContextService,
     user_id: str,
-    tool_ids: list[UUID],
+    *,
+    context_type: str,
+    source_ids: list[str],
+    match_by_id: bool = False,
 ) -> int:
-    from sqlalchemy import select
+    """Copy Context rows into WorkspaceContext.
 
-    from aiwen.models.context.tools import Tool
+    Args:
+        match_by_id: When True match on ``Context.id`` instead of
+                     ``Context.source_id`` (used for memories).
+    """
+    if not source_ids:
+        return 0
 
+    id_field = Context.id if match_by_id else Context.source_id
     result = await db.execute(
-        select(Tool).where(Tool.id.in_([str(tid) for tid in tool_ids]))
+        select(Context).where(
+            Context.context_type == context_type,
+            Context.user_id == UUID(user_id),
+            id_field.in_(source_ids),
+        )
     )
-    tools = result.scalars().all()
+    rows = result.scalars().all()
 
     count = 0
-    for tool in tools:
-        path = f"tools/{tool.tool_code or tool.id}"
-        glance = f"{tool.display_name or tool.name} — {tool.description[:60] if tool.description else ''}"
+    for ctx in rows:
+        path = _derive_path(ctx)
         await service.set(
             path=path,
-            glance=glance,
-            overview={
-                "name": tool.name,
-                "display_name": tool.display_name,
-                "description": tool.description,
-                "tool_type": tool.tool_type,
-                "tags": tool.tags or [],
-            },
-            detail=tool.input_schema,
-            tags=["tools"] + (tool.tags or []),
-            meta={"tool_id": str(tool.id), "tool_code": tool.tool_code},
+            glance=ctx.glance or "",
+            overview=ctx.summary,
+            detail=ctx.content,
+            tags=ctx.tags or [],
+            meta=ctx.meta or {},
             created_by=user_id,
             content_type="application/json",
         )
         count += 1
-    return count
 
-
-async def _populate_knowledge(
-    db: AsyncSession,
-    service: WorkspaceContextService,
-    user_id: str,
-    knowledge_ids: list[UUID],
-) -> int:
-    from sqlalchemy import select
-
-    from aiwen.models.context.knowledge.documents import Document
-    from aiwen.models.context.knowledge.knowledge import Knowledge
-
-    result = await db.execute(
-        select(Knowledge).where(Knowledge.id.in_(knowledge_ids))
-    )
-    knowledge_list = result.scalars().all()
-
-    count = 0
-    for kb in knowledge_list:
-        kb_id = str(kb.id)
-        # Add the knowledge base itself.
-        await service.set(
-            path=f"knowledge/{kb_id}",
-            glance=(kb.description[:80] if kb.description else None) or kb.name,
-            overview=kb.description,
-            detail=None,
-            tags=["knowledge"],
-            meta={"knowledge_id": kb_id},
-            created_by=user_id,
-            content_type="text/plain",
-        )
-        count += 1
-
-        # Add every document that belongs to this knowledge base.
-        doc_result = await db.execute(
-            select(Document)
-            .where(Document.knowledge_id == kb.id, Document.is_deleted.is_(False))
-            .order_by(Document.created_at)
-        )
-        for doc in doc_result.scalars().all():
-            await service.set(
-                path=f"knowledge/{kb_id}/{doc.id}",
-                glance=doc.original_name,
-                overview={
-                    "document_id": str(doc.id),
-                    "knowledge_id": kb_id,
-                    "file_name": doc.original_name,
-                    "mime_type": doc.mime_type,
-                    "status": doc.status,
-                    "chunk_count": doc.chunk_count,
-                },
-                detail=doc.content,
-                tags=["knowledge", "document"],
-                meta={"document_id": str(doc.id), "knowledge_id": kb_id},
-                created_by=user_id,
-                content_type="text/plain",
-            )
-            count += 1
-
-    return count
-
-
-async def _populate_skills(
-    db: AsyncSession,
-    service: WorkspaceContextService,
-    user_id: str,
-    skill_ids: list[UUID],
-) -> int:
-    from sqlalchemy import or_, select
-
-    from aiwen.models.context.skill import Skill
-
-    result = await db.execute(
-        select(Skill).where(Skill.id.in_(skill_ids))
-    )
-    selected_skills = result.scalars().all()
-
-    # Collect path prefixes for descendant lookup.
-    path_prefixes = [s.path for s in selected_skills if s.path]
-
-    # Load descendants: skills whose path starts with any selected skill's path.
-    descendants: list[Skill] = []
-    if path_prefixes:
-        desc_result = await db.execute(
-            select(Skill).where(
-                Skill.id.not_in(skill_ids),
-                or_(*(Skill.path.like(f"{p}/%") for p in path_prefixes)),
-            )
-        )
-        descendants = list(desc_result.scalars().all())
-
-    count = 0
-    for skill in list(selected_skills) + descendants:
-        glance = skill.glance or (skill.description[:60] if skill.description else skill.name)
-        await service.set(
-            path=f"skills/{skill.id}",
-            glance=glance,
-            overview=skill.summary,
-            detail=skill.content,
-            tags=["skills"] + (skill.tags or []),
-            meta={"skill_id": str(skill.id), "skill_path": skill.path},
-            created_by=user_id,
-            content_type="text/plain",
-        )
-        count += 1
-    return count
-
-
-async def _populate_memories(
-    db: AsyncSession,
-    service: WorkspaceContextService,
-    user_id: str,
-    memory_ids: list[UUID],
-) -> int:
-    from sqlalchemy import or_, select
-
-    from aiwen.core.enums import ContextType
-    from aiwen.models.context.context import Context
-
-    id_strs = [str(mid) for mid in memory_ids]
-    result = await db.execute(
-        select(Context).where(
-            Context.id.in_(id_strs),
-            Context.context_type == ContextType.SHORT_MEMORY,
-        )
-    )
-    selected = result.scalars().all()
-
-    # Collect path prefixes for descendant lookup.
-    path_prefixes = [m.path for m in selected if m.path]
-
-    # Load all descendant contexts whose path starts with any selected context's path.
-    descendants: list[Context] = []
-    if path_prefixes:
-        desc_result = await db.execute(
-            select(Context).where(
-                Context.id.not_in(id_strs),
-                Context.context_type == ContextType.SHORT_MEMORY,
-                or_(*(Context.path.like(f"{p}/%") for p in path_prefixes)),
-            )
-        )
-        descendants = list(desc_result.scalars().all())
-
-    count = 0
-    for mem in list(selected) + descendants:
-        glance = mem.glance or (mem.summary[:60] if mem.summary else mem.content[:60])
-        await service.set(
-            path=f"short_memory/{mem.id}",
-            glance=glance,
-            overview=mem.summary,
-            detail=mem.content,
-            tags=["memory"] + (mem.tags or []),
-            meta={
-                "memory_id": str(mem.id),
-                "source_context_id": str(mem.id),
-                "importance": mem.importance,
-            },
-            created_by=user_id,
-            content_type="text/plain",
-        )
-        count += 1
-    return count
-
-
-async def _populate_triggers(
-    db: AsyncSession,
-    workspace_id: UUID,
-    user_id: UUID,
-    trigger_ids: list[UUID],
-) -> int:
-    from sqlalchemy import select
-
-    from aiwen.models.workspaces.workspace_trigger import WorkspaceTrigger
-
-    result = await db.execute(
-        select(WorkspaceTrigger).where(
-            WorkspaceTrigger.id.in_(trigger_ids),
-            WorkspaceTrigger.workspace_id.is_(None),
-        )
-    )
-    templates = result.scalars().all()
-
-    count = 0
-    for tmpl in templates:
-        copy = WorkspaceTrigger(
-            workspace_id=workspace_id,
-            user_id=user_id,
-            name=tmpl.name,
-            description=tmpl.description,
-            event_type=tmpl.event_type,
-            condition_type=tmpl.condition_type,
-            condition_value=tmpl.condition_value,
-            condition_field=tmpl.condition_field,
-            tool_name=tmpl.tool_name,
-            action_params=tmpl.action_params,
-            priority=tmpl.priority,
-            enabled=tmpl.enabled,
-            created_by=user_id,
-        )
-        db.add(copy)
-        count += 1
-
-    if count:
-        await db.flush()
     return count
 
 
@@ -331,24 +169,7 @@ async def _create_root_structure(
     user_id: str,
     counts: dict[str, int],
 ) -> None:
-    """Create root and first-level directory nodes in WorkspaceContext.
-
-    The leaf entries (e.g. ``tools/my_tool``) are written by the individual
-    ``_populate_*`` helpers.  This function adds the parent directory nodes
-    so that ``list_context`` / ``glance_context`` on ``"/"`` returns a proper
-    directory tree instead of an empty result.
-
-    Directory layout::
-
-        /                   ← root, always created
-        ├── tools/          ← only if count > 0
-        ├── knowledge/
-        ├── skills/
-        ├── short_memory/
-        ├── long_memory/
-        └── triggers/
-    """
-    # Ordered list of (path, display_label, count_key, description)
+    """Create root and first-level directory nodes in WorkspaceContext."""
     _DIRS = [
         ("tools",        "Tools",        "tools",     "Callable tools available in this workspace"),
         ("knowledge",    "Knowledge",    "knowledge", "Knowledge bases attached to this workspace"),
@@ -376,7 +197,6 @@ async def _create_root_structure(
         if count > 0:
             populated.append((path, label, count, description))
 
-    # Root node — always written; glance summarises non-empty categories.
     if populated:
         root_glance = "Workspace context root — " + ", ".join(
             f"{label}: {count}" for _, label, count, _ in populated
@@ -395,13 +215,50 @@ async def _create_root_structure(
         overview=root_overview,
         detail=None,
         tags=["root", "directory"],
-        meta={
-            "directory": True,
-            "directories": [p for p, _, _, _ in _DIRS],
-        },
+        meta={"directory": True, "directories": [p for p, _, _, _ in _DIRS]},
         created_by=user_id,
         content_type="application/json",
     )
+
+
+async def _populate_triggers(
+    db: AsyncSession,
+    workspace_id: UUID,
+    user_id: UUID,
+    trigger_ids: list[UUID],
+) -> int:
+    from aiwen.models.workspaces.workspace_trigger import WorkspaceTrigger
+
+    result = await db.execute(
+        select(WorkspaceTrigger).where(
+            WorkspaceTrigger.id.in_(trigger_ids),
+            WorkspaceTrigger.workspace_id.is_(None),
+        )
+    )
+    templates = result.scalars().all()
+
+    count = 0
+    for tmpl in templates:
+        db.add(WorkspaceTrigger(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            name=tmpl.name,
+            description=tmpl.description,
+            event_type=tmpl.event_type,
+            condition_type=tmpl.condition_type,
+            condition_value=tmpl.condition_value,
+            condition_field=tmpl.condition_field,
+            tool_name=tmpl.tool_name,
+            action_params=tmpl.action_params,
+            priority=tmpl.priority,
+            enabled=tmpl.enabled,
+            created_by=user_id,
+        ))
+        count += 1
+
+    if count:
+        await db.flush()
+    return count
 
 
 async def _populate_history(
@@ -410,15 +267,8 @@ async def _populate_history(
     user_id: str,
     source_workspace_ids: list[UUID],
 ) -> int:
-    """Copy finished runs from source workspaces into long_memory/.
-
-    For each source workspace, loads all completed/finished runs and
-    reconstructs a conversation summary from USER_MESSAGE and AGENT_MESSAGE
-    events.  Each run becomes one entry at ``long_memory/{run_id}``.
-    """
+    """Copy finished runs from source workspaces into long_memory/."""
     import json
-
-    from sqlalchemy import select
 
     from aiwen.core.enums.events import EventType
     from aiwen.models.events.event import Event
@@ -428,7 +278,6 @@ async def _populate_history(
     for src_id in source_workspace_ids:
         src_id_str = str(src_id)
 
-        # Load finished runs for the source workspace (most recent 50).
         runs_result = await db.execute(
             select(Run)
             .where(
@@ -443,15 +292,11 @@ async def _populate_history(
         for run in runs:
             run_id_str = str(run.id)
 
-            # Fetch user + agent message events for this run, in order.
             events_result = await db.execute(
                 select(Event)
                 .where(
                     Event.run_id == run_id_str,
-                    Event.event_type.in_([
-                        EventType.USER_MESSAGE,
-                        EventType.AGENT_MESSAGE,
-                    ]),
+                    Event.event_type.in_([EventType.USER_MESSAGE, EventType.AGENT_MESSAGE]),
                 )
                 .order_by(Event.sequence)
             )
@@ -460,7 +305,6 @@ async def _populate_history(
             if not events:
                 continue
 
-            # Build a readable conversation transcript.
             turns = []
             for ev in events:
                 payload = ev.payload or {}
@@ -479,10 +323,7 @@ async def _populate_history(
             if not turns:
                 continue
 
-            # Glance: first user message, truncated.
-            first_user = next(
-                (t["content"] for t in turns if t["role"] == "user"), ""
-            )
+            first_user = next((t["content"] for t in turns if t["role"] == "user"), "")
             glance = first_user[:120] if first_user else f"Run {run_id_str[:8]}"
 
             await service.set(
@@ -497,10 +338,7 @@ async def _populate_history(
                 },
                 detail=json.dumps(turns, ensure_ascii=False),
                 tags=["long_memory", "imported_history"],
-                meta={
-                    "run_id": run_id_str,
-                    "source_workspace_id": src_id_str,
-                },
+                meta={"run_id": run_id_str, "source_workspace_id": src_id_str},
                 created_by=user_id,
                 content_type="application/json",
             )
