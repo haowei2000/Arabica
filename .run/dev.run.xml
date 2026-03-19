@@ -19,7 +19,7 @@
     <scripts>
       <script value="dev" />
     </scripts>
-    <node-interpreter value="project" />
+    <node-interpreter value="$USER_HOME$/.nvm/versions/node/v20.20.1/bin/node" />
     <envs />
     <method v="2" />
   </configuration>

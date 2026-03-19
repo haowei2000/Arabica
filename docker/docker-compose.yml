@@ -16,7 +16,7 @@ x-common-env: &common-env
 
 services:
   # Main application service
-  aiwen-app:
+  app:
     profiles:
       - app
       - all
@@ -27,7 +27,6 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    container_name: aiwen-app
     ports:
       - "${EXPOSE_PORT_AIWEN_PY:-8000}:8000"
       - "${EXPOSE_PORT_AIWEN_MCP:-9000}:9000"
@@ -101,7 +100,7 @@ services:
           memory: 512M
   
   # Celery Worker for background tasks
-  aiwen-celery-worker:
+  celery-worker:
     profiles:
       - celery
       - worker
@@ -113,7 +112,6 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    container_name: aiwen-celery-worker
     command: celery -A aiwen.workers.celery_app worker --loglevel=info --concurrency=4
     volumes:
       - aiwen-logs:/app/logs
@@ -157,7 +155,7 @@ services:
           memory: 256M
   
   # Celery Beat for scheduled tasks (optional)
-  aiwen-celery-beat:
+  celery-beat:
     profiles:
       - celery-beat
       - all
@@ -168,7 +166,6 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    container_name: aiwen-celery-beat
     command: celery -A aiwen.workers.celery_app beat --loglevel=info
     volumes:
       - aiwen-logs:/app/logs
@@ -195,7 +192,7 @@ services:
           memory: 64M
   
   # Flower - Celery monitoring (optional)
-  aiwen-flower:
+  flower:
     profiles:
       - flower
       - tools
@@ -206,7 +203,6 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    container_name: aiwen-flower
     command: celery -A aiwen.workers.celery_app flower --port=5555
     ports:
       - "${FLOWER_PORT:-5555}:5555"
@@ -233,7 +229,7 @@ services:
           memory: 64M
   
   # Frontend application (React + Vite)
-  aiwen-frontend:
+  frontend:
     profiles:
       - frontend
       - app
@@ -247,7 +243,6 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
         VITE_APP_TITLE: ${VITE_APP_TITLE:-Aiwen}
     image: aiwen-frontend:${VERSION:-latest}
-    container_name: aiwen-frontend
     ports:
       - "${FRONTEND_EXPOSE_PORT:-3000}:80"
     environment:
@@ -278,7 +273,6 @@ services:
       - infra
       - all
     image: pgvector/pgvector:pg15
-    container_name: aiwen-postgres
     ports:
       - "${EXPOSE_PORT_POSTGRES:-5432}:5432"
     volumes:
@@ -307,7 +301,6 @@ services:
   
   rustfs:
     image: rustfs/rustfs:latest
-    container_name: rustfs
     restart: unless-stopped
     profiles:
       - storage
@@ -337,7 +330,6 @@ services:
       - infra
       - all
     image: redis:7-alpine
-    container_name: aiwen-redis
     env_file:
       - ../.env
     command:
@@ -368,7 +360,6 @@ services:
   # Ollama Service (for local LLM)
   ollama:
     image: ollama/ollama:latest
-    container_name: aiwen-ollama
     profiles:
       - ollama
     ports:
@@ -409,7 +400,7 @@ services:
       - redis-commander
       - tools
       - all
-    container_name: aiwen-redis-commander
+    container_name: redis-commander
     ports:
       - "${REDIS_COMMANDER_PORT:-8081}:8081"
     environment:

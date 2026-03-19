@@ -17,14 +17,19 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "run",
-        sa.Column("input_tokens", sa.Integer(), nullable=False, server_default="0"),
-    )
-    op.add_column(
-        "run",
-        sa.Column("output_tokens", sa.Integer(), nullable=False, server_default="0"),
-    )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_columns = {col["name"] for col in inspector.get_columns("run")}
+    if "input_tokens" not in existing_columns:
+        op.add_column(
+            "run",
+            sa.Column("input_tokens", sa.Integer(), nullable=False, server_default="0"),
+        )
+    if "output_tokens" not in existing_columns:
+        op.add_column(
+            "run",
+            sa.Column("output_tokens", sa.Integer(), nullable=False, server_default="0"),
+        )
 
 
 def downgrade() -> None:
