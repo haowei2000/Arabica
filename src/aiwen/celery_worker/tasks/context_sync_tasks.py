@@ -497,6 +497,103 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
 
 @celery_app.task(
     bind=True,
+    name="context_sync.sync_inner_tool",
+    max_retries=3,
+    default_retry_delay=30,
+    queue="default",
+)
+def sync_inner_tool_to_contexts(self, tool_id: str):
+    """Sync a single inner tool: generate embeddings for all per-user Context rows
+    and upsert WorkspaceContext at tools/{name} for every active workspace.
+
+    Called from ToolRegistry Phase 5 after the Context rows are committed.
+    Inner tools have no owner (user_id=NULL in the tool table) so this task
+    fans out across all users and workspaces.
+    """
+    async def _execute():
+        from sqlalchemy import select
+
+        from aiwen.core.enums.workspaces import WorkspaceStatus
+        from aiwen.extensions.database import get_session
+        from aiwen.models.context.context import Context
+        from aiwen.models.context.tools.tool import Tool
+        from aiwen.models.workspaces.workspace import Workspace
+
+        async with get_session("aiwen") as session:
+            tool = await session.get(Tool, tool_id)
+            if not tool:
+                logger.warning(f"sync_inner_tool: tool {tool_id} not found")
+                return
+
+            tool_name = tool.tool_code or tool.name
+            display_name = tool.display_name or tool.name
+            glance = f"{display_name} — {(tool.description or '')[:60]}"
+            input_schema = tool.input_schema or {}
+            full_schema = {
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": tool.description or display_name,
+                    "parameters": input_schema,
+                },
+            }
+            schema_str = json.dumps(full_schema, ensure_ascii=False)
+            tool_tags = list(tool.tags or [])
+
+            # All active workspaces (inner tools are global)
+            ws_result = await session.execute(
+                select(Workspace.id).where(
+                    Workspace.status == WorkspaceStatus.ACTIVE,
+                    Workspace.is_deleted.is_(False),
+                )
+            )
+            all_workspace_ids = [str(row) for row in ws_result.scalars().all()]
+
+            # All Context rows for this inner tool (one per user, created by Phase 5)
+            ctx_result = await session.execute(
+                select(Context.id).where(
+                    Context.context_type == "tool",
+                    Context.source_id == UUID(tool_id),
+                )
+            )
+            ctx_ids = [str(row) for row in ctx_result.scalars().all()]
+
+        # ── 1. Sync WorkspaceContext paths ────────────────────────────────
+        dirty_ids = await _sync_path_to_workspaces(
+            all_workspace_ids,
+            path=f"tools/{_slugify(tool_name)}",
+            glance=glance,
+            overview=tool.description,
+            detail=schema_str,
+            tags=["tool"] + tool_tags,
+            meta={"tool_id": tool_id, "tool_code": tool_name},
+            created_by=None,
+        )
+        await _invalidate_workspace_caches(dirty_ids)
+
+        # ── 2. Generate embedding and store for all per-user Context rows ─
+        embed_text = " ".join(filter(None, [display_name, tool.description, schema_str]))
+        if embed_text.strip() and ctx_ids:
+            vector, field = _generate_embedding(embed_text)
+            async with get_session("aiwen") as session:
+                for ctx_id in ctx_ids:
+                    await _store_embedding(session, ctx_id, vector, field)
+                await session.commit()
+
+        logger.info(
+            f"sync_inner_tool: tool={tool_name} synced {len(dirty_ids)} workspace(s), "
+            f"embedded {len(ctx_ids)} context row(s)"
+        )
+
+    try:
+        run_async(_execute())
+    except Exception as e:
+        logger.error(f"sync_inner_tool failed for {tool_id}: {e}")
+        self.retry(exc=e)
+
+
+@celery_app.task(
+    bind=True,
     name="context_sync.delete_resource_contexts",
     max_retries=3,
     default_retry_delay=30,

@@ -621,6 +621,27 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     "Phase 5 done: created=%d updated=%d (%d tools × %d users)",
                     ctx_created, ctx_updated, len(synced_tools), len(all_users),
                 )
+
+                # ── Dispatch WorkspaceContext sync + embedding generation ──
+                # Phase 5 only writes the Context table rows. The async task
+                # handles: (a) syncing tools/{name} into every WorkspaceContext
+                # and (b) generating embeddings for the Context rows.
+                try:
+                    from aiwen.celery_worker.tasks.context_sync_tasks import (
+                        sync_inner_tool_to_contexts,
+                    )
+                    for tool in synced_tools:
+                        sync_inner_tool_to_contexts.delay(str(tool.id))
+                    self.logger.info(
+                        "Phase 5: dispatched %d sync_inner_tool tasks",
+                        len(synced_tools),
+                    )
+                except Exception as dispatch_err:
+                    self.logger.warning(
+                        "Phase 5: failed to dispatch inner tool context sync tasks: %s",
+                        dispatch_err,
+                    )
+
         except Exception as e:
             self.logger.error(
                 "Phase 5 failed — inner tools not synced to context table: %s",
