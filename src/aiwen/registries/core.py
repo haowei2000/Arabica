@@ -863,7 +863,10 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
     def get_tool_instance(cls, tool_name: str, **kwargs) -> BaseTool | None:  # type: ignore[misc]
         """Get tool instance by name (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
-        return BaseRegistry.get_instance(instance, tool_name, **kwargs)
+        try:
+            return BaseRegistry.get_instance(instance, tool_name, **kwargs)
+        except KeyError:
+            return None
 
     @classmethod
     def get_tool_info(cls, tool_name: str) -> dict | None:  # type: ignore[misc]

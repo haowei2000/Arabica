@@ -735,7 +735,7 @@ class DefaultExecutor(Executor):
             self._pending_tool_ids.discard(tool_id)
             self._pending_user_input = None
 
-        raw_events = filter_events_for_user_msg(self._raw_events_cache or [])
+        raw_events = filter_events_for_user_msg(events)
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -749,9 +749,7 @@ class DefaultExecutor(Executor):
         user messages, agent replies, and all resolved tool calls/results.
         Unresolved TOOL_CALL references are stripped by _strip_orphaned_tool_messages.
         """
-        # TODO: use the passed `events` list directly (same as _on_user_message) instead of
-        #       _raw_events_cache, to stay consistent and avoid stale-cache edge cases.
-        raw_events = filter_events_for_user_msg(self._raw_events_cache or [])
+        raw_events = filter_events_for_user_msg(events)
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -763,13 +761,12 @@ class DefaultExecutor(Executor):
 
         Same full-history approach as ``_on_tool_result``.
         """
-        # TODO: use the passed `events` list directly instead of _raw_events_cache (same as _on_tool_result)
         payload = events[-1].payload or {}
         self._pending_tool_ids.discard(payload.get("tool_id", ""))
         if self._pending_tool_ids:
             return  # Still waiting for other parallel tool results
 
-        raw_events = filter_events_for_user_msg(self._raw_events_cache or [])
+        raw_events = filter_events_for_user_msg(events)
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
