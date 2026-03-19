@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.skill import Skill
 from aiwen.schemas.context.skill import SkillCreate, SkillUpdate
+from aiwen.services.context.context_syncer import ContextSyncer
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ class SkillCRUD:
         else:
             await self.db.flush()
             await self.db.refresh(skill)
+
+        await ContextSyncer(self.db).sync_skill(skill)
 
         logger.info(f"Created skill: {data.name} (id={skill.id}, user={user_id})")
         return skill
@@ -115,6 +118,8 @@ class SkillCRUD:
             await self.db.flush()
             await self.db.refresh(skill)
 
+        await ContextSyncer(self.db).sync_skill(skill)
+
         logger.info(f"Updated skill: {skill.id}")
         return skill
 
@@ -128,6 +133,7 @@ class SkillCRUD:
         if not skill:
             return False
 
+        await ContextSyncer(self.db).remove_skill(skill)
         await self.db.delete(skill)
 
         if auto_commit:

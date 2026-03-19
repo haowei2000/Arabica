@@ -18,6 +18,7 @@ from aiwen.schemas.workspaces.trigger import (
     TriggerResponse,
     TriggerUpdate,
 )
+from aiwen.services.context.context_syncer import ContextSyncer
 
 router = APIRouter(prefix="/triggers", tags=["triggers"])
 
@@ -60,6 +61,7 @@ async def create_user_trigger(
     db.add(trigger)
     await db.commit()
     await db.refresh(trigger)
+    await ContextSyncer(db).sync_trigger(trigger, current_user.id)
     return TriggerResponse.model_validate(trigger)
 
 
@@ -146,6 +148,7 @@ async def update_user_trigger(
         setattr(trigger, field, value)
     await db.commit()
     await db.refresh(trigger)
+    await ContextSyncer(db).sync_trigger(trigger, current_user.id)
     return TriggerResponse.model_validate(trigger)
 
 
@@ -169,5 +172,6 @@ async def delete_user_trigger(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Trigger {trigger_id} not found",
         )
+    await ContextSyncer(db).remove_trigger(trigger, current_user.id)
     await db.delete(trigger)
     await db.commit()

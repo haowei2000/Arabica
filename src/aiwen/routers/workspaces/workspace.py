@@ -23,7 +23,6 @@ from aiwen.models.context.workspace_context import WorkspaceContext
 from aiwen.schemas.auth.user import UserResponse
 from aiwen.schemas.workspaces.workspace import (
     MemberRole,
-    WorkspaceContextConfig,
     WorkspaceCreate,
     WorkspaceListResponse,
     WorkspaceMemberCreate,
@@ -86,23 +85,15 @@ async def create_workspace(
         auto_commit=True,
     )
 
-    if data.context_config and any([
-        data.context_config.tool_ids,
-        data.context_config.knowledge_ids,
-        data.context_config.skill_ids,
-        data.context_config.source_workspace_ids,
-        data.context_config.memory_ids,
-        data.context_config.trigger_ids,
-    ]):
-        from aiwen.services.workspace_context.init_workspace_context import (
-            init_workspace_context,
-        )
-        await init_workspace_context(
-            db=db,
-            workspace_id=workspace.id,
-            user_id=current_user.id,
-            config=data.context_config,
-        )
+    from aiwen.services.workspace_context.init_workspace_context import (
+        init_workspace_context,
+    )
+    await init_workspace_context(
+        db=db,
+        workspace_id=workspace.id,
+        user_id=current_user.id,
+    )
+    await db.commit()
 
     return workspace
 
@@ -579,7 +570,6 @@ async def remove_workspace_context(
 @router.post("/{workspace_id}/context/reinit", status_code=status.HTTP_200_OK)
 async def reinit_workspace_context(
     workspace_id: str,
-    config: WorkspaceContextConfig,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
     db: Annotated[AsyncSession, Depends(get_aiwen_db)],
@@ -587,9 +577,9 @@ async def reinit_workspace_context(
     """
     Re-initialize workspace context.
 
-    Soft-deletes all non-history context entries for the workspace, then
-    repopulates from the supplied config (tools, knowledge, skills, memories).
-    History entries are preserved.
+    Soft-deletes all existing workspace context entries, then repopulates by
+    copying all context entries owned by the current user from the global
+    Context table.
     """
     workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
     if not workspace:
@@ -598,33 +588,31 @@ async def reinit_workspace_context(
             detail=f"Workspace {workspace_id} not found or access denied",
         )
 
-    # Soft-delete all non-history context entries
-    history_prefix = "/long_memory/%"
+    # Soft-delete all existing context entries
     await db.execute(
         sql_update(WorkspaceContext)
         .where(
             and_(
                 WorkspaceContext.workspace_id == UUID(workspace_id),
                 WorkspaceContext.is_deleted == False,  # noqa: E712
-                ~WorkspaceContext.path.like(history_prefix),
             )
         )
         .values(is_deleted=True)
     )
     await db.commit()
 
-    # Re-populate with new config
+    # Re-populate from global Context table
     from aiwen.services.workspace_context.init_workspace_context import (
         init_workspace_context,
     )
 
-    counts = await init_workspace_context(
+    count = await init_workspace_context(
         db=db,
         workspace_id=workspace_id,
         user_id=current_user.id,
-        config=config,
     )
-    return {"success": True, "counts": counts}
+    await db.commit()
+    return {"success": True, "count": count}
 
 
 @router.get(

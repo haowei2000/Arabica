@@ -20,6 +20,7 @@ from aiwen.schemas.workspaces.trigger import (
     TriggerTestResponse,
     TriggerUpdate,
 )
+from aiwen.services.context.context_syncer import ContextSyncer
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/triggers", tags=["triggers"])
 
@@ -72,6 +73,7 @@ async def create_trigger(
     db.add(trigger)
     await db.commit()
     await db.refresh(trigger)
+    await ContextSyncer(db).sync_trigger(trigger, current_user.id)
     return TriggerResponse.model_validate(trigger)
 
 
@@ -199,6 +201,7 @@ async def update_trigger(
 
     await db.commit()
     await db.refresh(trigger)
+    await ContextSyncer(db).sync_trigger(trigger, current_user.id)
     return TriggerResponse.model_validate(trigger)
 
 
@@ -232,6 +235,7 @@ async def delete_trigger(
             detail=f"Trigger {trigger_id} not found",
         )
 
+    await ContextSyncer(db).remove_trigger(trigger, current_user.id)
     await db.delete(trigger)
     await db.commit()
 
