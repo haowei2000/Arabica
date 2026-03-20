@@ -6,12 +6,12 @@ the global ``context`` table always reflects the latest state.
 
 Path conventions
 ----------------
-/tools/{tool_name}                — one entry per external tool
-/skills/{skill_name}              — one entry per skill
-/knowledge/{knowledge_name}       — one entry per knowledge base
-/triggers/{trigger_id}            — one entry per workspace trigger
-/workspaces/{workspace_id}        — one entry per workspace
-/workspaces/{workspace_id}/runs/{run_id}  — one entry per run (optional)
+/tools/{tool_name}                         — one entry per external tool
+/skills/{skill_name}                       — one entry per skill
+/knowledge/{knowledge_name}                — one entry per knowledge base
+/triggers/{trigger_name}                   — one entry per workspace trigger
+/workspaces/{workspace_name}               — one entry per workspace
+/workspaces/{workspace_name}/runs/{run_id[:8]}  — one entry per run (optional)
 
 Key root paths (schema / directory nodes)
 -----------------------------------------
@@ -175,8 +175,8 @@ class ContextSyncer:
     # ──────────────────────────────────────────────────────────────
 
     async def sync_trigger(self, trigger: Any, user_id: str | UUID) -> None:
-        """Upsert a context entry for a WorkspaceTrigger at /triggers/{id}."""
-        path = f"/triggers/{trigger.id}"
+        """Upsert a context entry for a WorkspaceTrigger at /triggers/{name}."""
+        path = f"/triggers/{trigger.name}"
         glance = f"Trigger: {trigger.name}"
         if trigger.description:
             glance += f" — {trigger.description[:50]}"
@@ -207,15 +207,15 @@ class ContextSyncer:
 
     async def remove_trigger(self, trigger: Any, user_id: str | UUID) -> None:
         """Delete the context entry for a WorkspaceTrigger."""
-        await self._delete(str(user_id), f"/triggers/{trigger.id}")
+        await self._delete(str(user_id), f"/triggers/{trigger.name}")
 
     # ──────────────────────────────────────────────────────────────
     # Workspace
     # ──────────────────────────────────────────────────────────────
 
     async def sync_workspace(self, workspace: Any) -> None:
-        """Upsert a context entry for a Workspace at /workspaces/{id}."""
-        path = f"/workspaces/{workspace.id}"
+        """Upsert a context entry for a Workspace at /workspaces/{name}."""
+        path = f"/workspaces/{workspace.name}"
         glance = f"Workspace: {workspace.name}"
         if workspace.description:
             glance += f" — {workspace.description[:60]}"
@@ -242,21 +242,23 @@ class ContextSyncer:
 
     async def remove_workspace(self, workspace: Any) -> None:
         """Delete the context entry for a Workspace."""
-        await self._delete(str(workspace.owner_id), f"/workspaces/{workspace.id}")
+        await self._delete(str(workspace.owner_id), f"/workspaces/{workspace.name}")
 
     # ──────────────────────────────────────────────────────────────
     # Run (lightweight — only glance / status, no heavy content)
     # ──────────────────────────────────────────────────────────────
 
     async def sync_run(self, run: Any) -> None:
-        """Upsert a context entry for a Run at /workspaces/{ws_id}/runs/{run_id}."""
-        path = f"/workspaces/{run.workspace_id}/runs/{run.id}"
-        glance = f"Run {str(run.id)[:8]} [{run.status}]"
+        """Upsert a context entry for a Run at /workspaces/{workspace_name}/runs/{run_id[:8]}."""
+        workspace_name = await self._workspace_name(run.workspace_id)
+        short_id = str(run.id)[:8]
+        path = f"/workspaces/{workspace_name}/runs/{short_id}"
+        glance = f"Run {short_id} [{run.status}]"
 
         parts: list[str] = [
             f"Run ID: {run.id}",
             f"Status: {run.status}",
-            f"Workspace: {run.workspace_id}",
+            f"Workspace: {workspace_name}",
         ]
 
         await self._upsert(
@@ -277,14 +279,23 @@ class ContextSyncer:
 
     async def remove_run(self, run: Any) -> None:
         """Delete the context entry for a Run."""
+        workspace_name = await self._workspace_name(run.workspace_id)
+        short_id = str(run.id)[:8]
         await self._delete(
             str(run.user_id),
-            f"/workspaces/{run.workspace_id}/runs/{run.id}",
+            f"/workspaces/{workspace_name}/runs/{short_id}",
         )
 
     # ──────────────────────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────────────────────
+
+    async def _workspace_name(self, workspace_id: Any) -> str:
+        """Return the workspace name for use in paths, falling back to the raw ID."""
+        from aiwen.models.workspaces.workspace import Workspace
+
+        ws = await self.db.get(Workspace, _uuid(str(workspace_id)))
+        return ws.name if ws else str(workspace_id)
 
     async def _upsert(
         self,

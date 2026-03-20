@@ -24,7 +24,6 @@ _DEFAULT_PROVIDER = "tongyi"
 _DEFAULT_MODEL = "text-embedding-v3"
 _DEFAULT_DIMENSION = 1024
 
-
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
 def _slugify(name: str) -> str:
