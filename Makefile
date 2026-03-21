@@ -23,6 +23,16 @@ help: ## 显示帮助信息
 # 安装和依赖管理
 # ============================================================================
 
+docker-build: ## Build Docker image (backend)
+	docker build -f docker/Dockerfile -t aiwen:latest .
+
+docker-build-frontend: ## Build Docker image (frontend)
+	docker build -f docker/Dockerfile.frontend -t aiwen-frontend:latest .
+
+docker-build-all: ## Build all Docker images (backend + frontend)
+	$(MAKE) docker-build
+	$(MAKE) docker-build-frontend
+
 docker-up: ## 启动 Docker 容器
 	docker compose -f docker/docker-compose.yml --env-file .env up -d
 
