@@ -92,8 +92,6 @@ def _ensure_registered():
     settings = get_settings()
     binds = {}
     binds.update(settings.postgres.aiwen_sqlalchemy_bind)
-    binds.update(settings.postgres.dify_sqlalchemy_bind)
-    binds.update(settings.mysql.mes_sqlalchemy_bind)
 
     for bind_name, url in binds.items():
         register_database(bind_name, url)

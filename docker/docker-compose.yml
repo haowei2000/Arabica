@@ -51,22 +51,14 @@ services:
       # Database Configuration - PostgreSQL
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-aiwen123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
-      POSTGRES__DIFY_DBNAME: ${POSTGRES__DIFY_DBNAME:-dify}
+      POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
+      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-struture}
       POSTGRES__DRIVER: postgresql+asyncpg
-      # Database Configuration - MySQL
-      MYSQL__HOST: mysql
-      MYSQL__PORT: 3306
-      MYSQL__USERNAME: ${MYSQL__USERNAME:-root}
-      MYSQL__PASSWORD: ${MYSQL__PASSWORD:-123456}
-      MYSQL__DBNAME: ${MYSQL__DBNAME:-agent_chat}
-      MYSQL__DRIVER: mysql+asyncmy
       # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
       REDIS__DB: ${REDIS_DB:-1}
       REDIS__USERNAME: ${REDIS__USERNAME:-}
       # Authentication
@@ -75,7 +67,7 @@ services:
       AUTH__ACCESS_TOKEN_EXPIRE_MINUTES: ${AUTH__ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       AUTH__REFRESH_TOKEN_EXPIRE_MINUTES: ${AUTH__REFRESH_TOKEN_EXPIRE_MINUTES:-10080}
       AUTH__ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
-      AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-admin123}
+      AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-123456}
       # External Services
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       OLLAMA__HOST: ollama
@@ -121,21 +113,13 @@ services:
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-aiwen123456}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
       POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
-      POSTGRES__DIFY_DBNAME: ${POSTGRES__DIFY_DBNAME:-dify}
       POSTGRES__DRIVER: postgresql+asyncpg
-      # Database Configuration - MySQL
-      MYSQL__HOST: mysql
-      MYSQL__PORT: 3306
-      MYSQL__USERNAME: ${MYSQL__USERNAME:-root}
-      MYSQL__PASSWORD: ${MYSQL__PASSWORD:-123456}
-      MYSQL__DBNAME: ${MYSQL__DBNAME:-agent_chat}
-      MYSQL__DRIVER: mysql+asyncmy
       # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
       REDIS__DB: ${REDIS_DB:-1}
       REDIS__USERNAME: ${REDIS__USERNAME:-}
     depends_on:
@@ -173,7 +157,7 @@ services:
       <<: *common-env
       REDIS__HOST: redis
       REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
       REDIS__DB: ${REDIS_DB:-1}
     depends_on:
       redis:
@@ -278,9 +262,9 @@ services:
       - ./postgres/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       <<: *common-env
-      POSTGRES_DB: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES_DB: ${POSTGRES__AIWEN_DBNAME:-struture}
       POSTGRES_USER: ${POSTGRES__USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-aiwen123456}
+      POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-123456}
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__AIWEN_DBNAME:-aiwen}"]
@@ -342,7 +326,7 @@ services:
       <<: *common-env
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-redis123}", "--no-auth-warning", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-123456}", "--no-auth-warning", "ping"]
       start_period: 10s
     restart: unless-stopped
     logging: *default-logging
@@ -403,9 +387,9 @@ services:
       - "${REDIS_COMMANDER_PORT:-8081}:8081"
     environment:
       <<: *common-env
-      REDIS_HOSTS: local:redis:6379:0:${REDIS__PASSWORD:-redis123}
+      REDIS_HOSTS: local:redis:6379:0:${REDIS__PASSWORD:-123456}
       HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
-      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin123}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-123456}
     depends_on:
       redis:
         condition: service_healthy

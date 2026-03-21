@@ -6,7 +6,6 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiwen.config.components.auth import AuthConfig
-from aiwen.config.components.mysql import MysqlConfig
 from aiwen.config.components.ollama import OllamaConfig
 from aiwen.config.components.openai import OpenAIConfig
 from aiwen.config.components.postgres import PostgresConfig
@@ -49,10 +48,6 @@ class AppSettings(BaseSettings):
             logging.warning(
                 "PostgreSQL configuration is not set. Database features may not work properly."
             )
-        if not self.mysql:
-            logging.warning(
-                "MySQL configuration is not set. Database features may not work properly."
-            )
         if not self.redis:
             logging.warning(
                 "Redis configuration is not set. Cache features may not work properly."
@@ -63,7 +58,6 @@ class AppSettings(BaseSettings):
             )
 
     postgres: PostgresConfig
-    mysql: MysqlConfig
     redis: RedisConfig
     auth: AuthConfig
     ollama: OllamaConfig | None = None
