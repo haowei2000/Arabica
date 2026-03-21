@@ -87,28 +87,46 @@ async def _sync_path_to_workspaces(
     created_by: str | None = None,
 ) -> list[str]:
     """Write a WorkspaceContext entry at *path* for each workspace; return dirty IDs."""
+    from sqlalchemy import select
+
     from aiwen.extensions.database import get_session
-    from aiwen.services.workspace_context.workspace_context_service import (
-        WorkspaceContextService,
-    )
+    from aiwen.models.context.workspace_context import WorkspaceContext
 
     dirty: list[str] = []
     for ws_id in workspace_ids:
         try:
             async with get_session("aiwen") as session:
-                svc = WorkspaceContextService(session, ws_id)
-                kwargs: dict = {}
-                if created_by:
-                    kwargs["created_by"] = created_by
-                await svc.set(
-                    path=path,
-                    glance=glance,
-                    overview=overview,
-                    detail=detail,
-                    tags=tags,
-                    meta=meta,
-                    **kwargs,
+                result = await session.execute(
+                    select(WorkspaceContext).where(
+                        WorkspaceContext.workspace_id == UUID(ws_id),
+                        WorkspaceContext.path == path,
+                        WorkspaceContext.is_deleted.is_(False),
+                    )
                 )
+                ctx = result.scalar_one_or_none()
+                name = path.rsplit("/", 1)[-1] if path else "unnamed"
+                if ctx is None:
+                    ctx = WorkspaceContext(
+                        workspace_id=UUID(ws_id),
+                        path=path,
+                        name=name,
+                        glance=glance,
+                        summary=overview,
+                        content=detail,
+                        tags=tags,
+                        meta=meta,
+                        created_by=UUID(created_by) if created_by else None,
+                    )
+                    session.add(ctx)
+                else:
+                    ctx.glance = glance
+                    ctx.summary = overview
+                    ctx.content = detail
+                    ctx.tags = tags
+                    ctx.meta = meta
+                    if created_by:
+                        ctx.created_by = UUID(created_by)
+                await session.commit()
             dirty.append(ws_id)
         except Exception as exc:
             logger.warning(f"_sync_path_to_workspaces: failed for workspace {ws_id} path={path}: {exc}")
