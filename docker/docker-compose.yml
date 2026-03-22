@@ -84,8 +84,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -248,7 +246,7 @@ services:
     environment:
       <<: *common-env
     depends_on:
-      aiwen-app:
+      app:
         condition: service_started
     healthcheck:
       <<: *healthcheck-defaults

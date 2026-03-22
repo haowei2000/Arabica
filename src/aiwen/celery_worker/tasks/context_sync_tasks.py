@@ -1,12 +1,13 @@
-"""Celery tasks for syncing resource changes to Context + WorkspaceContext tables.
+"""Celery tasks for syncing resource changes to the Context table.
 
 When a knowledge base, skill, tool, or memory is created or updated, these tasks:
-1. Upsert a representative entry in the Context table.
+1. Upsert a representative entry in the Context table (scope=USER).
 2. Generate an embedding for the Context row and store it in the Context table.
-3. Update all WorkspaceContext rows that reference the resource via meta fields.
+3. Update all workspace-scoped Context rows (scope=WORKSPACE) that reference
+   the resource via meta fields.
 
 All vector embeddings live exclusively in the Context table — subsystem models
-(Skill, Tool, Knowledge, WorkspaceContext) do not store embeddings.
+(Skill, Tool, Knowledge) do not store embeddings.
 """
 
 import json
@@ -16,6 +17,12 @@ from uuid import UUID, uuid4
 
 from aiwen.celery_worker.celery_app import celery_app
 from aiwen.celery_worker.tasks.knowledge_tasks import run_async
+from aiwen.celery_worker.tasks.workspace_context_sync import (
+    _get_user_workspace_ids,
+    _invalidate_workspace_caches,
+    _sync_path_to_workspaces,
+    _update_workspace_contexts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,104 +40,6 @@ def _slugify(name: str) -> str:
     slug = re.sub(r"[\s\-]+", "_", slug)
     return slug or "unnamed"
 
-
-async def _invalidate_workspace_caches(ws_ids: list[str]) -> None:
-    """Set Redis dirty-flags for the given workspace IDs so in-memory caches refresh."""
-    if not ws_ids:
-        return
-    try:
-        import redis.asyncio as redis_async
-
-        from aiwen.config.factory import get_settings
-
-        cfg = get_settings().redis
-        auth = f":{cfg.password}@" if cfg.password else ""
-        r = redis_async.from_url(
-            f"redis://{auth}{cfg.host}:{cfg.port}/{cfg.db}",
-            decode_responses=True,
-        )
-        async with r.pipeline(transaction=False) as pipe:
-            for ws_id in ws_ids:
-                pipe.setex(f"workspace_context_dirty:{ws_id}", 600, "1")
-            await pipe.execute()
-        await r.aclose()
-    except Exception as exc:
-        logger.warning(f"_invalidate_workspace_caches: failed to set dirty flags: {exc}")
-
-
-async def _get_user_workspace_ids(session, user_id: str) -> list[str]:
-    """Return all active workspace IDs owned by *user_id*."""
-    from sqlalchemy import select
-
-    from aiwen.core.enums.workspaces import WorkspaceStatus
-    from aiwen.models.workspaces.workspace import Workspace
-
-    result = await session.execute(
-        select(Workspace).where(
-            Workspace.owner_id == UUID(user_id),
-            Workspace.status == WorkspaceStatus.ACTIVE,
-            Workspace.is_deleted.is_(False),
-        )
-    )
-    return [str(ws.id) for ws in result.scalars().all()]
-
-
-async def _sync_path_to_workspaces(
-    workspace_ids: list[str],
-    *,
-    path: str,
-    glance: str,
-    overview: str | None,
-    detail: str | None,
-    tags: list[str],
-    meta: dict,
-    created_by: str | None = None,
-) -> list[str]:
-    """Write a WorkspaceContext entry at *path* for each workspace; return dirty IDs."""
-    from sqlalchemy import select
-
-    from aiwen.extensions.database import get_session
-    from aiwen.models.context.workspace_context import WorkspaceContext
-
-    dirty: list[str] = []
-    for ws_id in workspace_ids:
-        try:
-            async with get_session("aiwen") as session:
-                result = await session.execute(
-                    select(WorkspaceContext).where(
-                        WorkspaceContext.workspace_id == UUID(ws_id),
-                        WorkspaceContext.path == path,
-                        WorkspaceContext.is_deleted.is_(False),
-                    )
-                )
-                ctx = result.scalar_one_or_none()
-                name = path.rsplit("/", 1)[-1] if path else "unnamed"
-                if ctx is None:
-                    ctx = WorkspaceContext(
-                        workspace_id=UUID(ws_id),
-                        path=path,
-                        name=name,
-                        glance=glance,
-                        summary=overview,
-                        content=detail,
-                        tags=tags,
-                        meta=meta,
-                        created_by=UUID(created_by) if created_by else None,
-                    )
-                    session.add(ctx)
-                else:
-                    ctx.glance = glance
-                    ctx.summary = overview
-                    ctx.content = detail
-                    ctx.tags = tags
-                    ctx.meta = meta
-                    if created_by:
-                        ctx.created_by = UUID(created_by)
-                await session.commit()
-            dirty.append(ws_id)
-        except Exception as exc:
-            logger.warning(f"_sync_path_to_workspaces: failed for workspace {ws_id} path={path}: {exc}")
-    return dirty
 
 async def _upsert_context(session, *, user_id: str, context_type: str, source_id: str,
                            name: str, glance: str | None, summary: str | None,
@@ -181,30 +90,6 @@ async def _upsert_context(session, *, user_id: str, context_type: str, source_id
         session.add(ctx)
 
     return ctx
-
-
-async def _update_workspace_contexts(session, *, meta_key: str, resource_id: str,
-                                      glance: str | None, summary: str | None,
-                                      content: str | None = None):
-    """Update all WorkspaceContext rows whose meta[meta_key] == resource_id."""
-    from sqlalchemy import select
-
-    from aiwen.models.context.workspace_context import WorkspaceContext
-
-    stmt = select(WorkspaceContext).where(
-        WorkspaceContext.is_deleted.is_(False),
-        WorkspaceContext.meta[meta_key].astext == resource_id,
-    )
-    result = await session.execute(stmt)
-    rows = result.scalars().all()
-
-    for row in rows:
-        row.glance = glance
-        row.summary = summary
-        if content is not None:
-            row.content = content
-
-    return len(rows)
 
 
 def _generate_embedding(text: str, *,
@@ -617,51 +502,52 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
     queue="default",
 )
 def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key: str):
-    """Delete Context and WorkspaceContext entries for a removed resource.
+    """Delete Context entries (user-scoped and workspace-scoped) for a removed resource.
 
     Args:
         resource_id: UUID string of the deleted skill / tool / knowledge.
         context_type: Value stored in Context.context_type (e.g. "SKILL", "tool", "knowledge").
-        meta_key: JSON meta field used to locate WorkspaceContext rows (e.g. "skill_id").
+        meta_key: JSON meta field used to locate workspace-scoped Context rows (e.g. "skill_id").
     """
     async def _execute():
-        from sqlalchemy import delete, select
+        from sqlalchemy import select
 
+        from aiwen.core.enums.context import ContextScope
         from aiwen.extensions.database import get_session
         from aiwen.models.context.context import Context
-        from aiwen.models.context.workspace_context import WorkspaceContext
 
         async with get_session("aiwen") as session:
-            # Delete global Context rows
+            # Delete user-scoped Context rows
             ctx_result = await session.execute(
                 select(Context).where(
                     Context.source_id == UUID(resource_id),
                     Context.context_type == context_type,
+                    Context.scope == ContextScope.USER,
                 )
             )
             ctx_rows = ctx_result.scalars().all()
             for ctx in ctx_rows:
                 await session.delete(ctx)
 
-            # Soft-delete WorkspaceContext rows that reference this resource
+            # Delete workspace-scoped Context rows that reference this resource
             wc_result = await session.execute(
-                select(WorkspaceContext).where(
-                    WorkspaceContext.is_deleted.is_(False),
-                    WorkspaceContext.meta[meta_key].astext == resource_id,
+                select(Context).where(
+                    Context.scope == ContextScope.WORKSPACE,
+                    Context.meta[meta_key].astext == resource_id,
                 )
             )
             wc_rows = wc_result.scalars().all()
+            dirty_ids = list({str(row.meta.get("workspace_id")) for row in wc_rows if row.meta})
             for row in wc_rows:
-                row.is_deleted = True
+                await session.delete(row)
 
             await session.commit()
 
-        dirty_ids = list({str(row.workspace_id) for row in wc_rows})
         await _invalidate_workspace_caches(dirty_ids)
 
         logger.info(
-            f"delete_resource_contexts: removed {len(ctx_rows)} Context row(s) and "
-            f"soft-deleted {len(wc_rows)} WorkspaceContext row(s) for {context_type}/{resource_id}"
+            f"delete_resource_contexts: removed {len(ctx_rows)} user Context row(s) and "
+            f"{len(wc_rows)} workspace Context row(s) for {context_type}/{resource_id}"
         )
 
     try:

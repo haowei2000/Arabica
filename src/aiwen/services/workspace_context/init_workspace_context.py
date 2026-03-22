@@ -1,13 +1,12 @@
-"""Initialize workspace context by copying from the global Context table.
+"""Initialize workspace context by creating Context entries scoped to a workspace.
 
-On workspace creation, call ``init_workspace_context`` to snapshot all
-context entries owned by the workspace owner into the WorkspaceContext table.
+On workspace creation, call ``init_workspace_context`` to copy all global
+Context entries owned by the workspace owner into new workspace-scoped
+Context entries (identified by ``source_id == workspace_id``).
 
 The global Context table is the single source of truth — it is kept up to
 date automatically by ContextSyncer whenever tools, skills, knowledge bases,
 triggers, or workspaces are created / updated / deleted.
-
-WorkspaceContext is a lightweight snapshot taken once at workspace creation.
 """
 
 from __future__ import annotations
@@ -19,8 +18,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.core.enums.context import ContextScope, ContextType
 from aiwen.models.context.context import Context
-from aiwen.models.context.workspace_context import WorkspaceContext
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,10 @@ async def init_workspace_context(
     workspace_id: str | UUID,
     user_id: str | UUID,
 ) -> int:
-    """Copy all context entries for *user_id* into the WorkspaceContext table.
+    """Copy all context entries for *user_id* into workspace-scoped Context entries.
+
+    Each copied entry is linked to the workspace via ``source_id = workspace_id``
+    and assigned ``scope = ContextScope.WORKSPACE``.
 
     Args:
         db: Database session.
@@ -40,30 +42,35 @@ async def init_workspace_context(
     Returns:
         Number of context entries copied.
     """
-    workspace_id_str = str(workspace_id)
+    workspace_uuid = UUID(str(workspace_id))
     user_uuid = UUID(str(user_id))
 
-    # Fetch all context entries owned by this user
+    # Fetch all user-scoped context entries owned by this user
     result = await db.execute(
-        select(Context).where(Context.user_id == user_uuid).order_by(Context.path)
+        select(Context)
+        .where(
+            Context.user_id == user_uuid,
+            Context.scope == ContextScope.USER,
+        )
+        .order_by(Context.path)
     )
     contexts = result.scalars().all()
 
     count = 0
     for ctx in contexts:
-        # Normalise path — workspace_context paths don't carry the leading /
         raw_path = ctx.path or str(ctx.id)
         path = "/" + raw_path.lstrip("/")
 
-        # Serialize overview (summary) to string if it looks like JSON
         summary_str = ctx.summary
         if isinstance(summary_str, dict):
             summary_str = json.dumps(summary_str, ensure_ascii=False)
 
-        wc = WorkspaceContext(
-            workspace_id=workspace_id_str,
+        entry = Context(
+            user_id=user_uuid,
+            source_id=workspace_uuid,
+            scope=ContextScope.WORKSPACE,
             path=path,
-            name=ctx.glance or raw_path.rsplit("/", 1)[-1],
+            context_type=ctx.context_type,
             glance=ctx.glance,
             summary=summary_str,
             content=ctx.content,
@@ -71,13 +78,10 @@ async def init_workspace_context(
             meta={
                 **(ctx.meta or {}),
                 "source_context_id": str(ctx.id),
-                "context_type": ctx.context_type,
-                "source_id": str(ctx.source_id) if ctx.source_id else None,
+                "workspace_id": str(workspace_uuid),
             },
-            created_by=user_uuid,
-            content_type="text/plain",
         )
-        db.add(wc)
+        db.add(entry)
         count += 1
 
     if count:
@@ -85,8 +89,10 @@ async def init_workspace_context(
 
     logger.info(
         "init_workspace_context: workspace=%s user=%s copied=%d",
-        workspace_id_str,
+        str(workspace_uuid),
         user_id,
         count,
     )
     return count
+
+

@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aiwen.core.enums import ContextType
+from aiwen.core.enums.context import ContextScope
 from aiwen.extensions.database import get_base
 
 Base = get_base("aiwen")
@@ -57,6 +58,14 @@ class Context(Base):  # ty:ignore[unsupported-base]
     # S3 object key for retrieving the actual content
     s3_key: Mapped[str | None] = mapped_column(
         String(1024), nullable=True, comment="S3对象键，用于获取上下文的实际内容"
+    )
+
+    # Visibility scope
+    scope: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=ContextScope.USER.value,
+        comment="可见范围: user（仅自己）/ workspace（工作空间）/ global（全局）",
     )
 
     # ContextSchema type
@@ -139,6 +148,8 @@ class Context(Base):  # ty:ignore[unsupported-base]
     # Indexes for vector similarity search and path queries
     __table_args__ = (
         Index("ix_context_user_id", "user_id"),
+        Index("ix_context_scope", "scope"),
+        Index("ix_context_user_scope", "user_id", "scope"),  # Composite for scope-filtered queries
         Index("ix_context_type", "context_type"),
         Index("ix_context_path", "path"),  # For prefix queries (e.g., path LIKE 'prefix%')
         Index("ix_context_user_path", "user_id", "path"),  # Composite for user-scoped queries

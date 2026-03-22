@@ -26,6 +26,7 @@ from aiwen.extensions.logger import setup_logging
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
 from aiwen.models.auth.tenant import Tenant
 from aiwen.models.auth.user import User
+from aiwen.services.context.init_sys_context import ensure_default_context_paths
 from aiwen.utils.security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,9 @@ class BootstrapConfig:
 
     # Whether to initialize storage
     init_storage: bool = True
+
+    # Whether to seed default context paths in all workspaces (API only)
+    init_context_paths: bool = False
 
 
 async def _initialize_databases() -> None:
@@ -180,6 +184,19 @@ async def _initialize_registries() -> None:
         # Don't raise exception, allow app to continue
 
 
+async def _initialize_default_context_paths() -> None:
+    """Ensure all workspaces have the default context path skeleton.
+
+    Runs at API startup — idempotent, safe to call repeatedly.
+    """
+    logger.info("Seeding default context paths...")
+    try:
+        async with get_session("aiwen") as session:
+            await ensure_default_context_paths(db=session)
+    except Exception as e:
+        logger.error("Default context path seeding failed: %s", e, exc_info=True)
+
+
 class ApplicationBootstrap:
     """Application Initialization Manager (v2)"""
 
@@ -234,6 +251,10 @@ class ApplicationBootstrap:
         # Step 7: Storage backend
         if self.config.init_storage:
             await self._init_storage_backend()
+
+        # Step 8: Seed default context paths in all workspaces (API only)
+        if self.config.init_context_paths:
+            await _initialize_default_context_paths()
 
         logger.info("=" * 60)
         logger.info("✅ Application initialization completed (v2)")
@@ -393,6 +414,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         create_admin_user=True,  # API creates users
         init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
+        init_context_paths=True,  # Seed default context paths in all workspaces
     )
 
 
