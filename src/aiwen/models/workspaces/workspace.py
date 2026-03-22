@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -51,6 +51,11 @@ class Workspace(Base):
     )
     description: Mapped[str | None] = mapped_column(
         String(1000), nullable=True, comment="工作空间描述"
+    )
+
+    # LLM-generated summary (populated by summarize_workspace Celery task)
+    summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="LLM生成的工作空间摘要"
     )
 
     # Ownership

@@ -44,10 +44,13 @@ def _slugify(name: str) -> str:
 async def _upsert_context(session, *, user_id: str, context_type: str, source_id: str,
                            name: str, glance: str | None, summary: str | None,
                            content: str | None, tags: list[str] | None = None,
-                           meta: dict | None = None):
+                           meta: dict | None = None) -> tuple:
     """Create or update a Context row identified by (source_id, context_type, user_id).
 
-    Returns the Context instance (not yet committed).
+    Returns ``(ctx, needs_embedding)`` where ``needs_embedding`` is True only
+    when the row is newly created or its ``content`` field has changed.
+    Embeddings are cleared only in those cases to avoid redundant re-embedding
+    on metadata-only updates (glance, summary, tags, meta).
     """
     from sqlalchemy import select
 
@@ -64,17 +67,23 @@ async def _upsert_context(session, *, user_id: str, context_type: str, source_id
     ctx = result.scalar_one_or_none()
 
     if ctx:
+        new_content = content or ctx.content
+        content_changed = new_content != ctx.content
+
         ctx.glance = glance
         ctx.summary = summary
-        ctx.content = content or ctx.content
+        ctx.content = new_content
         if tags is not None:
             ctx.tags = tags
         ctx.meta = {**(ctx.meta or {}), **merged_meta}
-        # Clear the embedding so it gets regenerated below
-        ctx.embedding_384 = None
-        ctx.embedding_768 = None
-        ctx.embedding_1024 = None
-        ctx.embedding_1536 = None
+
+        if content_changed:
+            ctx.embedding_384 = None
+            ctx.embedding_768 = None
+            ctx.embedding_1024 = None
+            ctx.embedding_1536 = None
+
+        return ctx, content_changed
     else:
         ctx = Context(
             id=uuid4(),
@@ -88,8 +97,7 @@ async def _upsert_context(session, *, user_id: str, context_type: str, source_id
             meta=merged_meta,
         )
         session.add(ctx)
-
-    return ctx
+        return ctx, True
 
 
 def _generate_embedding(text: str, *,
@@ -144,7 +152,7 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
             kb_description = kb.description
             kb_tags = list(kb.tags or []) if hasattr(kb, "tags") else []
 
-            ctx = await _upsert_context(
+            ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="knowledge",
@@ -191,13 +199,15 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
             f"at '{path}' for knowledge {knowledge_id}"
         )
 
-        # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
-        if embed_text.strip():
+        # ── 3. Generate embedding only when content changed ────────────────
+        if needs_embedding and embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_knowledge: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_knowledge: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())
@@ -228,7 +238,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
 
             glance = skill.glance or (skill.description[:80] if skill.description else skill.name)
 
-            ctx = await _upsert_context(
+            ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="SKILL",
@@ -279,13 +289,15 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str):
             f"+ synced to {len(dirty_ids)} workspace(s) at '{path}' for skill {skill_id}"
         )
 
-        # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
-        if embed_text.strip():
+        # ── 3. Generate embedding only when content changed ────────────────
+        if needs_embedding and embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_skill: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_skill: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())
@@ -333,7 +345,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             }
             schema_str = json.dumps(full_schema, ensure_ascii=False)
 
-            ctx = await _upsert_context(
+            ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="tool",
@@ -381,13 +393,15 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             f"at '{path}' for tool {tool_id}"
         )
 
-        # ── 3. Generate embedding (outside session, blocking HTTP) ─────────
-        if embed_text.strip():
+        # ── 3. Generate embedding only when content changed ────────────────
+        if needs_embedding and embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_tool: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_tool: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())
@@ -586,11 +600,13 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):
                 mem.content[:80] if mem.content else "Memory"
             )
 
-            # Clear stale embedding so it gets regenerated
-            mem.embedding_384 = None
-            mem.embedding_768 = None
-            mem.embedding_1024 = None
-            mem.embedding_1536 = None
+            # Only clear and regenerate if no embedding exists yet
+            needs_embedding = mem.embedding_1024 is None
+            if needs_embedding:
+                mem.embedding_384 = None
+                mem.embedding_768 = None
+                mem.embedding_1024 = None
+                mem.embedding_1536 = None
 
             count = await _update_workspace_contexts(
                 session,
@@ -605,17 +621,18 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):
             await session.commit()
 
         logger.info(
-            f"sync_memory: cleared embedding + updated {count} WorkspaceContext(s) "
-            f"for memory {memory_id}"
+            f"sync_memory: updated {count} WorkspaceContext(s) for memory {memory_id}"
         )
 
-        # ── 2. Generate embedding (outside session, blocking HTTP) ─────────
-        if embed_text.strip():
+        # ── 2. Generate embedding only when missing ────────────────────────
+        if needs_embedding and embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
                 await _store_embedding(session, memory_id, vector, field)
                 await session.commit()
             logger.info(f"sync_memory: embedded Context {memory_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_memory: embedding already present, skipped {memory_id}")
 
     try:
         run_async(_execute())
@@ -654,7 +671,7 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
 
             content = "\n".join(filter(None, [ws.name, ws.description]))
 
-            ctx = await _upsert_context(
+            ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="workspace",
@@ -678,12 +695,14 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
 
         logger.info(f"sync_workspace: upserted Context for workspace {workspace_id}")
 
-        if content.strip():
+        if needs_embedding and content.strip():
             vector, field = _generate_embedding(content)
             async with get_session("aiwen") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_workspace: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_workspace: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())
@@ -734,7 +753,7 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
                 parts.append(f"Assistant: {output_msg}")
             content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
 
-            ctx = await _upsert_context(
+            ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="run",
@@ -759,12 +778,14 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
 
         logger.info(f"sync_run: upserted Context for run {run_id} ({run.status})")
 
-        if content.strip():
+        if needs_embedding and content.strip():
             vector, field = _generate_embedding(content[:2000])
             async with get_session("aiwen") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_run: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_run: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())
@@ -820,7 +841,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
             summary = f"{events[0].event_type} → {events[-1].event_type} ({len(events)} events)"
             workspace_id = str(events[0].workspace_id)
 
-            ctx = await _upsert_context(
+            ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
                 context_type="run_events",
@@ -846,12 +867,14 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
         )
 
         embed_text = content[:2000]  # cap to avoid oversized embedding inputs
-        if embed_text.strip():
+        if needs_embedding and embed_text.strip():
             vector, field = _generate_embedding(embed_text)
             async with get_session("aiwen") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_run_events: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_run_events: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())

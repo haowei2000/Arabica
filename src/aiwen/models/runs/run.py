@@ -96,6 +96,14 @@ class Run(Base):
         JSONB, comment="最终输出数据"
     )
 
+    # LLM-generated title and summary (populated by summarize_run Celery task)
+    title: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="LLM生成的标题"
+    )
+    summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="LLM生成的摘要"
+    )
+
     # Error information
     error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="错误消息")
     error_code: Mapped[str | None] = mapped_column(

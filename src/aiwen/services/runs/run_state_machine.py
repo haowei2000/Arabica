@@ -187,12 +187,14 @@ class RunStateMachine:
                     sync_run_events_to_context,
                     sync_run_to_contexts,
                 )
+                from aiwen.celery_worker.tasks.summarize_tasks import summarize_run
 
                 user_id = str(run.user_id)
                 sync_run_to_contexts.delay(run_id_str, user_id)
                 sync_run_events_to_context.delay(run_id_str, user_id)
+                summarize_run.delay(run_id_str, user_id)
                 logger.debug(
-                    f"Dispatched context sync tasks for terminal run {run_id_str} ({target_state_str})"
+                    f"Dispatched context sync and summarize tasks for terminal run {run_id_str} ({target_state_str})"
                 )
             except Exception as celery_err:
                 logger.warning(

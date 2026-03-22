@@ -220,9 +220,13 @@ class ContextSyncer:
         if workspace.description:
             glance += f" — {workspace.description[:60]}"
 
+        ws_summary = getattr(workspace, "summary", None)
+
         parts: list[str] = [f"Workspace: {workspace.name}"]
         if workspace.description:
             parts.append(f"Description: {workspace.description}")
+        if ws_summary:
+            parts.append(f"Summary: {ws_summary}")
 
         await self._upsert(
             user_id=str(workspace.owner_id),
@@ -230,7 +234,7 @@ class ContextSyncer:
             source_id=str(workspace.id),
             context_type=ContextType.WORKSPACE,
             glance=glance,
-            summary=workspace.description,
+            summary=ws_summary or workspace.description,
             content="\n".join(parts),
             tags=["workspace"],
             meta={
@@ -253,13 +257,20 @@ class ContextSyncer:
         workspace_name = await self._workspace_name(run.workspace_id)
         short_id = str(run.id)[:8]
         path = f"/workspaces/{workspace_name}/runs/{short_id}"
-        glance = f"Run {short_id} [{run.status}]"
+
+        title = getattr(run, "title", None)
+        run_summary = getattr(run, "summary", None)
+        glance = title or f"Run {short_id} [{run.status}]"
 
         parts: list[str] = [
             f"Run ID: {run.id}",
             f"Status: {run.status}",
             f"Workspace: {workspace_name}",
         ]
+        if title:
+            parts.insert(0, f"Title: {title}")
+        if run_summary:
+            parts.append(f"Summary: {run_summary}")
 
         await self._upsert(
             user_id=str(run.user_id),
@@ -267,7 +278,7 @@ class ContextSyncer:
             source_id=str(run.id),
             context_type=ContextType.RUN,
             glance=glance,
-            summary=None,
+            summary=run_summary,
             content="\n".join(parts),
             tags=["run", run.status],
             meta={
