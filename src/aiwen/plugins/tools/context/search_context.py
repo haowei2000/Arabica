@@ -142,8 +142,6 @@ class SearchContextTool(InnerTool):
                             "created_at": ctx.created_at.isoformat()
                             if ctx.created_at
                             else None,
-                            "summary": ctx.summary,
-                            "keywords": ctx.keywords,
                             "importance": ctx.importance,
                             "match_count": len(context_matches),
                             "matches": context_matches,

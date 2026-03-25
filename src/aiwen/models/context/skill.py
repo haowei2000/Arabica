@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any  # kept for JSONB columns
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Index, String, Text
+from sqlalchemy import DateTime, Index, String
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -26,13 +26,7 @@ class Skill(Base):  # ty:ignore[unsupported-base]
     user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    glance: Mapped[str | None] = mapped_column(Text, nullable=True)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    path: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    source_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     tags: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

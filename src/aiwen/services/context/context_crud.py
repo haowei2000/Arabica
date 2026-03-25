@@ -342,25 +342,9 @@ class ContextCRUD:
         if case_sensitive:
             if "content" in search_in:
                 search_conditions.append(Context.content.like(search_pattern))
-            if "summary" in search_in:
-                search_conditions.append(Context.summary.like(search_pattern))
-            if "keywords" in search_in:
-                # Search in JSONB array using PostgreSQL contains
-                search_conditions.append(
-                    Context.keywords.cast(text("text")).like(search_pattern)
-                )
         else:
             if "content" in search_in:
                 search_conditions.append(Context.content.ilike(search_pattern))
-            if "summary" in search_in:
-                search_conditions.append(Context.summary.ilike(search_pattern))
-            if "keywords" in search_in:
-                # Case insensitive search in JSONB array
-                search_conditions.append(
-                    func.lower(Context.keywords.cast(text("text"))).like(
-                        f"%{query.lower()}%"
-                    )
-                )
 
         if search_conditions:
             conditions.append(or_(*search_conditions))

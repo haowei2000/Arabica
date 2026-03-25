@@ -26,7 +26,11 @@ celery_app.conf.update(
     # Task discovery
     imports=[
         "aiwen.celery_worker.tasks.knowledge_tasks",
-        "aiwen.celery_worker.tasks.context_sync_tasks",
+        "aiwen.celery_worker.tasks.context_sync.sync_knowledge",
+        "aiwen.celery_worker.tasks.context_sync.sync_skill",
+        "aiwen.celery_worker.tasks.context_sync.sync_tool",
+        "aiwen.celery_worker.tasks.context_sync.sync_memory",
+        "aiwen.celery_worker.tasks.context_sync.sync_run",
         "aiwen.celery_worker.tasks.background_tasks",
     ],
 )

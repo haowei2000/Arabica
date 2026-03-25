@@ -82,11 +82,6 @@ class Context(Base):  # ty:ignore[unsupported-base]
         String(512), nullable=True, comment="一句话摘要（扫描层，快速浏览用）"
     )
 
-    # Layer 2: Overview - structured summary
-    summary: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="概览摘要（概览层，结构化数据）"
-    )
-
     # Layer 3: Detail - full content
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="完整内容（详情层）")
 
@@ -95,10 +90,6 @@ class Context(Base):  # ty:ignore[unsupported-base]
         JSONB, nullable=True, comment="标签列表，用于分类和过滤"
     )
 
-    # Keywords for search (deprecated in favor of tags, kept for backward compatibility)
-    keywords: Mapped[list[str] | None] = mapped_column(
-        JSONB, nullable=True, comment="关键词（已弃用，请使用 tags）"
-    )
     # Vector embedding_1536 for similarity search
     embedding_384: Mapped[list[float] | None] = mapped_column(
         Vector(384),  # 轻量级模型维度，如 MiniLM / E5-small / bge-small
@@ -204,8 +195,6 @@ class Context(Base):  # ty:ignore[unsupported-base]
         # Level 1: Glance - quick scan
         if self.glance:
             result["glance"] = self.glance
-        elif self.summary:
-            result["glance"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
         else:
             result["glance"] = self.content[:50] + "..." if len(self.content) > 50 else self.content
 
@@ -214,8 +203,6 @@ class Context(Base):  # ty:ignore[unsupported-base]
 
         # Level 2: Overview - structured summary
         if level in ("overview", "detail"):
-            if self.summary:
-                result["overview"] = self.summary
             if self.tags:
                 result["tags"] = self.tags
 
@@ -230,8 +217,6 @@ class Context(Base):  # ty:ignore[unsupported-base]
             result["importance"] = self.importance
             if self.s3_key:
                 result["s3_key"] = self.s3_key
-            if self.keywords:
-                result["keywords"] = self.keywords
 
         return result
 

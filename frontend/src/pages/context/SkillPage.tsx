@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle } from 'lucide-react';
-import { useSkills, useCreateSkill, useUpdateSkill, useDeleteSkill, useUploadSkillFolder } from '@/hooks/useSkills';
+import { useSkills, useUpdateSkill, useDeleteSkill, useUploadSkillFolder } from '@/hooks/useSkills';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,7 +11,7 @@ import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
-import type { SkillCreate, Skill } from '@/types/skill';
+import type { SkillUpdate, Skill } from '@/types/skill';
 
 // Parse YAML frontmatter from SKILL.md content
 function parseFrontmatter(content: string): { name?: string; description?: string; tags?: string[] } {
@@ -36,14 +36,115 @@ function parseFrontmatter(content: string): { name?: string; description?: strin
   return result;
 }
 
-const INITIAL_FORM: SkillCreate = { name: '', description: '', content: '', tags: [] };
+// ── File tree helpers ──────────────────────────────────────────────────────
+
+interface TreeNode {
+  name: string;
+  /** Full webkitRelativePath value, matching folderPaths entries. */
+  fullPath: string;
+  isDir: boolean;
+  children: TreeNode[];
+}
+
+function buildFileTree(paths: string[]): TreeNode[] {
+  const rootChildren: TreeNode[] = [];
+  for (const path of paths) {
+    const parts = path.split('/');
+    let cur = rootChildren;
+    for (let i = 1; i < parts.length; i++) {
+      const isLast = i === parts.length - 1;
+      const name = parts[i];
+      const fullPath = parts.slice(0, i + 1).join('/');
+      let node = cur.find((n) => n.name === name);
+      if (!node) {
+        node = { name, fullPath, isDir: !isLast, children: [] };
+        cur.push(node);
+      }
+      if (!isLast) cur = node.children;
+    }
+  }
+  return rootChildren;
+}
+
+function getLeafPaths(node: TreeNode): string[] {
+  if (!node.isDir) return [node.fullPath];
+  return node.children.flatMap(getLeafPaths);
+}
+
+function IndeterminateCheckbox({
+  checked, indeterminate, onChange, disabled,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      className="size-3 rounded cursor-pointer disabled:cursor-default accent-primary shrink-0"
+    />
+  );
+}
+
+function FileTreeNode({
+  node, selected, onToggleFile, onToggleDir, level = 0,
+}: {
+  node: TreeNode;
+  selected: Set<string>;
+  onToggleFile: (path: string) => void;
+  onToggleDir: (leafPaths: string[], allSelected: boolean) => void;
+  level?: number;
+}) {
+  const pl = level * 14;
+  if (!node.isDir) {
+    const isMain = node.name.toUpperCase() === 'SKILL.MD';
+    const checked = isMain || selected.has(node.fullPath);
+    return (
+      <div style={{ paddingLeft: pl }} className="flex items-center gap-1.5 py-[3px] group">
+        <IndeterminateCheckbox checked={checked} disabled={isMain} onChange={() => onToggleFile(node.fullPath)} />
+        <span className={cn('text-[11px] font-mono', isMain ? 'text-foreground font-semibold' : 'text-muted-foreground group-hover:text-foreground transition-colors')}>
+          {node.name}
+          {isMain && <span className="ml-1.5 text-[9px] bg-primary/10 text-primary px-1 rounded">main</span>}
+        </span>
+      </div>
+    );
+  }
+  const leafPaths = getLeafPaths(node);
+  const selCount = leafPaths.filter((p) => selected.has(p)).length;
+  const allSel = selCount === leafPaths.length;
+  const someSel = selCount > 0 && !allSel;
+  return (
+    <div>
+      <div style={{ paddingLeft: pl }} className="flex items-center gap-1.5 py-[3px] group">
+        <IndeterminateCheckbox checked={allSel} indeterminate={someSel} onChange={() => onToggleDir(leafPaths, allSel)} />
+        <span className="text-[11px] font-mono text-foreground/80 group-hover:text-foreground transition-colors font-medium">{node.name}/</span>
+        <span className="text-[10px] text-muted-foreground/40 tabular-nums">{selCount}/{leafPaths.length}</span>
+      </div>
+      {node.children.map((child) => (
+        <FileTreeNode key={child.fullPath} node={child} selected={selected} onToggleFile={onToggleFile} onToggleDir={onToggleDir} level={level + 1} />
+      ))}
+    </div>
+  );
+}
+
+// ── Page component ─────────────────────────────────────────────────────────
+
+const INITIAL_EDIT_FORM: SkillUpdate = { name: '', description: '', content: '', tags: [] };
 
 export default function SkillPage() {
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
-  const [formData, setFormData] = useState<SkillCreate>(INITIAL_FORM);
+  const [formData, setFormData] = useState<SkillUpdate>(INITIAL_EDIT_FORM);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('card');
@@ -53,6 +154,7 @@ export default function SkillPage() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   const [folderPaths, setFolderPaths] = useState<string[]>([]);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
   const [folderMeta, setFolderMeta] = useState<{ name?: string; description?: string; tags?: string[] }>({});
   const [folderTagInput, setFolderTagInput] = useState('');
   const [folderExtraTags, setFolderExtraTags] = useState<string[]>([]);
@@ -60,7 +162,6 @@ export default function SkillPage() {
   const { data: skillData, isLoading } = useSkills({
     tags: selectedTags.length > 0 ? selectedTags.join(',') : undefined,
   });
-  const createMutation = useCreateSkill();
   const updateMutation = useUpdateSkill();
   const deleteMutation = useDeleteSkill();
   const uploadFolderMutation = useUploadSkillFolder();
@@ -77,22 +178,16 @@ export default function SkillPage() {
   const removeTagFromForm = (tag: string) =>
     setFormData({ ...formData, tags: formData.tags?.filter((t) => t !== tag) || [] });
 
-  const openCreateModal = () => { setFormData(INITIAL_FORM); setShowCreateModal(true); };
   const openEditModal = (skill: Skill) => {
     setEditingSkill(skill);
-    setFormData({ name: skill.name, description: skill.description || '', content: skill.content, tags: skill.tags || [] });
+    setFormData({ name: skill.name, description: skill.description || '', content: '', tags: skill.tags || [] });
     setShowEditModal(true);
   };
   const closeModal = () => {
-    setShowCreateModal(false); setShowEditModal(false);
-    setFormData(INITIAL_FORM); setEditingSkill(null);
+    setShowEditModal(false);
+    setFormData(INITIAL_EDIT_FORM); setEditingSkill(null);
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try { await createMutation.mutateAsync(formData); closeModal(); }
-    catch (error) { alert(`Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`); }
-  };
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSkill) return;
@@ -111,42 +206,82 @@ export default function SkillPage() {
     if (m === 'list') setOpenItemId(null);
   };
 
+  const resetFolderState = () => {
+    setFolderFiles([]);
+    setFolderPaths([]);
+    setSelectedFilePaths(new Set());
+    setFolderMeta({});
+    setFolderExtraTags([]);
+    setFolderTagInput('');
+  };
+
   const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? []);
     if (selected.length === 0) return;
     const paths = selected.map((f) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
     setFolderFiles(selected);
     setFolderPaths(paths);
+    setSelectedFilePaths(new Set(paths)); // select all by default
     setFolderExtraTags([]);
     setFolderTagInput('');
 
-    // Find SKILL.md and parse frontmatter
     const skillMdIdx = paths.findIndex((p) => p.split('/').pop()?.toUpperCase() === 'SKILL.MD');
     if (skillMdIdx !== -1) {
       const reader = new FileReader();
-      reader.onload = (ev) => {
-        const text = ev.target?.result as string;
-        setFolderMeta(parseFrontmatter(text));
-      };
+      reader.onload = (ev) => setFolderMeta(parseFrontmatter(ev.target?.result as string));
       reader.readAsText(selected[skillMdIdx]);
     } else {
       setFolderMeta({});
     }
   };
 
+  const handleToggleFile = (path: string) => {
+    setSelectedFilePaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const handleToggleDir = (leafPaths: string[], allSelected: boolean) => {
+    setSelectedFilePaths((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        // Uncheck all except SKILL.md (always required)
+        leafPaths.forEach((p) => {
+          if (p.split('/').pop()?.toUpperCase() !== 'SKILL.MD') next.delete(p);
+        });
+      } else {
+        leafPaths.forEach((p) => next.add(p));
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => setSelectedFilePaths(new Set(folderPaths));
+  const handleDeselectAll = () => {
+    // Keep only SKILL.md entries
+    setSelectedFilePaths(new Set(folderPaths.filter((p) => p.split('/').pop()?.toUpperCase() === 'SKILL.MD')));
+  };
+
   const handleFolderUpload = async () => {
     if (folderFiles.length === 0) return;
+    // Always include SKILL.md even if somehow unchecked
+    const skillMdSet = new Set(folderPaths.filter((p) => p.split('/').pop()?.toUpperCase() === 'SKILL.MD'));
+    const filteredEntries = folderFiles
+      .map((f, i) => ({ file: f, path: folderPaths[i] }))
+      .filter(({ path }) => selectedFilePaths.has(path) || skillMdSet.has(path));
+
     const allTags = [...(folderMeta.tags ?? []), ...folderExtraTags];
     try {
       await uploadFolderMutation.mutateAsync({
-        files: folderFiles,
-        paths: folderPaths,
+        files: filteredEntries.map((e) => e.file),
+        paths: filteredEntries.map((e) => e.path),
         tags: allTags.length > 0 ? allTags.join(',') : undefined,
       });
       setShowFolderModal(false);
-      setFolderFiles([]);
-      setFolderPaths([]);
-      setFolderMeta({});
+      resetFolderState();
     } catch (error) {
       alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -155,8 +290,6 @@ export default function SkillPage() {
   if (isLoading) {
     return <div className="flex items-center justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
   }
-
-  const isModalOpen = showCreateModal || showEditModal;
 
   return (
     <div>
@@ -172,9 +305,8 @@ export default function SkillPage() {
         <div className="flex items-center gap-2">
           <ViewToggle mode={viewMode} onToggle={handleModeToggle} />
           <Button size="sm" variant="outline" onClick={() => setShowFolderModal(true)}>
-            <FolderOpen className="size-3.5 mr-1" />Folder
+            <FolderOpen className="size-3.5 mr-1" />Upload Folder
           </Button>
-          <Button size="sm" onClick={openCreateModal}>+ New</Button>
         </div>
       </div>
 
@@ -211,9 +343,6 @@ export default function SkillPage() {
                 <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">{skill.name}</p>
               </div>
               {skill.description && <p className="text-xs text-muted-foreground line-clamp-2">{skill.description}</p>}
-              <p className="text-[10px] text-muted-foreground font-mono leading-relaxed line-clamp-3 bg-muted/50 rounded p-2">
-                {skill.content.slice(0, 150)}{skill.content.length > 150 ? '…' : ''}
-              </p>
               {skill.tags && skill.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {skill.tags.slice(0, 4).map((tag) => (
@@ -223,7 +352,6 @@ export default function SkillPage() {
                 </div>
               )}
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
-                <span className="tabular-nums">{skill.content.length}c</span>
                 <span className={cn('inline-flex items-center gap-0.5', skill.has_embedding ? 'text-violet-500' : 'text-muted-foreground/50')}>
                   {skill.has_embedding ? <CheckCircle2 className="size-3" /> : <Circle className="size-3" />}
                 </span>
@@ -261,7 +389,6 @@ export default function SkillPage() {
                 {indexedDot}
                 <span className="text-sm font-medium flex-1 min-w-0 truncate">{skill.name}</span>
                 {tagChips}
-                <span className="text-[10px] text-muted-foreground/50 tabular-nums shrink-0">{skill.content.length}c</span>
               </>
             );
 
@@ -271,7 +398,6 @@ export default function SkillPage() {
                   {indexedDot}
                   <span className="text-sm font-medium flex-1 min-w-0 truncate">{skill.name}</span>
                   {tagChips}
-                  <span className="text-[10px] text-muted-foreground/50 tabular-nums shrink-0">{skill.content.length}c</span>
                   <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                     <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted transition-colors" onClick={() => openEditModal(skill)}>
                       <Pencil className="size-3.5 text-muted-foreground" />
@@ -284,12 +410,8 @@ export default function SkillPage() {
                   <div className="absolute right-2 top-full mt-1 z-50 w-80 rounded-xl border border-border bg-card shadow-lg shadow-black/10 p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
                     <div className="space-y-2 text-xs">
                       {skill.description && <p className="text-foreground/80 leading-relaxed">{skill.description}</p>}
-                      <p className="text-muted-foreground font-mono leading-relaxed line-clamp-4 bg-muted/50 rounded p-2">
-                        {skill.content.slice(0, 200)}{skill.content.length > 200 ? '…' : ''}
-                      </p>
                       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1.5 border-t border-border/50 text-muted-foreground">
                         <span>Indexed</span><span className="text-foreground">{skill.has_embedding ? 'Yes' : 'No'}</span>
-                        <span>Length</span><span className="text-foreground tabular-nums">{skill.content.length} chars</span>
                         <span>Created</span><span className="text-foreground">{formatRelativeTime(skill.created_at)}</span>
                       </div>
                     </div>
@@ -308,18 +430,12 @@ export default function SkillPage() {
                 detail={
                   <div className="space-y-3">
                     {skill.description && <p className="text-xs text-foreground/80 leading-relaxed">{skill.description}</p>}
-                    <pre className="text-[10px] text-muted-foreground font-mono leading-relaxed bg-muted/50 rounded-md p-3 max-h-40 overflow-y-auto whitespace-pre-wrap break-words">
-                      {skill.content.slice(0, 600)}{skill.content.length > 600 ? '…' : ''}
-                    </pre>
-                    {skill.summary && <p className="text-xs italic text-muted-foreground">{skill.summary}</p>}
                     <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
                       <span className="text-muted-foreground">Indexed</span>
                       <span className="flex items-center gap-1.5">
                         <span className={cn('size-1.5 rounded-full', skill.has_embedding ? 'bg-violet-500' : 'bg-muted-foreground/30')} />
                         {skill.has_embedding ? 'Yes' : 'No'}
                       </span>
-                      <span className="text-muted-foreground">Length</span>
-                      <span className="tabular-nums">{skill.content.length} chars</span>
                       {skill.tags && skill.tags.length > 0 && (
                         <><span className="text-muted-foreground">Tags</span><span>{skill.tags.join(', ')}</span></>
                       )}
@@ -355,135 +471,153 @@ export default function SkillPage() {
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
           <Sparkles className="mx-auto size-8 text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground mb-3">No skills yet</p>
-          <Button size="sm" onClick={openCreateModal}>Create Skill</Button>
+          <Button size="sm" variant="outline" onClick={() => setShowFolderModal(true)}>
+            <FolderOpen className="size-3.5 mr-1" />Upload Folder
+          </Button>
         </div>
       )}
 
       {/* Folder Upload Dialog */}
-      <Dialog open={showFolderModal} onOpenChange={(open) => { if (!open) { setShowFolderModal(false); setFolderFiles([]); setFolderPaths([]); setFolderMeta({}); } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Upload Skill Folder</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-1">
-            <p className="text-xs text-muted-foreground">
-              Select a folder containing a <code className="bg-muted px-1 rounded">SKILL.md</code> file.
-              The YAML frontmatter (<code className="bg-muted px-1 rounded">name</code>, <code className="bg-muted px-1 rounded">description</code>, <code className="bg-muted px-1 rounded">tags</code>) will be extracted automatically.
-              Other files (.md, .py, etc.) will be stored as supplementary references.
-            </p>
-            <div>
-              <input
-                ref={folderInputRef}
-                type="file"
-                className="hidden"
-                // @ts-expect-error webkitdirectory is not in typings
-                webkitdirectory=""
-                multiple
-                onChange={handleFolderSelect}
-              />
-              <Button variant="outline" className="w-full" onClick={() => folderInputRef.current?.click()}>
-                <FolderOpen className="size-4 mr-2" />
-                {folderFiles.length > 0 ? `${folderFiles.length} files selected` : 'Choose Folder'}
-              </Button>
-            </div>
+      {(() => {
+        const fileTree = buildFileTree(folderPaths);
+        const nonMainPaths = folderPaths.filter((p) => p.split('/').pop()?.toUpperCase() !== 'SKILL.MD');
+        const selectedCount = nonMainPaths.filter((p) => selectedFilePaths.has(p)).length;
+        const totalUpload = selectedCount + (folderPaths.some((p) => p.split('/').pop()?.toUpperCase() === 'SKILL.MD') ? 1 : 0);
+        return (
+          <Dialog open={showFolderModal} onOpenChange={(open) => { if (!open) { setShowFolderModal(false); resetFolderState(); } }}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader><DialogTitle>Upload Skill Folder</DialogTitle></DialogHeader>
+              <div className="space-y-4 py-1">
+                <p className="text-xs text-muted-foreground">
+                  Select a folder containing a <code className="bg-muted px-1 rounded">SKILL.md</code> file.
+                  Check the files and sub-folders you want to include.
+                </p>
 
-            {folderFiles.length > 0 && (
-              <>
-                {/* File tree preview */}
-                <div className="rounded-lg border border-border bg-muted/30 p-3 max-h-40 overflow-y-auto">
-                  <p className="text-[10px] font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">Files</p>
-                  {folderPaths.map((p) => {
-                    const basename = p.split('/').pop() ?? p;
-                    const isSkillMd = basename.toUpperCase() === 'SKILL.MD';
-                    return (
-                      <div key={p} className={cn('text-[11px] font-mono py-0.5', isSkillMd ? 'text-foreground font-semibold' : 'text-muted-foreground')}>
-                        {p.split('/').slice(1).join('/') || basename}
-                        {isSkillMd && <span className="ml-1.5 text-[9px] bg-primary/10 text-primary px-1 rounded">main</span>}
-                      </div>
-                    );
-                  })}
+                <div>
+                  <input
+                    ref={folderInputRef}
+                    type="file"
+                    className="hidden"
+                    // @ts-expect-error webkitdirectory is not in typings
+                    webkitdirectory=""
+                    multiple
+                    onChange={handleFolderSelect}
+                  />
+                  <Button variant="outline" className="w-full" onClick={() => folderInputRef.current?.click()}>
+                    <FolderOpen className="size-4 mr-2" />
+                    {folderFiles.length > 0 ? `${folderFiles.length} files in folder` : 'Choose Folder'}
+                  </Button>
                 </div>
 
-                {/* Extracted metadata */}
-                {folderMeta.name && (
-                  <div className="rounded-lg border border-border bg-card p-3 space-y-2">
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Extracted from SKILL.md</p>
-                    <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                      <span className="text-muted-foreground">Name</span>
-                      <span className="font-medium">{folderMeta.name}</span>
-                      {folderMeta.description && (
-                        <><span className="text-muted-foreground">Description</span><span>{folderMeta.description}</span></>
-                      )}
-                      {folderMeta.tags && folderMeta.tags.length > 0 && (
-                        <><span className="text-muted-foreground">Tags</span>
-                        <div className="flex flex-wrap gap-1">
-                          {folderMeta.tags.map((t) => <span key={t} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{t}</span>)}
-                        </div></>
-                      )}
+                {folderFiles.length > 0 && (
+                  <>
+                    {/* File tree with checkboxes */}
+                    <div className="rounded-lg border border-border bg-muted/30">
+                      <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 border-b border-border/50">
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                          Files — {totalUpload}/{folderPaths.length} selected
+                        </span>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={handleSelectAll} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors">All</button>
+                          <button type="button" onClick={handleDeselectAll} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors">None</button>
+                        </div>
+                      </div>
+                      <div className="p-3 max-h-52 overflow-y-auto">
+                        {fileTree.map((node) => (
+                          <FileTreeNode
+                            key={node.fullPath}
+                            node={node}
+                            selected={selectedFilePaths}
+                            onToggleFile={handleToggleFile}
+                            onToggleDir={handleToggleDir}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
 
-                {!folderMeta.name && (
-                  <p className="text-xs text-destructive">No SKILL.md found or missing <code>name</code> frontmatter field.</p>
-                )}
+                    {!folderMeta.name && (
+                      <p className="text-xs text-destructive">No SKILL.md found or missing <code>name</code> frontmatter field.</p>
+                    )}
 
-                {/* Extra tags */}
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Additional Tags</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={folderTagInput}
-                      onChange={(e) => setFolderTagInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
+                    {/* Extracted metadata */}
+                    {folderMeta.name && (
+                      <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+                        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Extracted from SKILL.md</p>
+                        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                          <span className="text-muted-foreground">Name</span>
+                          <span className="font-medium">{folderMeta.name}</span>
+                          {folderMeta.description && (
+                            <><span className="text-muted-foreground">Description</span><span>{folderMeta.description}</span></>
+                          )}
+                          {folderMeta.tags && folderMeta.tags.length > 0 && (
+                            <><span className="text-muted-foreground">Tags</span>
+                            <div className="flex flex-wrap gap-1">
+                              {folderMeta.tags.map((t) => <span key={t} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{t}</span>)}
+                            </div></>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extra tags */}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Additional Tags</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={folderTagInput}
+                          onChange={(e) => setFolderTagInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const t = folderTagInput.trim();
+                              if (t && !folderExtraTags.includes(t)) setFolderExtraTags([...folderExtraTags, t]);
+                              setFolderTagInput('');
+                            }
+                          }}
+                          placeholder="Add tag..."
+                          className="flex-1"
+                        />
+                        <Button type="button" variant="secondary" size="sm" onClick={() => {
                           const t = folderTagInput.trim();
                           if (t && !folderExtraTags.includes(t)) setFolderExtraTags([...folderExtraTags, t]);
                           setFolderTagInput('');
-                        }
-                      }}
-                      placeholder="Add tag..."
-                      className="flex-1"
-                    />
-                    <Button type="button" variant="secondary" size="sm" onClick={() => {
-                      const t = folderTagInput.trim();
-                      if (t && !folderExtraTags.includes(t)) setFolderExtraTags([...folderExtraTags, t]);
-                      setFolderTagInput('');
-                    }}>Add</Button>
-                  </div>
-                  {folderExtraTags.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-1">
-                      {folderExtraTags.map((t) => (
-                        <Badge key={t} variant="secondary" className="gap-1 text-xs">{t}
-                          <button type="button" onClick={() => setFolderExtraTags(folderExtraTags.filter((x) => x !== t))} className="ml-1 hover:text-foreground">×</button>
-                        </Badge>
-                      ))}
+                        }}>Add</Button>
+                      </div>
+                      {folderExtraTags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {folderExtraTags.map((t) => (
+                            <Badge key={t} variant="secondary" className="gap-1 text-xs">{t}
+                              <button type="button" onClick={() => setFolderExtraTags(folderExtraTags.filter((x) => x !== t))} className="ml-1 hover:text-foreground">×</button>
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowFolderModal(false); setFolderFiles([]); setFolderPaths([]); setFolderMeta({}); }}>Cancel</Button>
-            <Button
-              disabled={!folderMeta.name || uploadFolderMutation.isPending}
-              onClick={handleFolderUpload}
-            >
-              {uploadFolderMutation.isPending ? <><Loader2 className="size-4 animate-spin mr-2" />Uploading...</> : 'Upload Skill'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                  </>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setShowFolderModal(false); resetFolderState(); }}>Cancel</Button>
+                <Button disabled={!folderMeta.name || uploadFolderMutation.isPending} onClick={handleFolderUpload}>
+                  {uploadFolderMutation.isPending
+                    ? <><Loader2 className="size-4 animate-spin mr-2" />Uploading...</>
+                    : `Upload ${totalUpload} file${totalUpload !== 1 ? 's' : ''}`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
-      {/* Create / Edit Dialog */}
-      <Dialog open={isModalOpen} onOpenChange={(open) => { if (!open) closeModal(); }}>
+      {/* Edit Dialog */}
+      <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeModal(); }}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{showCreateModal ? 'Create Skill' : 'Edit Skill'}</DialogTitle></DialogHeader>
-          <form id="skill-form" onSubmit={showCreateModal ? handleCreate : handleUpdate} className="space-y-4">
+          <DialogHeader><DialogTitle>Edit Skill</DialogTitle></DialogHeader>
+          <form id="skill-form" onSubmit={handleUpdate} className="space-y-4">
             <div className="space-y-1.5"><Label>Name *</Label>
               <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g., Python Best Practices" required /></div>
             <div className="space-y-1.5"><Label>Description</Label>
-              <Input value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="Brief description" /></div>
+              <Input value={formData.description ?? ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="Brief description" /></div>
             <div className="space-y-1.5">
               <Label>Tags</Label>
               <div className="flex gap-2">
@@ -500,16 +634,22 @@ export default function SkillPage() {
                 </div>
               )}
             </div>
-            <div className="space-y-1.5"><Label>Content (Markdown) *</Label>
-              <Textarea value={formData.content} onChange={(e) => setFormData({ ...formData, content: e.target.value })} rows={16}
-                placeholder={`# Skill Title\n\n## Description\nWrite your skill documentation in Markdown...`} className="font-mono text-sm" required />
-              <p className="text-xs text-muted-foreground">Supports Markdown formatting.</p>
+            <div className="space-y-1.5">
+              <Label>Content (Markdown)</Label>
+              <Textarea
+                value={formData.content ?? ''}
+                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                rows={16}
+                placeholder="Leave blank to keep existing content unchanged"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">Content is stored in the Context table. Leave blank to keep existing.</p>
             </div>
           </form>
           <DialogFooter>
             <Button variant="outline" onClick={closeModal}>Cancel</Button>
-            <Button type="submit" form="skill-form" disabled={createMutation.isPending || updateMutation.isPending}>
-              {createMutation.isPending || updateMutation.isPending ? 'Saving...' : showCreateModal ? 'Create Skill' : 'Update Skill'}
+            <Button type="submit" form="skill-form" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? 'Saving...' : 'Update Skill'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -4,7 +4,7 @@ import path from 'path'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
+  const env = loadEnv(mode, path.resolve(__dirname, '..'), '')
 
   // Get backend host and port from env, with fallbacks
   const backendHost = env.VITE_BACKEND_HOST || env.AIWEN_APP_HOST || '127.0.0.1'

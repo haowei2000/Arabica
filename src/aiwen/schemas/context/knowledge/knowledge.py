@@ -15,11 +15,6 @@ class KnowledgeCreate(BaseModel):
         ..., min_length=1, max_length=255, description="Knowledge base name"
     )
     description: str | None = Field(None, description="Knowledge base description")
-    provider: str = Field(default="default", description="Provider type")
-    indexing_technique: str = Field(
-        default="high_quality", description="Indexing technique"
-    )
-    embedding_model: str | None = Field(None, description="Embedding model")
     preprocess_id: str | UUID | None = Field(
         None, description="Preprocess configuration ID"
     )
@@ -34,7 +29,6 @@ class KnowledgeUpdate(BaseModel):
     description: str | None = Field(None, description="Description")
     status: str | None = Field(None, description="Status")
     permission: str | None = Field(None, description="Permission setting")
-    embedding_model: str | None = Field(None, description="Embedding model")
     preprocess_id: str | UUID | None = Field(None, description="Preprocess config ID")
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
 
@@ -47,9 +41,6 @@ class KnowledgeResponse(ResponseMixin, BaseModel):
     description: str | None = None
     user_id: str
     owner_id: str | None = None
-    provider: str
-    indexing_technique: str
-    embedding_model: str | None = None
     preprocess_id: str | None = None
     status: str
     permission: str

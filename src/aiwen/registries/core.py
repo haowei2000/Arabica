@@ -593,7 +593,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                             ctx = existing_ctx_map.get(key)
                             if ctx:
                                 ctx.glance = glance
-                                ctx.summary = tool.description
                                 ctx.content = content
                                 ctx.tags = tags
                                 ctx.meta = {**(ctx.meta or {}), **meta}

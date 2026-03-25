@@ -144,45 +144,9 @@ class SkillProcessor:
             logger.error(f"Skill {skill_id} not found")
             return None
 
-        try:
-            # Parse Markdown content
-            parsed_data = self.parse_markdown(skill.content)
-
-            # Generate summary
-            summary = self.generate_summary(parsed_data)
-
-            # Update skill with parsed data
-            skill.summary = summary
-
-            # Store parsed structure in meta
-            meta = skill.meta or {}
-            meta["parsed_structure"] = {
-                "section_count": len(parsed_data["sections"]),
-                "code_block_count": len(parsed_data["code_blocks"]),
-                "has_frontmatter": bool(parsed_data["metadata"]),
-            }
-            if parsed_data["metadata"]:
-                meta["frontmatter"] = parsed_data["metadata"]
-            skill.meta = meta
-
-            # Embeddings are generated in the Context table via sync_skill_to_contexts
-            # Celery task — not on the Skill row itself.
-
-            if auto_commit:
-                await self.db.commit()
-                await self.db.refresh(skill)
-            else:
-                await self.db.flush()
-                await self.db.refresh(skill)
-
-            logger.info(f"Processed skill {skill_id}")
-            return skill
-
-        except Exception as e:
-            logger.error(f"Failed to process skill {skill_id}: {e}")
-            if auto_commit:
-                await self.db.rollback()
-            raise
+        # Content is stored in the Context table; nothing to process on the Skill row.
+        logger.info(f"Processed skill {skill_id} (no-op — content lives in Context table)")
+        return skill
 
     async def batch_process(
         self,

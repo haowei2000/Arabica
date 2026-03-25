@@ -43,18 +43,11 @@ class ContextCreate(BaseModel):
     glance: str | None = Field(
         None, max_length=512, description="One-line summary for quick scanning (Layer 1)"
     )
-    summary: str | None = Field(
-        None, description="Structured overview summary (Layer 2)"
-    )
     content: str = Field(
         ..., min_length=1, description="Full content detail (Layer 3)"
     )
-    # Tags and keywords
     tags: list[str] | None = Field(
         None, description="Tags for filtering and categorization"
-    )
-    keywords: list[str] | None = Field(
-        None, description="Keywords for search (deprecated, use tags instead)"
     )
     embedding_384: list[float] | None = Field(None, description="384-dim embedding")
     embedding_768: list[float] | None = Field(None, description="768-dim embedding")
@@ -110,11 +103,8 @@ class ContextUpdate(BaseModel):
     s3_key: str | None = Field(None, description="S3 object key for storing large content")
     # Progressive disclosure layers
     glance: str | None = Field(None, max_length=512, description="One-line summary")
-    summary: str | None = Field(None, description="Structured overview summary")
     content: str | None = Field(None, min_length=1, description="Full content detail")
-    # Tags and keywords
     tags: list[str] | None = Field(None, description="Tags for filtering")
-    keywords: list[str] | None = Field(None, description="Keywords (deprecated)")
     embedding_384: list[float] | None = Field(None, description="384-dim embedding")
     embedding_768: list[float] | None = Field(None, description="768-dim embedding")
     embedding_1024: list[float] | None = Field(None, description="1024-dim embedding")
@@ -152,11 +142,8 @@ class ContextResponse(ResponseMixin, BaseModel):
     context_type: str
     # Progressive disclosure layers
     glance: str | None = Field(None, description="One-line summary (Layer 1)")
-    summary: str | None = Field(None, description="Overview summary (Layer 2)")
     content: str = Field(..., description="Full content (Layer 3)")
-    # Tags and metadata
     tags: list[str] | None = Field(None, description="Tags for categorization")
-    keywords: list[str] | None = Field(None, description="Keywords (deprecated)")
     meta: dict[str, Any] | None = None
     importance: int | None = None
     # created_at, updated_at, UUID conversion, ORM config inherited from ResponseMixin
@@ -187,8 +174,6 @@ class ContextResponse(ResponseMixin, BaseModel):
         # Layer 1: Glance
         if self.glance:
             result["glance"] = self.glance
-        elif self.summary:
-            result["glance"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
         else:
             result["glance"] = self.content_preview
 
@@ -197,8 +182,6 @@ class ContextResponse(ResponseMixin, BaseModel):
 
         # Layer 2: Overview
         if level in ("overview", "detail"):
-            if self.summary:
-                result["overview"] = self.summary
             if self.tags:
                 result["tags"] = self.tags
 
@@ -213,8 +196,6 @@ class ContextResponse(ResponseMixin, BaseModel):
             result["importance"] = self.importance
             if self.s3_key:
                 result["s3_key"] = self.s3_key
-            if self.keywords:
-                result["keywords"] = self.keywords
 
         return result
 
@@ -278,7 +259,6 @@ class ToolContextInput(BaseModel):
     input_schema: dict[str, Any] | None = Field(
         None, description="JSON Schema for tool input parameters"
     )
-    keywords: list[str] | None = Field(None, description="Keywords for search")
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
     importance: int = Field(default=0, ge=0, le=100, description="Importance score")
 
@@ -296,8 +276,6 @@ class ToolContextInput(BaseModel):
             context_type=ContextType.TOOL,
             source_id=self.tool_id,
             content=content,
-            summary=self.description,
-            keywords=self.keywords,
             meta=self.meta,
             importance=self.importance,
         )
@@ -326,8 +304,6 @@ class UserMemoryContextInput(BaseModel):
     source_id: str | UUID | None = Field(
         None, description="Related source ID (e.g., conversation_id)"
     )
-    summary: str | None = Field(None, description="Memory summary")
-    keywords: list[str] | None = Field(None, description="Keywords for search")
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
     importance: int = Field(default=50, ge=0, le=100, description="Importance score")
 
@@ -336,8 +312,6 @@ class UserMemoryContextInput(BaseModel):
             context_type=ContextType.SHORT_MEMORY,
             source_id=self.source_id,
             content=self.memory,
-            summary=self.summary,
-            keywords=self.keywords,
             meta=self.meta,
             importance=self.importance,
         )
@@ -350,7 +324,6 @@ class SkillContextInput(BaseModel):
     name: str = Field(..., min_length=1, description="Skill name")
     description: str | None = Field(None, description="Skill description")
     content: str = Field(..., min_length=1, description="Skill content or instructions")
-    keywords: list[str] | None = Field(None, description="Keywords for search")
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
     importance: int = Field(default=0, ge=0, le=100, description="Importance score")
 
@@ -364,8 +337,6 @@ class SkillContextInput(BaseModel):
             context_type=ContextType.SKILL,
             source_id=self.skill_id,
             content=content,
-            summary=self.description,
-            keywords=self.keywords,
             meta=self.meta,
             importance=self.importance,
         )
@@ -377,7 +348,6 @@ class KnowledgeContextInput(BaseModel):
     knowledge_id: str | UUID | None = Field(None, description="Knowledge base ID")
     name: str = Field(..., min_length=1, description="Knowledge base name")
     description: str | None = Field(None, description="Knowledge base description")
-    keywords: list[str] | None = Field(None, description="Keywords for search")
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
     importance: int = Field(default=0, ge=0, le=100, description="Importance score")
 
@@ -390,8 +360,6 @@ class KnowledgeContextInput(BaseModel):
             context_type=ContextType.KNOWLEDGE,
             source_id=self.knowledge_id,
             content=content,
-            summary=self.description,
-            keywords=self.keywords,
             meta=self.meta,
             importance=self.importance,
         )
@@ -405,9 +373,6 @@ class KnowledgeContextInput(BaseModel):
             name=knowledge.name,
             description=knowledge.description,
             meta={
-                "provider": knowledge.provider,
-                "indexing_technique": knowledge.indexing_technique,
-                "embedding_model": knowledge.embedding_model,
                 "permission": knowledge.permission,
                 "status": knowledge.status,
             },
@@ -495,11 +460,17 @@ class GrepSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Search query string")
     context_type: ContextType | None = Field(None, description="Filter by context type")
     source_id: str | UUID | None = Field(None, description="Filter by source ID")
-    search_in: list[Literal["content", "summary", "keywords"]] = Field(
-        default=["content", "summary"], description="Fields to search in"
+    search_in: list[Literal["content"]] = Field(
+        default=["content"], description="Fields to search in"
     )
     case_sensitive: bool = Field(default=False, description="Case sensitive search")
     skip: int = Field(default=0, ge=0, description="Number of records to skip")
     limit: int = Field(
         default=20, ge=1, le=100, description="Maximum results to return"
     )
+
+class ContextCore(BaseModel):
+    """Core for a context, including glance, content, path """
+    glance: str | None = Field(None, description="A short summary of the context")
+    content: str | None = Field(None, description="The content of the context")
+    path: str | None = Field(None, description="The path of the context")

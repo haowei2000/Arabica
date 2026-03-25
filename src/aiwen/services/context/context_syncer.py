@@ -86,7 +86,6 @@ class ContextSyncer:
             source_id=str(tool.id),
             context_type=ContextType.TOOL,
             glance=glance,
-            summary=tool.description,
             content="\n".join(parts),
             tags=(tool.tags or []) + ["tool"],
             meta={
@@ -106,16 +105,20 @@ class ContextSyncer:
     # Skill
     # ──────────────────────────────────────────────────────────────
 
-    async def sync_skill(self, skill: Any) -> None:
-        """Upsert a context entry for a Skill at /skills/{name}."""
+    async def sync_skill(self, skill: Any, content: str | None = None) -> None:
+        """Upsert a context entry for a Skill at /skills/{name}.
+
+        ``content`` is the Markdown body (no longer stored on the Skill row).
+        If omitted, any existing content in the Context row is preserved.
+        """
         path = f"/skills/{skill.name}"
-        glance = skill.glance or f"Skill: {skill.name}"
+        glance = (skill.description[:80] if skill.description else None) or f"Skill: {skill.name}"
 
         parts: list[str] = [f"Skill: {skill.name}"]
         if skill.description:
             parts.append(f"Description: {skill.description}")
-        if skill.content:
-            parts.append(f"Content:\n{skill.content}")
+        if content:
+            parts.append(f"Content:\n{content}")
 
         await self._upsert(
             user_id=str(skill.user_id),
@@ -123,7 +126,6 @@ class ContextSyncer:
             source_id=str(skill.id),
             context_type=ContextType.SKILL,
             glance=glance,
-            summary=skill.description or skill.summary,
             content="\n".join(parts),
             tags=(skill.tags or []) + ["skill"],
             meta={"skill_id": str(skill.id)},
@@ -147,22 +149,17 @@ class ContextSyncer:
         parts: list[str] = [f"Knowledge Base: {knowledge.name}"]
         if knowledge.description:
             parts.append(f"Description: {knowledge.description}")
-        if getattr(knowledge, "provider", None):
-            parts.append(f"Provider: {knowledge.provider}")
-
         await self._upsert(
             user_id=str(knowledge.user_id),
             path=path,
             source_id=str(knowledge.id),
             context_type=ContextType.KNOWLEDGE,
             glance=glance,
-            summary=knowledge.description,
             content="\n".join(parts),
             tags=["knowledge"],
             meta={
                 "knowledge_id": str(knowledge.id),
                 "status": getattr(knowledge, "status", None),
-                "provider": getattr(knowledge, "provider", None),
             },
         )
 
@@ -194,7 +191,6 @@ class ContextSyncer:
             source_id=str(trigger.id),
             context_type=ContextType.TRIGGER,
             glance=glance,
-            summary=trigger.description,
             content="\n".join(parts),
             tags=["trigger", trigger.event_type],
             meta={
@@ -234,7 +230,6 @@ class ContextSyncer:
             source_id=str(workspace.id),
             context_type=ContextType.WORKSPACE,
             glance=glance,
-            summary=ws_summary or workspace.description,
             content="\n".join(parts),
             tags=["workspace"],
             meta={
@@ -278,7 +273,6 @@ class ContextSyncer:
             source_id=str(run.id),
             context_type=ContextType.RUN,
             glance=glance,
-            summary=run_summary,
             content="\n".join(parts),
             tags=["run", run.status],
             meta={
@@ -315,7 +309,6 @@ class ContextSyncer:
         source_id: str | None,
         context_type: str,
         glance: str,
-        summary: str | None,
         content: str,
         tags: list[str],
         meta: dict[str, Any],
@@ -330,7 +323,6 @@ class ContextSyncer:
 
         if ctx:
             ctx.glance = glance
-            ctx.summary = summary
             ctx.content = content
             ctx.tags = tags
             ctx.meta = meta
@@ -343,7 +335,6 @@ class ContextSyncer:
                 path=path,
                 context_type=context_type,
                 glance=glance,
-                summary=summary,
                 content=content,
                 tags=tags,
                 meta=meta,

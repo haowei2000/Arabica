@@ -1,4 +1,4 @@
-# aiwen/models/agent/knowledge.py
+# aiwen/models/agent/knowledge_structure.py
 """Knowledge management models for storing knowledge bases, knowledge and chunks."""
 
 from datetime import UTC, datetime
@@ -42,13 +42,6 @@ class Knowledge(Base):  # ty:ignore[unsupported-base]
     )
 
     # Knowledge base configuration
-    provider: Mapped[str] = mapped_column(
-        String(50), default="default", comment="知识库提供商"
-    )
-    indexing_technique: Mapped[str] = mapped_column(
-        String(50), default="high_quality", comment="索引技术"
-    )
-    embedding_model: Mapped[str | None] = mapped_column(String(255), comment="嵌入模型")
     preprocess_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("preprocess.id", ondelete="SET NULL"),

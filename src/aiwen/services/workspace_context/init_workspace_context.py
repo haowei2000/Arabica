@@ -11,7 +11,6 @@ triggers, or workspaces are created / updated / deleted.
 
 from __future__ import annotations
 
-import json
 import logging
 from uuid import UUID
 
@@ -61,10 +60,6 @@ async def init_workspace_context(
         raw_path = ctx.path or str(ctx.id)
         path = "/" + raw_path.lstrip("/")
 
-        summary_str = ctx.summary
-        if isinstance(summary_str, dict):
-            summary_str = json.dumps(summary_str, ensure_ascii=False)
-
         entry = Context(
             user_id=user_uuid,
             source_id=workspace_uuid,
@@ -72,7 +67,6 @@ async def init_workspace_context(
             path=path,
             context_type=ctx.context_type,
             glance=ctx.glance,
-            summary=summary_str,
             content=ctx.content,
             tags=ctx.tags or [],
             meta={

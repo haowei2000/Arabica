@@ -1,4 +1,7 @@
 from abc import ABC, abstractmethod
+from typing import Any
+
+from aiwen.schemas.context.context_schema import ContextCore
 
 
 class BaseStructurer(ABC):
@@ -6,5 +9,5 @@ class BaseStructurer(ABC):
     description: str
 
     @abstractmethod
-    def structure(self, text: str, mime_type: str) -> list[dict]:
+    def structure(self, input:Any) -> list[ContextCore]:
         """Return a list of section dicts with keys: title, level, content, position, structure_type, ..."""

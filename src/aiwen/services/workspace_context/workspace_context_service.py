@@ -20,8 +20,7 @@ WorkspaceContextService exposes read-only query methods.
 
 from __future__ import annotations
 
-import contextlib
-import json
+
 from typing import Any
 from uuid import UUID
 
@@ -103,11 +102,6 @@ class WorkspaceContextService:
     def _load_entry(self, ctx: Context) -> None:
         path = ctx.path.lstrip("/") if ctx.path else f"_/{ctx.id}"
 
-        overview = ctx.summary
-        if overview and isinstance(overview, str) and overview.startswith("{"):
-            with contextlib.suppress(json.JSONDecodeError, ValueError):
-                overview = json.loads(overview)
-
         meta = ctx.meta or {}
         meta.update(
             {
@@ -119,8 +113,8 @@ class WorkspaceContextService:
 
         self._store.set(
             path=path,
-            glance=ctx.glance or ctx.summary or ctx.content[:50] if ctx.content else path,
-            overview=overview,
+            glance=ctx.glance or ctx.content[:50] if ctx.content else path,
+            overview=None,
             detail=ctx.content,
             tags=ctx.tags or [],
             meta=meta,

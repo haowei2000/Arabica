@@ -120,15 +120,6 @@ class ContextStoreAdapter:
         # Normalize path (remove leading slash)
         path = ctx.path.lstrip("/") if ctx.path else str(ctx.id)
 
-        # Prepare overview (try to parse summary as JSON first)
-        overview = ctx.summary
-        if overview and overview.startswith("{"):
-            try:
-                import json
-                overview = json.loads(overview)
-            except (json.JSONDecodeError, ValueError):
-                pass  # Keep as string
-
         # Build meta from model fields
         meta = ctx.meta or {}
         meta.update({
@@ -148,8 +139,8 @@ class ContextStoreAdapter:
         # Set entry in store
         store.set(
             path=path,
-            glance=ctx.glance or ctx.summary or ctx.content[:100],
-            overview=overview,
+            glance=ctx.glance or ctx.content[:100],
+            overview=None,
             detail=ctx.content,
             tags=ctx.tags or [],
             meta=meta,
@@ -166,15 +157,6 @@ class ContextStoreAdapter:
         """
         from aiwen.frameworks.context import ContextEntry
 
-        # Prepare overview
-        overview = ctx.summary
-        if overview and overview.startswith("{"):
-            try:
-                import json
-                overview = json.loads(overview)
-            except (json.JSONDecodeError, ValueError):
-                pass
-
         # Build meta
         meta = ctx.meta or {}
         meta.update({
@@ -185,8 +167,8 @@ class ContextStoreAdapter:
         })
 
         return ContextEntry(
-            glance=ctx.glance or ctx.summary or ctx.content[:100],
-            overview=overview,
+            glance=ctx.glance or ctx.content[:100],
+            overview=None,
             detail=ctx.content,
             tags=ctx.tags or [],
             meta=meta,

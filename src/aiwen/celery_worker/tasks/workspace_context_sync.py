@@ -113,7 +113,6 @@ async def _sync_path_to_workspaces(
                         context_type=ContextType.WORKSPACE,
                         path=path,
                         glance=glance,
-                        summary=overview,
                         content=detail or "",
                         tags=tags,
                         meta={**meta, "workspace_id": ws_id},
@@ -121,7 +120,6 @@ async def _sync_path_to_workspaces(
                     session.add(ctx)
                 else:
                     ctx.glance = glance
-                    ctx.summary = overview
                     ctx.content = detail or ctx.content
                     ctx.tags = tags
                     ctx.meta = {**meta, "workspace_id": ws_id}
@@ -144,7 +142,6 @@ async def _update_workspace_contexts(
     meta_key: str,
     resource_id: str,
     glance: str | None,
-    summary: str | None,
     content: str | None = None,
 ) -> int:
     """Update all workspace-scoped Context rows whose meta[meta_key] == resource_id."""
@@ -162,7 +159,6 @@ async def _update_workspace_contexts(
 
     for row in rows:
         row.glance = glance
-        row.summary = summary
         if content is not None:
             row.content = content
 

@@ -52,11 +52,16 @@ export const skillService = {
     tags?: string,
   ): Promise<Skill> {
     const formData = new FormData();
-    for (const file of files) {
-      formData.append('files', file);
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i], paths[i]);
     }
-    const params: Record<string, string> = { paths: JSON.stringify(paths) };
+    const params: Record<string, string> = {};
     if (tags) params['tags'] = tags;
-    return apiClient.post(API_ENDPOINTS.SKILLS.UPLOAD_FOLDER, formData, { params });
+    // Remove the default `application/json` Content-Type so the browser can
+    // set `multipart/form-data; boundary=...` automatically for FormData.
+    return apiClient.post(API_ENDPOINTS.SKILLS.UPLOAD_FOLDER, formData, {
+      params,
+      headers: { 'Content-Type': undefined as unknown as string },
+    });
   },
 };

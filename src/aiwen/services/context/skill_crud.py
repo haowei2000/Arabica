@@ -28,19 +28,11 @@ class SkillCRUD:
         user_id: str | UUID,
         auto_commit: bool = True,
     ) -> Skill:
-        glance = f"Skill: {data.name}"
-        if data.description:
-            glance = f"{data.name} — {data.description[:50]}"
-
         skill = Skill(
             user_id=UUID(str(user_id)),
             name=data.name,
             description=data.description,
-            content=data.content,
-            glance=glance,
             tags=data.tags or [],
-            path=data.path,
-            source_id=data.source_id,
             meta=data.meta or {},
         )
 
@@ -53,7 +45,7 @@ class SkillCRUD:
             await self.db.flush()
             await self.db.refresh(skill)
 
-        await ContextSyncer(self.db).sync_skill(skill)
+        await ContextSyncer(self.db).sync_skill(skill, content=data.content)
 
         logger.info(f"Created skill: {data.name} (id={skill.id}, user={user_id})")
         return skill
@@ -91,17 +83,9 @@ class SkillCRUD:
 
         if "name" in update_data:
             skill.name = update_data["name"]
-            skill.glance = f"Skill: {update_data['name']}"
-            desc = update_data.get("description") or skill.description
-            if desc:
-                skill.glance = f"{update_data['name']} — {desc[:50]}"
 
         if "description" in update_data:
             skill.description = update_data["description"]
-            skill.summary = update_data["description"]
-
-        if "content" in update_data:
-            skill.content = update_data["content"]
 
         if "tags" in update_data:
             skill.tags = update_data["tags"]
@@ -118,7 +102,7 @@ class SkillCRUD:
             await self.db.flush()
             await self.db.refresh(skill)
 
-        await ContextSyncer(self.db).sync_skill(skill)
+        await ContextSyncer(self.db).sync_skill(skill, content=update_data.get("content"))
 
         logger.info(f"Updated skill: {skill.id}")
         return skill
@@ -176,7 +160,6 @@ class SkillCRUD:
             Skill.user_id == UUID(str(user_id)),
             or_(
                 Skill.name.ilike(f"%{query_text}%"),
-                Skill.content.ilike(f"%{query_text}%"),
                 Skill.description.ilike(f"%{query_text}%"),
             ),
         )

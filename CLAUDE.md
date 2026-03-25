@@ -1,7 +1,8 @@
 # CLAUDE.md
 Dont run format check and other unnecessary oprerations.
 Please Write the code in English.
-Import: please hint me to fix the grammar error when i send a message to help to improve my English
+Import: please hint me to fix the grammar error when i send a message to help to improve my English  
+if I ask with Chinese, please translate it to English
 ## Project Overview
 
 **Aiwen Service (v5.5.0)** - An enterprise-grade AI-powered agent orchestration platform with event-sourced architecture.
@@ -606,3 +607,9 @@ Example: `feat(auth): add user login endpoint`
 - See `frontend/README.md` for React app setup
 - TypeScript types in `frontend/src/types/`
 - API integration patterns in `frontend/src/services/`
+
+Add under a new ## Docker & Deployment section\n\nWhen fixing Docker/deployment issues, always verify the full build-and-run cycle before reporting success. Check: Dockerfile paths, volume mounts, network connectivity between containers, and that all required files are included in the build context.
+Add under ## General Rules at the top of CLAUDE.md\n\nAfter implementing a feature, run the application and verify it works end-to-end before marking complete. Pay special attention to: database migrations (check ordering and idempotency), import paths, and runtime errors that don't appear at build time.
+Add under ## Project Overview section at the top of CLAUDE.md\n\nThis project uses Python (backend) and TypeScript (frontend). Backend uses SQLite with alembic migrations, S3/MinIO for storage, WebSockets for real-time communication, and Docker Compose for deployment. When making changes, consider impacts across both backend and frontend.
+Add under ## Debugging section\n\nWhen debugging errors, diagnose the actual root cause before applying fixes. Do not guess-and-check iteratively. Read the relevant source code, trace the error path, and confirm the cause before editing.
+Add under ## Database section\n\nFor database migrations: ensure migration scripts are idempotent (handle already-existing tables/columns), verify migration ordering relative to startup code that depends on new schema, and test with a fresh database.

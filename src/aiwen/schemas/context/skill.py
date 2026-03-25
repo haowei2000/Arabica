@@ -8,20 +8,17 @@ from pydantic import BaseModel, Field
 
 
 class SkillBase(BaseModel):
-    """Base skill schema."""
+    """Base skill schema (metadata only — content lives in the Context table)."""
 
     name: str = Field(..., min_length=1, max_length=200, description="Skill name")
     description: str | None = Field(None, description="Skill description")
-    content: str = Field(..., min_length=1, description="Skill content in Markdown format")
     tags: list[str] | None = Field(None, description="Skill tags for categorization")
 
 
 class SkillCreate(SkillBase):
     """Schema for creating a new skill."""
 
-    workspace_id: UUID | None = Field(None, description="Associated workspace ID")
-    source_id: UUID | None = Field(None, description="Source ID if derived from another resource")
-    path: str | None = Field(None, description="Virtual path for organization")
+    content: str = Field(..., min_length=1, description="Skill content in Markdown format (stored in Context table)")
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 
@@ -30,23 +27,21 @@ class SkillUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
-    content: str | None = Field(None, min_length=1)
+    content: str | None = Field(None, min_length=1, description="New content; if omitted, existing content is unchanged")
     tags: list[str] | None = None
     meta: dict[str, Any] | None = None
 
 
 class SkillResponse(SkillBase):
-    """Schema for skill response."""
+    """Schema for skill response (metadata only)."""
 
     id: UUID
     user_id: UUID
-    source_id: UUID | None
-    workspace_id: UUID | None = None
-    path: str | None
-    glance: str | None = Field(None, description="One-line summary")
-    summary: str | None = Field(None, description="Structured summary")
     has_embedding: bool = Field(False, description="Whether embeddings have been generated")
-    files: dict[str, Any] | None = Field(None, description="Supplementary files as {path: content}")
+    files: dict[str, Any] | None = Field(
+        None,
+        description="Supplementary files metadata as {path: {s3_key, size, etag, content_type}}",
+    )
     created_at: datetime
     updated_at: datetime | None
 

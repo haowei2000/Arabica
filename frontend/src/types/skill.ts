@@ -2,20 +2,21 @@
  * Skill-related TypeScript types.
  */
 
+export interface SkillFileMetadata {
+  s3_key: string;
+  size: number;
+  etag?: string | null;
+  content_type?: string | null;
+}
+
 export interface Skill {
   id: string;
   user_id: string;
-  source_id?: string | null;
-  workspace_id?: string | null;
-  path?: string | null;
   name: string;
   description?: string | null;
-  content: string;
-  glance?: string | null;
-  summary?: string | null;
   tags?: string[] | null;
   has_embedding: boolean;
-  files?: Record<string, string> | null;
+  files?: Record<string, SkillFileMetadata> | null;
   created_at: string;
   updated_at?: string | null;
 }
@@ -23,11 +24,9 @@ export interface Skill {
 export interface SkillCreate {
   name: string;
   description?: string | null;
+  /** Markdown content — stored in the Context table, not on the Skill row. */
   content: string;
   tags?: string[];
-  workspace_id?: string | null;
-  source_id?: string | null;
-  path?: string | null;
   meta?: Record<string, unknown> | null;
 }
 

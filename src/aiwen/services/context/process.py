@@ -79,12 +79,8 @@ async def copy_contexts_to_workspace(
             "source_user_id": str(ctx.user_id),
             "context_type": ctx.context_type,
         }
-        if ctx.keywords:
-            source_meta["keywords"] = ctx.keywords
         if ctx.importance:
             source_meta["importance"] = ctx.importance
-        if ctx.summary:
-            source_meta["summary"] = ctx.summary
 
         meta = dict(ctx.meta) if ctx.meta else {}
         meta["source"] = source_meta
@@ -186,10 +182,6 @@ def _derive_name(ctx: Context) -> str:
             return parts[1]
         if parts[0]:
             return parts[0]
-
-    # Use summary truncated, or first line of content
-    if ctx.summary:
-        return ctx.summary[:120]
 
     if ctx.content:
         first_line = ctx.content.split("\n", 1)[0].strip()

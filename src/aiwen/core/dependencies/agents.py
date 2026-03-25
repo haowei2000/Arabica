@@ -11,6 +11,7 @@ from aiwen.services.app.app_crud import AppCRUD
 from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.knowledge.document_crud import DocumentCRUD
 from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
+from aiwen.services.context.skill_crud import SkillCRUD
 from aiwen.services.context.tools.tool_crud import ToolCRUD
 from aiwen.services.executor.executor_crud import ExecutorCRUD
 
@@ -94,6 +95,12 @@ async def get_tool_crud(
         ToolCRUD instance
     """
     return ToolCRUD(db)
+
+
+async def get_skill_crud(
+    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+) -> SkillCRUD:
+    return SkillCRUD(db)
 
 
 async def get_redis_client_dep():
