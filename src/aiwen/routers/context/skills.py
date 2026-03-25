@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.dependencies.agents import get_skill_crud
@@ -87,28 +88,13 @@ async def update_skill(
     skill_id: str,
     data: SkillUpdate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    crud: Annotated[SkillCRUD, Depends(get_skill_crud)],
 ):
     """
     Update an existing skill.
 
     If content is updated, the skill will be reprocessed automatically.
-
-    Args:
-        skill_id: Skill UUID
-        data: Update data
-        current_user: Current authenticated user
-        db: Database session
-
-    Returns:
-        Updated skill
-
-    Raises:
-        HTTPException 404: If skill not found
-        HTTPException 403: If user doesn't have access
     """
-    crud = SkillCRUD(db)
-
     skill = await crud.update(skill_id, data, user_id=current_user.id, auto_commit=True)
     if not skill:
         raise HTTPException(
@@ -129,28 +115,30 @@ async def update_skill(
 async def delete_skill(
     skill_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    crud: Annotated[SkillCRUD, Depends(get_skill_crud)],
+    storage: Annotated[S3StorageBackend, Depends(get_global_s3_storage)],
 ):
     """
-    Delete a skill (soft delete).
-
-    Args:
-        skill_id: Skill UUID
-        current_user: Current authenticated user
-        db: Database session
-
-    Raises:
-        HTTPException 404: If skill not found
-        HTTPException 403: If user doesn't have access
+    Delete a skill and its associated S3 files.
     """
-    crud = SkillCRUD(db)
-    success = await crud.delete(skill_id, user_id=current_user.id)
-
-    if not success:
+    skill = await crud.get_by_id(skill_id, user_id=current_user.id)
+    if not skill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Skill {skill_id} not found",
         )
+
+    # Delete S3 files before removing the DB record
+    if skill.files:
+        for path, meta in skill.files.items():
+            s3_key = meta.get("s3_key") or f"/{current_user.id}/skills/{path}"
+            try:
+                storage.delete(s3_key)
+                logger.info(f"Deleted S3 file: {s3_key}")
+            except Exception as e:
+                logger.error(f"Failed to delete S3 file {s3_key}: {e}")
+
+    await crud.delete(skill_id, user_id=current_user.id)
 
     from aiwen.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
     delete_resource_contexts.delay(skill_id, "SKILL", "skill_id")
@@ -247,6 +235,37 @@ async def search_skills(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get(
+    "/{skill_id}/files/{file_path:path}",
+    summary="Get skill file content",
+)
+async def get_skill_file(
+    skill_id: str,
+    file_path: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: Annotated[SkillCRUD, Depends(get_skill_crud)],
+    storage: Annotated[S3StorageBackend, Depends(get_global_s3_storage)],
+):
+    """Return the raw content of a file stored in a skill."""
+    skill = await crud.get_by_id(skill_id, user_id=current_user.id)
+    if not skill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Skill {skill_id} not found")
+
+    if not skill.files or file_path not in skill.files:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_path}' not found in skill")
+
+    meta = skill.files[file_path]
+    s3_key = meta.get("s3_key") or f"/{current_user.id}/skills/{file_path}"
+    try:
+        data = storage.get_bytes(s3_key)
+    except Exception as e:
+        logger.error(f"Failed to fetch skill file {s3_key}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch file content")
+
+    content_type = meta.get("content_type") or "application/octet-stream"
+    return Response(content=data, media_type=content_type)
 
 
 @router.post(

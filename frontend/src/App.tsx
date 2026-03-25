@@ -6,6 +6,7 @@ import ChatPage from './pages/ChatPage';
 import HomePage from './pages/HomePage';
 import AppWorkspacePage from './pages/AppWorkspacePage';
 import DocumentPage from './pages/context/DocumentPage';
+import SkillFilesPage from './pages/context/SkillFilesPage';
 import {useUIStore} from './stores/useUIStore';
 
 // Create QueryClient instance
@@ -36,6 +37,7 @@ function App() {
             <Route path="/app" element={<AppWorkspacePage />} />
           <Route path="/chat" element={<ChatPage />} />
             <Route path="/knowledge/:knowledgeId/documents" element={<DocumentPage/>}/>
+            <Route path="/skills/:skillId/files" element={<SkillFilesPage/>}/>
             <Route path="/" element={<Navigate to="/app" replace/>}/>
             {/* Backwards compatibility */}
             <Route path="/apps" element={<Navigate to="/home" replace/>}/>

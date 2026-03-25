@@ -131,6 +131,7 @@ export const API_ENDPOINTS = {
         SEARCH: '/agent/skills/search/query',
         PROCESS: (id: string) => `/agent/skills/${id}/process`,
         UPLOAD_FOLDER: '/agent/skills/upload-folder',
+        FILE_CONTENT: (id: string, filePath: string) => `/agent/skills/${id}/files/${filePath}`,
     },
 
     // ContextSchema/Chunk 管理

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FolderOpen, Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle } from 'lucide-react';
 import { useSkills, useUpdateSkill, useDeleteSkill, useUploadSkillFolder } from '@/hooks/useSkills';
+import { generateSkillFilesRoute } from '@/constants/routes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,6 +36,37 @@ function parseFrontmatter(content: string): { name?: string; description?: strin
     }
   }
   return result;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function SkillFileList({ files }: { files: Record<string, { s3_key: string; size: number; content_type?: string | null }> }) {
+  const entries = Object.entries(files);
+  if (entries.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      {entries.map(([path, meta]) => {
+        const name = path.split('/').pop() ?? path;
+        const isMain = name.toUpperCase() === 'SKILL.MD';
+        return (
+          <div key={path} className="flex items-center gap-2 text-[11px]">
+            <span className={cn('font-mono truncate flex-1 min-w-0', isMain ? 'text-foreground font-medium' : 'text-muted-foreground')}>
+              {name}
+              {isMain && <span className="ml-1.5 text-[9px] bg-primary/10 text-primary px-1 rounded">main</span>}
+            </span>
+            {meta.content_type && (
+              <span className="text-[9px] px-1 rounded bg-muted text-muted-foreground/70 shrink-0">{meta.content_type.split('/').pop()}</span>
+            )}
+            <span className="text-muted-foreground/50 tabular-nums shrink-0">{formatBytes(meta.size)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // ── File tree helpers ──────────────────────────────────────────────────────
@@ -141,6 +174,7 @@ function FileTreeNode({
 const INITIAL_EDIT_FORM: SkillUpdate = { name: '', description: '', content: '', tags: [] };
 
 export default function SkillPage() {
+  const navigate = useNavigate();
   const [showEditModal, setShowEditModal] = useState(false);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
@@ -351,6 +385,12 @@ export default function SkillPage() {
                   {skill.tags.length > 4 && <span className="text-[10px] text-muted-foreground/60">+{skill.tags.length - 4}</span>}
                 </div>
               )}
+              {skill.files && Object.keys(skill.files).length > 0 && (
+                <div className="pt-2 border-t border-border/40">
+                  <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Files</p>
+                  <SkillFileList files={skill.files} />
+                </div>
+              )}
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
                 <span className={cn('inline-flex items-center gap-0.5', skill.has_embedding ? 'text-violet-500' : 'text-muted-foreground/50')}>
                   {skill.has_embedding ? <CheckCircle2 className="size-3" /> : <Circle className="size-3" />}
@@ -358,6 +398,11 @@ export default function SkillPage() {
                 <span className="ml-auto">{formatRelativeTime(skill.created_at)}</span>
               </div>
               <div className="flex gap-2 pt-2 border-t border-border/40">
+                {skill.files && Object.keys(skill.files).length > 0 && (
+                  <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => navigate(generateSkillFilesRoute(skill.id))}>
+                    <FolderOpen className="size-3.5" />Open
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(skill)}>
                   <Pencil className="size-3.5" />Edit
                 </Button>
@@ -394,7 +439,8 @@ export default function SkillPage() {
 
             if (viewMode === 'list') {
               return (
-                <div key={skill.id} className="group relative flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors">
+                <div key={skill.id} className="group relative flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors cursor-pointer"
+                  onClick={() => skill.files && Object.keys(skill.files).length > 0 && navigate(generateSkillFilesRoute(skill.id))}>
                   {indexedDot}
                   <span className="text-sm font-medium flex-1 min-w-0 truncate">{skill.name}</span>
                   {tagChips}
@@ -414,6 +460,14 @@ export default function SkillPage() {
                         <span>Indexed</span><span className="text-foreground">{skill.has_embedding ? 'Yes' : 'No'}</span>
                         <span>Created</span><span className="text-foreground">{formatRelativeTime(skill.created_at)}</span>
                       </div>
+                      {skill.files && Object.keys(skill.files).length > 0 && (
+                        <div className="pt-1.5 border-t border-border/50">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">
+                            Files ({Object.keys(skill.files).length})
+                          </p>
+                          <SkillFileList files={skill.files} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -444,15 +498,18 @@ export default function SkillPage() {
                     </div>
                     {skill.files && Object.keys(skill.files).length > 0 && (
                       <div className="pt-2 border-t border-border/40">
-                        <p className="text-xs text-muted-foreground mb-1.5">Supplementary files</p>
-                        <div className="flex flex-wrap gap-1">
-                          {Object.keys(skill.files).map((path) => (
-                            <span key={path} className="text-[10px] px-1.5 py-0.5 rounded bg-muted font-mono text-muted-foreground">{path}</span>
-                          ))}
-                        </div>
+                        <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">
+                          Files ({Object.keys(skill.files).length})
+                        </p>
+                        <SkillFileList files={skill.files} />
                       </div>
                     )}
                     <div className="flex gap-2 pt-2 border-t border-border/40">
+                      {skill.files && Object.keys(skill.files).length > 0 && (
+                        <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => navigate(generateSkillFilesRoute(skill.id))}>
+                          <FolderOpen className="size-3.5" />Open Files
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(skill)}>
                         <Pencil className="size-3.5" />Edit
                       </Button>

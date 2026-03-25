@@ -16,3 +16,6 @@ export const generateChatRoute = (conversationId: string) =>
 
 export const generateKnowledgeDocumentsRoute = (knowledgeId: string) =>
     `/knowledge/${knowledgeId}/documents`;
+
+export const generateSkillFilesRoute = (skillId: string) =>
+    `/skills/${skillId}/files`;
