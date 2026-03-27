@@ -1,4 +1,4 @@
-# aiwen/models/context/skill.py
+# aiwen/models/context/skill_structure.py
 """Skill model — standalone table for user-defined skills."""
 
 from datetime import UTC, datetime

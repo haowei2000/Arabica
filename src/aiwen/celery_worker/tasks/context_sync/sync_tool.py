@@ -13,10 +13,10 @@ from aiwen.celery_worker.tasks.workspace_context_sync import (
 )
 from aiwen.celery_worker.tasks.context_sync._base import (
     _generate_embedding,
-    _slugify,
     _store_embedding,
     _upsert_context,
 )
+from aiwen.utils.context import slugify as _slugify
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
                 source_id=tool_id,
                 glance=glance,
                 content=schema_str,
+                path=f"tools/{_slugify(tool_name)}",
                 tags=["tool"] + tool_tags,
                 meta={"tool_id": tool_id, "tool_code": tool_name},
             )

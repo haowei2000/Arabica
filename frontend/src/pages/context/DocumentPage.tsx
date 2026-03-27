@@ -5,7 +5,7 @@ import {
   ArrowLeft, Loader2, Download, Eye, Trash2,
   FolderOpen, Folder, FileText, ChevronDown, ChevronRight,
   Table2, Code2, FileCode, Rows3, Wand2,
-  BookOpen, Book, AlignLeft, Search, ChevronsDownUp, ChevronsUpDown,
+  BookOpen, Book, AlignLeft, Search, ChevronsDownUp, ChevronsUpDown, Brain,
 } from 'lucide-react';
 import { useKnowledge } from '@/hooks/useKnowledge';
 import { useDeleteDocument, useDocumentList, useUploadDocument } from '@/hooks/useDocuments';
@@ -15,6 +15,7 @@ import type { StructureType } from '@/services/documentService';
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ContextViewer } from '@/components/ContextViewer';
 import { cn } from '@/lib/utils';
 import type { Document } from '@/types/document';
 import type { Chunk } from '@/types/chunk';
@@ -489,6 +490,7 @@ export default function DocumentPage() {
   const [structureType, setStructureType] = useState<UploadMode>('auto');
   const [viewMode, setViewMode] = useState<ViewMode>('documents');
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [contextViewDoc, setContextViewDoc] = useState<Document | null>(null);
 
   const { data: knowledge, isLoading: knowledgeLoading } = useKnowledge(knowledgeId || '');
   const { data: documentsData, isLoading: documentsLoading } = useDocumentList(knowledgeId || '');
@@ -762,6 +764,13 @@ export default function DocumentPage() {
                           </Button>
                           <Button
                             variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-primary"
+                            title="View Context"
+                            onClick={(e) => { e.stopPropagation(); setContextViewDoc(doc); }}
+                          >
+                            <Brain className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-primary"
                             title="Download"
                             onClick={(e) => handleDownload(doc, e)}
                           >
@@ -819,6 +828,16 @@ export default function DocumentPage() {
           />
         )}
       </div>
+
+      {contextViewDoc && (
+        <ContextViewer
+          open={!!contextViewDoc}
+          onClose={() => setContextViewDoc(null)}
+          entityType="document"
+          entityId={contextViewDoc.id}
+          entityName={contextViewDoc.original_name}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Library, FileText, Loader2, Trash2, FolderOpen } from 'lucide-react';
+import { Library, FileText, Loader2, Trash2, FolderOpen, Brain } from 'lucide-react';
 import { useKnowledgeList, useCreateKnowledge, useDeleteKnowledge } from '@/hooks/useKnowledge';
 import { generateKnowledgeDocumentsRoute } from '@/constants/routes';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
+import { ContextViewer } from '@/components/ContextViewer';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
 import type { KnowledgeCreate } from '@/types/knowledge';
@@ -36,6 +37,8 @@ export default function KnowledgePage() {
   const [formData, setFormData] = useState<KnowledgeCreate>(INITIAL_FORM);
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [contextViewId, setContextViewId] = useState<string | null>(null);
+  const contextViewItem = contextViewId ? (knowledgeData?.items ?? []).find((k) => k.id === contextViewId) : null;
 
   const { data: knowledgeData, isLoading } = useKnowledgeList();
   const createMutation = useCreateKnowledge();
@@ -125,6 +128,9 @@ export default function KnowledgePage() {
                   <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => navigate(generateKnowledgeDocumentsRoute(kb.id))}>
                     <FolderOpen className="size-3.5" />Open
                   </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); setContextViewId(kb.id); }}>
+                    <Brain className="size-3.5" />
+                  </Button>
                   <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
                     disabled={deleteMutation.isPending} onClick={(e) => handleDelete(kb.id, kb.name, e)}>
                     <Trash2 className="size-3.5" />
@@ -170,6 +176,13 @@ export default function KnowledgePage() {
                   {permissionChip}
                   <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 tabular-nums shrink-0"><FileText className="size-2.5" />{kb.document_count}</span>
                   <FolderOpen className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors shrink-0" />
+                  <button
+                    type="button"
+                    className="size-7 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted shrink-0"
+                    onClick={(e) => { e.stopPropagation(); setContextViewId(kb.id); }}
+                  >
+                    <Brain className="size-3.5 text-muted-foreground" />
+                  </button>
                   <button
                     type="button"
                     className="size-7 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 shrink-0"
@@ -236,6 +249,15 @@ export default function KnowledgePage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        className="gap-1.5"
+                        onClick={() => setContextViewId(kb.id)}
+                      >
+                        <Brain className="size-3.5" />
+                        Context
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
                         disabled={deleteMutation.isPending}
                         onClick={(e) => handleDelete(kb.id, kb.name, e)}
@@ -255,6 +277,17 @@ export default function KnowledgePage() {
           <p className="text-sm text-muted-foreground mb-3">No knowledge bases yet</p>
           <Button size="sm" onClick={() => setShowCreateForm(true)}>Create Knowledge Base</Button>
         </div>
+      )}
+
+      {/* Context Viewer */}
+      {contextViewId && contextViewItem && (
+        <ContextViewer
+          open={!!contextViewId}
+          onClose={() => setContextViewId(null)}
+          entityType="knowledge"
+          entityId={contextViewId}
+          entityName={contextViewItem.name}
+        />
       )}
 
       {/* Create Dialog */}

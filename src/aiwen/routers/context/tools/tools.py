@@ -15,10 +15,12 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiwen.core.dependencies.agents import get_context_crud
 from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.enums import ContextType
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.registries.core import ToolRegistry
 from aiwen.schemas.auth.user import UserResponse
@@ -41,6 +43,8 @@ from aiwen.schemas.context.tools.user_tool import (
     UserToolTestResponse,
     UserToolUpdate,
 )
+from aiwen.schemas.context.context_schema import ContextListResponse
+from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.tools.tool_crud import ToolCRUD
 
 from typing import Literal
@@ -326,6 +330,30 @@ async def list_tools(
     tool_responses = [_build_user_tool_response(tool) for tool in tools]
 
     return UserToolListResponse(tools=tool_responses, total=len(tool_responses))
+
+
+@router.get(
+    "/{tool_id}/context",
+    response_model=ContextListResponse,
+    summary="View synced context entries for a tool",
+)
+async def get_tool_context(
+    tool_id: UUID,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+):
+    """Return all Context entries synced from the given tool."""
+    skip = (page - 1) * page_size
+    items, total = await context_crud.list(
+        user_id=current_user.id,
+        context_type=ContextType.TOOL,
+        source_id=str(tool_id),
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 @router.get(

@@ -20,15 +20,17 @@ from pydantic import BaseModel
 
 from aiwen.celery_worker.celery_app import celery_app, example_task
 from aiwen.celery_worker.tasks.knowledge_tasks import process_document_structured
-from aiwen.core.dependencies.agents import get_document_crud, get_knowledge_crud
+from aiwen.core.dependencies.agents import get_context_crud, get_document_crud, get_knowledge_crud
 from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
 from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.context.context_schema import ContextListResponse
 from aiwen.schemas.context.knowledge.document import (
     DocumentListResponse,
     DocumentResponse,
     DocumentUploadResponse,
 )
+from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.knowledge.document_crud import DocumentCRUD
 from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 
@@ -306,6 +308,25 @@ async def list_documents_by_knowledge(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/{document_id}/context", response_model=ContextListResponse)
+async def get_document_context(
+    document_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(100, ge=1, le=1000, description="Items per page"),
+):
+    """Return all Context chunks synced from the given document."""
+    skip = (page - 1) * page_size
+    items, total = await context_crud.list_by_document_id(
+        document_id=document_id,
+        user_id=current_user.id,
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)

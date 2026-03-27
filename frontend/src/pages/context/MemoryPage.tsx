@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ChevronRight, Brain, Loader2, Play, Trash2 } from 'lucide-react';
+import { ChevronRight, Brain, Loader2, Play, Trash2, ChevronDown } from 'lucide-react';
 import { useWorkspaces, useWorkspaceRuns, useRunEvents } from '@/hooks/useMemory';
 import { useDeleteWorkspace } from '@/hooks/useWorkspaces';
+import { useMemories } from '@/hooks/useEntityContext';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { cn } from '@/lib/utils';
@@ -38,7 +39,9 @@ export default function MemoryPage() {
   const [hiddenEventTypes, setHiddenEventTypes] = useState<Set<string>>(new Set(['agent_token']));
   const [viewMode, setViewMode] = useState<ViewMode>('card');
 
+  const [showShortMemories, setShowShortMemories] = useState(false);
   const { data: workspaceData, isLoading: workspacesLoading } = useWorkspaces({ page_size: 50 });
+  const { data: memoriesData } = useMemories({ page_size: 50 });
   const { data: runsData } = useWorkspaceRuns(selectedWorkspace, expandedWorkspaces.has(selectedWorkspace || '') || viewMode === 'drawer');
   const { data: eventsData } = useRunEvents(selectedRun, expandedRuns.has(selectedRun || '') || (viewMode === 'drawer' && !!selectedRun));
   const deleteWorkspaceMutation = useDeleteWorkspace();
@@ -138,6 +141,32 @@ export default function MemoryPage() {
 
       {filterBar}
 
+      {/* Short Memories section */}
+      {memoriesData && memoriesData.total > 0 && (
+        <div className="mb-4 rounded-xl border border-border bg-card overflow-hidden">
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-muted/40 transition-colors text-left"
+            onClick={() => setShowShortMemories((v) => !v)}
+          >
+            <Brain className="size-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-medium">Short Memories</span>
+            <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">{memoriesData.total}</span>
+            <ChevronDown className={cn('size-3.5 text-muted-foreground ml-auto transition-transform', showShortMemories && 'rotate-180')} />
+          </button>
+          {showShortMemories && (
+            <div className="divide-y divide-border/50 border-t border-border/50">
+              {memoriesData.items.map((mem) => (
+                <div key={mem.id} className="px-4 py-2.5 space-y-1">
+                  <p className="text-xs text-foreground/80 leading-relaxed">{mem.glance ?? mem.content.slice(0, 120)}</p>
+                  {mem.path && <p className="text-[10px] font-mono text-muted-foreground/60">{mem.path}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {workspaces.length === 0 ? (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
           <Brain className="mx-auto size-8 text-muted-foreground/30 mb-3" />
@@ -182,8 +211,9 @@ export default function MemoryPage() {
             const workspaceRuns = isExpanded ? runs : [];
             return (
               <div key={workspace.id} className="group relative">
-                <button type="button" onClick={() => toggleWorkspace(workspace.id)}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left">
+                <div role="button" tabIndex={0} onClick={() => toggleWorkspace(workspace.id)}
+                  onKeyDown={(e) => e.key === 'Enter' && toggleWorkspace(workspace.id)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors cursor-pointer">
                   <span className={cn('size-2 rounded-full shrink-0', statusDot(workspace.status))} />
                   <ChevronRight className={cn('size-3 text-muted-foreground/50 transition-transform shrink-0', isExpanded && 'rotate-90')} />
                   <span className="text-sm font-medium flex-1 min-w-0 truncate">{workspace.name}</span>
@@ -201,7 +231,7 @@ export default function MemoryPage() {
                   >
                     <Trash2 className="size-3" />
                   </button>
-                </button>
+                </div>
 
                 {isExpanded && (
                   <div className="bg-muted/20 border-t border-border/50">
@@ -273,9 +303,10 @@ export default function MemoryPage() {
               <ScrollArea className="flex-1">
                 {workspaces.map((ws) => (
                   <div key={ws.id} className="group relative">
-                    <button type="button" onClick={() => selectWorkspace(ws.id)}
+                    <div role="button" tabIndex={0} onClick={() => selectWorkspace(ws.id)}
+                      onKeyDown={(e) => e.key === 'Enter' && selectWorkspace(ws.id)}
                       className={cn(
-                        'w-full flex items-center gap-2 px-3 py-2.5 text-left',
+                        'w-full flex items-center gap-2 px-3 py-2.5 cursor-pointer',
                         'border-b border-border/30 last:border-0 hover:bg-muted/40 transition-colors',
                         selectedWorkspace === ws.id && 'bg-primary/8 border-l-2 border-l-primary'
                       )}>
@@ -291,7 +322,7 @@ export default function MemoryPage() {
                         <Trash2 className="size-3" />
                       </button>
                       <ChevronRight className="size-3 text-muted-foreground/40 shrink-0" />
-                    </button>
+                    </div>
                   </div>
                 ))}
               </ScrollArea>

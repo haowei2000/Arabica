@@ -10,6 +10,7 @@ from aiwen.celery_worker.tasks.context_sync._base import (
     _store_embedding,
     _upsert_context,
 )
+from aiwen.utils.context import slugify as _slugify
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
                 source_id=workspace_id,
                 glance=ws.name,
                 content=content,
+                path=f"workspaces/{_slugify(ws.name)}",
                 tags=["workspace", str(ws.status)],
                 meta={
                     "workspace_id": workspace_id,
@@ -120,6 +122,7 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
                 parts.append(f"Assistant: {output_msg}")
             content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
 
+            run_path = f"runs/{_slugify(run.title)}" if run.title else f"runs/{run_id[:8]}"
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
@@ -127,6 +130,7 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
                 source_id=run_id,
                 glance=glance,
                 content=content,
+                path=run_path,
                 tags=["run", run.status],
                 meta={
                     "run_id": run_id,
@@ -212,6 +216,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
                 source_id=run_id,
                 glance=glance,
                 content=content,
+                path=f"runs/{run_id[:8]}/events",
                 tags=["events", "run"],
                 meta={
                     "run_id": run_id,
@@ -242,4 +247,89 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
         run_async(_execute())
     except Exception as e:
         logger.error(f"sync_run_events failed for {run_id}: {e}")
+        self.retry(exc=e)
+
+
+@celery_app.task(
+    bind=True,
+    name="context_sync.sync_run_to_memory",
+    max_retries=3,
+    default_retry_delay=30,
+    queue="default",
+)
+def sync_run_to_memory(self, run_id: str, user_id: str):
+    """Create a SHORT_MEMORY context entry from a completed run.
+
+    Called after summarize_run writes title/summary so the memory entry
+    contains the LLM-generated summary rather than raw input/output.
+    Falls back to raw input/output if summary is not available.
+    """
+    async def _execute():
+        from aiwen.extensions.database import get_session
+        from aiwen.models.runs.run import Run
+
+        async with get_session("aiwen") as session:
+            run = await session.get(Run, UUID(run_id))
+            if not run:
+                logger.warning(f"sync_run_to_memory: run {run_id} not found")
+                return
+
+            if run.status not in ("finished", "failed", "cancelled"):
+                logger.info(
+                    f"sync_run_to_memory: run {run_id} is not terminal ({run.status}), skipping"
+                )
+                return
+
+            input_msg = (run.input_data or {}).get("message", "")
+            output_msg = (run.output_data or {}).get("message", "") or str(run.output_data or "")
+
+            # Prefer LLM-generated title/summary; fall back to raw content
+            glance = run.title or (input_msg[:80] if input_msg else f"Run {run_id[:8]}")
+
+            parts: list[str] = []
+            if run.summary:
+                parts.append(run.summary)
+            if input_msg:
+                parts.append(f"User: {input_msg}")
+            if output_msg:
+                parts.append(f"Assistant: {output_msg}")
+            content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
+
+            memory_path = f"memory/{_slugify(run.title)}" if run.title else f"memory/run-{run_id[:8]}"
+            ctx, needs_embedding = await _upsert_context(
+                session,
+                user_id=user_id,
+                context_type="short_memory",
+                source_id=run_id,
+                glance=glance,
+                content=content,
+                path=memory_path,
+                tags=["memory", "run", run.status],
+                meta={
+                    "run_id": run_id,
+                    "workspace_id": str(run.workspace_id),
+                    "status": run.status,
+                    "app_id": str(run.app_id) if run.app_id else None,
+                },
+            )
+
+            await session.flush()
+            ctx_id = str(ctx.id)
+            await session.commit()
+
+        logger.info(f"sync_run_to_memory: upserted SHORT_MEMORY for run {run_id}")
+
+        if needs_embedding and content.strip():
+            vector, field = _generate_embedding(content[:2000])
+            async with get_session("aiwen") as session:
+                await _store_embedding(session, ctx_id, vector, field)
+                await session.commit()
+            logger.info(f"sync_run_to_memory: embedded Context {ctx_id}")
+        elif not needs_embedding:
+            logger.debug(f"sync_run_to_memory: content unchanged, skipped re-embedding {ctx_id}")
+
+    try:
+        run_async(_execute())
+    except Exception as e:
+        logger.error(f"sync_run_to_memory failed for {run_id}: {e}")
         self.retry(exc=e)

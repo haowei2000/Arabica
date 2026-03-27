@@ -224,6 +224,24 @@ async def grep_contexts(
     return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
+@router.get("/memories", response_model=ContextListResponse)
+async def list_memories(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+):
+    """List all short_memory Context entries for the current user."""
+    skip = (page - 1) * page_size
+    items, total = await crud.list(
+        user_id=current_user.id,
+        context_type=ContextType.SHORT_MEMORY.value,
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
+
+
 @router.get("/{context_id}", response_model=ContextResponse)
 async def get_context(
     context_id: str,

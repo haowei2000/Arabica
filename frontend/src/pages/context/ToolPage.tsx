@@ -4,7 +4,7 @@ import {
   MoveRight, Search, Copy, Play, X, Plus, ChevronRight, ChevronDown,
   ArrowRight, Check, CircleDot, Circle, Zap, ArrowLeft, Settings2,
   Link2, Type, Hash, ToggleLeft as ToggleIcon, List, Box, Braces,
-  Download, Upload, Code2, FormInput, AlertCircle, Layers,
+  Download, Upload, Code2, FormInput, AlertCircle, Layers, Brain,
 } from 'lucide-react';
 import {
   useToolList, useCreateTool, useUpdateTool, useDeleteTool,
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
+import { ContextViewer } from '@/components/ContextViewer';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
 import type { UserTool, UserToolCreate, InnerToolInfo, ToolExportData, MCPServerConfig, MCPTransport, MCPToolInfo } from '@/types/tool';
@@ -119,6 +120,7 @@ export default function ToolPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [contextViewId, setContextViewId] = useState<string | null>(null);
   const [groupByBundle, setGroupByBundle] = useState(true);
   const [collapsedBundles, setCollapsedBundles] = useState<Set<string>>(new Set());
 
@@ -1185,6 +1187,9 @@ export default function ToolPage() {
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}>
                   <Download className="size-3.5" />
                 </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); setContextViewId(tool.id); }}>
+                  <Brain className="size-3.5" />
+                </Button>
               </>
             ) : (
               <>
@@ -1204,6 +1209,9 @@ export default function ToolPage() {
                 </Button>
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}>
                   <Download className="size-3.5" />
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); setContextViewId(tool.id); }}>
+                  <Brain className="size-3.5" />
                 </Button>
                 <Button size="sm" variant="outline" className="text-destructive border-destructive/30"
                   disabled={deleteMutation.isPending} onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}>
@@ -1255,6 +1263,7 @@ export default function ToolPage() {
             )}
             <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}><Copy className="size-3.5 text-muted-foreground" /></button>
             <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => handleExportTool(tool, e)}><Download className="size-3.5 text-muted-foreground" /></button>
+            <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted" onClick={(e) => { e.stopPropagation(); setContextViewId(tool.id); }}><Brain className="size-3.5 text-muted-foreground" /></button>
             {!inner && <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-destructive/10" onClick={(e) => handleDelete(tool.id, tool.display_name || tool.name, e)}><Trash2 className="size-3.5 text-destructive/70" /></button>}
           </div>
         </div>
@@ -1298,6 +1307,7 @@ export default function ToolPage() {
               )}
               <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); handleUseAsTemplate(tool); }}><Copy className="size-3.5" />{inner ? 'Use as Template' : ''}</Button>
               <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => handleExportTool(tool, e)}><Download className="size-3.5" />Export</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); setContextViewId(tool.id); }}><Brain className="size-3.5" />Context</Button>
             </div>
           </div>
         }
@@ -1842,6 +1852,20 @@ export default function ToolPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Context Viewer */}
+      {contextViewId && (() => {
+        const t = (toolData?.tools ?? []).find((x) => x.id === contextViewId);
+        return t ? (
+          <ContextViewer
+            open={!!contextViewId}
+            onClose={() => setContextViewId(null)}
+            entityType="tool"
+            entityId={contextViewId}
+            entityName={t.display_name || t.name}
+          />
+        ) : null;
+      })()}
     </div>
   );
 }

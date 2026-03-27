@@ -15,6 +15,7 @@ from aiwen.celery_worker.tasks.context_sync.sync_run import (
     sync_workspace_to_contexts,
     sync_run_to_contexts,
     sync_run_events_to_context,
+    sync_run_to_memory,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "sync_workspace_to_contexts",
     "sync_run_to_contexts",
     "sync_run_events_to_context",
+    "sync_run_to_memory",
 ]

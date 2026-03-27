@@ -522,6 +522,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
             from aiwen.models.auth.user import User
             from aiwen.models.context.context import Context
+            from aiwen.utils.context import slugify as _slugify
 
             # All registered inner tools (no enabled filter — sync all)
             synced_tools = (await db.execute(
@@ -587,6 +588,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     tags = ["tool"] + (tool.tags or [])
                     meta = {"tool_id": str(tool.id), "tool_code": tool_name, "name": display_name}
 
+                    tool_path = f"tools/{_slugify(tool_name)}"
                     for user in all_users:
                         key = (tool.id, user.id)
                         if key in existing_pairs:
@@ -594,6 +596,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                             if ctx:
                                 ctx.glance = glance
                                 ctx.content = content
+                                ctx.path = tool_path
                                 ctx.tags = tags
                                 ctx.meta = {**(ctx.meta or {}), **meta}
                                 ctx.embedding_384 = None
@@ -608,6 +611,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                                 context_type="tool",
                                 source_id=tool.id,
                                 glance=glance,
+                                path=tool_path,
                                 summary=tool.description,
                                 content=content,
                                 tags=tags,

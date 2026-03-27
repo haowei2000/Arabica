@@ -11,4 +11,5 @@ from aiwen.celery_worker.tasks.context_sync import (  # noqa: F401
     sync_workspace_to_contexts,
     sync_run_to_contexts,
     sync_run_events_to_context,
+    sync_run_to_memory,
 )

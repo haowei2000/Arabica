@@ -4,15 +4,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from aiwen.core.dependencies.agents import get_knowledge_crud
+from aiwen.core.dependencies.agents import get_context_crud, get_knowledge_crud
 from aiwen.core.dependencies.auth import get_current_user
+from aiwen.core.enums import ContextType
 from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.context.context_schema import ContextListResponse
 from aiwen.schemas.context.knowledge.knowledge import (
     KnowledgeCreate,
     KnowledgeListResponse,
     KnowledgeResponse,
     KnowledgeUpdate,
 )
+from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -41,6 +44,26 @@ async def create_knowledge(
     from aiwen.celery_worker.tasks.context_sync_tasks import sync_knowledge_to_contexts
     sync_knowledge_to_contexts.delay(str(knowledge.id), str(current_user.id))
     return knowledge
+
+
+@router.get("/{knowledge_id}/context", response_model=ContextListResponse)
+async def get_knowledge_context(
+    knowledge_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+):
+    """Return all Context entries synced from the given knowledge base."""
+    skip = (page - 1) * page_size
+    items, total = await context_crud.list(
+        user_id=current_user.id,
+        context_type=ContextType.KNOWLEDGE,
+        source_id=knowledge_id,
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 @router.get("/{knowledge_id}/get", response_model=KnowledgeResponse)

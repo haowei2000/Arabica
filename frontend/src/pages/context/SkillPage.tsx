@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FolderOpen, Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle } from 'lucide-react';
+import { FolderOpen, Sparkles, Loader2, Trash2, Pencil, CheckCircle2, Circle, Brain } from 'lucide-react';
 import { useSkills, useUpdateSkill, useDeleteSkill, useUploadSkillFolder } from '@/hooks/useSkills';
 import { generateSkillFilesRoute } from '@/constants/routes';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
+import { ContextViewer } from '@/components/ContextViewer';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
 import type { SkillUpdate, Skill } from '@/types/skill';
@@ -183,6 +184,7 @@ export default function SkillPage() {
   const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const [contextViewId, setContextViewId] = useState<string | null>(null);
 
   // Folder upload state
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -201,6 +203,7 @@ export default function SkillPage() {
   const uploadFolderMutation = useUploadSkillFolder();
 
   const skills = skillData?.items ?? [];
+  const contextViewItem = contextViewId ? skills.find((s) => s.id === contextViewId) : null;
   const allTags = Array.from(new Set(skills.flatMap((s) => s.tags ?? []))).sort();
 
   const addTagToForm = () => {
@@ -406,6 +409,9 @@ export default function SkillPage() {
                 <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(skill)}>
                   <Pencil className="size-3.5" />Edit
                 </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); setContextViewId(skill.id); }}>
+                  <Brain className="size-3.5" />
+                </Button>
                 <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
                   disabled={deleteMutation.isPending} onClick={(e) => handleDelete(skill, e)}>
                   <Trash2 className="size-3.5" />
@@ -447,6 +453,9 @@ export default function SkillPage() {
                   <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                     <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted transition-colors" onClick={() => openEditModal(skill)}>
                       <Pencil className="size-3.5 text-muted-foreground" />
+                    </button>
+                    <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-muted transition-colors" onClick={(e) => { e.stopPropagation(); setContextViewId(skill.id); }}>
+                      <Brain className="size-3.5 text-muted-foreground" />
                     </button>
                     <button type="button" className="size-7 flex items-center justify-center rounded hover:bg-destructive/10 transition-colors" onClick={(e) => handleDelete(skill, e)}>
                       <Trash2 className="size-3.5 text-destructive/70" />
@@ -513,6 +522,9 @@ export default function SkillPage() {
                       <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => openEditModal(skill)}>
                         <Pencil className="size-3.5" />Edit
                       </Button>
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setContextViewId(skill.id)}>
+                        <Brain className="size-3.5" />Context
+                      </Button>
                       <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
                         disabled={deleteMutation.isPending} onClick={(e) => handleDelete(skill, e)}>
                         <Trash2 className="size-3.5" />
@@ -532,6 +544,17 @@ export default function SkillPage() {
             <FolderOpen className="size-3.5 mr-1" />Upload Folder
           </Button>
         </div>
+      )}
+
+      {/* Context Viewer */}
+      {contextViewId && contextViewItem && (
+        <ContextViewer
+          open={!!contextViewId}
+          onClose={() => setContextViewId(null)}
+          entityType="skill"
+          entityId={contextViewId}
+          entityName={contextViewItem.name}
+        />
       )}
 
       {/* Folder Upload Dialog */}

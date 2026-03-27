@@ -139,6 +139,11 @@ export const API_ENDPOINTS = {
         LIST: '/agent/context/query',
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/context/knowledge/${knowledgeId}/chunks`,
         LIST_BY_DOCUMENT: (documentId: string) => `/agent/context/document/${documentId}/chunks`,
+        MEMORIES: '/agent/context/memories',
+        FOR_SKILL: (id: string) => `/agent/skills/${id}/context`,
+        FOR_KNOWLEDGE: (id: string) => `/agent/knowledge/${id}/context`,
+        FOR_DOCUMENT: (id: string) => `/agent/document/${id}/context`,
+        FOR_TOOL: (id: string) => `/tools/${id}/context`,
     },
 
     // Triggers 管理

@@ -1,6 +1,5 @@
 """Shared helpers and constants for context-sync Celery tasks."""
 
-import re
 import logging
 from uuid import UUID, uuid4
 
@@ -35,6 +34,66 @@ async def _upsert_context(session, *, user_id: str, context_type: str, source_id
         Context.source_id == UUID(source_id),
         Context.context_type == context_type,
         Context.user_id == UUID(user_id),
+    )
+    result = await session.execute(stmt)
+    ctx = result.scalar_one_or_none()
+
+    if ctx:
+        new_content = content or ctx.content
+        content_changed = new_content != ctx.content
+
+        ctx.glance = glance
+        ctx.content = new_content
+        if path is not None:
+            ctx.path = path
+        if tags is not None:
+            ctx.tags = tags
+        ctx.meta = {**(ctx.meta or {}), **merged_meta}
+
+        if content_changed:
+            ctx.embedding_384 = None
+            ctx.embedding_768 = None
+            ctx.embedding_1024 = None
+            ctx.embedding_1536 = None
+
+        return ctx, content_changed
+    else:
+        ctx = Context(
+            id=uuid4(),
+            user_id=UUID(user_id),
+            context_type=context_type,
+            source_id=UUID(source_id),
+            glance=glance,
+            path=path,
+            content=content or "",
+            tags=tags or [],
+            meta=merged_meta,
+        )
+        session.add(ctx)
+        return ctx, True
+
+
+async def _upsert_context_at_path(session, *, user_id: str, context_type: str, source_id: str,
+                                   path: str, glance: str | None, content: str | None,
+                                   tags: list[str] | None = None,
+                                   meta: dict | None = None) -> tuple:
+    """Create or update a Context row identified by (source_id, context_type, user_id, path).
+
+    Unlike ``_upsert_context``, the ``path`` is part of the unique key so multiple
+    entries with different paths can coexist for the same source (e.g. per-file
+    chunks of a skill or knowledge base).
+    """
+    from sqlalchemy import select
+
+    from aiwen.models.context.context import Context
+
+    merged_meta = meta or {}
+
+    stmt = select(Context).where(
+        Context.source_id == UUID(source_id),
+        Context.context_type == context_type,
+        Context.user_id == UUID(user_id),
+        Context.path == path,
     )
     result = await session.execute(stmt)
     ctx = result.scalar_one_or_none()

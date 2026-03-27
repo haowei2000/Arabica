@@ -8,13 +8,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.core.dependencies.agents import get_skill_crud
+from aiwen.core.dependencies.agents import get_context_crud, get_skill_crud
+from aiwen.core.enums import ContextType
+from aiwen.services.context.context_crud import ContextCRUD
 from aiwen.services.context.skill_crud import SkillCRUD
 from aiwen.core.dependencies.auth import get_current_user
 from aiwen.extensions.database import get_aiwen_db
 from aiwen.extensions.storage.global_storage import get_global_s3_storage
 from aiwen.extensions.storage.s3_storage_backend import S3StorageBackend
 from aiwen.schemas.auth.user import UserResponse
+from aiwen.schemas.context.context_schema import ContextListResponse
 from aiwen.schemas.context.skill import (
     SkillCreate,
     SkillListResponse,
@@ -40,6 +43,30 @@ def _build_skill_response(skill) -> SkillResponse:
         updated_at=skill.updated_at,
     )
 
+
+
+@router.get(
+    "/{skill_id}/context",
+    response_model=ContextListResponse,
+    summary="View synced context entries for a skill",
+)
+async def get_skill_context(
+    skill_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+):
+    """Return all Context entries synced from the given skill."""
+    skip = (page - 1) * page_size
+    items, total = await context_crud.list(
+        user_id=current_user.id,
+        context_type=ContextType.SKILL,
+        source_id=skill_id,
+        skip=skip,
+        limit=page_size,
+    )
+    return ContextListResponse(total=total, items=items, page=page, page_size=page_size)
 
 
 @router.get(
@@ -425,4 +452,8 @@ async def upload_skill_folder(
         logger.info(f"Updated skill.files with metadata")
 
     logger.info(f"Skill upload completed successfully: {skill.id}")
+
+    from aiwen.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+    sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
+
     return _build_skill_response(skill)

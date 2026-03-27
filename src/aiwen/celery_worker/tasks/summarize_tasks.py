@@ -146,8 +146,11 @@ def summarize_run(self, run_id: str, user_id: str) -> None:
             len(summary),
         )
 
-        # ── Trigger workspace summary refresh ─────────────────────────────
+        # ── Trigger workspace summary refresh and memory write ────────────
         summarize_workspace.delay(workspace_id, user_id)
+
+        from aiwen.celery_worker.tasks.context_sync.sync_run import sync_run_to_memory
+        sync_run_to_memory.delay(run_id, user_id)
 
     try:
         run_async(_execute())

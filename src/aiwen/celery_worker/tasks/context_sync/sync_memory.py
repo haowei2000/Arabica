@@ -12,6 +12,7 @@ from aiwen.celery_worker.tasks.context_sync._base import (
     _generate_embedding,
     _store_embedding,
 )
+from aiwen.utils.context import slugify as _slugify
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,15 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):
                 return
 
             glance = mem.glance or (mem.content[:80] if mem.content else "Memory")
+
+            # Back-fill path for rows created before path was set
+            if not mem.path:
+                if mem.glance:
+                    mem.path = f"memory/{_slugify(mem.glance[:50])}"
+                elif mem.source_id:
+                    mem.path = f"memory/run-{str(mem.source_id)[:8]}"
+                else:
+                    mem.path = f"memory/{str(mem.id)[:8]}"
 
             # Only clear and regenerate if no embedding exists yet
             needs_embedding = mem.embedding_1024 is None
