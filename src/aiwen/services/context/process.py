@@ -60,7 +60,7 @@ async def copy_contexts_to_workspace(
         )
         return []
 
-    from aiwen.services.context.client import context_service_client
+    new_entries: list[WorkspaceContext] = []
 
     for ctx in contexts:
         # Build the virtual path
@@ -69,9 +69,6 @@ async def copy_contexts_to_workspace(
             target_path = f"{path_prefix.rstrip('/')}/{target_path.lstrip('/')}"
         elif path_prefix:
             target_path = path_prefix
-
-        # Derive a display name from the context
-        name = _derive_name(ctx)
 
         # Preserve source metadata that doesn't map 1:1
         source_meta: dict = {
@@ -85,28 +82,34 @@ async def copy_contexts_to_workspace(
         meta = dict(ctx.meta) if ctx.meta else {}
         meta["source"] = source_meta
 
-        # Instead of DB model, call the context service
-        await context_service_client.create_context(
+        ws_ctx = WorkspaceContext(
             workspace_id=workspace_id,
-            path=target_path or "",
-            name=name,
-            content=ctx.content or "",
+            created_by=created_by,
+            path=target_path,
+            name=_derive_name(ctx),
             content_type=_guess_content_type(ctx),
             glance=ctx.glance,
-            summary=ctx.summary,
+            content=ctx.content,
+            s3_key=ctx.s3_key if hasattr(ctx, "s3_key") else None,
             tags=ctx.tags or [],
             meta=meta,
             expires_at=expires_at,
         )
+        db.add(ws_ctx)
+        new_entries.append(ws_ctx)
+
+    if auto_commit:
+        await db.commit()
+    else:
+        await db.flush()
 
     logger.info(
-        "Copied %d/%d contexts into context-service for workspace %s",
-        len(contexts),
+        "Copied %d/%d contexts into WorkspaceContext for workspace %s",
+        len(new_entries),
         len(context_ids),
         workspace_id,
     )
-    # We return an empty list or a list of mock objects since we no longer use WorkspaceContext model here
-    return []
+    return new_entries
 
 
 async def copy_contexts_to_workspace_by_filter(

@@ -9,6 +9,6 @@ Source modules:
     - aiwen.registries.core: ToolRegistry, ExecutorRegistry, register_tool, register_executor
     - aiwen.registries.manager: RegistryManager, get_registry
     - aiwen.core.interfaces.protocols: ToolProtocol, ExecutorProtocol, is_tool, is_executor
-    - aiwen.core.interfaces.tool: BaseTool, InnerTool, ExternalTool, ToolMetadata, ...
+    - aiwen.core.interfaces.tool: BaseTool, InnerTool, ToolMetadata, ...
     - aiwen.core.interfaces.executor: Executor, WaitingForTool
 """

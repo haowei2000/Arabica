@@ -17,14 +17,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.models.context.tools import Tool
-from aiwen.schemas.context.tools.user_tool import UserToolCreate, UserToolUpdate
 from aiwen.services.context.context_syncer import ContextSyncer
 
 logger = logging.getLogger(__name__)
@@ -77,96 +75,6 @@ class ToolCRUD:
                 "Please choose a different name."
             )
 
-    @staticmethod
-    def validate_chain_steps(
-        chain: list[dict[str, Any]] | None,
-        reserved: set[str] | None = None,
-    ) -> None:
-        """Validate that every chain step references an existing tool.
-
-        Raises:
-            ValueError: If a step references an unknown tool name.
-        """
-        if not chain:
-            return
-
-        if reserved is None:
-            reserved = ToolCRUD._get_reserved_names()
-
-        for idx, step in enumerate(chain):
-            step_tool = step.get("tool_name")
-            if not step_tool:
-                raise ValueError(
-                    f"Chain step {idx} is missing 'tool_name'."
-                )
-            if step_tool not in reserved:
-                raise ValueError(
-                    f"Chain step {idx} references unknown tool '{step_tool}'. "
-                    "Only registered built-in tools can be used in chain steps."
-                )
-
-    async def create_tool(
-        self, user_id: UUID, tool_data: UserToolCreate, auto_commit: bool = True
-    ) -> Tool:
-        """
-        Create a new external tool
-
-        Args:
-            user_id: Owner user ID
-            tool_data: Tool creation data
-            auto_commit: Whether to commit immediately
-
-        Returns:
-            Tool: Created tool instance
-
-        Raises:
-            ValueError: If tool name already exists, is reserved, or chain
-                steps reference unknown tools.
-        """
-        # ── Name validation ──────────────────────────────────────
-        reserved = self._get_reserved_names()
-        self.validate_tool_name(tool_data.name, reserved)
-        self.validate_chain_steps(tool_data.chain, reserved)
-
-        # Check if tool name already exists for this user (external only)
-        existing = await self.get_tool_by_name(user_id, tool_data.name)
-        if existing:
-            raise ValueError(
-                f"Tool with name '{tool_data.name}' already exists for this user"
-            )
-
-        tool = Tool(
-            user_id=user_id,
-            tool_type="external",
-            tool_code=f"ext_{tool_data.name}_{uuid4().hex[:8]}",
-            workspace_id=tool_data.workspace_id,
-            name=tool_data.name,
-            display_name=tool_data.display_name,
-            description=tool_data.description,
-            inner_tool_name=tool_data.inner_tool_name,
-            parameter_mapping=tool_data.parameter_mapping,
-            chain=tool_data.chain,
-            input_schema=tool_data.input_schema,
-            output_schema=tool_data.output_schema,
-            category=tool_data.category,
-            tags=tool_data.tags,
-            timeout=tool_data.timeout,
-            enabled=tool_data.enabled,
-            is_public=tool_data.is_public,
-        )
-
-        self.db.add(tool)
-
-        if auto_commit:
-            await self.db.commit()
-            await self.db.refresh(tool)
-        else:
-            await self.db.flush()
-
-        await ContextSyncer(self.db).sync_tool(tool)
-
-        logger.info(f"Created user tool: {tool.name} (id={tool.id}, user={user_id})")
-        return tool
 
     async def get_tool_by_id(
         self, tool_id: UUID, user_id: UUID | None = None
@@ -272,51 +180,6 @@ class ToolCRUD:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def update_tool(
-        self,
-        tool_id: UUID,
-        user_id: UUID,
-        tool_data: UserToolUpdate,
-        auto_commit: bool = True,
-    ) -> Tool | None:
-        """
-        Update an external tool
-
-        Args:
-            tool_id: Tool ID
-            user_id: User ID (for ownership check)
-            tool_data: Update data
-            auto_commit: Whether to commit immediately
-
-        Returns:
-            Tool | None: Updated tool or None if not found/not owner
-
-        Raises:
-            ValueError: If updated chain steps reference unknown tools.
-        """
-        tool = await self.get_tool_by_id(tool_id, user_id)
-        if not tool or tool.user_id != user_id:
-            return None
-
-        update_data = tool_data.model_dump(exclude_unset=True)
-
-        # Validate chain steps if they are being updated
-        if "chain" in update_data and update_data["chain"] is not None:
-            self.validate_chain_steps(update_data["chain"])
-
-        for field, value in update_data.items():
-            setattr(tool, field, value)
-
-        if auto_commit:
-            await self.db.commit()
-            await self.db.refresh(tool)
-        else:
-            await self.db.flush()
-
-        await ContextSyncer(self.db).sync_tool(tool)
-
-        logger.info(f"Updated user tool: {tool.name} (id={tool_id})")
-        return tool
 
     async def delete_tool(
         self, tool_id: UUID, user_id: UUID, auto_commit: bool = True

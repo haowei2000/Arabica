@@ -37,8 +37,8 @@ docker-build-all: ## Build all Docker images (backend + frontend + context-servi
 	$(MAKE) docker-build-frontend
 	$(MAKE) docker-build-context-service
 
-docker-up: ## Start all containers (infra + app + frontend)
-	cd docker && docker compose --env-file .env --profile infra --profile app up -d
+docker-up: ## Start all containers (infra + app + celery worker)
+	cd docker && docker compose --env-file .env --profile infra --profile app --profile celery up -d
 
 docker-up-infra: ## Start infrastructure only (postgres, redis, etc.)
 	cd docker && docker compose --env-file .env --profile infra up -d

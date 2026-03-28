@@ -100,19 +100,11 @@ export const API_ENDPOINTS = {
 
     // User Tools
     TOOLS: {
-        TEMPLATES: '/tools/templates',
-        TEMPLATE: (id: string) => `/tools/templates/${id}`,
-        TOOL_TEMPLATE: (id: string) => `/tools/${id}/template`,
         LIST: '/tools/',
-        CREATE: '/tools/',
         GET: (id: string) => `/tools/${id}`,
-        UPDATE: (id: string) => `/tools/${id}`,
         DELETE: (id: string) => `/tools/${id}`,
         TOGGLE: (id: string) => `/tools/${id}/toggle`,
         TEST: (id: string) => `/tools/${id}/test`,
-        EXPORT: (id: string) => `/tools/${id}/export`,
-        IMPORT: '/tools/import',
-        INNER_TOOLS: '/tools/registry/inner-tools',
         PROBE_MCP: '/tools/probe-mcp',
         IMPORT_FROM_MCP: '/tools/import-from-mcp',
     },

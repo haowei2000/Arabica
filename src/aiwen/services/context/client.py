@@ -3,8 +3,6 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from aiwen.config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -12,8 +10,14 @@ class ContextServiceClient:
     """Client for the separate Context Service."""
 
     def __init__(self, base_url: Optional[str] = None):
-        # Default to the service name in Docker network if not provided
-        self.base_url = base_url or getattr(settings, "CONTEXT_SERVICE_URL", "http://context-service:8080")
+        if base_url:
+            self.base_url = base_url
+        else:
+            try:
+                from aiwen.config.factory import get_settings
+                self.base_url = getattr(get_settings(), "CONTEXT_SERVICE_URL", "http://context-service:8080")
+            except Exception:
+                self.base_url = "http://context-service:8080"
 
     async def create_context(
         self,

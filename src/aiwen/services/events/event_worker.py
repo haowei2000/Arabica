@@ -377,27 +377,21 @@ class Worker:
         config["workspace_id"] = workspace_id
         config["run_id"] = run_id
 
-        if user_tool_classes:
-            user_instances = {cls.METADATA.name: cls() for cls in user_tool_classes}
-            per_run_caller = RegistryToolCaller(extra_instances=user_instances)
-            config["tool_caller"] = per_run_caller
-            # Store so TOOL_CALL events (routed outside the executor) can use
-            # the same caller that knows about user/MCP tools.
-            if run_id:
-                self._run_tool_callers[run_id] = per_run_caller
+        # Always create a per-run caller — only MCP-imported tools are available.
+        # Inner tools must be imported from the aiwen-mcp server first.
+        user_instances = {cls.METADATA.name: cls() for cls in (user_tool_classes or [])}
+        per_run_caller = RegistryToolCaller(extra_instances=user_instances)
+        config["tool_caller"] = per_run_caller
+        if run_id:
+            self._run_tool_callers[run_id] = per_run_caller
 
-            base_extra = list(self._default_tool_provider._extra_tool_classes)
-            if not config.get("enable_browser_tools", True):
-                base_extra = []
-            config["tool_provider"] = RegistryToolProvider(
-                extra_tool_classes=base_extra + list(user_tool_classes),
-            )
-        else:
-            config["tool_caller"] = self._tool_caller
-            config["tool_provider"] = self._default_tool_provider
-            # Pass cached tools_info to skip re-generating schemas on every run.
-            if executor_code in self._tools_info_cache:
-                config["tools_info"] = self._tools_info_cache[executor_code]
+        config["tool_provider"] = RegistryToolProvider(
+            extra_tool_classes=list(user_tool_classes or []),
+        )
+
+        # Pass cached tools_info only when no user tools (stable schema).
+        if not user_tool_classes and executor_code in self._tools_info_cache:
+            config["tools_info"] = self._tools_info_cache[executor_code]
 
         executor = executor_cls(config)
 

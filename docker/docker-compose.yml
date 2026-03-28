@@ -91,6 +91,7 @@ services:
   mcp-server:
     profiles:
       - mcp
+      - app
       - all
     build:
       context: ..
@@ -139,6 +140,32 @@ services:
         reservations:
           memory: 256M
   
+  # One-shot container: imports all inner tools from the MCP server on startup
+  tool-initializer:
+    profiles:
+      - app
+      - all
+    image: python:3-alpine
+    volumes:
+      - ./init_builtin_tools.py:/init_builtin_tools.py:ro
+    command: ["python", "/init_builtin_tools.py"]
+    environment:
+      <<: *common-env
+      API_URL: http://app:8000
+      MCP_URL: http://mcp-server:9000
+      MCP_SSE_PATH: /mcp
+      ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-123456}
+      WAIT_TIMEOUT: "120"
+    depends_on:
+      app:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+    restart: "no"
+    networks:
+      - aiwen-network
+
   # Celery Worker for background tasks
   celery-worker:
     profiles:

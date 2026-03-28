@@ -19,14 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class RegistryToolProvider(ToolProvider):
-    """Provides tool classes/instances from the ToolRegistry.
+    """Provides tool classes imported from MCP servers.
 
-    Aggregates tools from:
-      1. Explicit ``extra_tool_classes`` (e.g. browser tools, server tools)
-         passed at construction time.
-      2. All tools registered in the ``ToolRegistry`` singleton.
-
-    This keeps the executor unaware of *where* tools originate.
+    Only serves tools explicitly passed as ``extra_tool_classes`` — i.e.
+    tools imported from MCP servers via the tool library.  Inner (built-in)
+    tools are not exposed here; they must be imported from the aiwen-mcp
+    server like any other MCP server.
     """
 
     def __init__(
@@ -35,42 +33,25 @@ class RegistryToolProvider(ToolProvider):
     ) -> None:
         self._extra_tool_classes: list[type[BaseTool]] = extra_tool_classes or []
 
-    def get_tool_classes(self) -> list[type[BaseTool]]:  # ty:ignore[invalid-method-override]
-        """Return extra + registry tool classes."""
-        from aiwen.registries.core import ToolRegistry
-
-        classes: list[type[BaseTool]] = list(self._extra_tool_classes)
-
-        # Avoid duplicates: collect names already present
-        known_names = {cls.METADATA.name for cls in classes}
-
-        for tool_name in ToolRegistry.list_tools():
-            if tool_name in known_names:
-                continue
-            tool_cls = ToolRegistry.get_tool_class(tool_name)
-            if tool_cls is not None:
-                classes.append(tool_cls)
-                known_names.add(tool_name)
-
-        return classes
+    def get_tool_classes(self) -> list[type[BaseTool]]:
+        """Return MCP-imported tool classes only."""
+        return list(self._extra_tool_classes)
 
     def get_tool_instance(self, tool_name: str) -> BaseTool | None:
-        """Return a tool instance by name."""
-        from aiwen.registries.core import ToolRegistry
-
-        return ToolRegistry.get_tool_instance(tool_name)
+        """Return a tool instance by name from MCP-imported tools."""
+        for cls in self._extra_tool_classes:
+            if cls.METADATA.name == tool_name:
+                return cls()
+        return None
 
 
 class RegistryToolCaller(ToolCaller):
-    """Executes tools via the ToolRegistry singleton.
+    """Executes MCP-imported tools by name.
 
-    Looks up the tool instance by name, then calls it with the
-    provided arguments using ``BaseTool.__call__()``.
-
-    An optional ``extra_instances`` dict allows per-run tools
-    (e.g. user-defined ExternalTools loaded from the database)
-    to be resolved without polluting the global ToolRegistry.
-    Extra instances take precedence over registry look-ups.
+    Only resolves tools from ``extra_instances`` — tools that were imported
+    from MCP servers and loaded via ``DynamicToolLoader``.  Inner (built-in)
+    tools are not callable here; they must be imported from the aiwen-mcp
+    server first.
     """
 
     def __init__(
@@ -82,15 +63,11 @@ class RegistryToolCaller(ToolCaller):
     async def call(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Execute a tool through extra instances or the registry."""
-        # Per-run extra instances (user-defined tools) checked first
+        """Execute an MCP-imported tool by name."""
         if tool_name in self._extra_instances:
             return await self._extra_instances[tool_name](**arguments)
 
-        from aiwen.registries.core import ToolRegistry
-
-        tool_instance = ToolRegistry.get_tool_instance(tool_name)
-        if tool_instance is not None:
-            return await tool_instance(**arguments)
-
-        raise ValueError(f"Tool '{tool_name}' not found in ToolRegistry")
+        raise ValueError(
+            f"Tool '{tool_name}' not found. "
+            "Import it from an MCP server first (including the aiwen-mcp server for built-in tools)."
+        )

@@ -1,16 +1,7 @@
+import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toolService } from '@/services/toolService';
-import type { UserToolCreate, UserToolUpdate, ToolTemplate, ToolExportData, InnerToolListResponse, MCPServerConfig, MCPImportRequest, ToolBundleListResponse } from '@/types/tool';
-
-export const useTemplates = (params?: {
-  execution_mode?: string;
-  source?: string;
-}) => {
-  return useQuery({
-    queryKey: ['tool-templates', params],
-    queryFn: () => toolService.getTemplates(params),
-  });
-};
+import type { MCPServerConfig, MCPImportRequest, ToolBundleListResponse, InnerToolListResponse } from '@/types/tool';
 
 export const useToolList = (params?: {
   workspace_id?: string;
@@ -22,29 +13,6 @@ export const useToolList = (params?: {
   return useQuery({
     queryKey: ['tools', 'list', params],
     queryFn: () => toolService.getTools(params),
-  });
-};
-
-export const useCreateTool = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: UserToolCreate) => toolService.createTool(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tools'] });
-    },
-  });
-};
-
-export const useUpdateTool = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UserToolUpdate }) =>
-      toolService.updateTool(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tools'] });
-    },
   });
 };
 
@@ -71,44 +39,32 @@ export const useToggleTool = () => {
   });
 };
 
-export const useToolAsTemplate = (id: string | null) => {
-  return useQuery<ToolTemplate>({
-    queryKey: ['tool-template', id],
-    queryFn: () => toolService.getToolAsTemplate(id!),
-    enabled: !!id,
-    staleTime: 60_000,
-  });
-};
-
-export const useInnerTools = () => {
-  return useQuery<InnerToolListResponse>({
-    queryKey: ['tools', 'registry', 'inner-tools'],
-    queryFn: () => toolService.getInnerTools(),
-    staleTime: 5 * 60 * 1000,
-  });
+/** Returns all tools mapped to InnerToolInfo shape (for tool pickers in other pages). */
+export const useInnerTools = (): { data: InnerToolListResponse | undefined; isLoading: boolean } => {
+  const { data, isLoading } = useToolList({ include_public: true });
+  const mapped = useMemo<InnerToolListResponse | undefined>(() => {
+    if (!data) return undefined;
+    return {
+      inner_tools: data.tools.map(t => ({
+        name: t.name,
+        display_name: t.display_name,
+        description: t.description,
+        category: t.category ?? '',
+        tags: t.tags ?? [],
+        timeout: t.timeout ?? 30,
+        input_schema: t.input_schema ?? {},
+        output_schema: (t.output_schema ?? {}) as Record<string, unknown>,
+      })),
+      total: data.total,
+    };
+  }, [data]);
+  return { data: mapped, isLoading };
 };
 
 export const useTestTool = () => {
   return useMutation({
     mutationFn: ({ id, parameters }: { id: string; parameters: Record<string, unknown> }) =>
       toolService.testTool(id, parameters),
-  });
-};
-
-export const useExportTool = () => {
-  return useMutation({
-    mutationFn: (id: string) => toolService.exportTool(id),
-  });
-};
-
-export const useImportTool = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: ToolExportData) => toolService.importTool(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tools'] });
-    },
   });
 };
 
