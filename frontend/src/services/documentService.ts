@@ -10,7 +10,7 @@ export interface DocumentPreviewResponse {
     content_length: number;
 }
 
-export type StructureType = 'document' | 'table' | 'code';
+export type StructureType = 'document' | 'table' | 'code' | 'markdown';
 
 const CODE_EXTENSIONS = new Set([
   'py', 'js', 'ts', 'tsx', 'jsx', 'java', 'go', 'rb', 'cpp', 'c', 'h', 'cs',
@@ -32,7 +32,15 @@ export function detectStructureType(file: File): StructureType {
   if (mime.startsWith('text/x-') || mime.startsWith('application/x-')
       || mime === 'application/javascript' || mime === 'text/javascript') return 'code';
 
+  if (ext === 'md' || ext === 'markdown' || mime === 'text/markdown') return 'markdown';
+
   return 'document';
+}
+
+export interface FolderUploadResult {
+    uploads: DocumentUploadResponse[];
+    total: number;
+    failed: number;
 }
 
 export interface UploadDocumentParams {
@@ -70,6 +78,31 @@ export const documentService = {
             headers: {
                 'Content-Type': 'multipart/form-data',
             },
+        });
+    },
+
+    /**
+     * Upload all files from a folder to a knowledge base.
+     * Structure type is auto-detected per file on the server.
+     */
+    async uploadFolder(params: {
+        files: File[];
+        knowledge_id: string;
+        embedding_provider?: string;
+        embedding_model?: string;
+        embedding_dimension?: number;
+    }): Promise<FolderUploadResult> {
+        const formData = new FormData();
+        formData.append('knowledge_id', params.knowledge_id);
+        for (const file of params.files) {
+            formData.append('files', file, file.webkitRelativePath || file.name);
+        }
+        if (params.embedding_provider) formData.append('embedding_provider', params.embedding_provider);
+        if (params.embedding_model) formData.append('embedding_model', params.embedding_model);
+        if (params.embedding_dimension) formData.append('embedding_dimension', params.embedding_dimension.toString());
+
+        return apiClient.post(API_ENDPOINTS.DOCUMENT.UPLOAD_FOLDER, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
         });
     },
 

@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.enums.context import ContextType
 from aiwen.models.context.context import Context
+from aiwen.services.context.context_crud import ContextCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -313,35 +314,19 @@ class ContextSyncer:
         tags: list[str],
         meta: dict[str, Any],
     ) -> None:
-        user_uuid = _uuid(user_id)
-        stmt = select(Context).where(
-            Context.user_id == user_uuid,
-            Context.path == path,
+        crud = ContextCRUD(self.db)
+        await crud.upsert_by_path(
+            user_id=user_id,
+            path=path,
+            data={
+                "context_type": context_type,
+                "source_id": source_id,
+                "glance": glance,
+                "content": content,
+                "tags": tags,
+                "meta": meta,
+            },
         )
-        result = await self.db.execute(stmt)
-        ctx = result.scalar_one_or_none()
-
-        if ctx:
-            ctx.glance = glance
-            ctx.content = content
-            ctx.tags = tags
-            ctx.meta = meta
-            if source_id:
-                ctx.source_id = _uuid(source_id)
-        else:
-            ctx = Context(
-                user_id=user_uuid,
-                source_id=_uuid(source_id),
-                path=path,
-                context_type=context_type,
-                glance=glance,
-                content=content,
-                tags=tags,
-                meta=meta,
-            )
-            self.db.add(ctx)
-
-        await self.db.flush()
         logger.debug("context_syncer: upserted path=%s user=%s", path, user_id)
 
     async def _delete(self, user_id: str, path: str) -> None:

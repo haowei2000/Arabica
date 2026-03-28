@@ -28,4 +28,4 @@ def dispatch_structure(text: str, mime_type: str, structure_type: str) -> list[d
 
 # Auto-register built-in plugins (import order matters: document first so
 # table/code can reference DocumentStructurer in their fallback paths)
-from . import code_structure, document, file_structure, knowledge_structure, memory_structure, skill_structure, table, tool  # noqa: E402
+from . import code_structure, document, file_structure, knowledge_structure, markdown_structure, memory_structure, skill_structure, table, tool  # noqa: E402

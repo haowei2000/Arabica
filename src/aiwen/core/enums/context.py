@@ -14,16 +14,17 @@ class ContextScope(StrEnum):
 class ContextType(StrEnum):
     """Context type options."""
 
-    CHUNK = "CHUNK"
+    CHUNK = "chunk"
     CONVERSATION = "conversation"
     MESSAGE = "message"
     SHORT_MEMORY = "short_memory"
-    SKILL = "SKILL"
+    SKILL = "skill"
     TOOL = "tool"
     KNOWLEDGE = "knowledge"
     WORKSPACE = "workspace"
     TRIGGER = "trigger"
     RUN = "run"
+    RUN_EVENTS = "run_events"
 
 
 class ContextPathSuffix:

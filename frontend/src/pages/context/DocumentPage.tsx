@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -6,15 +6,17 @@ import {
   FolderOpen, Folder, FileText, ChevronDown, ChevronRight,
   Table2, Code2, FileCode, Rows3, Wand2,
   BookOpen, Book, AlignLeft, Search, ChevronsDownUp, ChevronsUpDown, Brain,
+  FolderInput, FolderTree,
 } from 'lucide-react';
 import { useKnowledge } from '@/hooks/useKnowledge';
 import { useDeleteDocument, useDocumentList, useUploadDocument } from '@/hooks/useDocuments';
 import { useChunksByDocument } from '@/hooks/useChunks';
 import { documentService, detectStructureType } from '@/services/documentService';
-import type { StructureType } from '@/services/documentService';
+import type { StructureType, FolderUploadResult } from '@/services/documentService';
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ContextViewer } from '@/components/ContextViewer';
 import { cn } from '@/lib/utils';
 import type { Document } from '@/types/document';
@@ -37,6 +39,138 @@ type ViewMode = 'documents' | 'sections' | 'preview';
 interface SectionNode {
   section: Chunk;
   children: SectionNode[];
+}
+
+// ─── Folder-picker tree (for upload dialog) ───────────────────────────────────
+
+interface FolderTreeNode {
+  name: string;
+  fullPath: string; // webkitRelativePath value
+  isDir: boolean;
+  children: FolderTreeNode[];
+}
+
+function buildFolderTree(paths: string[]): FolderTreeNode[] {
+  const roots: FolderTreeNode[] = [];
+  for (const path of paths) {
+    const parts = path.split('/');
+    let cur = roots;
+    for (let i = 1; i < parts.length; i++) {
+      const isLast = i === parts.length - 1;
+      const name = parts[i];
+      const fullPath = parts.slice(0, i + 1).join('/');
+      let node = cur.find((n) => n.name === name);
+      if (!node) {
+        node = { name, fullPath, isDir: !isLast, children: [] };
+        cur.push(node);
+      }
+      if (!isLast) cur = node.children;
+    }
+  }
+  return roots;
+}
+
+function getLeafPaths(node: FolderTreeNode): string[] {
+  if (!node.isDir) return [node.fullPath];
+  return node.children.flatMap(getLeafPaths);
+}
+
+const STRUCTURE_TYPE_BADGE: Record<StructureType, { label: string; cls: string }> = {
+  markdown: { label: 'md',  cls: 'bg-indigo-500/15 text-indigo-600' },
+  document: { label: 'doc', cls: 'bg-blue-500/15 text-blue-600' },
+  table:    { label: 'tbl', cls: 'bg-emerald-500/15 text-emerald-600' },
+  code:     { label: 'code',cls: 'bg-violet-500/15 text-violet-600' },
+};
+
+function IndeterminateCheckbox({
+  checked, indeterminate, onChange, disabled,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      className="size-3 rounded cursor-pointer disabled:cursor-default accent-primary shrink-0"
+    />
+  );
+}
+
+function FolderFileNode({
+  node, selected, fileMap, onToggleFile, onToggleDir, level = 0,
+}: {
+  node: FolderTreeNode;
+  selected: Set<string>;
+  fileMap: Map<string, File>; // path → File (for structure type detection on leaves)
+  onToggleFile: (path: string) => void;
+  onToggleDir: (leafPaths: string[], allSelected: boolean) => void;
+  level?: number;
+}) {
+  const pl = level * 14;
+
+  if (!node.isDir) {
+    const file = fileMap.get(node.fullPath);
+    const st = file ? detectStructureType(file) : 'document';
+    const badge = STRUCTURE_TYPE_BADGE[st];
+    return (
+      <div style={{ paddingLeft: pl }} className="flex items-center gap-1.5 py-[3px] group">
+        <IndeterminateCheckbox
+          checked={selected.has(node.fullPath)}
+          onChange={() => onToggleFile(node.fullPath)}
+        />
+        <span className="text-[11px] font-mono text-muted-foreground group-hover:text-foreground transition-colors flex-1 min-w-0 truncate">
+          {node.name}
+        </span>
+        <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded leading-none shrink-0', badge.cls)}>
+          {badge.label}
+        </span>
+      </div>
+    );
+  }
+
+  const leafPaths = getLeafPaths(node);
+  const selCount = leafPaths.filter((p) => selected.has(p)).length;
+  const allSel = selCount === leafPaths.length;
+  const someSel = selCount > 0 && !allSel;
+
+  return (
+    <div>
+      <div style={{ paddingLeft: pl }} className="flex items-center gap-1.5 py-[3px] group">
+        <IndeterminateCheckbox
+          checked={allSel}
+          indeterminate={someSel}
+          onChange={() => onToggleDir(leafPaths, allSel)}
+        />
+        <span className="text-[11px] font-mono text-foreground/80 group-hover:text-foreground transition-colors font-medium flex-1 min-w-0 truncate">
+          {node.name}/
+        </span>
+        <span className="text-[10px] text-muted-foreground/40 tabular-nums shrink-0">
+          {selCount}/{leafPaths.length}
+        </span>
+      </div>
+      {node.children.map((child) => (
+        <FolderFileNode
+          key={child.fullPath}
+          node={child}
+          selected={selected}
+          fileMap={fileMap}
+          onToggleFile={onToggleFile}
+          onToggleDir={onToggleDir}
+          level={level + 1}
+        />
+      ))}
+    </div>
+  );
 }
 
 // ─── Tree builder ─────────────────────────────────────────────────────────────
@@ -136,6 +270,7 @@ function SectionTreeNode({ node, depth = 0, expandAll }: SectionTreeNodeProps) {
   const hasContent = node.section.content.trim().length > 0;
   const langTag = st === 'code' ? node.section.meta?.code_language : undefined;
   const rowIdx = st === 'table' ? node.section.meta?.row_index : undefined;
+  const sectionPath = st === 'markdown' ? (node.section.meta?.section_path as string | undefined) : undefined;
 
   return (
     <div>
@@ -179,9 +314,19 @@ function SectionTreeNode({ node, depth = 0, expandAll }: SectionTreeNodeProps) {
         )}
 
         {/* Title */}
-        <span className="flex-1 text-sm text-foreground truncate leading-snug" title={title}>
+        <span
+          className="flex-1 text-sm text-foreground truncate leading-snug"
+          title={sectionPath ?? title}
+        >
           {title || <span className="text-muted-foreground italic">Untitled</span>}
         </span>
+
+        {/* Markdown path chip — visible on hover */}
+        {sectionPath && (
+          <span className="shrink-0 text-[10px] font-mono text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity truncate max-w-[180px]">
+            {sectionPath}
+          </span>
+        )}
 
         {/* Char count toggle */}
         {hasContent && (
@@ -415,6 +560,12 @@ const STRUCTURE_OPTIONS: { value: UploadMode; label: string; desc: string; icon:
     icon: <FileText className="size-4" />,
   },
   {
+    value: 'markdown',
+    label: 'Markdown',
+    desc: 'Heading hierarchy as paths',
+    icon: <FolderTree className="size-4" />,
+  },
+  {
     value: 'table',
     label: 'Table',
     desc: 'Rows & columns',
@@ -430,6 +581,7 @@ const STRUCTURE_OPTIONS: { value: UploadMode; label: string; desc: string; icon:
 
 const DETECTED_TYPE_LABEL: Record<StructureType, string> = {
   document: 'Document',
+  markdown: 'Markdown',
   table: 'Table',
   code: 'Code',
 };
@@ -484,6 +636,7 @@ export default function DocumentPage() {
   const { knowledgeId } = useParams<{ knowledgeId: string }>();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -491,6 +644,13 @@ export default function DocumentPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('documents');
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [contextViewDoc, setContextViewDoc] = useState<Document | null>(null);
+
+  // Folder-upload modal state
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [folderFiles, setFolderFiles] = useState<File[]>([]);
+  const [folderPaths, setFolderPaths] = useState<string[]>([]);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
+  const [folderUploading, setFolderUploading] = useState(false);
 
   const { data: knowledge, isLoading: knowledgeLoading } = useKnowledge(knowledgeId || '');
   const { data: documentsData, isLoading: documentsLoading } = useDocumentList(knowledgeId || '');
@@ -527,6 +687,96 @@ export default function DocumentPage() {
       }
     }
   }, [knowledgeId, uploadMutation, structureType]);
+
+  // Folder modal: pick files from OS
+  const handleFolderSelect = useCallback((input: HTMLInputElement) => {
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length === 0) return;
+    const paths = files.map((f) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
+    setFolderFiles(files);
+    setFolderPaths(paths);
+    setSelectedFilePaths(new Set(paths)); // select all by default
+    setShowFolderModal(true);
+  }, []);
+
+  const resetFolderModal = useCallback(() => {
+    setFolderFiles([]);
+    setFolderPaths([]);
+    setSelectedFilePaths(new Set());
+    setShowFolderModal(false);
+  }, []);
+
+  const handleToggleFile = useCallback((path: string) => {
+    setSelectedFilePaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const handleToggleDir = useCallback((leafPaths: string[], allSelected: boolean) => {
+    setSelectedFilePaths((prev) => {
+      const next = new Set(prev);
+      if (allSelected) leafPaths.forEach((p) => next.delete(p));
+      else leafPaths.forEach((p) => next.add(p));
+      return next;
+    });
+  }, []);
+
+  // Folder modal: confirm upload of selected files
+  const handleFolderUpload = useCallback(async () => {
+    if (!knowledgeId || folderFiles.length === 0) return;
+
+    const entries = folderFiles
+      .map((f, i) => ({ file: f, path: folderPaths[i] }))
+      .filter(({ path }) => selectedFilePaths.has(path));
+
+    if (entries.length === 0) return;
+
+    const placeholders: UploadingFile[] = entries.map(({ file }) => ({
+      file,
+      taskId: null,
+      status: 'uploading' as const,
+      detectedType: detectStructureType(file),
+    }));
+
+    resetFolderModal();
+    setUploadingFiles((prev) => [...prev, ...placeholders]);
+    setFolderUploading(true);
+
+    try {
+      const result: FolderUploadResult = await documentService.uploadFolder({
+        files: entries.map((e) => e.file),
+        knowledge_id: knowledgeId,
+      });
+
+      const placeholderSet = new Set(placeholders.map((p) => p.file));
+      setUploadingFiles((prev) =>
+        prev.map((pf) => {
+          if (!placeholderSet.has(pf.file)) return pf;
+          const match = result.uploads.find(
+            (u) => u.document.original_name === ((pf.file as File & { webkitRelativePath?: string }).webkitRelativePath || pf.file.name)
+          );
+          if (!match) return { ...pf, status: 'error' as const, error: 'Upload failed' };
+          return { ...pf, taskId: match.task_id, status: 'success' as const };
+        })
+      );
+      setTimeout(() => {
+        setUploadingFiles((prev) => prev.filter((f) => !placeholderSet.has(f.file)));
+      }, 3000);
+    } catch (error) {
+      setUploadingFiles((prev) =>
+        prev.map((pf) =>
+          placeholders.some((p) => p.file === pf.file)
+            ? { ...pf, status: 'error' as const, error: error instanceof Error ? error.message : 'Upload failed' }
+            : pf
+        )
+      );
+    } finally {
+      setFolderUploading(false);
+    }
+  }, [knowledgeId, folderFiles, folderPaths, selectedFilePaths, resetFolderModal]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(false); }, []);
@@ -645,6 +895,15 @@ export default function DocumentPage() {
                   accept=".pdf,.doc,.docx,.txt,.md,.html,.csv"
                   onChange={(e) => handleFileUpload(e.target.files)}
                 />
+                <input
+                  ref={folderInputRef}
+                  type="file"
+                  className="hidden"
+                  // @ts-expect-error webkitdirectory is non-standard but widely supported
+                  webkitdirectory=""
+                  multiple
+                  onChange={(e) => handleFolderSelect(e.target)}
+                />
                 <p className="text-foreground mb-2">
                   Drag and drop files here, or{' '}
                   <button
@@ -652,14 +911,20 @@ export default function DocumentPage() {
                     onClick={() => fileInputRef.current?.click()}
                     className="text-primary hover:underline font-medium"
                   >
-                    browse
+                    browse files
+                  </button>
+                  {' '}or{' '}
+                  <button
+                    type="button"
+                    onClick={() => folderInputRef.current?.click()}
+                    className="text-primary hover:underline font-medium inline-flex items-center gap-1"
+                  >
+                    <FolderInput className="size-4" />
+                    upload folder
                   </button>
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  PDF, DOCX, TXT, MD, HTML, CSV
-                  {structureType === 'auto' && ' · Structurer is detected automatically from the file type'}
-                  {structureType === 'table' && ' · Rows & columns extraction'}
-                  {structureType === 'code' && ' · Functions & classes extraction'}
+                  PDF, DOCX, TXT, MD, HTML, CSV · Folder upload auto-detects structure type per file
                 </p>
               </div>
             </div>
@@ -838,6 +1103,102 @@ export default function DocumentPage() {
           entityName={contextViewDoc.original_name}
         />
       )}
+
+      {/* ── Folder upload dialog ─────────────────────────────────────────── */}
+      {(() => {
+        const fileTree = buildFolderTree(folderPaths);
+        const fileMap = new Map(
+          folderFiles.map((f) => [
+            (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
+            f,
+          ])
+        );
+        const selectedCount = selectedFilePaths.size;
+        return (
+          <Dialog
+            open={showFolderModal}
+            onOpenChange={(open) => { if (!open) resetFolderModal(); }}
+          >
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Upload Folder</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-4 py-1">
+                <p className="text-xs text-muted-foreground">
+                  Check the files you want to upload. Structure type is auto-detected per file.
+                  Use <span className="font-medium">Upload Folder</span> again to pick a different folder.
+                </p>
+
+                {/* Choose folder button */}
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => folderInputRef.current?.click()}
+                >
+                  <FolderInput className="size-4 mr-2" />
+                  {folderFiles.length > 0
+                    ? `${folderFiles.length} files in folder — click to change`
+                    : 'Choose Folder'}
+                </Button>
+
+                {folderFiles.length > 0 && (
+                  <div className="rounded-lg border border-border bg-muted/30">
+                    {/* Header row */}
+                    <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 border-b border-border/50">
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                        Files — {selectedCount}/{folderPaths.length} selected
+                      </span>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFilePaths(new Set(folderPaths))}
+                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFilePaths(new Set())}
+                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          None
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* File tree */}
+                    <div className="p-3 max-h-60 overflow-y-auto">
+                      {fileTree.map((node) => (
+                        <FolderFileNode
+                          key={node.fullPath}
+                          node={node}
+                          selected={selectedFilePaths}
+                          fileMap={fileMap}
+                          onToggleFile={handleToggleFile}
+                          onToggleDir={handleToggleDir}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={resetFolderModal}>Cancel</Button>
+                <Button
+                  disabled={selectedCount === 0 || folderUploading}
+                  onClick={handleFolderUpload}
+                >
+                  {folderUploading
+                    ? <><Loader2 className="size-4 animate-spin mr-2" />Uploading…</>
+                    : `Upload ${selectedCount} file${selectedCount !== 1 ? 's' : ''}`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }

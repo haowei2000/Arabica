@@ -16,6 +16,7 @@ from aiwen.celery_worker.tasks.context_sync._base import (
     _store_embedding,
     _upsert_context,
 )
+from aiwen.core.enums import ContextType
 from aiwen.utils.context import slugify as _slugify
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
-                context_type="tool",
+                context_type=ContextType.TOOL,
                 source_id=tool_id,
                 glance=glance,
                 content=schema_str,
@@ -181,7 +182,7 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
             # All Context rows for this inner tool (one per user, created by Phase 5)
             ctx_result = await session.execute(
                 select(Context.id).where(
-                    Context.context_type == "tool",
+                    Context.context_type == ContextType.TOOL,
                     Context.source_id == UUID(tool_id),
                 )
             )

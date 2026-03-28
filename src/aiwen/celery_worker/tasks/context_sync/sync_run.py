@@ -10,6 +10,7 @@ from aiwen.celery_worker.tasks.context_sync._base import (
     _store_embedding,
     _upsert_context,
 )
+from aiwen.core.enums import ContextType
 from aiwen.utils.context import slugify as _slugify
 
 logger = logging.getLogger(__name__)
@@ -212,7 +213,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
-                context_type="run_events",
+                context_type=ContextType.RUN_EVENTS,
                 source_id=run_id,
                 glance=glance,
                 content=content,

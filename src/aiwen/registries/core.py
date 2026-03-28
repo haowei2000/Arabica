@@ -520,6 +520,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             import json as _json
             from uuid import uuid4 as _uuid4
 
+            from aiwen.core.enums import ContextType as _ContextType
             from aiwen.models.auth.user import User
             from aiwen.models.context.context import Context
             from aiwen.utils.context import slugify as _slugify
@@ -550,7 +551,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     (row.source_id, row.user_id)
                     for row in (await db.execute(
                         select(Context.source_id, Context.user_id).where(
-                            Context.context_type == "tool",
+                            Context.context_type == _ContextType.TOOL,
                             Context.source_id.in_(tool_ids),
                             Context.user_id.in_(user_ids),
                         )
@@ -562,7 +563,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     (ctx.source_id, ctx.user_id): ctx
                     for ctx in (await db.execute(
                         select(Context).where(
-                            Context.context_type == "tool",
+                            Context.context_type == _ContextType.TOOL,
                             Context.source_id.in_(tool_ids),
                             Context.user_id.in_(user_ids),
                         )
@@ -608,7 +609,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                             db.add(Context(
                                 id=_uuid4(),
                                 user_id=user.id,
-                                context_type="tool",
+                                context_type=_ContextType.TOOL,
                                 source_id=tool.id,
                                 glance=glance,
                                 path=tool_path,

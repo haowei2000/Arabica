@@ -89,6 +89,7 @@ export const API_ENDPOINTS = {
     // Document 管理
     DOCUMENT: {
         UPLOAD: '/agent/document/upload',
+        UPLOAD_FOLDER: '/agent/document/upload-folder',
         GET: (id: string) => `/agent/document/${id}`,
         LIST_BY_KNOWLEDGE: (knowledgeId: string) => `/agent/document/knowledge/${knowledgeId}`,
         DELETE: (id: string) => `/agent/document/${id}/delete`,

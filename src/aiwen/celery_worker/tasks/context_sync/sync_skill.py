@@ -15,6 +15,7 @@ from aiwen.celery_worker.tasks.context_sync._base import (
     _store_embedding,
     _upsert_context_at_path,
 )
+from aiwen.core.enums import ContextType
 from aiwen.utils.context import slugify as _slugify
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
                 ctx, needs_embedding = await _upsert_context_at_path(
                     session,
                     user_id=user_id,
-                    context_type="SKILL",
+                    context_type=ContextType.SKILL,
                     source_id=skill_id,
                     path=path,
                     glance=core.glance or glance,

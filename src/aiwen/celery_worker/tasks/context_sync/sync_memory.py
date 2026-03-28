@@ -109,7 +109,7 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
         meta_key: JSON meta field used to locate workspace-scoped Context rows (e.g. "skill_id").
     """
     async def _execute():
-        from sqlalchemy import select
+        from sqlalchemy import delete, select
         from uuid import UUID
 
         from aiwen.core.enums.context import ContextScope
@@ -117,37 +117,45 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
         from aiwen.models.context.context import Context
 
         async with get_session("aiwen") as session:
-            # Delete user-scoped Context rows
-            ctx_result = await session.execute(
-                select(Context).where(
+            # Collect workspace IDs before deleting workspace-scoped rows
+            wc_result = await session.execute(
+                select(Context.meta).where(
+                    Context.scope == ContextScope.WORKSPACE,
+                    Context.meta[meta_key].astext == resource_id,
+                )
+            )
+            dirty_ids = list({
+                str(row[0].get("workspace_id"))
+                for row in wc_result.all()
+                if row[0]
+            })
+
+            # Bulk delete user-scoped Context rows
+            user_del = await session.execute(
+                delete(Context).where(
                     Context.source_id == UUID(resource_id),
                     Context.context_type == context_type,
                     Context.scope == ContextScope.USER,
                 )
             )
-            ctx_rows = ctx_result.scalars().all()
-            for ctx in ctx_rows:
-                await session.delete(ctx)
+            ctx_count = user_del.rowcount
 
-            # Delete workspace-scoped Context rows that reference this resource
-            wc_result = await session.execute(
-                select(Context).where(
+            # Bulk delete workspace-scoped Context rows
+            ws_del = await session.execute(
+                delete(Context).where(
                     Context.scope == ContextScope.WORKSPACE,
                     Context.meta[meta_key].astext == resource_id,
                 )
             )
-            wc_rows = wc_result.scalars().all()
-            dirty_ids = list({str(row.meta.get("workspace_id")) for row in wc_rows if row.meta})
-            for row in wc_rows:
-                await session.delete(row)
+            wc_count = ws_del.rowcount
 
             await session.commit()
 
         await _invalidate_workspace_caches(dirty_ids)
 
         logger.info(
-            f"delete_resource_contexts: removed {len(ctx_rows)} user Context row(s) and "
-            f"{len(wc_rows)} workspace Context row(s) for {context_type}/{resource_id}"
+            f"delete_resource_contexts: removed {ctx_count} user Context row(s) and "
+            f"{wc_count} workspace Context row(s) for {context_type}/{resource_id}"
         )
 
     try:

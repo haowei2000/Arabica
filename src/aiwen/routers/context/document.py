@@ -1,8 +1,11 @@
 """REST API endpoints for document upload and management."""
 
 import hashlib
+import logging
 from typing import Annotated
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from celery.result import AsyncResult
 from fastapi import (
@@ -63,6 +66,25 @@ async def test_celery():
             "message": "Failed to submit task",
             "error": str(e),
         }
+
+
+_CODE_EXTENSIONS = {
+    "py", "js", "ts", "tsx", "jsx", "java", "go", "rb", "cpp", "c", "h", "cs",
+    "php", "swift", "rs", "kt", "scala", "sh", "bash", "lua", "r", "sql",
+    "vue", "svelte", "dart", "ex", "exs", "ml", "hs", "clj", "elm",
+}
+
+
+def detect_structure_type(filename: str, mime_type: str | None) -> str:
+    """Infer structuring strategy from filename and MIME type."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext == "csv" or (mime_type and "csv" in mime_type):
+        return "table"
+    if ext in _CODE_EXTENSIONS:
+        return "code"
+    if ext in {"md", "markdown"} or (mime_type and "markdown" in mime_type):
+        return "markdown"
+    return "document"
 
 
 def compute_file_hash(content: bytes) -> str:
@@ -178,9 +200,6 @@ async def upload_document(
     await knowledge_crud.increment_document_count(knowledge_id)
 
     # Trigger Celery task chain
-    import logging
-
-    logger = logging.getLogger(__name__)
     logger.info(f"Triggering document processing for document_id={document.id}")
 
     task_id = process_document_structured(
@@ -199,6 +218,119 @@ async def upload_document(
         document=DocumentResponse.model_validate(document),
         task_id=task_id,
     )
+
+
+class FolderUploadResponse(BaseModel):
+    """Schema for folder upload response — one entry per file."""
+
+    uploads: list[DocumentUploadResponse]
+    total: int
+    failed: int
+
+
+@router.post(
+    "/upload-folder",
+    response_model=FolderUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_folder(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
+    knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
+    files: list[UploadFile] = File(..., description="All files in the folder"),
+    knowledge_id: str = Form(..., description="Knowledge base ID"),
+    embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
+    embedding_model: str = Form(default="text-embedding-v3", description="Embedding model"),
+    embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
+):
+    """
+    Upload an entire folder to a knowledge base.
+
+    Each file's structuring strategy is auto-detected from its extension:
+    - CSV → table
+    - Source code files → code
+    - Everything else → document
+
+    Files that fail to upload are skipped; the response reports how many failed.
+    """
+    # Validate knowledge base
+    knowledge = await knowledge_crud.get_by_id(knowledge_id)
+    if not knowledge:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base {knowledge_id} not found",
+        )
+    if str(knowledge.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to upload to this knowledge base",
+        )
+
+    uploads: list[DocumentUploadResponse] = []
+    failed = 0
+
+    for upload_file in files:
+        original_name = upload_file.filename or "unknown"
+        try:
+            content = await upload_file.read()
+            if not content:
+                logger.warning(f"Skipping empty file: {original_name}")
+                failed += 1
+                continue
+
+            file_size = len(content)
+            file_hash = compute_file_hash(content)
+            structure_type = detect_structure_type(original_name, upload_file.content_type)
+            object_key = f"{knowledge_id}/{uuid4()}_{original_name}"
+
+            storage = get_global_s3_storage()
+            bucket_name = storage.bucket
+            storage.put_bytes(
+                key=object_key,
+                data=content,
+                content_type=upload_file.content_type or "application/octet-stream",
+            )
+
+            document = await document_crud.create(
+                knowledge_id=knowledge_id,
+                user_id=current_user.id,
+                original_name=original_name,
+                object_key=object_key,
+                file_size=file_size,
+                file_hash=file_hash,
+                mime_type=upload_file.content_type,
+                storage_type="s3",
+                bucket_name=bucket_name,
+            )
+
+            await knowledge_crud.increment_document_count(knowledge_id)
+
+            task_id = process_document_structured(
+                document_id=str(document.id),
+                knowledge_id=knowledge_id,
+                object_key=object_key,
+                mime_type=upload_file.content_type or "application/octet-stream",
+                user_id=str(current_user.id),
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                embedding_dimension=embedding_dimension,
+                structure_type=structure_type,
+            )
+
+            uploads.append(
+                DocumentUploadResponse(
+                    document=DocumentResponse.model_validate(document),
+                    task_id=task_id,
+                )
+            )
+            logger.info(
+                f"Folder upload: queued {original_name} as {structure_type}, task={task_id}"
+            )
+        except Exception as e:
+            logger.error(f"Folder upload: failed to process {original_name}: {e}")
+            failed += 1
+
+    return FolderUploadResponse(uploads=uploads, total=len(files), failed=failed)
 
 
 @router.get("/task/{task_id}/status", response_model=TaskStatusResponse)

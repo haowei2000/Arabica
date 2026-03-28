@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
-from uuid import UUID
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
-from sqlalchemy import Integer, and_, cast, func, or_, select, text
+from sqlalchemy import Integer, and_, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.enums import ContextType
@@ -323,7 +323,7 @@ class ContextCRUD:
         normalized_user_id = normalize_uuid_to_str(user_id)
 
         if search_in is None:
-            search_in = ["content", "summary"]
+            search_in = ["content"]
 
         # Base conditions
         conditions = [Context.user_id == normalized_user_id]
@@ -660,19 +660,24 @@ class ContextCRUD:
         normalized_source_id = normalize_uuid_to_str(source_id)
         normalized_user_id = normalize_uuid_to_str(user_id)
 
-        # Get contexts to delete
-        stmt = select(Context).where(
+        # Count first, then bulk delete in a single statement
+        count_stmt = select(func.count(Context.id)).where(
             and_(
                 Context.source_id == normalized_source_id,
                 Context.user_id == normalized_user_id,
             )
         )
-        result = await self.db.execute(stmt)
-        contexts = list(result.scalars().all())
+        count_result = await self.db.execute(count_stmt)
+        count = count_result.scalar() or 0
 
-        count = len(contexts)
-        for context in contexts:
-            await self.db.delete(context)
+        if count:
+            del_stmt = delete(Context).where(
+                and_(
+                    Context.source_id == normalized_source_id,
+                    Context.user_id == normalized_user_id,
+                )
+            )
+            await self.db.execute(del_stmt)
 
         if auto_commit:
             await self.db.commit()
@@ -727,3 +732,219 @@ class ContextCRUD:
         items = list(result.scalars().all())
 
         return items, total
+
+    # ==================== Upsert Methods ====================
+
+    async def upsert_by_path(
+        self,
+        user_id: str | UUID,
+        path: str,
+        data: dict[str, Any],
+        auto_commit: bool = False,
+    ) -> Context:
+        """Upsert a Context row keyed on (user_id, path).
+
+        Creates the row if it doesn't exist; updates glance/content/tags/meta
+        and clears embeddings when content changes.
+        """
+        normalized_user_id = normalize_uuid_to_str(user_id)
+
+        stmt = select(Context).where(
+            Context.user_id == normalized_user_id,
+            Context.path == path,
+        )
+        result = await self.db.execute(stmt)
+        ctx = result.scalar_one_or_none()
+
+        content = data.get("content", "")
+        if ctx:
+            content_changed = content != ctx.content
+            ctx.glance = data.get("glance", ctx.glance)
+            ctx.content = content
+            if data.get("tags") is not None:
+                ctx.tags = data["tags"]
+            if data.get("meta") is not None:
+                ctx.meta = {**(ctx.meta or {}), **data["meta"]}
+            if data.get("source_id") is not None:
+                ctx.source_id = UUID(str(data["source_id"]))
+            if content_changed:
+                ctx.embedding_384 = None
+                ctx.embedding_768 = None
+                ctx.embedding_1024 = None
+                ctx.embedding_1536 = None
+        else:
+            source_id = data.get("source_id")
+            ctx = Context(
+                id=uuid4(),
+                user_id=normalized_user_id,
+                path=path,
+                context_type=data.get("context_type", ContextType.WORKSPACE),
+                source_id=UUID(str(source_id)) if source_id else None,
+                glance=data.get("glance", ""),
+                content=content,
+                tags=data.get("tags", []),
+                meta=data.get("meta", {}),
+            )
+            self.db.add(ctx)
+
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
+
+        return ctx
+
+    async def upsert_by_source(
+        self,
+        source_id: str | UUID,
+        context_type: str,
+        user_id: str | UUID,
+        data: dict[str, Any],
+        auto_commit: bool = False,
+    ) -> tuple[Context, bool]:
+        """Upsert a Context row keyed on (source_id, context_type, user_id).
+
+        Returns ``(ctx, needs_embedding)`` — True when content changed or is new.
+        """
+        normalized_user_id = normalize_uuid_to_str(user_id)
+        source_uuid = UUID(str(source_id))
+
+        stmt = select(Context).where(
+            Context.source_id == source_uuid,
+            Context.context_type == context_type,
+            Context.user_id == normalized_user_id,
+        )
+        result = await self.db.execute(stmt)
+        ctx = result.scalar_one_or_none()
+
+        content = data.get("content") or ""
+        if ctx:
+            new_content = content or ctx.content
+            content_changed = new_content != ctx.content
+            ctx.glance = data.get("glance", ctx.glance)
+            ctx.content = new_content
+            if data.get("path") is not None:
+                ctx.path = data["path"]
+            if data.get("tags") is not None:
+                ctx.tags = data["tags"]
+            ctx.meta = {**(ctx.meta or {}), **(data.get("meta") or {})}
+            if content_changed:
+                ctx.embedding_384 = None
+                ctx.embedding_768 = None
+                ctx.embedding_1024 = None
+                ctx.embedding_1536 = None
+            needs_embedding = content_changed
+        else:
+            ctx = Context(
+                id=uuid4(),
+                user_id=normalized_user_id,
+                context_type=context_type,
+                source_id=source_uuid,
+                glance=data.get("glance"),
+                path=data.get("path"),
+                content=content,
+                tags=data.get("tags") or [],
+                meta=data.get("meta") or {},
+            )
+            self.db.add(ctx)
+            needs_embedding = True
+
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
+
+        return ctx, needs_embedding
+
+    async def upsert_by_source_and_path(
+        self,
+        source_id: str | UUID,
+        context_type: str,
+        user_id: str | UUID,
+        path: str,
+        data: dict[str, Any],
+        auto_commit: bool = False,
+    ) -> tuple[Context, bool]:
+        """Upsert a Context row keyed on (source_id, context_type, user_id, path).
+
+        Multiple entries with different paths can coexist for the same source
+        (e.g. per-section chunks of a skill or knowledge base).
+
+        Returns ``(ctx, needs_embedding)``.
+        """
+        normalized_user_id = normalize_uuid_to_str(user_id)
+        source_uuid = UUID(str(source_id))
+
+        stmt = select(Context).where(
+            Context.source_id == source_uuid,
+            Context.context_type == context_type,
+            Context.user_id == normalized_user_id,
+            Context.path == path,
+        )
+        result = await self.db.execute(stmt)
+        ctx = result.scalar_one_or_none()
+
+        content = data.get("content") or ""
+        if ctx:
+            new_content = content or ctx.content
+            content_changed = new_content != ctx.content
+            ctx.glance = data.get("glance", ctx.glance)
+            ctx.content = new_content
+            if data.get("tags") is not None:
+                ctx.tags = data["tags"]
+            ctx.meta = {**(ctx.meta or {}), **(data.get("meta") or {})}
+            if content_changed:
+                ctx.embedding_384 = None
+                ctx.embedding_768 = None
+                ctx.embedding_1024 = None
+                ctx.embedding_1536 = None
+            needs_embedding = content_changed
+        else:
+            ctx = Context(
+                id=uuid4(),
+                user_id=normalized_user_id,
+                context_type=context_type,
+                source_id=source_uuid,
+                glance=data.get("glance"),
+                path=path,
+                content=content,
+                tags=data.get("tags") or [],
+                meta=data.get("meta") or {},
+            )
+            self.db.add(ctx)
+            needs_embedding = True
+
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
+
+        return ctx, needs_embedding
+
+    async def create_batch_raw(
+        self,
+        rows: list[dict[str, Any]],
+        auto_commit: bool = False,
+    ) -> list[Context]:
+        """Bulk-insert pre-built Context rows from raw dicts.
+
+        Intended for high-volume knowledge chunk insertion where embeddings
+        are already computed. Each dict must contain all required Context fields.
+        """
+        contexts = []
+        for row in rows:
+            if "id" not in row:
+                row = {**row, "id": uuid4()}
+            ctx = Context(**row)
+            self.db.add(ctx)
+            contexts.append(ctx)
+
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
+
+        for ctx in contexts:
+            await self.db.refresh(ctx)
+
+        return contexts

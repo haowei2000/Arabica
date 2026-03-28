@@ -1,15 +1,16 @@
 """Shared helpers and constants for context-sync Celery tasks."""
 
 import logging
-from uuid import UUID, uuid4
+from uuid import UUID
+
+from aiwen.services.context.context_embedding import (
+    DEFAULT_DIMENSION as _DEFAULT_DIMENSION,
+    DEFAULT_MODEL as _DEFAULT_MODEL,
+    DEFAULT_PROVIDER as _DEFAULT_PROVIDER,
+    embed_for_context as _embed_for_context,
+)
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_PROVIDER = "tongyi"
-_DEFAULT_MODEL = "text-embedding-v3"
-_DEFAULT_DIMENSION = 1024
-
-
 
 
 
@@ -21,56 +22,23 @@ async def _upsert_context(session, *, user_id: str, context_type: str, source_id
 
     Returns ``(ctx, needs_embedding)`` where ``needs_embedding`` is True only
     when the row is newly created or its ``content`` field has changed.
-    Embeddings are cleared only in those cases to avoid redundant re-embedding
-    on metadata-only updates (glance, tags, meta).
+    Delegates to ContextCRUD.upsert_by_source.
     """
-    from sqlalchemy import select
+    from aiwen.services.context.context_crud import ContextCRUD
 
-    from aiwen.models.context.context import Context
-
-    merged_meta = meta or {}
-
-    stmt = select(Context).where(
-        Context.source_id == UUID(source_id),
-        Context.context_type == context_type,
-        Context.user_id == UUID(user_id),
+    crud = ContextCRUD(session)
+    return await crud.upsert_by_source(
+        source_id=source_id,
+        context_type=context_type,
+        user_id=user_id,
+        data={
+            "glance": glance,
+            "content": content,
+            "path": path,
+            "tags": tags,
+            "meta": meta,
+        },
     )
-    result = await session.execute(stmt)
-    ctx = result.scalar_one_or_none()
-
-    if ctx:
-        new_content = content or ctx.content
-        content_changed = new_content != ctx.content
-
-        ctx.glance = glance
-        ctx.content = new_content
-        if path is not None:
-            ctx.path = path
-        if tags is not None:
-            ctx.tags = tags
-        ctx.meta = {**(ctx.meta or {}), **merged_meta}
-
-        if content_changed:
-            ctx.embedding_384 = None
-            ctx.embedding_768 = None
-            ctx.embedding_1024 = None
-            ctx.embedding_1536 = None
-
-        return ctx, content_changed
-    else:
-        ctx = Context(
-            id=uuid4(),
-            user_id=UUID(user_id),
-            context_type=context_type,
-            source_id=UUID(source_id),
-            glance=glance,
-            path=path,
-            content=content or "",
-            tags=tags or [],
-            meta=merged_meta,
-        )
-        session.add(ctx)
-        return ctx, True
 
 
 async def _upsert_context_at_path(session, *, user_id: str, context_type: str, source_id: str,
@@ -80,55 +48,24 @@ async def _upsert_context_at_path(session, *, user_id: str, context_type: str, s
     """Create or update a Context row identified by (source_id, context_type, user_id, path).
 
     Unlike ``_upsert_context``, the ``path`` is part of the unique key so multiple
-    entries with different paths can coexist for the same source (e.g. per-file
-    chunks of a skill or knowledge base).
+    entries with different paths can coexist for the same source.
+    Delegates to ContextCRUD.upsert_by_source_and_path.
     """
-    from sqlalchemy import select
+    from aiwen.services.context.context_crud import ContextCRUD
 
-    from aiwen.models.context.context import Context
-
-    merged_meta = meta or {}
-
-    stmt = select(Context).where(
-        Context.source_id == UUID(source_id),
-        Context.context_type == context_type,
-        Context.user_id == UUID(user_id),
-        Context.path == path,
+    crud = ContextCRUD(session)
+    return await crud.upsert_by_source_and_path(
+        source_id=source_id,
+        context_type=context_type,
+        user_id=user_id,
+        path=path,
+        data={
+            "glance": glance,
+            "content": content,
+            "tags": tags,
+            "meta": meta,
+        },
     )
-    result = await session.execute(stmt)
-    ctx = result.scalar_one_or_none()
-
-    if ctx:
-        new_content = content or ctx.content
-        content_changed = new_content != ctx.content
-
-        ctx.glance = glance
-        ctx.content = new_content
-        if tags is not None:
-            ctx.tags = tags
-        ctx.meta = {**(ctx.meta or {}), **merged_meta}
-
-        if content_changed:
-            ctx.embedding_384 = None
-            ctx.embedding_768 = None
-            ctx.embedding_1024 = None
-            ctx.embedding_1536 = None
-
-        return ctx, content_changed
-    else:
-        ctx = Context(
-            id=uuid4(),
-            user_id=UUID(user_id),
-            context_type=context_type,
-            source_id=UUID(source_id),
-            glance=glance,
-            path=path,
-            content=content or "",
-            tags=tags or [],
-            meta=merged_meta,
-        )
-        session.add(ctx)
-        return ctx, True
 
 
 def _generate_embedding(text: str, *,
@@ -138,13 +75,9 @@ def _generate_embedding(text: str, *,
     """Embed text synchronously; returns (vector, field_name).
 
     Must be called OUTSIDE any async DB session to avoid blocking the event loop.
+    Delegates to the centralized context_embedding module.
     """
-    from aiwen.services.context.knowledge.embeddings import EmbeddingService
-
-    svc = EmbeddingService(provider=provider, model=model, dimension=dimension)
-    vector = svc.embed_text(text)
-    field = svc.get_embedding_field_name()
-    return vector, field
+    return _embed_for_context(text, provider=provider, model=model, dimension=dimension)
 
 
 async def _store_embedding(session, ctx_id: str, vector: list[float], field: str):

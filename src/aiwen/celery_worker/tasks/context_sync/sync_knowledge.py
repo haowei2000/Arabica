@@ -28,7 +28,16 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
 
         # ── 1. Read knowledge and upsert global Context row ───────────────
         async with get_session("aiwen") as session:
-            kb = await session.get(Knowledge, knowledge_id)
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            stmt = (
+                select(Knowledge)
+                .where(Knowledge.id == knowledge_id)
+                .options(selectinload(Knowledge.documents))
+            )
+            result = await session.execute(stmt)
+            kb = result.scalar_one_or_none()
             if not kb:
                 logger.warning(f"sync_knowledge: knowledge {knowledge_id} not found")
                 return
