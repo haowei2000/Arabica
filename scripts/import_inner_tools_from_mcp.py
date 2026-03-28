@@ -5,7 +5,7 @@ from uuid import UUID
 from aiwen.config.factory import get_settings
 from aiwen.core.bootstrap import bootstrap_api
 from aiwen.extensions.database import get_session
-from aiwen.routers.context.tools.tools import MCPImportRequest, MCPToolImport, import_from_mcp
+from aiwen.routers.context.tools.tools import MCPImportRequest, import_from_mcp
 from aiwen.models.auth.user import User
 from sqlalchemy import select
 
@@ -17,7 +17,11 @@ async def main():
     bootstrap = await bootstrap_api()
     settings = get_settings()
     
-    mcp_url = f"http://{settings.mcp_host or 'localhost'}:{settings.mcp_port or 9000}/mcp"
+    import os
+    # When running from host, always use localhost and the EXPOSED port
+    mcp_host = "localhost"
+    mcp_port = "9090"
+    mcp_url = f"http://{mcp_host}:{mcp_port}/mcp"
     logger.info(f"Connecting to Aiwen MCP at {mcp_url}")
     
     try:
@@ -56,7 +60,7 @@ async def main():
             
             # Use the existing router logic (or call it directly)
             # We need a mock user response for the Depends
-            from aiwen.schemas.auth.user_schema import UserResponse
+            from aiwen.schemas.auth.user import UserResponse
             current_user = UserResponse.model_validate(admin_user)
             
             # Note: import_from_mcp returns MCPImportResponse, not successes/failures list directly

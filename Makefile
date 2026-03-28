@@ -1,7 +1,7 @@
 # Makefile for AI630 Project
 # 提供便捷的开发和测试命令
 
-.PHONY: help test test-unit test-integration test-slow test-coverage test-fast test-verbose test-failed clean install install-dev lint lint-fix format format-check check db-migrate db-upgrade db-rollback db-downgrade db-reset db-revision db-revision-empty db-current db-history db-heads db-branches db-stamp db-status run run-mcp dev dev-mcp docker-build docker-build-cache docker-build-multi docker-build-push docker-up docker-down docker-logs docker-restart docker-shell docker-status docker-stats docker-size docker-inspect-layers docker-clean docker-prune-all docker-build-dev docker-scan docker-info docker-test-build env-sync ci pre-commit quick-test full-test shell deps-update deps-tree info
+.PHONY: help test test-unit test-integration test-slow test-coverage test-fast test-verbose test-failed clean install install-dev lint lint-fix format format-check check db-migrate db-upgrade db-rollback db-downgrade db-reset db-revision db-revision-empty db-current db-history db-heads db-branches db-stamp db-status run run-mcp dev dev-mcp docker-build docker-build-cache docker-build-multi docker-build-push docker-build-context-service docker-up docker-up-infra docker-down docker-logs docker-restart docker-shell docker-status docker-stats docker-size docker-inspect-layers docker-clean docker-prune-all docker-build-dev docker-scan docker-info docker-test-build env-sync ci pre-commit quick-test full-test shell deps-update deps-tree info
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -24,20 +24,43 @@ help: ## 显示帮助信息
 # ============================================================================
 
 docker-build: ## Build Docker image (backend)
-	docker build -f docker/Dockerfile -t aiwen:latest .
+	cd docker && docker build -f Dockerfile -t aiwen:latest ..
 
 docker-build-frontend: ## Build Docker image (frontend)
-	docker build -f docker/Dockerfile.frontend -t aiwen-frontend:latest .
+	cd docker && docker build -f Dockerfile.frontend -t aiwen-frontend:latest ..
 
-docker-build-all: ## Build all Docker images (backend + frontend)
+docker-build-context-service: ## Build Docker image (context-service)
+	cd docker && docker build -f Dockerfile.context-service -t aiwen-context-service:latest ..
+
+docker-build-all: ## Build all Docker images (backend + frontend + context-service)
 	$(MAKE) docker-build
 	$(MAKE) docker-build-frontend
+	$(MAKE) docker-build-context-service
 
-docker-up: ## 启动 Docker 容器
-	docker compose -f docker/docker-compose.yml --env-file .env up -d
+docker-up: ## Start all containers (infra + app + frontend)
+	cd docker && docker compose --env-file .env --profile infra --profile app up -d
 
-docker-down: ## 停止 Docker 容器
-	docker compose -f docker/docker-compose.yml --env-file .env down
+docker-up-infra: ## Start infrastructure only (postgres, redis, etc.)
+	cd docker && docker compose --env-file .env --profile infra up -d
+
+docker-down: ## Stop all containers
+	cd docker && docker compose --env-file .env --profile all down
+
+docker-status: ## Show container status
+	cd docker && docker compose ps
+
+docker-logs: ## Show container logs
+	cd docker && docker compose logs -f
+
+# ============================================================================
+# 环境配置
+# ============================================================================
+
+env-sync: ## 同步 .env.example 到 .env
+	uv run sync-env
+
+env-sync-docker: ## 同步 .env.example 到 docker/.env
+	uv run sync-env --docker
 
 # ============================================================================
 # 数据库迁移 (Alembic)

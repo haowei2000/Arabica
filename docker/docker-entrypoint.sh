@@ -17,21 +17,24 @@ trap terminate TERM INT
 # ----------------------
 # Migrations
 # ----------------------
-cd /app
-echo "==> Running database migrations..."
+if [ "$SKIP_MIGRATIONS" = "true" ]; then
+    echo "==> Skipping database migrations (SKIP_MIGRATIONS=true)"
+else
+    cd /app
+    echo "==> Running database migrations..."
 
 # Temporarily disable exit on error for migration handling
 set +e
 
 # Get current alembic version
-CURRENT_VERSION=$(uv run alembic current 2>/dev/null | grep -v "^INFO" | grep -v "^Using" | grep -v "^Context" | grep -v "^Will assume" || true)
+CURRENT_VERSION=$(alembic current 2>/dev/null | grep -v "^INFO" | grep -v "^Using" | grep -v "^Context" | grep -v "^Will assume" || true)
 
 if [ -n "$CURRENT_VERSION" ]; then
     # Version exists, normal upgrade
     echo "==> Current database version: $CURRENT_VERSION"
     echo "==> Upgrading to head..."
 
-    uv run alembic upgrade heads 2>&1
+    alembic upgrade heads 2>&1
     if [ $? -eq 0 ]; then
         echo "==> Database migrations completed successfully"
     else
@@ -45,7 +48,7 @@ else
 
     # Try direct upgrade (works if database is empty)
     # Save output to check for errors
-    uv run alembic upgrade head > /tmp/alembic_output.log 2>&1
+    alembic upgrade head > /tmp/alembic_output.log 2>&1
     UPGRADE_EXIT_CODE=$?
 
     if [ $UPGRADE_EXIT_CODE -eq 0 ]; then
@@ -56,11 +59,11 @@ else
             echo "==> Tables already exist but no version recorded"
             echo "==> Stamping database as current version..."
 
-            if uv run alembic stamp heads; then
+            if alembic stamp heads; then
                 echo "==> Database stamped as head"
                 echo "==> Applying any new migrations..."
 
-                if uv run alembic upgrade head; then
+                if alembic upgrade head; then
                     echo "==> Database migrations completed successfully"
                 else
                     echo "==> WARNING: Could not apply new migrations after stamp"
@@ -77,13 +80,19 @@ else
         fi
     fi
 fi
+fi
 
 # Re-enable exit on error
 set -e
 
 # ----------------------
-# Start services
+# Start custom command or default services
 # ----------------------
+if [ "$#" -gt 0 ]; then
+    echo "==> Executing custom command: $@"
+    exec "$@"
+fi
+
 cd /app/src
 
 # uv run aiwen-mcp &
@@ -91,10 +100,10 @@ cd /app/src
 
 cd /app/src
 
-uv run aiwen-api &
+aiwen-api &
 API_PID=$!
 
-uv run aiwen-worker &
+aiwen-worker &
 WORKER_PID=$!
 
 echo "==> All services started (API PID: $API_PID, Worker PID: $WORKER_PID)"

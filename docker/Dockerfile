@@ -75,6 +75,10 @@ COPY docker/docker-entrypoint.sh ./docker/docker-entrypoint.sh
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install -e .
 
+# Pre-install dependencies for the entrypoints
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
 # Make entrypoint executable
 RUN chmod +x ./docker/docker-entrypoint.sh
 
@@ -102,21 +106,32 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         cargo; \
     rm -rf /var/lib/apt/lists/*
 
-# Copy virtual environment and application from builder
-COPY --from=app-builder /app/.venv /app/.venv
-COPY --from=app-builder /app/src /app/src
-COPY --from=app-builder /app/alembic.ini /app/alembic.ini
-COPY --from=app-builder /app/docker/docker-entrypoint.sh /app/docker/docker-entrypoint.sh
-COPY --from=app-builder /app/pyproject.toml /app/pyproject.toml
-COPY --from=app-builder /app/README.md /app/README.md
-
-# Create non-root user for security
+# Create non-root user for security BEFORE copying files
 RUN groupadd -g 1000 appuser && \
-    useradd -r -u 1000 -g appuser -s /bin/sh -d /app appuser && \
-    chown -R appuser:appuser /app
+    useradd -r -u 1000 -g appuser -s /bin/sh -d /app appuser
+
+# Copy virtual environment and application from builder with explicit ownership
+COPY --from=app-builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --from=app-builder --chown=appuser:appuser /app/src /app/src
+COPY --from=app-builder --chown=appuser:appuser /app/alembic.ini /app/alembic.ini
+COPY --from=app-builder --chown=appuser:appuser /app/docker/docker-entrypoint.sh /app/docker/docker-entrypoint.sh
+COPY --from=app-builder --chown=appuser:appuser /app/pyproject.toml /app/pyproject.toml
+COPY --from=app-builder --chown=appuser:appuser /app/README.md /app/README.md
+
+# Fix venv Python symlinks to point to system Python
+RUN set -eux; \
+    SYSPYTHON=$(command -v python3.12 || command -v python3 || echo ""); \
+    if [ -n "$SYSPYTHON" ]; then \
+        ln -sf "$SYSPYTHON" /app/.venv/bin/python3; \
+        ln -sf "$SYSPYTHON" /app/.venv/bin/python; \
+    fi; \
+    chown -R appuser:appuser /app/.venv/bin/python*
 
 # Create logs directory with proper permissions
 RUN mkdir -p /app/logs && chown -R appuser:appuser /app/logs
+
+# Final recursive chown to ensure everything is owned by appuser
+RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
@@ -129,7 +144,7 @@ WORKDIR /app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://127.0.0.1:8000/health || exit 1
 
 # Expose ports
 EXPOSE 8000 9000

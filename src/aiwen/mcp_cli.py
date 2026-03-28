@@ -3,16 +3,13 @@
 # ============================================================================
 """MCP 应用核心实现"""
 
-from contextlib import asynccontextmanager
 import logging
 import os
+from contextlib import asynccontextmanager
 
-from aiwen.mcp_router.browser import browser_mcp, shutdown_browser_sessions
-from aiwen.mcp_router.nl2sql import nl2sql_mcp
-from aiwen.mcp_router.inner_tools import register_inner_tools_to_mcp
-from dotenv import load_dotenv
-from fastmcp import FastMCP
 import fastmcp.server.middleware
+import uvicorn
+from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import (
     CallToolSettings,
     ListToolsSettings,
@@ -20,11 +17,12 @@ from fastmcp.server.middleware.caching import (
 )
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from key_value.aio.stores.redis import RedisStore
-import uvicorn
 
 from aiwen.config.factory import get_settings
 from aiwen.core.bootstrap import bootstrap_mcp
 from aiwen.extensions.logger import setup_logging
+
+from aiwen.mcp_router.inner_tools import register_inner_tools_to_mcp
 
 # 初始化日志
 setup_logging()
@@ -73,8 +71,8 @@ def _setup_mcp_server() -> FastMCP:
     settings = get_settings()
 
     mcp_instance = FastMCP("Aiwen MCP", lifespan=lifespan)
-    mcp_instance.mount(nl2sql_mcp)
-    mcp_instance.mount(browser_mcp)
+    # mcp_instance.mount(nl2sql_mcp)
+    # mcp_instance.mount(browser_mcp)
     
     # Register all discovered inner tools
     register_inner_tools_to_mcp(mcp_instance)
@@ -167,5 +165,10 @@ def run() -> None:
         raise
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point for the aiwen-mcp command."""
     run()
+
+
+if __name__ == "__main__":
+    main()
