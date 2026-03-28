@@ -613,7 +613,6 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                                 source_id=tool.id,
                                 glance=glance,
                                 path=tool_path,
-                                summary=tool.description,
                                 content=content,
                                 tags=tags,
                                 meta=meta,
