@@ -35,10 +35,8 @@ class DeleteContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import or_, select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from aiwen.services.context.client import context_service_client
+        from uuid import UUID
 
         try:
             if not input_data.confirm:
@@ -52,49 +50,27 @@ class DeleteContextTool(InnerTool):
                     },
                 )
 
-            normalized_path = "/" + input_data.path.lstrip("/")
-            async with get_session("aiwen") as db:
-                if input_data.recursive:
-                    stmt = select(WorkspaceContext).where(
-                        WorkspaceContext.workspace_id == input_data.workspace_id,
-                        WorkspaceContext.is_deleted == False,  # noqa: E712
-                        or_(
-                            WorkspaceContext.path == normalized_path,
-                            WorkspaceContext.path.like(f"{normalized_path}/%"),
-                        ),
-                    )
-                else:
-                    stmt = select(WorkspaceContext).where(
-                        WorkspaceContext.workspace_id == input_data.workspace_id,
-                        WorkspaceContext.path == normalized_path,
-                        WorkspaceContext.is_deleted == False,  # noqa: E712
-                    )
+            workspace_id = UUID(input_data.workspace_id)
+            # The context service delete is naturally recursive if the path is a 'directory'
+            # in our implementation (since we use shutil.rmtree).
+            success = await context_service_client.delete_context(
+                workspace_id=workspace_id,
+                path=input_data.path
+            )
 
-                result = await db.execute(stmt)
-                contexts = result.scalars().all()
-
-                if not contexts:
-                    return ToolOutputSchema(
-                        success=False,
-                        message=f"Context not found at path: {input_data.path}",
-                        data={"path": input_data.path, "exists": False},
-                    )
-
-                deleted_paths = []
-                for ctx in contexts:
-                    ctx.is_deleted = True
-                    deleted_paths.append(ctx.path)
-
-                await db.commit()
+            if not success:
+                return ToolOutputSchema(
+                    success=False,
+                    message=f"Context not found at path: {input_data.path}",
+                    data={"path": input_data.path, "exists": False},
+                )
 
             return ToolOutputSchema(
                 success=True,
-                message=f"Deleted {len(deleted_paths)} context(s) at: {input_data.path}",
+                message=f"Deleted context at: {input_data.path}",
                 data={
                     "path": input_data.path,
                     "recursive": input_data.recursive,
-                    "deleted_count": len(deleted_paths),
-                    "deleted_paths": deleted_paths,
                 },
             )
 

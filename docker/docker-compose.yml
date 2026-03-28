@@ -404,6 +404,26 @@ services:
         reservations:
           memory: 64M
 
+  # Context Service for file-based metadata
+  context-service:
+    profiles:
+      - infra
+      - all
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.context-service
+    image: aiwen-context-service:${VERSION:-latest}
+    ports:
+      - "${EXPOSE_PORT_CONTEXT_SERVICE:-8080}:8080"
+    volumes:
+      - aiwen-context-data:/app/data/context
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiwen-network
+
 networks:
   aiwen-network:
     driver: bridge
@@ -411,4 +431,6 @@ networks:
 
 volumes:
   aiwen-logs:
+    driver: local
+  aiwen-context-data:
     driver: local

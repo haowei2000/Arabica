@@ -56,47 +56,58 @@ class GlobContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from uuid import UUID
+        from aiwen.services.context.client import context_service_client
 
         try:
+            workspace_id = UUID(input_data.workspace_id)
             pattern_regex = _glob_to_regex(input_data.pattern)
 
             # SQL prefix hint: narrow down rows before Python-level glob matching
             prefix_end = input_data.pattern.find("*")
-            sql_prefix = None
+            sql_prefix = ""
             if prefix_end > 0:
-                sql_prefix = "/" + input_data.pattern[:prefix_end].lstrip("/")
+                sql_prefix = input_data.pattern[:prefix_end].rstrip("/")
 
-            async with get_session("aiwen") as db:
-                stmt = (
-                    select(WorkspaceContext)
-                    .where(
-                        WorkspaceContext.workspace_id == input_data.workspace_id,
-                        WorkspaceContext.is_deleted == False,  # noqa: E712
-                    )
-                    .order_by(WorkspaceContext.path)
-                )
-
-                if sql_prefix:
-                    stmt = stmt.where(WorkspaceContext.path.like(f"{sql_prefix}%"))
-
-                result = await db.execute(stmt)
-                contexts = result.scalars().all()
+            result_data = await context_service_client.list_contexts(
+                workspace_id=workspace_id,
+                prefix=sql_prefix,
+                recursive=True
+            )
+            
+            contexts = result_data.get("items", [])
 
             # Apply glob filter in Python
-            matched = [ctx for ctx in contexts if ctx.path and pattern_regex.match(ctx.path)]
+            matched = [ctx for ctx in contexts if ctx.get("path") and pattern_regex.match(ctx.get("path"))]
 
             # Apply tag filter
             if input_data.tags:
-                matched = [ctx for ctx in matched if ctx.has_all_tags(input_data.tags)]
+                matched = [
+                    ctx for ctx in matched 
+                    if ctx.get("tags") and all(tag in ctx.get("tags", []) for tag in input_data.tags)
+                ]
 
             matched = matched[: input_data.limit]
 
-            items = [ctx.disclose("glance") for ctx in matched]
-            paths = [(ctx.path or "").lstrip("/") for ctx in matched]
+            def disclose_glance(ctx):
+                path = ctx.get("path")
+                name = ctx.get("name") or (path.rsplit("/", 1)[-1] if path else "unnamed")
+                res = {"path": path, "name": name}
+                
+                if ctx.get("glance"):
+                    res["glance"] = ctx["glance"]
+                elif ctx.get("summary"):
+                    summ = ctx["summary"]
+                    res["glance"] = summ[:100] + "..." if len(summ) > 100 else summ
+                elif ctx.get("content"):
+                    cont = ctx["content"]
+                    res["glance"] = cont[:50] + "..." if len(cont) > 50 else cont
+                else:
+                    res["glance"] = f"{name} ({ctx.get('content_type') or 'unknown'})"
+                return res
+
+            items = [disclose_glance(ctx) for ctx in matched]
+            paths = [(ctx.get("path") or "").lstrip("/") for ctx in matched]
 
             return ToolOutputSchema(
                 success=True,

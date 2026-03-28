@@ -36,36 +36,26 @@ class GlanceContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from uuid import UUID
+        from aiwen.services.context.client import context_service_client
 
         try:
-            async with get_session("aiwen") as db:
-                stmt = (
-                    select(WorkspaceContext)
-                    .where(
-                        WorkspaceContext.workspace_id == input_data.workspace_id,
-                        WorkspaceContext.is_deleted == False,  # noqa: E712
-                    )
-                    .order_by(WorkspaceContext.path)
-                    .limit(input_data.limit)
-                )
+            workspace_id = UUID(input_data.workspace_id)
+            prefix = input_data.prefix or ""
 
-                if input_data.prefix:
-                    normalized_prefix = "/" + input_data.prefix.lstrip("/")
-                    stmt = stmt.where(
-                        WorkspaceContext.path.like(f"{normalized_prefix}%")
-                    )
-
-                result = await db.execute(stmt)
-                contexts = result.scalars().all()
+            result_data = await context_service_client.list_contexts(
+                workspace_id=workspace_id,
+                prefix=prefix,
+                recursive=True
+            )
+            
+            contexts = result_data.get("items", [])
+            contexts = contexts[: input_data.limit]
 
             glances = [
                 {
-                    "path": (ctx.path or "").lstrip("/"),
-                    "glance": ctx.glance or ctx.name,
+                    "path": (ctx.get("path") or "").lstrip("/"),
+                    "glance": ctx.get("glance") or ctx.get("name") or "",
                 }
                 for ctx in contexts
             ]

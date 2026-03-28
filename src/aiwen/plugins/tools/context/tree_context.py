@@ -10,15 +10,46 @@ from aiwen.core.interfaces.tool import (
 )
 
 
-def _build_tree(contexts: list, root_normalized: str | None, level: str) -> dict:
-    """Build nested tree from flat DB context list."""
+def _disclose_overview(ctx: dict) -> dict[str, Any]:
+    """Progressive disclosure for dictionary-based context."""
+    path = ctx.get("path")
+    name = ctx.get("name") or (path.rsplit("/", 1)[-1] if path else "unnamed")
+    result: dict[str, Any] = {"path": path, "name": name}
+
+    # Level 1: Glance
+    if ctx.get("glance"):
+        result["glance"] = ctx["glance"]
+    elif ctx.get("summary"):
+        summ = ctx["summary"]
+        result["glance"] = summ[:100] + "..." if len(summ) > 100 else summ
+    elif ctx.get("content"):
+        cont = ctx["content"]
+        result["glance"] = cont[:50] + "..." if len(cont) > 50 else cont
+    else:
+        result["glance"] = f"{name} ({ctx.get('content_type') or 'unknown'})"
+
+    # Level 2: Overview
+    if ctx.get("summary"):
+        result["overview"] = ctx["summary"]
+    result["content_type"] = ctx.get("content_type")
+    if ctx.get("size_bytes") is not None:
+        result["size_bytes"] = ctx["size_bytes"]
+    if ctx.get("tags"):
+        result["tags"] = ctx["tags"]
+
+    return result
+
+
+def _build_tree(contexts: list[dict], root_normalized: str | None) -> dict:
+    """Build nested tree from flat context list."""
     node_map: dict[str, dict] = {}
-    for ctx in sorted(contexts, key=lambda c: c.path or ""):
-        if not ctx.path:
+    for ctx in sorted(contexts, key=lambda c: c.get("path") or ""):
+        path = ctx.get("path")
+        if not path:
             continue
-        data = ctx.disclose(level)
+        data = _disclose_overview(ctx)
         data["children"] = []
-        node_map[ctx.path] = data
+        node_map[path] = data
 
     for path in sorted(node_map.keys()):
         # "/" in path[1:] checks if there's a slash after the leading one
@@ -29,7 +60,7 @@ def _build_tree(contexts: list, root_normalized: str | None, level: str) -> dict
     if root_normalized:
         if root_normalized in node_map:
             return node_map[root_normalized]
-        # root has no DB record itself — collect its direct children
+        # root has no record itself — collect its direct children
         prefix = root_normalized + "/"
         child_depth = root_normalized.count("/") + 1
         orphans = [
@@ -66,36 +97,22 @@ class TreeContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import or_, select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from uuid import UUID
+        from aiwen.services.context.client import context_service_client
 
         try:
-            root_normalized = ("/" + input_data.root.strip("/")) if input_data.root else None
+            workspace_id = UUID(input_data.workspace_id)
+            root_normalized = ("/" + input_data.root.strip("/")) if input_data.root else ""
 
-            async with get_session("aiwen") as db:
-                stmt = (
-                    select(WorkspaceContext)
-                    .where(
-                        WorkspaceContext.workspace_id == input_data.workspace_id,
-                        WorkspaceContext.is_deleted == False,  # noqa: E712
-                    )
-                    .order_by(WorkspaceContext.path)
-                )
+            result_data = await context_service_client.list_contexts(
+                workspace_id=workspace_id,
+                prefix=root_normalized,
+                recursive=True
+            )
+            
+            contexts = result_data.get("items", [])
 
-                if root_normalized:
-                    stmt = stmt.where(
-                        or_(
-                            WorkspaceContext.path == root_normalized,
-                            WorkspaceContext.path.like(f"{root_normalized}/%"),
-                        )
-                    )
-
-                result = await db.execute(stmt)
-                contexts = result.scalars().all()
-
-            tree = _build_tree(contexts, root_normalized, "overview")
+            tree = _build_tree(contexts, root_normalized or None)
             total_nodes = _count_nodes(tree) if tree else 0
 
             return ToolOutputSchema(

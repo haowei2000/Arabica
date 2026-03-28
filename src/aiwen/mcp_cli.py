@@ -9,6 +9,7 @@ import os
 
 from aiwen.mcp_router.browser import browser_mcp, shutdown_browser_sessions
 from aiwen.mcp_router.nl2sql import nl2sql_mcp
+from aiwen.mcp_router.inner_tools import register_inner_tools_to_mcp
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 import fastmcp.server.middleware
@@ -74,6 +75,10 @@ def _setup_mcp_server() -> FastMCP:
     mcp_instance = FastMCP("Aiwen MCP", lifespan=lifespan)
     mcp_instance.mount(nl2sql_mcp)
     mcp_instance.mount(browser_mcp)
+    
+    # Register all discovered inner tools
+    register_inner_tools_to_mcp(mcp_instance)
+    
     mcp_instance.add_middleware(SimpleLoggingMiddleware())
     if settings.mcp_cache_enable:
         mcp_instance.add_middleware(_initialize_cache_middleware(settings))
@@ -92,6 +97,9 @@ async def lifespan(app: FastMCP):
     bootstrap = None
     try:
         logger.info("🔌 MCP starting up...")
+        # ⚠️ Force inner tool discovery on for the MCP server so it can expose them
+        os.environ["AIWEN_SKIP_INNER_TOOL_DISCOVERY"] = "false"
+        
         # 使用统一的初始化流程
         bootstrap = await bootstrap_mcp()
         logger.info("✅ MCP startup complete")

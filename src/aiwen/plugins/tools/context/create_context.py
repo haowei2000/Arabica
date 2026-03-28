@@ -58,14 +58,11 @@ class CreateContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from aiwen.services.context.client import context_service_client
+        from uuid import UUID
 
         try:
-            normalized_path = "/" + input_data.path.lstrip("/")
-
+            workspace_id = UUID(input_data.workspace_id)
             summary_str = (
                 json.dumps(input_data.overview, ensure_ascii=False)
                 if isinstance(input_data.overview, dict)
@@ -77,38 +74,17 @@ class CreateContextTool(InnerTool):
                 else (str(input_data.detail) if input_data.detail is not None else None)
             )
 
-            async with get_session("aiwen") as db:
-                stmt = select(WorkspaceContext).where(
-                    WorkspaceContext.workspace_id == input_data.workspace_id,
-                    WorkspaceContext.path == normalized_path,
-                )
-                result = await db.execute(stmt)
-                ctx = result.scalar_one_or_none()
-
-                if ctx:
-                    ctx.is_deleted = False
-                    ctx.glance = input_data.glance
-                    ctx.name = input_data.name or input_data.glance
-                    ctx.summary = summary_str
-                    ctx.content = content_str
-                    ctx.tags = input_data.tags
-                    ctx.meta = input_data.meta or {}
-                    ctx.content_type = input_data.content_type
-                else:
-                    ctx = WorkspaceContext(
-                        workspace_id=input_data.workspace_id,
-                        path=normalized_path,
-                        name=input_data.name or input_data.glance,
-                        glance=input_data.glance,
-                        summary=summary_str,
-                        content=content_str,
-                        tags=input_data.tags,
-                        meta=input_data.meta or {},
-                        content_type=input_data.content_type,
-                    )
-                    db.add(ctx)
-
-                await db.commit()
+            await context_service_client.create_context(
+                workspace_id=workspace_id,
+                path=input_data.path,
+                name=input_data.name or input_data.glance,
+                content=content_str,
+                glance=input_data.glance,
+                summary=summary_str,
+                tags=input_data.tags or [],
+                meta=input_data.meta or {},
+                content_type=input_data.content_type,
+            )
 
             return ToolOutputSchema(
                 success=True,

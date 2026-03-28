@@ -60,7 +60,7 @@ async def copy_contexts_to_workspace(
         )
         return []
 
-    created: list[WorkspaceContext] = []
+    from aiwen.services.context.client import context_service_client
 
     for ctx in contexts:
         # Build the virtual path
@@ -85,36 +85,28 @@ async def copy_contexts_to_workspace(
         meta = dict(ctx.meta) if ctx.meta else {}
         meta["source"] = source_meta
 
-        ws_ctx = WorkspaceContext(
+        # Instead of DB model, call the context service
+        await context_service_client.create_context(
             workspace_id=workspace_id,
-            created_by=created_by,
-            path=target_path,
+            path=target_path or "",
             name=name,
+            content=ctx.content or "",
             content_type=_guess_content_type(ctx),
-            content=ctx.content,
-            s3_key=ctx.s3_key,
-            size_bytes=len(ctx.content.encode("utf-8")) if ctx.content else None,
+            glance=ctx.glance,
+            summary=ctx.summary,
+            tags=ctx.tags or [],
             meta=meta,
             expires_at=expires_at,
         )
-        db.add(ws_ctx)
-        created.append(ws_ctx)
-
-    if auto_commit:
-        await db.commit()
-    else:
-        await db.flush()
-
-    for ws_ctx in created:
-        await db.refresh(ws_ctx)
 
     logger.info(
-        "Copied %d/%d contexts into workspace %s",
-        len(created),
+        "Copied %d/%d contexts into context-service for workspace %s",
+        len(contexts),
         len(context_ids),
         workspace_id,
     )
-    return created
+    # We return an empty list or a list of mock objects since we no longer use WorkspaceContext model here
+    return []
 
 
 async def copy_contexts_to_workspace_by_filter(

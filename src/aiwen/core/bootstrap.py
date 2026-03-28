@@ -67,6 +67,9 @@ class BootstrapConfig:
     # Whether to seed default context paths in all workspaces (API only)
     init_context_paths: bool = False
 
+    # Whether to discover inner tools from the filesystem (Plugin discovery)
+    discover_inner_tools: bool = True
+
 
 async def _initialize_databases() -> None:
     """Initialize database connections"""
@@ -121,7 +124,7 @@ async def _shutdown_databases() -> None:
     logger.info("All database connections closed")
 
 
-async def _initialize_registries() -> None:
+async def _initialize_registries(config: BootstrapConfig) -> None:
     """
     Initialize all registries using a centralized system.
 
@@ -155,8 +158,11 @@ async def _initialize_registries() -> None:
         executor_registry = manager.get_registry(ExecutorRegistry)
 
         # Auto-discover and register InnerTool subclasses
-        logger.info("Auto-discovering tool modules...")
-        tool_registry.discover_and_register_tools()
+        if config.discover_inner_tools:
+            logger.info("Auto-discovering tool modules from filesystem...")
+            tool_registry.discover_and_register_tools()
+        else:
+            logger.info("Skipping tool discovery from filesystem (discover_inner_tools=false)")
 
         # Log current state
         tool_count = len(tool_registry.list_tools())
@@ -246,7 +252,7 @@ class ApplicationBootstrap:
 
         # Step 6: NEW: Unified registry initialization
         if self.config.init_registries:
-            await _initialize_registries()
+            await _initialize_registries(self.config)
 
         # Step 7: Storage backend
         if self.config.init_storage:
@@ -405,6 +411,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
     - create_tables=False: Tables managed by Alembic
     - create_admin_user=True: API responsible for user creation
     - init_registries=True: ⭐ NEW unified registry initialization
+    - discover_inner_tools=False: Tools imported via MCP
     """
     return BootstrapConfig(
         init_logging=True,
@@ -415,6 +422,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
         init_context_paths=True,  # Seed default context paths in all workspaces
+        discover_inner_tools=False,  # API connects to MCP server for tools
     )
 
 
@@ -426,6 +434,7 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
     - create_tables=False: Tables managed by Alembic
     - create_admin_user=False: Worker doesn't create users
     - init_registries=True: ⭐ NEW unified registry initialization
+    - discover_inner_tools=False: Tools imported via MCP
     """
     return BootstrapConfig(
         init_logging=True,
@@ -435,6 +444,7 @@ def get_worker_bootstrap_config() -> BootstrapConfig:
         create_admin_user=False,  # Worker doesn't create users
         init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
+        discover_inner_tools=False,
     )
 
 
@@ -470,6 +480,23 @@ def get_celery_bootstrap_config() -> BootstrapConfig:
     )
 
 
+def get_mcp_bootstrap_config() -> BootstrapConfig:
+    """
+    MCP service initialization configuration
+    
+    Needs database for tool discovery, and logging.
+    """
+    return BootstrapConfig(
+        init_logging=True,
+        init_redis=False,
+        init_database=True,
+        create_tables=False,
+        create_admin_user=False,
+        init_registries=True,  # Need registries to discover tools
+        init_storage=False,
+    )
+
+
 async def bootstrap_alembic() -> ApplicationBootstrap:
     """Initialize Alembic service"""
     bootstrap = ApplicationBootstrap(get_alembic_bootstrap_config())
@@ -494,5 +521,12 @@ async def bootstrap_worker() -> ApplicationBootstrap:
 async def bootstrap_celery() -> ApplicationBootstrap:
     """Initialize Celery service"""
     bootstrap = ApplicationBootstrap(get_celery_bootstrap_config())
+    await bootstrap.initialize()
+    return bootstrap
+
+
+async def bootstrap_mcp() -> ApplicationBootstrap:
+    """Initialize MCP service"""
+    bootstrap = ApplicationBootstrap(get_mcp_bootstrap_config())
     await bootstrap.initialize()
     return bootstrap

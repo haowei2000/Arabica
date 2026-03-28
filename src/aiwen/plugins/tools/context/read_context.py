@@ -26,23 +26,17 @@ class ReadContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from aiwen.services.context.client import context_service_client
+        from uuid import UUID
 
         try:
-            normalized_path = "/" + input_data.path.lstrip("/")
-            async with get_session("aiwen") as db:
-                stmt = select(WorkspaceContext).where(
-                    WorkspaceContext.workspace_id == input_data.workspace_id,
-                    WorkspaceContext.path == normalized_path,
-                    WorkspaceContext.is_deleted == False,  # noqa: E712
-                )
-                result = await db.execute(stmt)
-                ctx = result.scalar_one_or_none()
+            workspace_id = UUID(input_data.workspace_id)
+            ctx_data = await context_service_client.get_context(
+                workspace_id=workspace_id,
+                path=input_data.path
+            )
 
-            if ctx is None:
+            if ctx_data is None:
                 return ToolOutputSchema(
                     success=False,
                     message=f"Context not found at path: {input_data.path}",
@@ -54,7 +48,9 @@ class ReadContextTool(InnerTool):
                 message=f"Retrieved context: {input_data.path}",
                 data={
                     "path": input_data.path,
-                    "content": ctx.content,
+                    "content": ctx_data.get("content"),
+                    "content_type": ctx_data.get("content_type"),
+                    "glance": ctx_data.get("glance"),
                 },
             )
 

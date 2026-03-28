@@ -8,23 +8,15 @@ if TYPE_CHECKING:
     from aiwen.models.context.workspace_context import WorkspaceContext
 
 
-def _build_md_tree(contexts: list[WorkspaceContext], root_path: str) -> str:
-    """Build a markdown tree string from a list of contexts.
-
-    Example output:
-        - tools/
-          - web_search
-          - code_exec
-        - knowledge/
-          - python_guide
-    """
+def _build_md_tree(contexts: list[dict], root_path: str) -> str:
+    """Build a markdown tree string from a list of contexts."""
     lines: list[str] = []
     root_depth = root_path.rstrip("/").count("/")
 
     for ctx in contexts:
-        path = (ctx.path or "").rstrip("/")
+        path = ctx.get("path", "").rstrip("/")
         depth = path.count("/") - root_depth - 1
-        indent = "  " * depth
+        indent = "  " * max(0, depth)
         name = path.rsplit("/", 1)[-1]
         lines.append(f"{indent}- {name}")
 
@@ -70,48 +62,23 @@ class ListContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from aiwen.extensions.database import get_session
-        from aiwen.models.context.workspace_context import WorkspaceContext
+        from aiwen.services.context.client import context_service_client
+        from uuid import UUID
 
         try:
-            normalized_path = "/" + input_data.path.strip("/")
-
-            if normalized_path == "/":
-                # Root: children are top-level paths like "/tools", "/knowledge".
-                # prefix="/" matches them all; child_depth=1 because they have exactly
-                # one slash.  Using "//" would match nothing since no path starts that way.
-                prefix = "/"
-                child_depth = 1
-            else:
-                prefix = normalized_path + "/"
-                child_depth = normalized_path.count("/") + 1  # slash count of direct children
-
-            async with get_session("aiwen") as db:
-                stmt = (
-                    select(WorkspaceContext)
-                    .where(
-                        WorkspaceContext.workspace_id == input_data.workspace_id,
-                        WorkspaceContext.path.like(f"{prefix}%"),
-                        WorkspaceContext.is_deleted == False,  # noqa: E712
-                    )
-                    .order_by(WorkspaceContext.path)
-                )
-                result = await db.execute(stmt)
-                all_descendants = result.scalars().all()
-
-            if input_data.mode == "children":
-                contexts = [
-                    ctx for ctx in all_descendants
-                    if ctx.path and ctx.path.count("/") == child_depth
-                ]
-            else:
-                contexts = list(all_descendants)
-
+            workspace_id = UUID(input_data.workspace_id)
+            recursive = input_data.mode == "descendants"
+            
+            result_data = await context_service_client.list_contexts(
+                workspace_id=workspace_id,
+                prefix=input_data.path,
+                recursive=recursive
+            )
+            
+            contexts = result_data.get("items", [])
             contexts = contexts[: input_data.limit]
 
-            tree = _build_md_tree(contexts, normalized_path)
+            tree = _build_md_tree(contexts, input_data.path)
 
             return ToolOutputSchema(
                 success=True,
