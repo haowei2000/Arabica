@@ -1,162 +1,176 @@
-"""Workspace context service — read-only query facade over Context.
+"""Workspace context service — read-only query facade over multi-scope Context.
 
-Architecture
-============
-The write path is intentionally simple:
-
-1. **Global Context table** — single source of truth, kept up to date by
-   ``ContextSyncer`` whenever tools / skills / knowledge / triggers / workspaces
-   are created, updated, or deleted.
-
-2. **Workspace-scoped Context entries** — Context rows with
-   ``source_id == workspace_id``, created at workspace creation time
-   (see ``init_workspace_context``).  After creation they are not modified.
-
-3. **ContextStore (in-memory)** — loaded on demand from Context for
-   fast glob / tree / children queries within a single request.
-
-WorkspaceContextService exposes read-only query methods.
+Simplified implementation that uses Context ORM models directly instead of
+ContextStore/ContextEntry abstractions.
 """
 
 from __future__ import annotations
 
-
+import fnmatch
+import logging
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiwen.core.enums.context import ContextScope
 from aiwen.models.context.context import Context
 
+logger = logging.getLogger(__name__)
+
 
 class WorkspaceContextService:
-    """Read-only query facade over Context (workspace-scoped) + in-memory ContextStore.
+    """Read-only query facade over Context (Workspace + User + Global scopes).
 
     Usage::
 
         service = WorkspaceContextService(session, workspace_id)
         await service.load()
 
-        tools = await service.glob("tools/**")
-        tree  = await service.tree("tools")
-        entry = await service.get("tools/web_search", "overview")
+        tools = await service.glob("tools/*")
+        entry = await service.get("tools/web_search", "detail")
     """
 
-    def __init__(self, session: AsyncSession, workspace_id: str | UUID) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        workspace_id: str | UUID,
+        owner_id: str | UUID | None = None,
+    ) -> None:
         self.session = session
         self.workspace_id = str(workspace_id)
         self._workspace_uuid = UUID(self.workspace_id)
-        self._store = None
+        self.owner_id = str(owner_id) if owner_id else None
+        self._owner_uuid = UUID(self.owner_id) if self.owner_id else None
+        
+        self._contexts: list[Context] = []
         self._loaded = False
 
-    # ──────────────────────────────────────────────────────────────
-    # Loading
-    # ──────────────────────────────────────────────────────────────
+    async def _ensure_owner_id(self) -> None:
+        """Fetch workspace owner_id from DB if not provided."""
+        if self._owner_uuid:
+            return
+        from aiwen.models.workspaces.workspace import Workspace
+        ws = await self.session.get(Workspace, self._workspace_uuid)
+        if ws:
+            self.owner_id = str(ws.owner_id)
+            self._owner_uuid = ws.owner_id
 
-    async def load(self):  # -> ContextStore
-        """Load workspace-scoped Context rows from DB into the in-memory ContextStore."""
-        from aiwen.frameworks.context import ContextStore, count_aggregator
-        from aiwen.core.enums.context import ContextPathSuffix
+    async def load(self) -> list[Context]:
+        """Load multi-scoped Context rows from DB into memory."""
+        await self._ensure_owner_id()
 
-        if self._store is None:
-            self._store = ContextStore(
-                title=f"Workspace {self.workspace_id}",
-                description=f"Context snapshot for workspace {self.workspace_id}",
-            )
-
-            # Register standard schema nodes (skeleton / directory nodes)
-            paths = {
-                ContextPathSuffix.TOOLS: "Available Tools",
-                ContextPathSuffix.SKILLS: "Available Skills",
-                ContextPathSuffix.KNOWLEDGE: "Knowledge Base",
-                ContextPathSuffix.TRIGGERS: "Triggers",
-                ContextPathSuffix.WORKSPACES: "Workspaces",
-                ContextPathSuffix.LONG_MEMORY: "Long Memory",
-                ContextPathSuffix.SHORT_MEMORY: "Short Memory",
-            }
-            for suffix, title in paths.items():
-                self._store.schema(
-                    suffix,
-                    glance=title,
-                    aggregator=count_aggregator,
-                    tags=["workspace", suffix],
-                )
-
+        # Multi-scope load: Workspace-specific + User-scoped (owner) + Global
         stmt = (
             select(Context)
             .where(
-                Context.source_id == self._workspace_uuid,
-                Context.scope == ContextScope.WORKSPACE,
+                or_(
+                    and_(
+                        Context.source_id == self._workspace_uuid,
+                        Context.scope == ContextScope.WORKSPACE,
+                    ),
+                    and_(
+                        Context.user_id == self._owner_uuid,
+                        Context.scope == ContextScope.USER,
+                    ),
+                    Context.scope == ContextScope.GLOBAL,
+                )
             )
             .order_by(Context.path)
         )
         result = await self.session.execute(stmt)
-        for ctx in result.scalars().all():
-            self._load_entry(ctx)
-
+        self._contexts = list(result.scalars().all())
         self._loaded = True
-        return self._store
-
-    def _load_entry(self, ctx: Context) -> None:
-        path = ctx.path.lstrip("/") if ctx.path else f"_/{ctx.id}"
-
-        meta = ctx.meta or {}
-        meta.update(
-            {
-                "id": str(ctx.id),
-                "workspace_id": self.workspace_id,
-                "s3_key": ctx.s3_key,
-            }
+        
+        logger.debug(
+            "WorkspaceContextService: loaded %d contexts for workspace %s",
+            len(self._contexts),
+            self.workspace_id
         )
-
-        self._store.set(
-            path=path,
-            glance=ctx.glance or ctx.content[:50] if ctx.content else path,
-            overview=None,
-            detail=ctx.content,
-            tags=ctx.tags or [],
-            meta=meta,
-        )
+        return self._contexts
 
     async def _ensure_loaded(self) -> None:
         if not self._loaded:
             await self.load()
 
+    def _normalize_path(self, path: str) -> str:
+        return path.strip("/")
+
     # ──────────────────────────────────────────────────────────────
-    # Query API (read-only)
+    # Query API
     # ──────────────────────────────────────────────────────────────
 
-    async def get(self, path: str, level: str = "overview") -> Any:
+    async def get(self, path: str, level: str = "overview") -> dict[str, Any] | None:
+        """Get a single context by path."""
         await self._ensure_loaded()
-        from aiwen.frameworks.context import DetailLevel
+        target = self._normalize_path(path)
+        
+        for ctx in self._contexts:
+            if ctx.path and self._normalize_path(ctx.path) == target:
+                return {"path": ctx.path, **ctx.disclose(level)}
+        return None
 
-        return self._store.get(path, DetailLevel.from_str(level))
-
-    async def glob(self, pattern: str):  # -> QueryResult
+    async def glob(self, pattern: str, level: str = "overview") -> list[dict[str, Any]]:
+        """Query contexts using glob patterns (e.g. 'tools/*', 'knowledge/**')."""
         await self._ensure_loaded()
-        return self._store.glob(pattern)
+        target_pat = self._normalize_path(pattern)
+        
+        results = []
+        for ctx in self._contexts:
+            if not ctx.path:
+                continue
+            path = self._normalize_path(ctx.path)
+            if fnmatch.fnmatch(path, target_pat):
+                results.append({"path": ctx.path, **ctx.disclose(level)})
+        return results
 
-    async def children(self, prefix: str):  # -> QueryResult
+    async def list(self, prefix: str | None = None, level: str = "glance") -> list[dict[str, Any]]:
+        """List contexts, optionally filtered by path prefix."""
         await self._ensure_loaded()
-        return self._store.children(prefix)
+        
+        results = []
+        prefix_norm = self._normalize_path(prefix) if prefix else ""
+        
+        for ctx in self._contexts:
+            if not ctx.path:
+                continue
+            path = self._normalize_path(ctx.path)
+            if not prefix_norm or path.startswith(prefix_norm):
+                results.append({"path": ctx.path, **ctx.disclose(level)})
+        return results
 
-    async def descendants(self, prefix: str):  # -> QueryResult
+    async def tree(self, root: str | None = None, level: str = "overview") -> dict[str, Any]:
+        """Return context structure as a hierarchical tree."""
         await self._ensure_loaded()
-        return self._store.descendants(prefix)
+        
+        all_items = await self.list(root, level)
+        if not all_items:
+            return {}
 
-    async def tree(self, root: str | None = None, level: str = "overview") -> Any:
-        await self._ensure_loaded()
-        from aiwen.frameworks.context import DetailLevel
+        # Simple tree construction
+        nodes_by_path: dict[str, dict[str, Any]] = {}
+        roots: list[dict[str, Any]] = []
 
-        return self._store.tree(root, DetailLevel.from_str(level))
+        for item in sorted(all_items, key=lambda x: x["path"]):
+            path = item["path"]
+            node = {**item, "children": []}
+            nodes_by_path[path] = node
+            
+            # Find parent
+            parts = path.strip("/").rsplit("/", 1)
+            parent_path = parts[0] if len(parts) > 1 else None
+            
+            if parent_path and parent_path in nodes_by_path:
+                nodes_by_path[parent_path]["children"].append(node)
+            else:
+                roots.append(node)
 
-    async def glance(self, prefix: str | None = None) -> list[str]:
-        await self._ensure_loaded()
-        return self._store.glance(prefix)
+        if len(roots) == 1:
+            return roots[0]
+        return {"path": root or "/", "children": roots}
 
     @property
-    def store(self):
-        """Raw ContextStore instance (read-only — do not modify directly)."""
-        return self._store
+    def contexts(self) -> list[Context]:
+        """Raw Context model instances."""
+        return self._contexts

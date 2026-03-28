@@ -26,8 +26,8 @@ class Context(Base):  # ty:ignore[unsupported-base]
 
     IMPORTANT: This is the DATABASE model for persistent context storage.
     Do not confuse with:
-    - ContextStore (aiwen.frameworks.context.layer) - In-memory hierarchical storage
-    - ContextEntry (aiwen.frameworks.context.layer) - Framework node class
+    - ContextStore (aiwen.services.workspace_context.workspace_context_service) - In-memory hierarchical storage
+    - ContextEntry (aiwen.services.workspace_context.workspace_context_service) - Framework node class
     - ContextSchema (aiwen.schemas.context.context_schema) - Pydantic API schema
     - WorkspaceContext (aiwen.models.context.workspace_context) - Workspace-specific contexts
 

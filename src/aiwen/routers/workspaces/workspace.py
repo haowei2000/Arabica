@@ -85,18 +85,7 @@ async def create_workspace(
         auto_commit=True,
     )
 
-    from aiwen.services.workspace_context.init_workspace_context import (
-        init_workspace_context,
-    )
     from aiwen.services.context.process import copy_contexts_to_workspace_by_filter
-
-    # Populate Context table (workspace-scoped, used by agents)
-    await init_workspace_context(
-        db=db,
-        workspace_id=workspace.id,
-        user_id=current_user.id,
-    )
-    await db.commit()
 
     # Populate WorkspaceContext table (used by the workspace context UI)
     await copy_contexts_to_workspace_by_filter(
@@ -613,21 +602,10 @@ async def reinit_workspace_context(
     )
     await db.commit()
 
-    # Re-populate Context table (workspace-scoped, for agents)
-    from aiwen.services.workspace_context.init_workspace_context import (
-        init_workspace_context,
-    )
+    # Re-populate WorkspaceContext table (for the workspace context UI)
     from aiwen.services.context.process import copy_contexts_to_workspace_by_filter
 
-    count = await init_workspace_context(
-        db=db,
-        workspace_id=workspace_id,
-        user_id=current_user.id,
-    )
-    await db.commit()
-
-    # Re-populate WorkspaceContext table (for the workspace context UI)
-    await copy_contexts_to_workspace_by_filter(
+    ws_contexts = await copy_contexts_to_workspace_by_filter(
         db=db,
         workspace_id=UUID(workspace_id),
         user_id=UUID(str(current_user.id)),
@@ -635,7 +613,7 @@ async def reinit_workspace_context(
         auto_commit=True,
     )
 
-    return {"success": True, "count": count}
+    return {"success": True, "count": len(ws_contexts)}
 
 
 @router.get(
