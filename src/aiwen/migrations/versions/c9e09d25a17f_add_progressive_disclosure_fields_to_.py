@@ -25,6 +25,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     conn.execute(sa.text("ALTER TABLE context ADD COLUMN IF NOT EXISTS glance VARCHAR(512)"))
     conn.execute(sa.text("ALTER TABLE context ADD COLUMN IF NOT EXISTS tags JSONB"))
+    conn.execute(sa.text("ALTER TABLE context ADD COLUMN IF NOT EXISTS summary TEXT"))
     op.alter_column('context', 'summary',
                existing_type=sa.TEXT(),
                comment='概览摘要（概览层，结构化数据）',
@@ -33,6 +34,7 @@ def upgrade() -> None:
                existing_type=sa.TEXT(),
                comment='完整内容（详情层）',
                existing_nullable=False)
+    conn.execute(sa.text("ALTER TABLE context ADD COLUMN IF NOT EXISTS keywords JSONB"))
     op.alter_column('context', 'keywords',
                existing_type=postgresql.JSONB(astext_type=sa.Text()),
                comment='关键词（已弃用，请使用 tags）',

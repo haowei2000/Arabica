@@ -18,18 +18,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "run",
-        sa.Column("title", sa.String(255), nullable=True, comment="LLM生成的标题"),
-    )
-    op.add_column(
-        "run",
-        sa.Column("summary", sa.Text(), nullable=True, comment="LLM生成的摘要"),
-    )
-    op.add_column(
-        "workspace",
-        sa.Column("summary", sa.Text(), nullable=True, comment="LLM生成的工作空间摘要"),
-    )
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE run ADD COLUMN IF NOT EXISTS title VARCHAR(255)"))
+    conn.execute(sa.text("COMMENT ON COLUMN run.title IS 'LLM生成的标题'"))
+    conn.execute(sa.text("ALTER TABLE run ADD COLUMN IF NOT EXISTS summary TEXT"))
+    conn.execute(sa.text("COMMENT ON COLUMN run.summary IS 'LLM生成的摘要'"))
+    conn.execute(sa.text("ALTER TABLE workspace ADD COLUMN IF NOT EXISTS summary TEXT"))
+    conn.execute(sa.text("COMMENT ON COLUMN workspace.summary IS 'LLM生成的工作空间摘要'"))
 
 
 def downgrade() -> None:

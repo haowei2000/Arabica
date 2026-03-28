@@ -18,18 +18,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "context",
-        sa.Column(
-            "scope",
-            sa.String(length=20),
-            nullable=False,
-            server_default="user",
-            comment="可见范围: user（仅自己）/ workspace（工作空间）/ global（全局）",
-        ),
-    )
-    op.create_index("ix_context_scope", "context", ["scope"])
-    op.create_index("ix_context_user_scope", "context", ["user_id", "scope"])
+    conn = op.get_bind()
+    conn.execute(sa.text("ALTER TABLE context ADD COLUMN IF NOT EXISTS scope VARCHAR(20) DEFAULT 'user' NOT NULL"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_context_scope ON context (scope)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_context_user_scope ON context (user_id, scope)"))
 
 
 def downgrade() -> None:
