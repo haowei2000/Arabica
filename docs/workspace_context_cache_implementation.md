@@ -14,7 +14,7 @@
 
 ### 1. 核心缓存模块（新增）
 
-**文件**: `src/aiwen/utils/workspace_context_cache.py`
+**文件**: `src/structure/utils/workspace_context_cache.py`
 
 **功能**:
 - 全局 TTLCache (maxsize=200, ttl=300)
@@ -42,7 +42,7 @@ def get_cache_info() -> str
 
 所有工具已更新为使用缓存版本：
 
-#### 2.1 `src/aiwen/plugins/tools/context/create_context.py`
+#### 2.1 `src/structure/plugins/tools/context/create_context.py`
 
 **修改**:
 
@@ -63,49 +63,49 @@ service = await get_cached_workspace_context(db, input_data.workspace_id)
 
 ---
 
-#### 2.2 `src/aiwen/plugins/tools/context/read_context.py`
+#### 2.2 `src/structure/plugins/tools/context/read_context.py`
 
 **修改**: 同上
 **影响**: 读取 context 时缓存加速（最常用操作）
 
 ---
 
-#### 2.3 `src/aiwen/plugins/tools/context/glob_context.py`
+#### 2.3 `src/structure/plugins/tools/context/glob_context.py`
 
 **修改**: 同上
 **影响**: Glob 查询时缓存加速（高频操作）
 
 ---
 
-#### 2.4 `src/aiwen/plugins/tools/context/list_context.py`
+#### 2.4 `src/structure/plugins/tools/context/list_context.py`
 
 **修改**: 同上
 **影响**: 列表查询缓存加速
 
 ---
 
-#### 2.5 `src/aiwen/plugins/tools/context/tree_context.py`
+#### 2.5 `src/structure/plugins/tools/context/tree_context.py`
 
 **修改**: 同上
 **影响**: 树形结构查询缓存加速
 
 ---
 
-#### 2.6 `src/aiwen/plugins/tools/context/update_context.py`
+#### 2.6 `src/structure/plugins/tools/context/update_context.py`
 
 **修改**: 同上
 **影响**: 更新 context 时缓存加速
 
 ---
 
-#### 2.7 `src/aiwen/plugins/tools/context/glance_context.py`
+#### 2.7 `src/structure/plugins/tools/context/glance_context.py`
 
 **修改**: 同上
 **影响**: 快速扫描缓存加速
 
 ---
 
-#### 2.8 `src/aiwen/plugins/tools/context/delete_context.py`
+#### 2.8 `src/structure/plugins/tools/context/delete_context.py`
 
 **修改**: 同上（import 位置略有不同）
 **影响**: 删除 context 时缓存加速
@@ -309,7 +309,7 @@ python scripts/monitor_workspace_cache.py --watch
 
 **方式 3：API 端点（可选）**
 
-在 `src/aiwen/routers/monitoring.py` 添加：
+在 `src/structure/routers/monitoring.py` 添加：
 
 ```python
 from structure.utils.workspace_context_cache import get_cache_stats
@@ -439,7 +439,7 @@ await service.load()
 
 ### 方式 2：全局开关（推荐）
 
-创建 `src/aiwen/utils/workspace_context_cache_switch.py`:
+创建 `src/structure/utils/workspace_context_cache_switch.py`:
 
 ```python
 import os

@@ -128,7 +128,7 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-8 text-center text-xs text-muted-foreground/60">
-            Powered by Aiwen
+            Powered by Structure
           </div>
         </div>
       </div>

@@ -24,7 +24,7 @@
 ### 后端文件 (4个)
 
 ```
-src/aiwen/
+src/structure/
 ├── schemas/context/skill.py              # Pydantic schemas
 ├── services/context/
 │   ├── skill_crud.py                     # CRUD operations

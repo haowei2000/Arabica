@@ -13,7 +13,7 @@ from structure.core.dependencies.workspace import (
     get_workspace_crud,
     get_workspace_member_crud,
 )
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from tests.unit.routers.conftest import (
     make_user,
     USER_ID,
@@ -100,7 +100,7 @@ def mock_db():
 def client(mock_workspace_crud, mock_member_crud, mock_db, patch_bootstrap):
     user = make_user()
     app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_aiwen_db] = lambda: mock_db
+    app.dependency_overrides[get_structure_db] = lambda: mock_db
     app.dependency_overrides[get_workspace_crud] = lambda: mock_workspace_crud
     app.dependency_overrides[get_workspace_member_crud] = lambda: mock_member_crud
 

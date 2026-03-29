@@ -1,11 +1,11 @@
 # Docker Compose Setup Guide
 
-This guide explains how to set up and run the AIWen service using Docker Compose with all necessary components.
+This guide explains how to set up and run the Structure service using Docker Compose with all necessary components.
 
 ## Overview
 
 The Docker Compose setup includes the following services:
-- `aiwen-app`: Main FastAPI application
+- `structure-app`: Main FastAPI application
 - `postgres`: PostgreSQL database for primary data storage
 - `mysql`: MySQL database for additional data storage
 - `redis`: Redis cache and session storage
@@ -117,7 +117,7 @@ docker-compose up -d --scale structure-app=2
 
 ### Services Configuration
 
-- **aiwen-app**: Built from the Dockerfile in the `docker/` directory, with health checks and resource limits
+- **structure-app**: Built from the Dockerfile in the `docker/` directory, with health checks and resource limits
 - **postgres**: PostgreSQL 15 with health checks and persistent volume
 - **mysql**: MySQL 8.0 with health checks and persistent volume
 - **redis**: Redis 7 with authentication and persistence

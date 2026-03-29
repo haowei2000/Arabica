@@ -38,7 +38,7 @@ class ToolMetadata:
     display_name: str  # Display name
     description: str  # Tool description
     version: str = "1.0.0"  # Version number
-    author: str = "Aiwen"  # Author
+    author: str = "Structure"  # Author
     tags: list[str] = field(default_factory=list)  # Tags
     category: str = "general"  # Category
     enabled: bool = True  # Whether enabled

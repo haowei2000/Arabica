@@ -13,7 +13,7 @@ from structure.core.enums import ContextType
 from structure.services.context.context_crud import ContextCRUD
 from structure.services.context.skill_crud import SkillCRUD
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.extensions.storage.global_storage import get_global_s3_storage
 from structure.extensions.storage.s3_storage_backend import S3StorageBackend
 from structure.schemas.auth.user import UserResponse
@@ -77,7 +77,7 @@ async def get_skill_context(
 async def get_skill(
     skill_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """
     Get a specific skill by ID.
@@ -178,7 +178,7 @@ async def delete_skill(
 )
 async def list_skills(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     tags: str | None = Query(None, description="Comma-separated tags filter"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -226,7 +226,7 @@ async def list_skills(
 )
 async def search_skills(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     q: str = Query(..., min_length=1, description="Search query"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -303,7 +303,7 @@ async def get_skill_file(
 async def process_skill(
     skill_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     embedding_model: str | None = Query(None, description="Embedding model to use"),
 ):
     """

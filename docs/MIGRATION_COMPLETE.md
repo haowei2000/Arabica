@@ -7,7 +7,7 @@
 ## 📋 迁移内容
 
 ### 1. ContextLayer 框架 ✅
-- **位置**: `src/aiwen/frameworks/context_layer.py`
+- **位置**: `src/structure/frameworks/context_layer.py`
 - **功能**:
   - 路径寻址（Path-based addressing）
   - Glob 通配符查询 (`*`, `**`)
@@ -30,7 +30,7 @@
   - `ix_ws_ctx_workspace_deleted` - 活跃上下文查询
 
 ### 3. WorkspaceContextService ✅
-- **位置**: `src/aiwen/services/workspace_context_service.py`
+- **位置**: `src/structure/services/workspace_context_service.py`
 - **架构**:
   ```
   WorkspaceContext 表 (PostgreSQL)
@@ -132,7 +132,7 @@ tree = await service.tree(f"{workspace_id}/tools")
 ## 📁 新增文件
 
 ```
-src/aiwen/
+src/structure/
 ├── frameworks/
 │   ├── __init__.py                    # 新增
 │   └── context_layer.py               # 新增 - ContextLayer 框架

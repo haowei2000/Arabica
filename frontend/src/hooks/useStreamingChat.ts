@@ -101,6 +101,11 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
 
       lastUserMessageRef.current = content;
 
+      // Reset all streaming state
+      setIsStreaming(true);
+      clearStreamingState();
+      setStreamError(null);
+
       // Optimistic user message
       addMessage({
         id: generateUUID(),
@@ -108,11 +113,6 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         content,
         timestamp: new Date(),
       });
-
-      // Reset all streaming state
-      setIsStreaming(true);
-      clearStreamingState();
-      setStreamError(null);
 
       await streamService.sendStreamingMessage({
         workspaceId,

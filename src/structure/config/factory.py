@@ -24,7 +24,7 @@
 使用示例:
     from structure.config.factory import get_settings
     settings = get_settings()
-    print(settings.postgres.aiwen_dbname)
+    print(settings.postgres.structure_dbname)
 """
 
 from functools import lru_cache
@@ -116,7 +116,7 @@ def get_settings() -> AppSettings:
     Example:
         >>> from structure.config.factory import get_settings
         >>> settings = get_settings()
-        >>> print(settings.postgres.aiwen_dbname)
-        'aiwen'
+        >>> print(settings.postgres.structure_dbname)
+        'structure'
     """
     return AppSettings()

@@ -7,7 +7,7 @@ from fastapi import Depends
 import redis.asyncio as redis_async
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.middleware.cache_middleware import get_redis_client
 from structure.services.events.event_consumer import EventConsumer, EventReplayer
 from structure.services.events.event_crud import EventCRUD
@@ -24,7 +24,7 @@ async def _get_redis_client() -> redis_async.Redis:
 
 
 async def get_workspace_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> WorkspaceCRUD:
     """Dependency to get WorkspaceCRUD instance.
 
@@ -38,7 +38,7 @@ async def get_workspace_crud(
 
 
 async def get_workspace_member_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> WorkspaceMemberCRUD:
     """Dependency to get WorkspaceMemberCRUD instance.
 
@@ -52,7 +52,7 @@ async def get_workspace_member_crud(
 
 
 async def get_run_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> RunCRUD:
     """Dependency to get RunCRUD instance.
 
@@ -66,7 +66,7 @@ async def get_run_crud(
 
 
 async def get_event_publisher(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     redis_client: Annotated[redis_async.Redis, Depends(_get_redis_client)],
 ) -> EventPublisher:
     """Dependency to get EventPublisher instance.
@@ -96,7 +96,7 @@ async def get_event_consumer(
 
 
 async def get_event_replayer(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> EventReplayer:
     """Dependency to get EventReplayer instance.
 
@@ -110,7 +110,7 @@ async def get_event_replayer(
 
 
 async def get_event_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> EventCRUD:
     """Dependency to get EventCRUD instance.
 
@@ -124,7 +124,7 @@ async def get_event_crud(
 
 
 async def get_run_state_machine(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     redis_client: Annotated[redis_async.Redis, Depends(_get_redis_client)],
 ) -> RunStateMachine:
     """Dependency to get RunStateMachine instance.

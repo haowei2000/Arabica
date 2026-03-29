@@ -405,6 +405,16 @@ class WorkspaceCRUD:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none() is not None
 
+    async def get_all_active_ids(self) -> list[str]:
+        """Get all non-deleted workspace IDs.
+
+        Returns:
+            List of workspace IDs
+        """
+        stmt = select(Workspace.id).where(Workspace.is_deleted == False)  # noqa: E712
+        result = await self.db.execute(stmt)
+        return [str(row[0]) for row in result.all()]
+
     async def get_by_legacy_conversation_id(
         self,
         conversation_id: str | UUID,

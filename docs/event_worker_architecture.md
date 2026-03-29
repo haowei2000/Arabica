@@ -309,8 +309,8 @@ Each handler logs:
 
 ## Related Files
 
-- **Event Types**: `src/aiwen/core/enums/events.py`
-- **Event Publisher**: `src/aiwen/services/events/event_publisher.py`
-- **State Machine**: `src/aiwen/services/runs/run_state_machine.py`
-- **Run API**: `src/aiwen/routers/runs/runs.py`
-- **Executor Base**: `src/aiwen/core/interfaces/executor.py`
+- **Event Types**: `src/structure/core/enums/events.py`
+- **Event Publisher**: `src/structure/services/events/event_publisher.py`
+- **State Machine**: `src/structure/services/runs/run_state_machine.py`
+- **Run API**: `src/structure/routers/runs/runs.py`
+- **Executor Base**: `src/structure/core/interfaces/executor.py`

@@ -20,7 +20,7 @@ def setup_environment():
     os.environ.setdefault("POSTGRES__PORT", "5435")
     os.environ.setdefault("POSTGRES__USERNAME", "postgres")
     os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
-    os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "structure")
+    os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
     print("环境变量已设置")
 
 
@@ -37,7 +37,7 @@ def check_user_exists():
             "-U",
             os.environ["POSTGRES__USERNAME"],
             "-d",
-            os.environ["POSTGRES__AIWEN_DBNAME"],
+            os.environ["POSTGRES__STRUCTURE_DBNAME"],
             "-t",
             "-c",
             "SELECT username FROM auth_user WHERE username = 'admin';",

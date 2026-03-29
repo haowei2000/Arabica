@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.friend import (
     FriendListResponse,
     FriendRequestCreate,
@@ -20,7 +20,7 @@ from structure.services.auth.friend_crud import FriendCRUD
 router = APIRouter(prefix="/friends", tags=["friends"])
 
 
-def _get_friend_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]) -> FriendCRUD:
+def _get_friend_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]) -> FriendCRUD:
     return FriendCRUD(db)
 
 
@@ -37,7 +37,7 @@ async def send_friend_request(
     data: FriendRequestCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: FriendCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Send a friend request to another user by their user ID."""
     try:

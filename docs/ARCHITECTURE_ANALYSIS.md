@@ -3,7 +3,7 @@
 ## 当前模块概览
 
 ```
-src/aiwen/
+src/structure/
 ├── extensions/          # 586 行 - 基础设施层
 │   ├── database.py      # 522 行 - 多数据库管理
 │   ├── logger.py        # 64 行 - 日志配置

@@ -1,6 +1,6 @@
 # Centralized Registry System
 
-This module provides a unified, extensible registry architecture for managing different types of components in the Aiwen Service.
+This module provides a unified, extensible registry architecture for managing different types of components in the Structure Service.
 
 ## Overview
 

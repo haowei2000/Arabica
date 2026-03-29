@@ -5,7 +5,7 @@ Import: please hint me to fix the grammar error when i send a message to help to
 if I ask with Chinese, please translate it to English
 ## Project Overview
 
-**Aiwen Service (v5.5.0)** - An enterprise-grade AI-powered agent orchestration platform with event-sourced architecture.
+**Structure Service (v5.5.0)** - An enterprise-grade AI-powered agent orchestration platform with event-sourced architecture.
 
 ### Key Characteristics
 - 🎯 **Event-Sourced Architecture**: All state changes captured as immutable events
@@ -321,10 +321,10 @@ make docker-down      # Stop containers
 
 ## Project Structure
 
-### Backend Structure (`src/aiwen/`)
+### Backend Structure (`src/structure/`)
 
 ```
-src/aiwen/
+src/structure/
 ├── core/                      # Foundation Layer (37,925 lines)
 │   ├── bootstrap.py           # Unified initialization system
 │   ├── interfaces/            # Abstract base classes
@@ -552,17 +552,17 @@ Example: `feat(auth): add user login endpoint`
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/aiwen/app.py` | 93 | FastAPI app initialization |
-| `src/aiwen/core/bootstrap.py` | 477 | Unified bootstrap system |
-| `src/aiwen/worker_cli.py` | 215 | Worker process entry point |
-| `src/aiwen/services/events/event_worker.py` | 200+ | Event consumption + executor dispatch |
-| `src/aiwen/services/events/event_publisher.py` | 150+ | Dual-write (DB + Redis) event publishing |
-| `src/aiwen/services/executor/runtime.py` | 78 | Executor lifecycle management |
-| `src/aiwen/services/runs/run_state_machine.py` | 200+ | Run state transitions |
-| `src/aiwen/registries/core.py` | 250+ | Registry abstraction layer |
-| `src/aiwen/core/interfaces/executor.py` | 200+ | Executor protocol definition |
-| `src/aiwen/core/tool_calling/strategy.py` | 83+ | Tool calling strategy interface |
-| `src/aiwen/extensions/database.py` | 300+ | Async DB infrastructure |
+| `src/structure/app.py` | 93 | FastAPI app initialization |
+| `src/structure/core/bootstrap.py` | 477 | Unified bootstrap system |
+| `src/structure/worker_cli.py` | 215 | Worker process entry point |
+| `src/structure/services/events/event_worker.py` | 200+ | Event consumption + executor dispatch |
+| `src/structure/services/events/event_publisher.py` | 150+ | Dual-write (DB + Redis) event publishing |
+| `src/structure/services/executor/runtime.py` | 78 | Executor lifecycle management |
+| `src/structure/services/runs/run_state_machine.py` | 200+ | Run state transitions |
+| `src/structure/registries/core.py` | 250+ | Registry abstraction layer |
+| `src/structure/core/interfaces/executor.py` | 200+ | Executor protocol definition |
+| `src/structure/core/tool_calling/strategy.py` | 83+ | Tool calling strategy interface |
+| `src/structure/extensions/database.py` | 300+ | Async DB infrastructure |
 
 ---
 

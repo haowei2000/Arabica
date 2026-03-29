@@ -37,7 +37,7 @@ Agent Registry 是一个用于管理 Agent 模板的注册系统，提供内存�
 
 ### 1. AgentRegistry 类
 
-位置: `src/aiwen/services/agents/agent_registry.py`
+位置: `src/structure/services/agents/agent_registry.py`
 
 **职责**:
 - 内存中维护 Agent 模板类的注册表
@@ -75,7 +75,7 @@ class AgentRegistry:
 
 ### 2. Default Agent Template
 
-位置: `src/aiwen/services/agents/agent_template/default/concrete.py`
+位置: `src/structure/services/agents/agent_template/default/concrete.py`
 
 **配置**:
 ```python
@@ -93,7 +93,7 @@ TEMPLATE = {
 
 ### 3. 数据库模型
 
-位置: `src/aiwen/models/agents/agent_template.py`
+位置: `src/structure/models/agents/agent_template.py`
 
 **表结构**:
 ```sql
@@ -216,7 +216,7 @@ async def register_default_templates(db_session: AsyncSession) -> None:
 系统会捕获并记录错误，但不会阻止应用启动:
 
 ```python
-ERROR:aiwen.services.agents.agent_registry:Failed to register template CUSTOM001: ...
+ERROR:structure.services.agents.agent_registry:Failed to register template CUSTOM001: ...
 ```
 
 ### 2. 模板不存在
@@ -236,10 +236,10 @@ except ValueError as e:
 成功注册时的日志:
 
 ```
-INFO:aiwen.services.agents.agent_registry:=== Registering default agent templates ===
-INFO:aiwen.services.agents.agent_registry:✓ Registered new agent template: DEFAULT001 (id: ...)
-INFO:aiwen.services.agents.agent_registry:=== Agent template registration complete: 1 succeeded, 0 failed ===
-INFO:aiwen.core.lifespan:Agent registry initialized successfully
+INFO:structure.services.agents.agent_registry:=== Registering default agent templates ===
+INFO:structure.services.agents.agent_registry:✓ Registered new agent template: DEFAULT001 (id: ...)
+INFO:structure.services.agents.agent_registry:=== Agent template registration complete: 1 succeeded, 0 failed ===
+INFO:structure.core.lifespan:Agent registry initialized successfully
 ```
 
 ## 数据库查询

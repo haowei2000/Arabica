@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.models.workspaces.workspace_trigger import WorkspaceTrigger
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.workspaces.trigger import (
@@ -39,7 +39,7 @@ def _parse_uuid(value: object, field: str = "id") -> UUID:
 async def create_user_trigger(
     data: TriggerCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Create a user-level trigger template (workspace_id=null)."""
     user_uuid = _parse_uuid(current_user.id, "user_id")
@@ -68,7 +68,7 @@ async def create_user_trigger(
 @router.get("", response_model=TriggerListResponse)
 async def list_user_triggers(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     event_type: str | None = Query(None, description="Filter by event type"),
     enabled: bool | None = Query(None, description="Filter by enabled state"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -104,7 +104,7 @@ async def list_user_triggers(
 async def get_user_trigger(
     trigger_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Get a single user-level trigger template by ID."""
     user_uuid = _parse_uuid(current_user.id, "user_id")
@@ -128,7 +128,7 @@ async def update_user_trigger(
     trigger_id: str,
     data: TriggerUpdate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Update a user-level trigger template."""
     user_uuid = _parse_uuid(current_user.id, "user_id")
@@ -156,7 +156,7 @@ async def update_user_trigger(
 async def delete_user_trigger(
     trigger_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Delete a user-level trigger template."""
     user_uuid = _parse_uuid(current_user.id, "user_id")

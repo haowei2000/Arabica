@@ -28,9 +28,9 @@ services:
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: aiwen-service:${VERSION:-latest}
+    image: structure-service:${VERSION:-latest}
     ports:
-      - "${EXPOSE_PORT_AIWEN_PY:-8000}:8000"
+      - "${EXPOSE_PORT_STRUCTURE_PY:-8000}:8000"
     volumes:
       - structure-logs:/app/logs
       # Uncomment for development to mount source code
@@ -51,7 +51,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-struture}
+      POSTGRES__DBNAME: ${POSTGRES__DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -79,7 +79,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -99,7 +99,7 @@ services:
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: aiwen-service:${VERSION:-latest}
+    image: structure-service:${VERSION:-latest}
     command: ["structure-mcp"]
     ports:
       - "9090:9000"
@@ -110,14 +110,14 @@ services:
     environment:
       <<: *common-env
       SKIP_MIGRATIONS: "true"
-      AIWEN_MCP_PORT: 9000
-      AIWEN_MCP_HOST: 0.0.0.0
+      STRUCTURE_MCP_PORT: 9000
+      STRUCTURE_MCP_HOST: 0.0.0.0
       # Database Configuration - PostgreSQL
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-struture}
+      POSTGRES__DBNAME: ${POSTGRES__DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -132,7 +132,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -164,7 +164,7 @@ services:
         condition: service_started
     restart: "no"
     networks:
-      - aiwen-network
+      - structure-network
 
   # Celery Worker for background tasks
   celery-worker:
@@ -178,7 +178,7 @@ services:
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: aiwen-service:${VERSION:-latest}
+    image: structure-service:${VERSION:-latest}
     command: celery -A structure.celery_worker.celery_app worker --loglevel=info --concurrency=4
     volumes:
       - structure-logs:/app/logs
@@ -192,7 +192,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-structure}
+      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -206,7 +206,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -225,7 +225,7 @@ services:
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: aiwen-service:${VERSION:-latest}
+    image: structure-service:${VERSION:-latest}
     command: celery -A structure.celery_worker.celery_app beat --loglevel=info
     volumes:
       - structure-logs:/app/logs
@@ -239,7 +239,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-structure}
+      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -254,7 +254,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -273,7 +273,7 @@ services:
       args:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: aiwen-service:${VERSION:-latest}
+    image: structure-service:${VERSION:-latest}
     command: celery -A structure.celery_worker.celery_app flower --port=5555
     ports:
       - "${FLOWER_PORT:-5555}:5555"
@@ -287,7 +287,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-structure}
+      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -302,7 +302,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -323,8 +323,8 @@ services:
       dockerfile: docker/Dockerfile.frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
-        VITE_APP_TITLE: ${VITE_APP_TITLE:-Aiwen}
-    image: aiwen-frontend:${VERSION:-latest}
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-Structure}
+    image: structure-frontend:${VERSION:-latest}
     ports:
       - "${FRONTEND_EXPOSE_PORT:-3000}:80"
     volumes:
@@ -341,7 +341,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -364,16 +364,16 @@ services:
       - ./postgres/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       <<: *common-env
-      POSTGRES_DB: ${POSTGRES__AIWEN_DBNAME:-struture}
+      POSTGRES_DB: ${POSTGRES__DBNAME:-structure}
       POSTGRES_USER: ${POSTGRES__USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-123456}
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__AIWEN_DBNAME:-structure}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__DBNAME:-structure}"]
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -405,7 +405,7 @@ services:
       - ./rustfs/data:/data
       - ./rustfs/logs:/logs
     networks:
-      - aiwen-network
+      - structure-network
 
   # Redis Cache
   redis:
@@ -433,7 +433,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -464,7 +464,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -498,7 +498,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
     deploy:
       resources:
         limits:
@@ -514,7 +514,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.context-service
-    image: aiwen-context-service:${VERSION:-latest}
+    image: structure-context-service:${VERSION:-latest}
     ports:
       - "${EXPOSE_PORT_CONTEXT_SERVICE:-8080}:8080"
     volumes:
@@ -524,15 +524,15 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks:
-      - aiwen-network
+      - structure-network
 
 networks:
-  aiwen-network:
+  structure-network:
     driver: bridge
     name: structure-network
 
 volumes:
-  aiwen-logs:
+  structure-logs:
     driver: local
-  aiwen-context-data:
+  structure-context-data:
     driver: local

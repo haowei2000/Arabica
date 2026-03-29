@@ -1,5 +1,5 @@
 """
-Centralized Registry System for Aiwen Service.
+Centralized Registry System for Structure Service.
 
 Registries:
     - ToolRegistry: Manages tool instances and schemas

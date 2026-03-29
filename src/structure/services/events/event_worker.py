@@ -264,10 +264,11 @@ class Worker:
             except Exception as e:
                 logger.error(f"Stuck run detector error: {e}", exc_info=True)
 
-    async def start(self, stream_name: str):
-        """Start consuming messages from the stream using consumer groups."""
+    async def start(self, workspace_id: str):
+        """Start consuming messages from the workspace stream using consumer groups."""
+        stream_name = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         await self._ensure_consumer_group(stream_name)
-        logger.info(f"Worker '{self.consumer_name}' listening on stream: {stream_name}")
+        logger.info(f"Worker '{self.consumer_name}' listening on workspace stream: {stream_name}")
 
         self._stuck_detector_task = asyncio.create_task(self._stuck_run_detector_loop())
 
@@ -300,34 +301,32 @@ class Worker:
             except Exception as e:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
+                logger.error(f"Worker stream read error: {e}", exc_info=True)
+                await asyncio.sleep(1)
 
     async def _dispatch(
         self, stream_name: str, event_id: bytes, event_data: dict
     ) -> None:
         """Process one Redis stream message in an isolated DB session.
 
-        Run events are loaded from Redis once before opening the DB session and
+        Workspace events are loaded from Redis once before opening the DB session and
         reused throughout the entire handling chain (seq computation, executor
         forwarding) to avoid repeated round-trips.  xack is sent only on
         success; failed messages re-enter the pending queue for retry.
         """
         try:
             event = self._parse_redis_event(event_data)
-            code = encode(event.event_type)
+            workspace_id = event.workspace_id or ""
+            if not workspace_id:
+                 # Try to extract from stream name if not in event payload
+                 parts = stream_name.split(":")
+                 if len(parts) >= 2:
+                     workspace_id = parts[1]
 
-            # Load run events from Redis before opening the DB session.
-            # Infrastructure events (noop / task / artifact / workspace / cancel)
-            # don't need run context so we skip the read for them.
-            run_events: list[Event] = []
-            if (
-                event.run_id
-                and not RE_CODE_NOOP.match(code)
-                and not RE_CODE_TASK.match(code)
-                and not RE_CODE_ARTIFACT.match(code)
-                and not RE_CODE_WORKSPACE.match(code)
-                and code != "4"
-            ):
-                run_events = await self._load_run_events(UUID(str(event.run_id)))
+            # Load all workspace events from Redis before opening the DB session.
+            workspace_events: list[Event] = []
+            if workspace_id:
+                workspace_events = await self._load_workspace_events(workspace_id)
 
             async with get_session("structure") as db:
                 publisher = EventPublisher(
@@ -338,7 +337,7 @@ class Worker:
                 )
                 state_machine = RunStateMachine(db, self.redis, publisher)
                 ctx = _Ctx(db=db, publisher=publisher, state_machine=state_machine)
-                await self.handle_event(event, ctx, run_events)
+                await self.handle_event(event, ctx, workspace_events)
 
             await self.redis.xack(stream_name, REDIS_CONSUMER_GROUP, event_id)
         except Exception as e:
@@ -508,17 +507,13 @@ class Worker:
                 await ctx.state_machine.fail(run_id, error=str(e), auto_commit=True)
             return None
 
-    async def handle_event(self, event: Event, ctx: _Ctx, run_events: list[Event]) -> None:
-        """Route events using the run's seq string for all dispatch decisions.
-
-        *run_events* is pre-loaded by _dispatch (single Redis read).  The seq
-        string is derived inline from that list so no further Redis reads are
-        needed here or in downstream handlers.
+    async def handle_event(self, event: Event, ctx: _Ctx, workspace_events: list[Event]) -> None:
+        """Route events using the workspace's history for dispatch decisions.
 
           seq ends with "b" → TO_EXECUTOR        → _handle_to_executor
-          seq ends with "0" → USER_MESSAGE        → run triggers + forward
-          seq ends with "5" → TOOL_CALL           → handle_tool_call
-          seq ends with [6789a] + has user msg    → forward to executor
+          seq ends with "0" → USER_MESSAGE       → run triggers + forward
+          seq ends with "5" → TOOL_CALL          → handle_tool_call
+          seq ends with [6789a] + has user msg   → forward to executor
           terminal in seq   → skip (run finished)
           otherwise         → skip (stale / unrecognised)
         """
@@ -551,6 +546,9 @@ class Worker:
             if (event.payload or {}).get("_source") == "trigger" and RE_CODE_SKIP_SRC.match(code):
                 return
 
+            # Filter events for the current run to decide on routing
+            run_events = [e for e in workspace_events if str(e.run_id) == str(run_id)]
+            
             # Derive seq from pre-loaded events (no Redis call).
             seq = encode_sequence((str(e.event_type),) for e in run_events)
             logger.debug("handle_event: run=%s seq=%r", run_id, seq)
@@ -560,15 +558,10 @@ class Worker:
                     logger.debug("Skipping %s for run %s: terminal (%s)", event.event_type, run_id, s)
 
                 case s if s.endswith("b"):
-                    await self._handle_to_executor(event, run_events, ctx)
+                    # Pass full workspace events to executor
+                    await self._handle_to_executor(event, workspace_events, ctx)
 
                 case s if s.endswith("0"):
-                    # Triggers fire first so their TOOL_CALL/TOOL_RESULT events land in
-                    # the Redis stream before the TO_EXECUTOR event.  The executor then
-                    # reads the full stream (including trigger results) in one pass.
-                    # TODO: if a trigger tool is slow the TO_EXECUTOR publish is delayed;
-                    #       consider running triggers in the background and waiting with
-                    #       a timeout so slow triggers don't stall message processing.
                     await self._run_triggers(event, ctx)
                     await self._publish_to_executor_event(event, ctx)
 
@@ -620,36 +613,24 @@ class Worker:
         )
         logger.debug("Published TO_EXECUTOR for original=%s run=%s", event.event_type, event.run_id)
 
-    async def _load_run_events(self, run_id: UUID, count: int = 1000) -> list[Event]:
-        """Load events for *run_id* from the Redis run stream.
-
-        Returns the event list including TO_EXECUTOR events so the seq
-        string computed by _dispatch ends with "b" when a TO_EXECUTOR is the
-        latest event.  Only TO_EXECUTOR routing events are stripped before
-        forwarding to the executor; trigger events flow through as normal
-        conversation events.
-
-        An explicit ``count`` limit prevents unbounded memory usage for
-        very long-running conversations.  Falls back to an empty list on
-        Redis error.
-        """
-        run_stream = f"{REDIS_RUN_LABEL}:{run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+    async def _load_workspace_events(self, workspace_id: str, count: int = 2000) -> list[Event]:
+        """Load events for *workspace_id* from the Redis workspace stream."""
+        workspace_stream = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         try:
-            messages = await self.redis.xrange(run_stream, count=count)
+            messages = await self.redis.xrange(workspace_stream, count=count)
         except Exception as e:
-            logger.warning("_load_run_events: redis error for run %s: %s", run_id, e)
+            logger.warning("_load_workspace_events: redis error for workspace %s: %s", workspace_id, e)
             return []
 
         return [Event.from_redis_fields(fields) for _, fields in messages]
 
     async def _handle_to_executor(
-        self, envelope: Event, run_events: list[Event], ctx: _Ctx
+        self, envelope: Event, workspace_events: list[Event], ctx: _Ctx
     ) -> None:
-        """Forward pre-loaded run events to the executor.
+        """Forward pre-loaded workspace events to the executor.
 
         Flow:
-          1. Restore trigger context (_context) from the envelope payload into
-             the last USER_MESSAGE (trigger results are in-memory only).
+          1. Filter events if needed (though the executor now decides based on global_event).
           2. Forward events to the executor via _forward_to_executor.
           3. On completion: flush event buffer to DB, update token counts,
              finalize run state, and release all resources.
@@ -659,10 +640,10 @@ class Worker:
             return
         run_id_uuid = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
 
-        # Strip only routing events — trigger TOOL_CALL/TOOL_RESULT/AGENT_MESSAGE
-        # are kept as first-class conversation events for the executor.
-        events = [e for e in run_events if str(e.event_type) != EventType.TO_EXECUTOR]
-        logger.info("_handle_to_executor: %d events for run %s", len(events), run_id_uuid)
+        # Forward all events to the executor — it will filter based on global_event config.
+        # We still strip TO_EXECUTOR routing events to avoid noise.
+        events = [e for e in workspace_events if str(e.event_type) != EventType.TO_EXECUTOR]
+        logger.info("_handle_to_executor: %d workspace events for run %s", len(events), run_id_uuid)
 
         logger.info("_handle_to_executor: forwarding to executor for run %s", run_id_uuid)
         run_id, run_id_str, has_pending_tools = await self._forward_to_executor(envelope, events, ctx)

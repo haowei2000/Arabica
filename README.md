@@ -2,7 +2,7 @@
 
 > **v1.0.0** · Enterprise-grade, event-sourced, async-first AI agent platform built with FastAPI + Python 3.12.
 
-Aiwen is a production-ready backend for running intelligent AI agents at scale. It provides a complete orchestration layer — from LLM interaction and tool execution to real-time streaming and distributed worker coordination — all built on an immutable event-sourcing foundation.
+Structure is a production-ready backend for running intelligent AI agents at scale. It provides a complete orchestration layer — from LLM interaction and tool execution to real-time streaming and distributed worker coordination — all built on an immutable event-sourcing foundation.
 
 ---
 
@@ -107,7 +107,7 @@ PostgreSQL         Redis
 
 ### 1. Event Sourcing
 
-Every state change in Aiwen is an **immutable event** written to PostgreSQL and simultaneously broadcast on Redis Streams. There is no mutable "current state" table — all state is derived by replaying the event log.
+Every state change in Structure is an **immutable event** written to PostgreSQL and simultaneously broadcast on Redis Streams. There is no mutable "current state" table — all state is derived by replaying the event log.
 
 ```
 USER_MESSAGE  ──→  AGENT_THINKING / AGENT_TOKEN  ──→  AGENT_MESSAGE
@@ -229,7 +229,7 @@ for iteration in range(max_iterations):
 
 ## Plugin System
 
-Aiwen uses a **decorator-based registration** system. Importing a module is sufficient to register its components.
+Structure uses a **decorator-based registration** system. Importing a module is sufficient to register its components.
 
 ### Registering an Executor
 
@@ -283,7 +283,7 @@ The `RegistryManager` singleton auto-discovers all registered components on star
 
 ## Tool Calling Strategy
 
-Aiwen abstracts LLM tool calling behind a **Strategy** interface to support both native function-calling models and prompt-based models.
+Structure abstracts LLM tool calling behind a **Strategy** interface to support both native function-calling models and prompt-based models.
 
 ### PromptCallingStrategy (default)
 
@@ -576,7 +576,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 ## Project Structure
 
 ```
-src/aiwen/
+src/structure/
 ├── app.py                    # FastAPI application factory
 ├── worker_cli.py             # Worker process entry point
 ├── cli.py                    # CLI commands

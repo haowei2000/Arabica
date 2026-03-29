@@ -569,14 +569,24 @@ export default function WorkspaceConsole() {
     page_size: 50,
   });
 
+  const hasLoadedInitialRun = useRef<string | null>(null);
+
   // Automatically load latest run history when entering workspace
   useEffect(() => {
     if (currentWorkspaceId && runsData?.items && runsData.items.length > 0 && !currentRunId && !isStreaming) {
-      // Find the most recent run (sorted by created_at desc in backend)
-      const latestRun = runsData.items[0];
-      if (latestRun) {
-        loadRun(latestRun.id);
+      // Only auto-load if we haven't already loaded an initial run for THIS workspace
+      if (hasLoadedInitialRun.current !== currentWorkspaceId) {
+        const latestRun = runsData.items[0];
+        if (latestRun) {
+          hasLoadedInitialRun.current = currentWorkspaceId;
+          loadRun(latestRun.id);
+        }
       }
+    }
+    
+    // If workspace changes, and we don't have a run, we might need to reset the ref
+    if (hasLoadedInitialRun.current && hasLoadedInitialRun.current !== currentWorkspaceId) {
+       hasLoadedInitialRun.current = null;
     }
   }, [currentWorkspaceId, runsData?.items, currentRunId, isStreaming, loadRun]);
 
@@ -768,6 +778,7 @@ export default function WorkspaceConsole() {
               </div>
             ) : null}
 
+            {console.log('Rendering messages:', messages)}
             {messages.map((message) => (
               <div
                 key={message.id}

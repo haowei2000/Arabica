@@ -18,7 +18,7 @@ from structure.core.dependencies.workspace import (
     WorkspaceCRUDDep,
     WorkspaceMemberCRUDDep,
 )
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.models.context.workspace_context import WorkspaceContext
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.workspaces.workspace import (
@@ -47,7 +47,7 @@ async def create_workspace(
     data: WorkspaceCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """
     Create a new workspace.
@@ -455,7 +455,7 @@ async def list_workspace_contexts(
     workspace_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=500, description="Items per page"),
 ):
@@ -504,7 +504,7 @@ async def copy_contexts_to_workspace_endpoint(
     body: CopyContextsRequest,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Copy selected user contexts into the workspace."""
     workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
@@ -539,7 +539,7 @@ async def remove_workspace_context(
     context_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Remove a context entry from the workspace (soft delete)."""
     workspace = await crud.get_by_id_and_user(workspace_id, current_user.id)
@@ -573,7 +573,7 @@ async def reinit_workspace_context(
     workspace_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> dict:
     """
     Re-initialize workspace context.
@@ -626,7 +626,7 @@ async def list_invitable_friends(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: WorkspaceCRUDDep,
     member_crud: WorkspaceMemberCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """List the current user's friends who are not yet members of this workspace.
 

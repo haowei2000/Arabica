@@ -33,7 +33,7 @@ Write-Host ""
 
 # 检查防火墙规则
 Write-Host "[3/6] 检查防火墙规则..." -ForegroundColor Yellow
-$firewallRules = Get-NetFirewallRule | Where-Object {$_.DisplayName -like "*Aiwen*" -or $_.DisplayName -like "*8000*" -or $_.DisplayName -like "*3000*"}
+$firewallRules = Get-NetFirewallRule | Where-Object {$_.DisplayName -like "*Structure*" -or $_.DisplayName -like "*8000*" -or $_.DisplayName -like "*3000*"}
 if ($firewallRules) {
     Write-Host "  找到以下防火墙规则:" -ForegroundColor Green
     $firewallRules | ForEach-Object {
@@ -88,9 +88,9 @@ if (-not $firewallRules) {
     Write-Host "建议 1: 配置防火墙规则" -ForegroundColor Cyan
     Write-Host "运行以下命令（需要管理员权限）:" -ForegroundColor White
     Write-Host ""
-    Write-Host "New-NetFirewallRule -DisplayName 'Aiwen API' -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow" -ForegroundColor Green
-    Write-Host "New-NetFirewallRule -DisplayName 'Aiwen Frontend' -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow" -ForegroundColor Green
-    Write-Host "New-NetFirewallRule -DisplayName 'Aiwen Nginx' -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow" -ForegroundColor Green
+    Write-Host "New-NetFirewallRule -DisplayName 'Structure API' -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow" -ForegroundColor Green
+    Write-Host "New-NetFirewallRule -DisplayName 'Structure Frontend' -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow" -ForegroundColor Green
+    Write-Host "New-NetFirewallRule -DisplayName 'Structure Nginx' -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow" -ForegroundColor Green
     Write-Host ""
 }
 
@@ -105,7 +105,7 @@ if ($localhostOnly) {
     }
     Write-Host ""
     Write-Host "检查以下文件:" -ForegroundColor White
-    Write-Host "  - src/aiwen/api_cli.py (确保 host='0.0.0.0')" -ForegroundColor Gray
+    Write-Host "  - src/structure/api_cli.py (确保 host='0.0.0.0')" -ForegroundColor Gray
     Write-Host "  - frontend/vite.config.ts (确保 host: '0.0.0.0')" -ForegroundColor Gray
     Write-Host ""
 }

@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "aiwen-service"
+name = "structure-service"
 version = "5.5.0"
-description = "Backend service for aiwen platform"
+description = "Backend service for structure platform"
 readme = "README.md"
 requires-python = ">=3.14"
 authors = [{ name = "Epichust", email = "" }]
-keywords = ["aiwen", "service", "api"]
+keywords = ["structure", "service", "api"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
@@ -98,11 +98,11 @@ dev = [
 
 [project.scripts]
 # 统一服务管理（推荐使用）
-aiwen = "aiwen.service_manager:main"
+structure = "structure.service_manager:main"
 # 单独服务入口（保留向后兼容）
-aiwen-api = "aiwen.api_cli:run"
-aiwen-mcp = "aiwen.mcp_cli:main"
-aiwen-worker = "aiwen.worker_cli:main_sync"
+structure-api = "structure.api_cli:run"
+structure-mcp = "structure.mcp_cli:main"
+structure-worker = "structure.worker_cli:main_sync"
 # 工具
 sync-env = "scripts.sync_env:main"
 
@@ -114,10 +114,10 @@ environments = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/aiwen", "src/scripts"]
+packages = ["src/structure", "src/scripts"]
 
 [tool.hatch.build.targets.sdist]
-packages = ["src/aiwen", "src/scripts"]
+packages = ["src/structure", "src/scripts"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -142,7 +142,7 @@ addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
-    "--cov=src/aiwen",
+    "--cov=src/structure",
     "--cov-report=html",
     "--cov-report=term-missing",
     "--cov-report=xml",
@@ -158,7 +158,7 @@ plugins = ["sqlalchemy.ext.mypy.plugin"]
 
 [tool.coverage.run]
 branch = true
-source = ["src/aiwen"]
+source = ["src/structure"]
 omit = [
     "*/tests/*",
     "*/site-packages/*",

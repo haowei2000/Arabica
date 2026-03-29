@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from structure.app import app
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from tests.unit.routers.conftest import make_user, USER_ID, TENANT_ID
 
 
@@ -20,10 +20,10 @@ def mock_db():
 
 @pytest.fixture()
 def client(mock_db, patch_bootstrap):
-    app.dependency_overrides[get_aiwen_db] = lambda: mock_db
+    app.dependency_overrides[get_structure_db] = lambda: mock_db
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
-    app.dependency_overrides.pop(get_aiwen_db, None)
+    app.dependency_overrides.pop(get_structure_db, None)
 
 
 # ── /api/auth/register ──────────────────────────────────────────

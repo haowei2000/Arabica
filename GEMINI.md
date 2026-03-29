@@ -1,12 +1,12 @@
-# Aiwen Project Overview
+# Structure Project Overview
 
-Aiwen is an enterprise-grade, event-sourced, async-first AI agent platform designed for running intelligent AI agents at scale. It provides a complete orchestration layer encompassing LLM interaction, tool execution, real-time streaming, and distributed worker coordination.
+Structure is an enterprise-grade, event-sourced, async-first AI agent platform designed for running intelligent AI agents at scale. It provides a complete orchestration layer encompassing LLM interaction, tool execution, real-time streaming, and distributed worker coordination.
 
 ## Architecture & Technologies
 
 The project is structured as a monorepo containing both the backend service and the frontend web application.
 
-- **Backend (`src/aiwen/`)**: 
+- **Backend (`src/structure/`)**: 
   - **Language**: Python 3.14+
   - **Framework**: FastAPI
   - **Database & ORM**: PostgreSQL with SQLAlchemy 2.0 (async), Alembic for migrations

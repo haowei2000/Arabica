@@ -485,8 +485,8 @@ async def test_full_tool_execution_flow():
 
 ## Related Files
 
-- **Executor**: `src/aiwen/plugins/executors/simple/concrete.py`
-- **EventWorker**: `src/aiwen/services/events/event_worker.py`
-- **Event Types**: `src/aiwen/core/enums/events.py`
-- **ToolCaller**: `src/aiwen/registries/tool_service.py`
-- **State Machine**: `src/aiwen/services/runs/run_state_machine.py`
+- **Executor**: `src/structure/plugins/executors/simple/concrete.py`
+- **EventWorker**: `src/structure/services/events/event_worker.py`
+- **Event Types**: `src/structure/core/enums/events.py`
+- **ToolCaller**: `src/structure/registries/tool_service.py`
+- **State Machine**: `src/structure/services/runs/run_state_machine.py`

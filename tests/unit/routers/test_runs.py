@@ -15,7 +15,7 @@ from structure.core.dependencies.workspace import (
     get_run_state_machine,
     get_event_publisher,
 )
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.core.enums.runs import RunStatus, TriggerType
 from tests.unit.routers.conftest import (
     make_user,
@@ -111,7 +111,7 @@ def mock_db():
 def client(mock_workspace_crud, mock_run_crud, mock_state_machine, mock_event_publisher, mock_db, patch_bootstrap):
     user = make_user()
     app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_aiwen_db] = lambda: mock_db
+    app.dependency_overrides[get_structure_db] = lambda: mock_db
     app.dependency_overrides[get_workspace_crud] = lambda: mock_workspace_crud
     app.dependency_overrides[get_run_crud] = lambda: mock_run_crud
     app.dependency_overrides[get_run_state_machine] = lambda: mock_state_machine

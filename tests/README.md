@@ -506,7 +506,7 @@ mock_db.execute.return_value = mock_result
 ### Q: 测试覆盖率太低怎么办？
 
 A: 
-1. 运行 `pytest --cov=src/aiwen --cov-report=html` 查看覆盖率报告
+1. 运行 `pytest --cov=src/structure --cov-report=html` 查看覆盖率报告
 2. 在 `htmlcov/index.html` 中查看哪些代码未被覆盖
 3. 为未覆盖的代码添加测试
 4. 重点测试核心业务逻辑

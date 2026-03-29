@@ -2,13 +2,13 @@
 
 ## Overview
 
-Added a comprehensive protocol layer to the Aiwen Service registry system using PEP 544 structural typing. This provides type-safe interfaces for all registry components while maintaining backward compatibility.
+Added a comprehensive protocol layer to the Structure Service registry system using PEP 544 structural typing. This provides type-safe interfaces for all registry components while maintaining backward compatibility.
 
 ## What Was Added
 
 ### 1. Core Protocol Definitions
 
-**File**: `src/aiwen/core/interfaces/protocols.py`
+**File**: `src/structure/core/interfaces/protocols.py`
 
 Defined four main protocols:
 
@@ -46,18 +46,18 @@ PROTOCOL_REGISTRY = {
 ### 4. Module Structure Updates
 
 #### New Files Created:
-- `src/aiwen/core/interfaces/protocols.py` - Protocol definitions
-- `src/aiwen/core/interfaces/__init__.py` - Protocol exports
-- `src/aiwen/core/interfaces/tool.py` - Tool interface re-exports
+- `src/structure/core/interfaces/protocols.py` - Protocol definitions
+- `src/structure/core/interfaces/__init__.py` - Protocol exports
+- `src/structure/core/interfaces/tool.py` - Tool interface re-exports
 - `docs/PROTOCOLS.md` - Comprehensive protocol documentation
 - `examples/protocol_usage_example.py` - Usage examples
 - `tests/test_protocols.py` - Protocol validation tests
 
 #### Updated Files:
-- `src/aiwen/registries/__init__.py` - Now exports protocols
-- `src/aiwen/registries/README.md` - Added protocol documentation
-- `src/aiwen/registries/base_class/__init__.py` - Updated exports
-- `src/aiwen/registries/base_class/base_executor.py` - Re-exports Executor protocol
+- `src/structure/registries/__init__.py` - Now exports protocols
+- `src/structure/registries/README.md` - Added protocol documentation
+- `src/structure/registries/base_class/__init__.py` - Updated exports
+- `src/structure/registries/base_class/base_executor.py` - Re-exports Executor protocol
 
 ## Key Features
 
@@ -333,7 +333,7 @@ python examples/protocol_usage_example.py
 
 - **Protocol documentation**: `docs/PROTOCOLS.md`
 - **Usage examples**: `examples/protocol_usage_example.py`
-- **Registry documentation**: `src/aiwen/registries/README.md`
+- **Registry documentation**: `src/structure/registries/README.md`
 - **Tests**: `tests/test_protocols.py`
 
 ## Future Extensions

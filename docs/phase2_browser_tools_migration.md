@@ -32,7 +32,7 @@ All browser automation tools have been successfully migrated to BaseTool:
 
 ## Files Modified
 
-### 1. **src/aiwen/services/executor/tools/browser_tools.py**
+### 1. **src/structure/services/executor/tools/browser_tools.py**
 
 **Before (LangChain @tool):**
 ```python
@@ -93,7 +93,7 @@ class BrowserLaunchTool(BaseTool):
         )
 ```
 
-### 2. **src/aiwen/services/executor/executor_template/default/concrete.py**
+### 2. **src/structure/services/executor/executor_template/default/concrete.py**
 
 Updated browser tools loading to convert BaseTool classes:
 
@@ -295,7 +295,7 @@ With the BaseTool system, we can now:
 ## Backup Created
 
 Original browser_tools.py backed up to:
-- `src/aiwen/services/executor/tools/browser_tools.py.old`
+- `src/structure/services/executor/tools/browser_tools.py.old`
 
 Can be restored if needed during testing period.
 

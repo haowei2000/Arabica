@@ -32,7 +32,7 @@ def run():
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.environ.get("AIWEN_APP_PORT", 8000)),
+        port=int(os.environ.get("STRUCTURE_APP_PORT", 8000)),
         reload=False,
     )
 

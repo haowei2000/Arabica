@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.middleware.cache_middleware import get_redis_client
 from structure.services.app.app_crud import AppCRUD
 from structure.services.context.context_crud import ContextCRUD
@@ -16,7 +16,7 @@ from structure.services.context.tools.tool_crud import ToolCRUD
 from structure.services.executor.executor_crud import ExecutorCRUD
 
 
-async def get_app_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]) -> AppCRUD:
+async def get_app_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]) -> AppCRUD:
     """
     Dependency to get AppCRUD instance.
 
@@ -30,7 +30,7 @@ async def get_app_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]) -> Ap
 
 
 async def get_executor_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> ExecutorCRUD:
     """
     Dependency to get ExecutorCRUD instance.
@@ -39,7 +39,7 @@ async def get_executor_crud(
 
 
 async def get_knowledge_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> KnowledgeCRUD:
     """
     Dependency to get KnowledgeCRUD instance.
@@ -54,7 +54,7 @@ async def get_knowledge_crud(
 
 
 async def get_context_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> ContextCRUD:
     """
     Dependency to get ContextCRUD instance.
@@ -69,7 +69,7 @@ async def get_context_crud(
 
 
 async def get_document_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> DocumentCRUD:
     """
     Dependency to get DocumentCRUD instance.
@@ -84,7 +84,7 @@ async def get_document_crud(
 
 
 async def get_tool_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> ToolCRUD:
     """Dependency to get ToolCRUD instance.
 
@@ -98,7 +98,7 @@ async def get_tool_crud(
 
 
 async def get_skill_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> SkillCRUD:
     return SkillCRUD(db)
 

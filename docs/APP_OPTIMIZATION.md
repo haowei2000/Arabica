@@ -23,7 +23,7 @@
 ## 新增模块结构
 
 ```
-src/aiwen/core/
+src/structure/core/
 ├── __init__.py              # 核心模块导出
 ├── exceptions.py            # 全局异常处理器
 ├── middleware.py            # 中间件配置
@@ -231,7 +231,7 @@ return [
 
 ### 导入测试
 ```bash
-python -c "from aiwen.app import app; print('✓ App imported')"
+python -c "from structure.app import app; print('✓ App imported')"
 ```
 
 ### 健康检查测试

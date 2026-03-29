@@ -6,7 +6,7 @@ from typing import Optional
 from .manager import ContextManager
 from .models import ContextCreateRequest, ContextListResponse, ContextResponse
 
-app = FastAPI(title="Aiwen Context Service")
+app = FastAPI(title="Structure Context Service")
 manager = ContextManager(data_root="/app/data/context")
 
 

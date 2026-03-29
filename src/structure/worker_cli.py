@@ -36,44 +36,48 @@ from structure.services.events.event_publisher import REDIS_EXECUTOR_LABEL
 from structure.services.events.event_worker import Worker
 from structure.services.executor.runtime import ExecutorInstanceManager
 
+from structure.services.workspaces.workspace_crud import WorkspaceCRUD
+
 logger = logging.getLogger(__name__)
 
 
-def generate_consumer_name(prefix: str, index: int) -> str:
+def generate_consumer_name(prefix: str, workspace_id: str, index: int) -> str:
     """Generate unique consumer name for a worker."""
     hostname = os.environ.get("HOSTNAME", "local")
     short_uuid = uuid.uuid4().hex[:8]
-    return f"{prefix}-{hostname}-{os.getpid()}-{index}-{short_uuid}"
+    # Include workspace_id in consumer name for easier tracking
+    ws_prefix = workspace_id[:8]
+    return f"{prefix}-{ws_prefix}-{hostname}-{os.getpid()}-{index}-{short_uuid}"
 
 
 async def run_single_worker(
     redis_client: Any,
     db_factory: Any,
+    workspace_id: str,
     consumer_name: str,
     worker_index: int,
     shared_runtime: ExecutorInstanceManager,
 ) -> None:
     """Run a single worker instance."""
-    logger.info(f"🚀 Worker [{worker_index}] starting (consumer: {consumer_name})")
+    logger.info(f"🚀 Worker [{worker_index}] for workspace [{workspace_id}] starting (consumer: {consumer_name})")
 
     try:
         async with db_factory as session:
             worker = Worker(redis_client, session, consumer_name=consumer_name, runtime=shared_runtime)
-            await worker.start(REDIS_EXECUTOR_LABEL)
+            await worker.start(workspace_id)
     except asyncio.CancelledError:
-        logger.info(f"⏹️  Worker [{worker_index}] cancelled")
+        logger.info(f"⏹️  Worker [{worker_index}] for workspace [{workspace_id}] cancelled")
         raise
     except Exception as e:
-        logger.error(f"❌ Worker [{worker_index}] error: {e}", exc_info=True)
+        logger.error(f"❌ Worker [{worker_index}] for workspace [{workspace_id}] error: {e}", exc_info=True)
         raise
 
 
-async def run_workers(num_workers: int, name_prefix: str) -> None:
-    """Run multiple workers concurrently."""
+async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
+    """Run multiple workers concurrently for each active workspace."""
     logger.info("=" * 60)
     logger.info("🔧 Agent Worker Starting...")
-    logger.info(f"   Workers: {num_workers}")
-    logger.info(f"   Stream: {REDIS_EXECUTOR_LABEL}")
+    logger.info(f"   Workers per workspace: {num_workers_per_workspace}")
     logger.info("=" * 60)
 
     bootstrap = None
@@ -86,20 +90,28 @@ async def run_workers(num_workers: int, name_prefix: str) -> None:
 
         # Single shared runtime so all workers can find executors created by any peer
         shared_runtime = ExecutorInstanceManager()
+        
+        # Get all active workspace IDs
+        async with get_session("structure") as db:
+            workspace_crud = WorkspaceCRUD(db)
+            workspace_ids = await workspace_crud.get_all_active_ids()
+        
+        logger.info(f"📋 Found {len(workspace_ids)} active workspace(s)")
 
-        # Create worker tasks
-        for i in range(num_workers):
-            consumer_name = generate_consumer_name(name_prefix, i)
-            db_factory = get_session("structure")
+        # Create worker tasks for each workspace
+        for ws_idx, workspace_id in enumerate(workspace_ids):
+            for i in range(num_workers_per_workspace):
+                consumer_name = generate_consumer_name(name_prefix, workspace_id, i)
+                db_factory = get_session("structure")
 
-            task = asyncio.create_task(
-                run_single_worker(redis_client, db_factory, consumer_name, i, shared_runtime),
-                name=f"worker-{i}",
-            )
-            tasks.append(task)
+                task = asyncio.create_task(
+                    run_single_worker(redis_client, db_factory, workspace_id, consumer_name, i, shared_runtime),
+                    name=f"worker-{ws_idx}-{i}",
+                )
+                tasks.append(task)
 
         logger.info("=" * 60)
-        logger.info(f"🚀 Started {num_workers} worker(s)")
+        logger.info(f"🚀 Started {len(tasks)} total worker(s) across {len(workspace_ids)} workspace(s)")
         logger.info("=" * 60)
 
         # Wait for all workers (or until one fails)

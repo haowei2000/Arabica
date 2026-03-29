@@ -1,13 +1,13 @@
 # Agent Registry 实施状态报告
 
 **日期**: 2025-12-23
-**数据库**: aiwen_agent (根据 `.env` 配置)
+**数据库**: structure_agent (根据 `.env` 配置)
 
 ## 当前状态 ✅
 
 ### 1. 数据库表结构
 
-所有必要的表已在 `aiwen_agent` 数据库中创建:
+所有必要的表已在 `structure_agent` 数据库中创建:
 
 ```sql
 -- ✅ agent_template 表
@@ -49,7 +49,7 @@ CREATE TABLE messages (
 
 #### ✅ Message 模型 - 添加外键约束
 
-**文件**: `src/aiwen/models/agents/message.py`
+**文件**: `src/structure/models/agents/message.py`
 
 ```python
 # 修复前
@@ -65,7 +65,7 @@ conversation_id: Mapped[str] = mapped_column(
 
 #### ✅ DefaultAgentTemplate - 修正配置字段
 
-**文件**: `src/aiwen/services/agents/agent_template/default/concrete.py`
+**文件**: `src/structure/services/agents/agent_template/default/concrete.py`
 
 ```python
 # 修复前
@@ -81,7 +81,7 @@ TEMPLATE = {
 
 #### ✅ Agent Registry - 完整实现
 
-**文件**: `src/aiwen/services/agents/agent_registry.py`
+**文件**: `src/structure/services/agents/agent_registry.py`
 
 - ✅ AgentRegistry 类（内存缓存 + 数据库持久化）
 - ✅ register_default_templates() 函数
@@ -90,7 +90,7 @@ TEMPLATE = {
 
 #### ✅ 应用启动集成
 
-**文件**: `src/aiwen/core/lifespan.py`
+**文件**: `src/structure/core/lifespan.py`
 
 ```python
 async def lifespan(app: FastAPI):
@@ -131,7 +131,7 @@ POSTGRES__HOST=10.1.2.111
 POSTGRES__PORT=5435
 POSTGRES__USERNAME=postgres
 POSTGRES__PASSWORD=difyai123456
-POSTGRES__AIWEN_DBNAME=aiwen_agent  # ← 注意是 aiwen_agent
+POSTGRES__STRUCTURE_DBNAME=structure_agent  # ← 注意是 structure_agent
 
 # MySQL
 MYSQL__HOST=61.183.71.118
@@ -201,7 +201,7 @@ alembic revision --autogenerate -m "description of changes"
 
 ### 2. 检查生成的迁移
 
-查看 `src/aiwen/migrations/versions/` 目录下的新文件。
+查看 `src/structure/migrations/versions/` 目录下的新文件。
 
 ### 3. 应用迁移
 
@@ -273,7 +273,7 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ### 步骤 2: 注册到默认模板列表
 
-编辑 `src/aiwen/services/agents/agent_registry.py`:
+编辑 `src/structure/services/agents/agent_registry.py`:
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
@@ -406,7 +406,7 @@ LIMIT 5;
 - [x] 测试通过
 
 ✅ **数据库状态**:
-- Database: `aiwen_agent`
+- Database: `structure_agent`
 - Tables: `agent_template`, `conversations`, `messages`
 - Foreign Key: `fk_messages_conversation` ✓
 - Alembic Version: `da790b82e86b`

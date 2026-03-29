@@ -1,5 +1,5 @@
 # Build stage
-FROM node:22-alpine AS builder
+FROM docker.m.daocloud.io/library/node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY frontend/ .
 
 # Build arguments for environment variables
 ARG VITE_API_BASE_URL=/api
-ARG VITE_APP_TITLE=Aiwen
+ARG VITE_APP_TITLE=Structure
 
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_APP_TITLE=${VITE_APP_TITLE}
@@ -21,7 +21,7 @@ ENV VITE_APP_TITLE=${VITE_APP_TITLE}
 RUN npx vite build
 
 # Production stage
-FROM nginx:alpine
+FROM docker.m.daocloud.io/library/nginx:alpine
 
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html

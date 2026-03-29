@@ -300,11 +300,11 @@ WHERE context_type = 'SKILL'
 
 ### 后端文件
 
-- ✅ `src/aiwen/schemas/context/skill.py` - Pydantic schemas
-- ✅ `src/aiwen/services/context/skill_crud.py` - CRUD operations
-- ✅ `src/aiwen/services/context/skill_processor.py` - Markdown处理
-- ✅ `src/aiwen/routers/context/skills.py` - API路由
-- ✅ `src/aiwen/core/routers.py` - 路由注册（已更新）
+- ✅ `src/structure/schemas/context/skill.py` - Pydantic schemas
+- ✅ `src/structure/services/context/skill_crud.py` - CRUD operations
+- ✅ `src/structure/services/context/skill_processor.py` - Markdown处理
+- ✅ `src/structure/routers/context/skills.py` - API路由
+- ✅ `src/structure/core/routers.py` - 路由注册（已更新）
 
 ### 前端文件
 

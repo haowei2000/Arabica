@@ -70,7 +70,7 @@ def _setup_mcp_server() -> FastMCP:
     """配置并创建 MCP 服务器"""
     settings = get_settings()
 
-    mcp_instance = FastMCP("Aiwen MCP", lifespan=lifespan)
+    mcp_instance = FastMCP("Structure MCP", lifespan=lifespan)
     # mcp_instance.mount(nl2sql_mcp)
     # mcp_instance.mount(browser_mcp)
     
@@ -85,7 +85,7 @@ def _setup_mcp_server() -> FastMCP:
         LoggingMiddleware(include_payloads=True, max_payload_length=1000)
     )
 
-    logger.info("MCP server configured: AIWEN MCP")
+    logger.info("MCP server configured: STRUCTURE MCP")
     return mcp_instance
 
 
@@ -96,7 +96,7 @@ async def lifespan(app: FastMCP):
     try:
         logger.info("🔌 MCP starting up...")
         # ⚠️ Force inner tool discovery on for the MCP server so it can expose them
-        os.environ["AIWEN_SKIP_INNER_TOOL_DISCOVERY"] = "false"
+        os.environ["STRUCTURE_SKIP_INNER_TOOL_DISCOVERY"] = "false"
         
         # 使用统一的初始化流程
         bootstrap = await bootstrap_mcp()
@@ -152,12 +152,12 @@ def run() -> None:
     try:
         mcp_instance = _setup_mcp_server()
         logger.info(
-            f"Starting MCP Server on {os.environ.get('AIWEN_MCP_HOST')}:{os.environ.get('AIWEN_MCP_PORT')}..."
+            f"Starting MCP Server on {os.environ.get('STRUCTURE_MCP_HOST')}:{os.environ.get('STRUCTURE_MCP_PORT')}..."
         )
         uvicorn.run(
             mcp_instance.http_app(),
-            host=os.environ.get("AIWEN_MCP_HOST", "0.0.0.0"),
-            port=int(os.environ.get("AIWEN_MCP_PORT", 9000)),
+            host=os.environ.get("STRUCTURE_MCP_HOST", "0.0.0.0"),
+            port=int(os.environ.get("STRUCTURE_MCP_PORT", 9000)),
             log_level="error",
         )
     except Exception as e:

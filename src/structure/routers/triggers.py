@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.models.workspaces.workspace_trigger import WorkspaceTrigger
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.workspaces.trigger import (
@@ -41,7 +41,7 @@ async def create_trigger(
     workspace_id: str,
     data: TriggerCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Create a new trigger for a workspace.
 
@@ -81,7 +81,7 @@ async def create_trigger(
 async def list_triggers(
     workspace_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     event_type: str | None = Query(None, description="Filter by event type"),
     enabled: bool | None = Query(None, description="Filter by enabled state"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -130,7 +130,7 @@ async def get_trigger(
     workspace_id: str,
     trigger_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Get a single trigger by ID.
 
@@ -166,7 +166,7 @@ async def update_trigger(
     trigger_id: str,
     data: TriggerUpdate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Update an existing trigger.
 
@@ -210,7 +210,7 @@ async def delete_trigger(
     workspace_id: str,
     trigger_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Delete a trigger.
 
@@ -246,7 +246,7 @@ async def test_trigger(
     trigger_id: str,
     data: TriggerTestRequest,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Dry-run test a trigger against a sample payload.
 

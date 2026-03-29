@@ -81,13 +81,13 @@ npm run dev
 
 ```powershell
 # 允许端口 8000 (API)
-New-NetFirewallRule -DisplayName "Aiwen API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Structure API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
 
 # 允许端口 3000 (前端)
-New-NetFirewallRule -DisplayName "Aiwen Frontend" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Structure Frontend" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
 
 # 如果使用 nginx
-New-NetFirewallRule -DisplayName "Aiwen Nginx" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Structure Nginx" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow
 ```
 
 **方法 B: 图形界面**
@@ -98,7 +98,7 @@ New-NetFirewallRule -DisplayName "Aiwen Nginx" -Direction Inbound -LocalPort 80 
 4. 选择 `TCP`，输入端口 `8000` → `下一步`
 5. 选择 `允许连接` → `下一步`
 6. 勾选所有配置文件 → `下一步`
-7. 命名为 `Aiwen API` → `完成`
+7. 命名为 `Structure API` → `完成`
 8. 重复步骤为端口 3000 创建规则
 
 #### 5. 测试访问
@@ -147,12 +147,12 @@ cp nginx/nginx.conf.lan nginx/nginx.conf
 
 ```yaml
 services:
-  aiwen-app:
+  structure-app:
     ports:
       - "0.0.0.0:8000:8000"  # 明确指定
       - "0.0.0.0:9000:9000"
 
-  aiwen-frontend:
+  structure-frontend:
     ports:
       - "0.0.0.0:3000:80"
 
@@ -263,13 +263,13 @@ upstream backend {
 
 ```powershell
 # 查看现有规则
-Get-NetFirewallRule -DisplayName "Aiwen*"
+Get-NetFirewallRule -DisplayName "Structure*"
 
 # 删除旧规则
-Remove-NetFirewallRule -DisplayName "Aiwen API"
+Remove-NetFirewallRule -DisplayName "Structure API"
 
 # 重新创建
-New-NetFirewallRule -DisplayName "Aiwen API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Structure API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
 ```
 
 ### 问题 4: 跨域错误（CORS）
@@ -379,7 +379,7 @@ Test-NetConnection -ComputerName 192.168.1.100 -Port 8000
 
 ```
 项目根目录/
-├── src/aiwen/api_cli.py          # API 启动配置 (host=0.0.0.0)
+├── src/structure/api_cli.py          # API 启动配置 (host=0.0.0.0)
 ├── frontend/vite.config.ts        # 前端配置 (host: '0.0.0.0')
 ├── docker/nginx/nginx.conf        # Nginx 原配置
 ├── docker/nginx/nginx.conf.lan    # Nginx 优化配置（新）

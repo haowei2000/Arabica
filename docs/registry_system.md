@@ -2,12 +2,12 @@
 
 ## Overview
 
-The Aiwen Service uses a centralized registry system to manage different types of components (tools, agents, models, etc.) with consistent patterns for registration, discovery, and lifecycle management.
+The Structure Service uses a centralized registry system to manage different types of components (tools, agents, models, etc.) with consistent patterns for registration, discovery, and lifecycle management.
 
 ## Folder Structure
 
 ```
-src/aiwen/
+src/structure/
 ├── registries/                    # 🆕 Centralized registry system
 │   ├── __init__.py               # Public API exports
 │   ├── base.py                   # BaseRegistry abstract class
@@ -105,7 +105,7 @@ src/aiwen/
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. Module Import                                                │
-│     import aiwen.services.tools.inner_tool.server_tools         │
+│     import structure.services.tools.inner_tool.server_tools         │
 └────────────┬────────────────────────────────────────────────────┘
              │
              ▼
@@ -221,7 +221,7 @@ src/aiwen/
 
 ### Phase 1: Create New Registry System (✅ Complete)
 
-- [x] Create `src/aiwen/registries/` folder
+- [x] Create `src/structure/registries/` folder
 - [x] Implement `BaseRegistry` abstract class
 - [x] Implement `RegistryManager` coordinator
 - [x] Create `ToolRegistry` extending `BaseRegistry`

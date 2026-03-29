@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 
 # Fixed UUIDs for deterministic tests

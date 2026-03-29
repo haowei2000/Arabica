@@ -1,13 +1,13 @@
-src/aiwen/dependencies:
+src/structure/dependencies:
 __init__.py  __pycache__  agents.py  auth.py  redis.py  workspace.py
-src/aiwen/dependencies/__pycache__:
+src/structure/dependencies/__pycache__:
 __init__.cpython-312.pyc  auth.cpython-312.pyc
 agents.cpython-312.pyc    workspace.cpython-312.pyc
-src/aiwen/migrations:
+src/structure/migrations:
 README.md  __pycache__  env.py  script.py.mako  versions
-src/aiwen/migrations/__pycache__:
+src/structure/migrations/__pycache__:
 env.cpython-312.pyc
-src/aiwen/migrations/versions:
+src/structure/migrations/versions:
 0001_initial_database_schema.py
 0236573bfc43_change_message_column_to_list_of_dicts.py
 0430e7390877_make_admin_id_nullable_in_tenant.py
@@ -28,7 +28,7 @@ d44c36b57007_add_document_status_fields.py
 da790b82e86b_add_agent_template_id_column_and_remove_.py
 dd983e0a2018_add_foreign_key_to_messages_.py
 e5f6a7b8c9d0_create_workspace_run_event.py
-src/aiwen/migrations/versions/__pycache__:
+src/structure/migrations/versions/__pycache__:
 0001_initial_database_schema.cpython-312.pyc
 0236573bfc43_change_message_column_to_list_of_dicts.cpython-312.pyc
 0430e7390877_make_admin_id_nullable_in_tenant.cpython-312.pyc
@@ -50,17 +50,17 @@ da790b82e86b_add_agent_template_id_column_and_remove_.cpython-312.pyc
 dd983e0a2018_add_foreign_key_to_messages_.cpython-312.pyc
 e5f6a7b8c9d0_create_workspace_run_event.cpython-312.pyc
 e5f9a1b2c3d4_add_mode_column_to_conversations.cpython-312.pyc
-src/aiwen/models:
+src/structure/models:
 __init__.py  __pycache__  agents  auth  types.py
-src/aiwen/models/__pycache__:
+src/structure/models/__pycache__:
 __init__.cpython-312.pyc  types.cpython-312.pyc
-src/aiwen/models/agents:
+src/structure/models/agents:
 __init__.py        chat_model.py    embedding_model.py  run.py
 __pycache__        chunk.py         event.py            workspace.py
 agent_task.py      context.py       knowledge.py        workspace_member.py
 agent_template.py  conversation.py  message.py
 app.py             docments.py      preprocess.py
-src/aiwen/models/agents/__pycache__:
+src/structure/models/agents/__pycache__:
 __init__.cpython-312.pyc        embedding_model.cpython-312.pyc
 agent_task.cpython-312.pyc      event.cpython-312.pyc
 agent_template.cpython-312.pyc  knowledge.cpython-312.pyc
@@ -70,146 +70,146 @@ chunk.cpython-312.pyc           run.cpython-312.pyc
 context.cpython-312.pyc         workspace.cpython-312.pyc
 conversation.cpython-312.pyc    workspace_member.cpython-312.pyc
 docments.cpython-312.pyc
-src/aiwen/models/auth:
+src/structure/models/auth:
 __init__.py  __pycache__  tenant.py  user.py
-src/aiwen/models/auth/__pycache__:
+src/structure/models/auth/__pycache__:
 __init__.cpython-312.pyc  tenant.cpython-312.pyc  user.cpython-312.pyc
-src/aiwen/routers:
+src/structure/routers:
 __init__.py  agents   context         test_auth.py  workspaces
 __pycache__  auth.py  flush_redis.py  user
-src/aiwen/routers/__pycache__:
+src/structure/routers/__pycache__:
 __init__.cpython-312.pyc  flush_redis.cpython-312.pyc
 auth.cpython-312.pyc      test_auth.cpython-312.pyc
-src/aiwen/routers/agents:
+src/structure/routers/agents:
 __init__.py  __pycache__  app.py  chat.py  conversations.py  messages.py
-src/aiwen/routers/agents/__pycache__:
+src/structure/routers/agents/__pycache__:
 __init__.cpython-312.pyc  conversations.cpython-312.pyc
 app.cpython-312.pyc       messages.cpython-312.pyc
 chat.cpython-312.pyc
-src/aiwen/routers/context:
+src/structure/routers/context:
 __init__.py  __pycache__  context.py  document.py  knowledge.py
-src/aiwen/routers/context/__pycache__:
+src/structure/routers/context/__pycache__:
 __init__.cpython-312.pyc  document.cpython-312.pyc
 context.cpython-312.pyc   knowledge.cpython-312.pyc
-src/aiwen/routers/user:
+src/structure/routers/user:
 __init__.py  __pycache__  user_examples.py  user_management.py
-src/aiwen/routers/user/__pycache__:
+src/structure/routers/user/__pycache__:
 __init__.cpython-312.pyc       user_management.cpython-312.pyc
 user_examples.cpython-312.pyc
-src/aiwen/routers/workspaces:
+src/structure/routers/workspaces:
 __init__.py  __pycache__  events.py  runs.py  workspace.py
-src/aiwen/routers/workspaces/__pycache__:
+src/structure/routers/workspaces/__pycache__:
 __init__.cpython-312.pyc  runs.cpython-312.pyc
 events.cpython-312.pyc    workspace.cpython-312.pyc
-src/aiwen/schemas:
+src/structure/schemas:
 __init__.py  agents  chat.py    events  runs  workspace
 __pycache__  auth    common.py  files   task
-src/aiwen/schemas/__pycache__:
+src/structure/schemas/__pycache__:
 __init__.cpython-312.pyc  chat.cpython-312.pyc  common.cpython-312.pyc
-src/aiwen/schemas/agents:
+src/structure/schemas/agents:
 __pycache__        app.py      conversation.py  input.py      message.py
 agent_template.py  context.py  document.py      knowledge.py
-src/aiwen/schemas/agents/__pycache__:
+src/structure/schemas/agents/__pycache__:
 agent_template.cpython-312.pyc  document.cpython-312.pyc
 app.cpython-312.pyc             input.cpython-312.pyc
 context.cpython-312.pyc         knowledge.cpython-312.pyc
 conversation.cpython-312.pyc    message.cpython-312.pyc
-src/aiwen/schemas/auth:
+src/structure/schemas/auth:
 __pycache__  auth.py  tenant.py  user.py
-src/aiwen/schemas/auth/__pycache__:
+src/structure/schemas/auth/__pycache__:
 auth.cpython-312.pyc  user.cpython-312.pyc
-src/aiwen/schemas/events:
+src/structure/schemas/events:
 __init__.py  __pycache__  event_payloads.py
-src/aiwen/schemas/events/__pycache__:
+src/structure/schemas/events/__pycache__:
 __init__.cpython-312.pyc  event_payloads.cpython-312.pyc
-src/aiwen/schemas/files:
+src/structure/schemas/files:
 __pycache__  convert.py
-src/aiwen/schemas/files/__pycache__:
+src/structure/schemas/files/__pycache__:
 convert.cpython-312.pyc
-src/aiwen/schemas/runs:
+src/structure/schemas/runs:
 __init__.py  __pycache__  run.py
-src/aiwen/schemas/runs/__pycache__:
+src/structure/schemas/runs/__pycache__:
 __init__.cpython-312.pyc  run.cpython-312.pyc
-src/aiwen/schemas/task:
+src/structure/schemas/task:
 __pycache__  field.py  payload.py
-src/aiwen/schemas/task/__pycache__:
+src/structure/schemas/task/__pycache__:
 field.cpython-312.pyc  payload.cpython-312.pyc
-src/aiwen/schemas/workspace:
+src/structure/schemas/workspace:
 __init__.py  __pycache__  workspace.py
-src/aiwen/schemas/workspace/__pycache__:
+src/structure/schemas/workspace/__pycache__:
 __init__.cpython-312.pyc  workspace.cpython-312.pyc
-src/aiwen/services:
+src/structure/services:
 __init__.py  agent  compat  events  knowledge  storage
 __pycache__  auth   crud    files   runs       workspaces
-src/aiwen/services/__pycache__:
+src/structure/services/__pycache__:
 __init__.cpython-312.pyc
-src/aiwen/services/agent:
+src/structure/services/agent:
 README.md    __pycache__        agent_template  base.py  context     tool
 __init__.py  agent_registry.py  app_factory.py  chat     runtime.py
-src/aiwen/services/agent/__pycache__:
+src/structure/services/agent/__pycache__:
 __init__.cpython-312.pyc        base.cpython-312.pyc
 agent_registry.cpython-312.pyc  runtime.cpython-312.pyc
 app_factory.cpython-312.pyc
-src/aiwen/services/agent/agent_template:
+src/structure/services/agent/agent_template:
 default  nl2sql
-src/aiwen/services/agent/agent_template/default:
+src/structure/services/agent/agent_template/default:
 __init__.py  __pycache__  concrete.py  context.py
-src/aiwen/services/agent/agent_template/default/__pycache__:
+src/structure/services/agent/agent_template/default/__pycache__:
 __init__.cpython-312.pyc  context.cpython-312.pyc
 concrete.cpython-312.pyc  memory.cpython-312.pyc
-src/aiwen/services/agent/agent_template/nl2sql:
+src/structure/services/agent/agent_template/nl2sql:
 __pycache__  concrete.py
-src/aiwen/services/agent/agent_template/nl2sql/__pycache__:
+src/structure/services/agent/agent_template/nl2sql/__pycache__:
 concrete.cpython-312.pyc
-src/aiwen/services/agent/chat:
+src/structure/services/agent/chat:
 __init__.py  __pycache__  chat_helper.py  chat_service.py
-src/aiwen/services/agent/chat/__pycache__:
+src/structure/services/agent/chat/__pycache__:
 __init__.cpython-312.pyc     chat_service.cpython-312.pyc
 chat_helper.cpython-312.pyc
-src/aiwen/services/agent/context:
-src/aiwen/services/agent/tool:
-src/aiwen/services/auth:
+src/structure/services/agent/context:
+src/structure/services/agent/tool:
+src/structure/services/auth:
 __pycache__  auth_service.py  token_service.py  user_crud.py
-src/aiwen/services/auth/__pycache__:
+src/structure/services/auth/__pycache__:
 auth_service.cpython-312.pyc   user_crud.cpython-312.pyc
 token_service.cpython-312.pyc
-src/aiwen/services/compat:
+src/structure/services/compat:
 __init__.py  __pycache__  conversation_compat.py
-src/aiwen/services/compat/__pycache__:
+src/structure/services/compat/__pycache__:
 __init__.cpython-312.pyc  conversation_compat.cpython-312.pyc
-src/aiwen/services/crud:
+src/structure/services/crud:
 __init__.py             app_crud.py           document_crud.py   task_crud.py
 __pycache__             context_crud.py       knowledge_crud.py
 agent_template_crud.py  conversation_crud.py  message_crud.py
-src/aiwen/services/crud/__pycache__:
+src/structure/services/crud/__pycache__:
 __init__.cpython-312.pyc             document_crud.cpython-312.pyc
 agent_template_crud.cpython-312.pyc  knowledge_crud.cpython-312.pyc
 app_crud.cpython-312.pyc             message_crud.cpython-312.pyc
 context_crud.cpython-312.pyc         task_crud.cpython-312.pyc
 conversation_crud.cpython-312.pyc
-src/aiwen/services/events:
+src/structure/services/events:
 __init__.py  __pycache__  event_consumer.py  event_publisher.py
-src/aiwen/services/events/__pycache__:
+src/structure/services/events/__pycache__:
 __init__.cpython-312.pyc        event_publisher.cpython-312.pyc
 event_consumer.cpython-312.pyc
-src/aiwen/services/files:
+src/structure/services/files:
 __pycache__  convert.py
-src/aiwen/services/files/__pycache__:
+src/structure/services/files/__pycache__:
 convert.cpython-312.pyc
-src/aiwen/services/knowledge:
+src/structure/services/knowledge:
 __init__.py  __pycache__  chunker.py  embeddings.py  parser.py
-src/aiwen/services/knowledge/__pycache__:
+src/structure/services/knowledge/__pycache__:
 __init__.cpython-312.pyc  embeddings.cpython-312.pyc
 chunker.cpython-312.pyc   parser.cpython-312.pyc
-src/aiwen/services/runs:
+src/structure/services/runs:
 __init__.py  __pycache__  run_crud.py  run_state_machine.py
-src/aiwen/services/runs/__pycache__:
+src/structure/services/runs/__pycache__:
 __init__.cpython-312.pyc  run_state_machine.cpython-312.pyc
 run_crud.cpython-312.pyc
-src/aiwen/services/storage:
+src/structure/services/storage:
 __init__.py  minio_client.py
-src/aiwen/services/workspaces:
+src/structure/services/workspaces:
 __init__.py  __pycache__  member_crud.py  workspace_crud.py
-src/aiwen/services/workspaces/__pycache__:
+src/structure/services/workspaces/__pycache__:
 __init__.cpython-312.pyc     workspace_crud.cpython-312.pyc
 member_crud.cpython-312.pyc

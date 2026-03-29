@@ -2,12 +2,12 @@
 
 ## 🎯 Overview
 
-A centralized, extensible registry system has been designed for the Aiwen Service to manage all component registrations (tools, agents, models, etc.) with consistent patterns and unified control.
+A centralized, extensible registry system has been designed for the Structure Service to manage all component registrations (tools, agents, models, etc.) with consistent patterns and unified control.
 
 ## 📁 Complete Folder Structure
 
 ```
-src/aiwen/
+src/structure/
 │
 ├── registries/                          # 🆕 NEW: Centralized Registry System
 │   ├── __init__.py                     # Public API exports
@@ -434,10 +434,10 @@ registry.add_on_retrieve_hook(on_retrieve)
 
 | Document | Description | Location |
 |----------|-------------|----------|
-| System README | Usage guide and API reference | `src/aiwen/registries/README.md` |
+| System README | Usage guide and API reference | `src/structure/registries/README.md` |
 | Architecture Doc | Design, flows, and diagrams | `docs/registry_system.md` |
 | This Summary | Quick overview and setup | `REGISTRY_SYSTEM_SUMMARY.md` |
-| Example Code | ModelRegistry example | `src/aiwen/registries/examples/` |
+| Example Code | ModelRegistry example | `src/structure/registries/examples/` |
 
 ## ✅ Benefits Summary
 
@@ -454,19 +454,19 @@ registry.add_on_retrieve_hook(on_retrieve)
 
 ## 🎯 Next Steps
 
-1. **Review the design**: Read `src/aiwen/registries/README.md`
+1. **Review the design**: Read `src/structure/registries/README.md`
 2. **Understand the architecture**: See `docs/registry_system.md`
-3. **Try the example**: Run `src/aiwen/registries/examples/model_registry_example.py`
-4. **Optional migration**: Update imports to use `from aiwen.registries import ...`
+3. **Try the example**: Run `src/structure/registries/examples/model_registry_example.py`
+4. **Optional migration**: Update imports to use `from structure.registries import ...`
 5. **Optional simplification**: Update bootstrap code to use `sync_all_registries()`
 6. **Extend as needed**: Create new registry types following the pattern
 
 ## 📞 Support
 
 For questions or issues:
-- Check the documentation in `src/aiwen/registries/README.md`
+- Check the documentation in `src/structure/registries/README.md`
 - Review the architecture guide in `docs/registry_system.md`
-- See the example in `src/aiwen/registries/examples/model_registry_example.py`
+- See the example in `src/structure/registries/examples/model_registry_example.py`
 - Refer to existing registries for patterns
 
 ---

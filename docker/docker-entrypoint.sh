@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "==> Starting aiwen services..."
+echo "==> Starting structure services..."
 
 terminate() {
     echo "==> Received termination signal"

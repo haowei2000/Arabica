@@ -13,7 +13,7 @@ The Redis cache middleware provides automatic caching for GET requests using Red
 
 ## Implementation Details
 
-### 1. Cache Middleware (`src/aiwen/middleware/cache_middleware.py`)
+### 1. Cache Middleware (`src/structure/middleware/cache_middleware.py`)
 
 Key features:
 - **Automatic Caching**: Caches all GET requests with status code 200
@@ -22,14 +22,14 @@ Key features:
 - **TTL Management**: Configurable cache expiration time (default 300 seconds)
 - **Route-level Decorator**: Additional `@cache_route()` decorator for fine-grained control
 
-### 2. Application Integration (`src/aiwen/app.py`)
+### 2. Application Integration (`src/structure/app.py`)
 
 - **Initialization**: Redis clients initialized during app startup
 - **Middleware Registration**: Cache middleware added to the app
 - **Cleanup**: Redis clients properly closed during app shutdown
 - **Health Check**: Updated to reflect Redis middleware status
 
-### 3. Route Integration (`src/aiwen/routers/nl2sql.py`)
+### 3. Route Integration (`src/structure/routers/nl2sql.py`)
 
 - **Test Endpoint**: Added `/api/nl2sql/test-cache` to demonstrate caching
 - **Cache Flush Endpoint**: Added `/api/nl2sql/flush-cache` to clear cache entries

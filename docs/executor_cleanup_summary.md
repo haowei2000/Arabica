@@ -145,7 +145,7 @@ async def __call__(self, **kwargs: Any) -> dict[str, Any]:
 ## Files Remaining in tools/
 
 ```
-src/aiwen/services/executor/tools/
+src/structure/services/executor/tools/
 ├── __init__.py              # Simplified exports
 ├── base_tool.py             # Unified BaseTool base class
 ├── browser_tools.py         # 13 browser automation tools
@@ -189,7 +189,7 @@ INFO: ✅ Test 1 PASSED: Browser tools loaded successfully
 
 ### Test 3: Import Verification
 ```bash
-$ uv run python -c "from aiwen.services.tools import BROWSER_TOOLS, SERVER_TOOLS"
+$ uv run python -c "from structure.services.tools import BROWSER_TOOLS, SERVER_TOOLS"
 ```
 
 **Result:** ✅ PASSED
@@ -411,7 +411,7 @@ Removing 40% of code improved clarity and maintainability:
 - `docs/tool_unification_summary.md` - Tool migration to BaseTool
 - `docs/phase2_browser_tools_migration.md` - Browser tools conversion
 - `docs/tool_migration_complete.md` - Complete migration summary
-- `src/aiwen/services/executor/tools/base_tool.py` - BaseTool implementation
+- `src/structure/services/executor/tools/base_tool.py` - BaseTool implementation
 - `examples/agent_with_user_tools.py` - User tools integration example
 
 ---
@@ -431,5 +431,5 @@ The tool system now uses a **unified BaseTool execution model** with no external
 ---
 
 *Document generated: 2026-02-08*
-*Project: Aiwen Service v5.5.0*
+*Project: Structure Service v5.5.0*
 *Cleanup: Executor System Simplification*

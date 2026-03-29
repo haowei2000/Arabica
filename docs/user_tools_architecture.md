@@ -37,7 +37,7 @@ The user tools system enables users to create, manage, and execute custom tools 
 
 ### 1. API Layer
 
-**File:** `src/aiwen/routers/tools/user_tools.py`
+**File:** `src/structure/routers/tools/user_tools.py`
 
 **Responsibilities:**
 - Expose REST API for tool CRUD operations
@@ -61,9 +61,9 @@ GET    /tools/registry/schemas  # Get LLM schemas
 ### 2. Storage Layer
 
 **Files:**
-- `src/aiwen/models/tools/user_tool.py` - SQLAlchemy model
-- `src/aiwen/schemas/tools/user_tool.py` - Pydantic schemas
-- `src/aiwen/services/tools/user_tool_crud.py` - CRUD operations
+- `src/structure/models/tools/user_tool.py` - SQLAlchemy model
+- `src/structure/schemas/tools/user_tool.py` - Pydantic schemas
+- `src/structure/services/tools/user_tool_crud.py` - CRUD operations
 
 **Database Schema:**
 ```sql
@@ -111,7 +111,7 @@ CREATE INDEX idx_user_tools_enabled ON user_tools(enabled);
 
 ### 3. Loading Layer
 
-**File:** `src/aiwen/services/tools/dynamic_tool_loader.py`
+**File:** `src/structure/services/tools/dynamic_tool_loader.py`
 
 **Responsibilities:**
 - Read tool definitions from database
@@ -170,7 +170,7 @@ ToolClass = type(
 
 ### 4. Registry Layer
 
-**File:** `src/aiwen/services/executor/tools/tool_registry.py`
+**File:** `src/structure/services/executor/tools/tool_registry.py`
 
 **Responsibilities:**
 - Centralized registry for all tools (built-in + user-defined)
@@ -211,7 +211,7 @@ class ToolRegistry:
 
 ### 5. Execution Layer
 
-**File:** `src/aiwen/services/executor/executor_template/default/concrete.py`
+**File:** `src/structure/services/executor/executor_template/default/concrete.py`
 
 **Responsibilities:**
 - Initialize agent with all tools (built-in + user)
@@ -564,5 +564,5 @@ logger.error(f"Tool execution failed: {error}", exc_info=True)
 - **API Documentation**: `docs/user_tools_guide.md`
 - **Example Code**: `examples/user_tools_demo.py`
 - **Integration Example**: `examples/agent_with_user_tools.py`
-- **Base Tool Class**: `src/aiwen/services/executor/tools/base_tool.py`
-- **Tool Registry**: `src/aiwen/services/executor/tools/tool_registry.py`
+- **Base Tool Class**: `src/structure/services/executor/tools/base_tool.py`
+- **Tool Registry**: `src/structure/services/executor/tools/tool_registry.py`

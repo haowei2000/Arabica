@@ -136,7 +136,7 @@ router.include_router(app_router)
 
 ## 删除的文件
 
-- ❌ `/Users/haowei/projects/ai630/src/aiwen/routers/agents/agent.py` (旧的路由文件)
+- ❌ `/Users/haowei/projects/ai630/src/structure/routers/agents/agent.py` (旧的路由文件)
 
 ## API 使用示例
 

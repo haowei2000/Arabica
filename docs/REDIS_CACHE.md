@@ -80,7 +80,7 @@ GET /health
 
 ## Customization
 
-You can customize the cache behavior by modifying the `src/aiwen/extensions/redis.py` file:
+You can customize the cache behavior by modifying the `src/structure/extensions/redis.py` file:
 
 - Change serialization method (currently using pickle)
 - Modify cache key generation strategy

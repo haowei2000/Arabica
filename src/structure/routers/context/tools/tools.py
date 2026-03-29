@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structure.core.dependencies.agents import get_context_crud
 from structure.core.dependencies.auth import get_current_user
 from structure.core.enums import ContextType
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.registries.core import ToolRegistry
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.context.context_schema import ContextListResponse
@@ -106,7 +106,7 @@ def _mcp_client_config(req: MCPServerConfig) -> str | dict:
 )
 async def list_tools(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     workspace_id: UUID | None = None,
     enabled_only: bool = True,
     include_public: bool = True,
@@ -135,7 +135,7 @@ async def list_tools(
 async def get_tool_context(
     tool_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -167,7 +167,7 @@ async def get_tool_context(
 async def get_tool(
     tool_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolCRUD(db)
     tool = await crud.get_tool_by_id(tool_id, current_user.id)
@@ -184,7 +184,7 @@ async def get_tool(
 async def delete_tool(
     tool_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolCRUD(db)
     tool = await crud.get_tool_by_id(tool_id)
@@ -212,7 +212,7 @@ async def toggle_tool(
     tool_id: UUID,
     enabled: bool,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolCRUD(db)
     tool = await crud.toggle_enabled(tool_id, current_user.id, enabled)
@@ -233,7 +233,7 @@ async def test_tool(
     tool_id: UUID,
     test_request: UserToolTestRequest,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Test an MCP tool by executing it with the provided parameters."""
     crud = ToolCRUD(db)
@@ -323,7 +323,7 @@ async def probe_mcp(
 async def import_from_mcp(
     body: MCPImportRequest,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> MCPImportResponse:
     """Probe the MCP server, then bulk-create Tool records for the requested tools."""
     from structure.registries.mcp_loader import probe_mcp_server

@@ -1,4 +1,4 @@
-"""Reusable annotated types for Aiwen."""
+"""Reusable annotated types for Structure."""
 
 from structure.core.types.context_path import ContextPath
 

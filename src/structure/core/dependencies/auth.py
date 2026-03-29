@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.auth import TokenData
 from structure.schemas.auth.user import UserResponse
 from structure.services.auth.auth_service import AuthService
@@ -24,7 +24,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> UserResponse:
     """
     Get the current authenticated user from the JWT token.

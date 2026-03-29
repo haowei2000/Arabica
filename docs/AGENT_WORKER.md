@@ -251,7 +251,7 @@ POSTGRES__HOST=localhost
 POSTGRES__PORT=5432
 POSTGRES__USERNAME=postgres
 POSTGRES__PASSWORD=your_password
-POSTGRES__AIWEN_DBNAME=structure
+POSTGRES__STRUCTURE_DBNAME=structure
 ```
 
 ### 依赖项
@@ -267,10 +267,10 @@ pip install redis asyncio sqlalchemy
 Worker 会输出详细的日志信息：
 
 ```
-2025-12-23 19:30:00 - aiwen.workers.agent_worker - INFO - Starting AgentWorker...
-2025-12-23 19:30:01 - aiwen.workers.agent_worker - INFO - Processing task xxx for app yyy
-2025-12-23 19:30:02 - aiwen.workers.agent_worker - INFO - Agent instance created for task xxx, type: chat
-2025-12-23 19:30:05 - aiwen.workers.agent_worker - INFO - Task xxx completed successfully with 15 chunks
+2025-12-23 19:30:00 - structure.workers.agent_worker - INFO - Starting AgentWorker...
+2025-12-23 19:30:01 - structure.workers.agent_worker - INFO - Processing task xxx for app yyy
+2025-12-23 19:30:02 - structure.workers.agent_worker - INFO - Agent instance created for task xxx, type: chat
+2025-12-23 19:30:05 - structure.workers.agent_worker - INFO - Task xxx completed successfully with 15 chunks
 ```
 
 ### 查看运行状态
@@ -307,7 +307,7 @@ A: 确保 worker 正在运行
 **Q: Agent 类型未注册错误**
 ```
 A: 确保在 AppAgentFactory 中注册了对应的 agent 类型
-   检查 src/aiwen/services/agents/app_factory.py
+   检查 src/structure/services/agents/app_factory.py
 ```
 
 **Q: 数据库连接错误**

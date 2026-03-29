@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import WorkspaceCRUDDep
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.runs.task import TaskListResponse, TaskResponse
 from structure.services.runs.task_crud import TaskCRUD
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/tasks", tags=["tasks"])
 
 
 async def get_task_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> TaskCRUD:
     return TaskCRUD(db)
 

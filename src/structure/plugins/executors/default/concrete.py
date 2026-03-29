@@ -698,10 +698,24 @@ class DefaultExecutor(Executor):
             [str(e.event_type) for e in events],
         )
         if self.global_event:
-            all_events = await self._fetch_events(
+            # Fetch workspace-wide history from PostgreSQL for cross-run
+            # context.  However, the *current* run's events are held in an
+            # in-memory buffer (not yet flushed to DB) during execution, so
+            # the DB query won't include them.  We must merge the worker-
+            # provided ``events`` (sourced from Redis) to ensure the current
+            # user message is present.
+            db_events = await self._fetch_events(
                 global_scope=True,
                 limit=self.max_history_messages,
             )
+            # Collect event IDs already in the DB result to avoid duplicates.
+            db_event_ids = {str(e.id) for e in db_events}
+            # Append current-run events that are not yet in the DB.
+            current_run_events = [
+                e for e in events
+                if str(e.id) not in db_event_ids
+            ]
+            all_events = db_events + current_run_events
         else:
             all_events = events
         # TODO: remove diagnostic logging (end of block) once verified

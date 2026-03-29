@@ -91,7 +91,7 @@ def _ensure_registered():
 
     settings = get_settings()
     binds = {}
-    binds.update(settings.postgres.aiwen_sqlalchemy_bind)
+    binds.update(settings.postgres.structure_sqlalchemy_bind)
 
     for bind_name, url in binds.items():
         register_database(bind_name, url)
@@ -226,7 +226,7 @@ def _create_session_dependency(bind_name: str):
 
 
 def get_db_session(bind_name: str = "primary"):
-    """返回一个固定（可缓存）的依赖函数对象。更推荐直接使用命名依赖：Depends(get_aiwen_db) / Depends(get_mes_db)。"""
+    """返回一个固定（可缓存）的依赖函数对象。更推荐直接使用命名依赖：Depends(get_structure_db) / Depends(get_mes_db)。"""
     dep = _dependency_functions.get(bind_name)
     if dep is None:
         dep = _create_session_dependency(bind_name)
@@ -538,6 +538,6 @@ def is_database_registered(bind_name: str) -> bool:
 
 # 命名固定依赖（推荐使用，无需括号）
 get_primary_db = get_db_session("primary")
-get_aiwen_db = get_db_session("structure")
+get_structure_db = get_db_session("structure")
 get_mes_db = get_db_session("mes")
 get_dify_db = get_db_session("dify")

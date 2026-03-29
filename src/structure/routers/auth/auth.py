@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.auth import Token, TokenRefresh
 from structure.schemas.auth.user import EmailRegisterRequest, UserCreate, UserResponse
 from structure.services.auth.auth_service import AuthService
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 async def get_auth_service(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)]
+    db: Annotated[AsyncSession, Depends(get_structure_db)]
 ) -> AuthService:
     """Dependency to get AuthService instance."""
     return AuthService(db)

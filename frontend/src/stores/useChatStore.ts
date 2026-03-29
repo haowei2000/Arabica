@@ -104,9 +104,12 @@ export const useChatStore = create<ChatState>((set) => ({
   setMessages: (messages) => set({ messages }),
 
   addMessage: (message) =>
-    set((state) => ({
-      messages: [...state.messages, message],
-    })),
+    set((state) => {
+      console.log('addMessage:', message);
+      return {
+        messages: [...state.messages, message],
+      };
+    }),
 
   updateStreamingMessage: (content) => set({ streamingMessage: content }),
 

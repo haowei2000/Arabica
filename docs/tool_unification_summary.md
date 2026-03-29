@@ -21,12 +21,12 @@ Successfully unified all tools to use the custom `BaseTool` class system, elimin
 
 #### Files Created/Modified
 
-1. **Created:** `src/aiwen/services/executor/tools/server_tools_v2.py`
+1. **Created:** `src/structure/services/executor/tools/server_tools_v2.py`
    - All 11 server tools using BaseTool
    - Clean, consistent interface
    - Full type safety with Pydantic
 
-2. **Modified:** `src/aiwen/services/executor/executor_template/default/concrete.py`
+2. **Modified:** `src/structure/services/executor/executor_template/default/concrete.py`
    - Updated imports to use `server_tools_v2`
    - Updated `_load_server_tools()` to use V2 tool collections
    - Added `_convert_to_langchain_tool()` method for LangChain compatibility
@@ -392,9 +392,9 @@ CUSTOM_TOOLS = [MyCustomTool]
 - `examples/agent_with_server_tools.py` - Working examples
 
 ### Code References
-- `src/aiwen/services/executor/tools/base_tool.py` - BaseTool definition
-- `src/aiwen/services/executor/tools/server_tools_v2.py` - Converted tools
-- `src/aiwen/services/executor/tools/tool_registry.py` - Tool registry
+- `src/structure/services/executor/tools/base_tool.py` - BaseTool definition
+- `src/structure/services/executor/tools/server_tools_v2.py` - Converted tools
+- `src/structure/services/executor/tools/tool_registry.py` - Tool registry
 
 ### Testing
 - `examples/agent_with_server_tools.py` - Integration test

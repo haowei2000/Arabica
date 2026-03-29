@@ -131,7 +131,7 @@ All constants and helper functions are tested:
 
 ```bash
 uv run python -c "
-from aiwen.plugins.executors.conflict.prompts import (
+from structure.plugins.executors.conflict.prompts import (
     ContextPathSuffix,
     build_context_path,
     get_all_context_paths,

@@ -91,7 +91,7 @@ wheels = [
 ]
 
 [[package]]
-name = "aiwen-service"
+name = "structure-service"
 version = "5.5.0"
 source = { editable = "." }
 dependencies = [

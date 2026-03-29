@@ -2,7 +2,7 @@
 
 ## 概述
 
-Executor 是 Aiwen 中 Agent 的执行引擎。每种 Executor 代表一种 Agent 行为模式（如对话型、工作流型、NL2SQL 型等）。系统通过 `ExecutorRegistry` 统一管理 Executor 的注册、发现、持久化与实例化。
+Executor 是 Structure 中 Agent 的执行引擎。每种 Executor 代表一种 Agent 行为模式（如对话型、工作流型、NL2SQL 型等）。系统通过 `ExecutorRegistry` 统一管理 Executor 的注册、发现、持久化与实例化。
 
 **核心架构**
 
@@ -54,7 +54,7 @@ class MyExecutor(Executor):
 启动时 `ExecutorRegistry.discover_and_import_executors()` 扫描 `plugins/executors/` 目录下的所有 `.py` 文件，import 触发 `@register_executor` 装饰器完成注册。
 
 ```
-src/aiwen/plugins/executors/
+src/structure/plugins/executors/
 ├── default/
 │   └── concrete.py      # DefaultExecutor
 ├── conflict/

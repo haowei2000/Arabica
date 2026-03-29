@@ -22,7 +22,7 @@ async def main():
     mcp_host = "localhost"
     mcp_port = "9090"
     mcp_url = f"http://{mcp_host}:{mcp_port}/mcp"
-    logger.info(f"Connecting to Aiwen MCP at {mcp_url}")
+    logger.info(f"Connecting to Structure MCP at {mcp_url}")
     
     try:
         async with get_session("structure") as session:

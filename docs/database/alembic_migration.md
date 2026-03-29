@@ -1,8 +1,8 @@
-# 使用Alembic管理aiwen数据库和添加默认管理员用户
+# 使用Alembic管理structure数据库和添加默认管理员用户
 
 ## 概述
 
-本文档详细介绍了如何使用Alembic迁移工具来管理aiwen数据库的模式变更，并添加默认的管理员用户。Alembic是一个轻量级的数据库迁移工具，用于跟踪和应用数据库模式变更。
+本文档详细介绍了如何使用Alembic迁移工具来管理structure数据库的模式变更，并添加默认的管理员用户。Alembic是一个轻量级的数据库迁移工具，用于跟踪和应用数据库模式变更。
 
 ## 先决条件
 
@@ -24,7 +24,7 @@ export POSTGRES__HOST=10.1.2.111
 export POSTGRES__PORT=5435
 export POSTGRES__USERNAME=postgres
 export POSTGRES__PASSWORD=difyai123456
-export POSTGRES__AIWEN_DBNAME=structure
+export POSTGRES__STRUCTURE_DBNAME=structure
 
 # 可选：自定义管理员用户设置
 export ADMIN_PASSWORD=admin123
@@ -33,7 +33,7 @@ export ADMIN_EMAIL=admin@example.com
 
 ### 2. 更新Alembic配置
 
-编辑 `src/aiwen/migrations/env.py` 文件以正确配置数据库连接和模型元数据。此文件现在使用与应用程序相同的配置系统：
+编辑 `src/structure/migrations/env.py` 文件以正确配置数据库连接和模型元数据。此文件现在使用与应用程序相同的配置系统：
 
 ```python
 import os
@@ -54,7 +54,7 @@ os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
 os.environ.setdefault("POSTGRES__PORT", "5435")
 os.environ.setdefault("POSTGRES__USERNAME", "postgres")
 os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
-os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "structure")
+os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
 
 # 尝试从项目配置获取数据库URL
 db_url = None
@@ -62,8 +62,8 @@ try:
     from structure.config.factory import get_settings
 
     settings = get_settings()
-    # 从设置中获取aiwen数据库URL
-    db_urls = settings.postgres.aiwen_sqlalchemy_bind
+    # 从设置中获取structure数据库URL
+    db_urls = settings.postgres.structure_sqlalchemy_bind
     if db_urls:
         # 将异步URL转换为同步URL供Alembic使用
         async_url = list(db_urls.values())[0]
@@ -77,7 +77,7 @@ if not db_url:
     db_url = (
         f"postgresql+psycopg2://"
         f"{quote_plus(os.environ.get('POSTGRES__USERNAME', 'postgres'))}:{quote_plus(os.environ.get('POSTGRES__PASSWORD', '123456'))}@"
-        f"{os.environ.get('POSTGRES__HOST', 'localhost')}:{os.environ.get('POSTGRES__PORT', '5432')}/{os.environ.get('POSTGRES__AIWEN_DBNAME', 'structure')}"
+        f"{os.environ.get('POSTGRES__HOST', 'localhost')}:{os.environ.get('POSTGRES__PORT', '5432')}/{os.environ.get('POSTGRES__STRUCTURE_DBNAME', 'structure')}"
     )
 
 # 导入模型
@@ -120,7 +120,7 @@ os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
 os.environ.setdefault("POSTGRES__PORT", "5435")
 os.environ.setdefault("POSTGRES__USERNAME", "postgres")
 os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
-os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "structure")
+os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
 
 # 导入模型
 from structure.extensions.database import get_base
@@ -141,7 +141,7 @@ target_metadata = get_base("structure").metadata
 db_url = (
     f"postgresql://"
     f"{quote_plus(os.environ['POSTGRES__USERNAME'])}:{quote_plus(os.environ['POSTGRES__PASSWORD'])}@"
-    f"{os.environ['POSTGRES__HOST']}:{os.environ['POSTGRES__PORT']}/{os.environ['POSTGRES__AIWEN_DBNAME']}"
+    f"{os.environ['POSTGRES__HOST']}:{os.environ['POSTGRES__PORT']}/{os.environ['POSTGRES__STRUCTURE_DBNAME']}"
 )
 config.set_main_option("sqlalchemy.url", db_url)
 ```
@@ -156,7 +156,7 @@ config.set_main_option("sqlalchemy.url", db_url)
 alembic revision -m "create auth tables"
 ```
 
-编辑生成的迁移文件 (`src/aiwen/migrations/versions/<revision_id>_create_auth_tables.py`)：
+编辑生成的迁移文件 (`src/structure/migrations/versions/<revision_id>_create_auth_tables.py`)：
 
 ```python
 """create auth tables
@@ -253,7 +253,7 @@ alembic stamp head
 alembic revision -m "add default admin user"
 ```
 
-编辑生成的迁移文件 (`src/aiwen/migrations/versions/<revision_id>_add_default_admin_user.py`)：
+编辑生成的迁移文件 (`src/structure/migrations/versions/<revision_id>_add_default_admin_user.py`)：
 
 ```python
 """add default admin user
@@ -427,7 +427,7 @@ alembic stamp head
 - POSTGRES__PORT
 - POSTGRES__USERNAME
 - POSTGRES__PASSWORD
-- POSTGRES__AIWEN_DBNAME
+- POSTGRES__STRUCTURE_DBNAME
 
 ### 3. 权限问题
 
@@ -452,4 +452,4 @@ alembic stamp head
 4. **文档化变更**：为每个迁移添加清晰的描述
 5. **逐步升级**：对于复杂的变更，考虑将其分解为多个小的迁移
 
-通过遵循这些步骤和最佳实践，您可以有效地使用Alembic来管理aiwen数据库的模式变更，并确保默认管理员用户的正确创建。
+通过遵循这些步骤和最佳实践，您可以有效地使用Alembic来管理structure数据库的模式变更，并确保默认管理员用户的正确创建。

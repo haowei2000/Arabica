@@ -516,5 +516,5 @@ See complete working examples in:
 For questions or issues:
 1. Check this documentation
 2. Review examples in `examples/`
-3. Check tool source code in `src/aiwen/services/executor/tools/server_tools.py`
+3. Check tool source code in `src/structure/services/executor/tools/server_tools.py`
 4. Report issues at project repository

@@ -26,9 +26,9 @@ class PostgresConfig(BaseModel):
         description="PostgreSQL password",
     )
 
-    aiwen_dbname: str = Field(
+    structure_dbname: str = Field(
         default="structure",
-        description="Aiwen DB",
+        description="Structure DB",
     )
 
     driver: str = Field(
@@ -38,13 +38,13 @@ class PostgresConfig(BaseModel):
 
 
     @property
-    def aiwen_sqlalchemy_bind(self) -> dict[str, str]:
+    def structure_sqlalchemy_bind(self) -> dict[str, str]:
         """Return a dict usable as SQLALCHEMY_BINDS entry for the 'structure' bind."""
         return {
             "structure": (
                 f"{self.driver}://"
                 f"{quote_plus(self.username)}:{quote_plus(self.password)}@"
-                f"{self.host}:{self.port}/{self.aiwen_dbname}"
+                f"{self.host}:{self.port}/{self.structure_dbname}"
             )
         }
 

@@ -17,7 +17,7 @@ def _normalize_queues(queues: str) -> str:
 
 @click.group()
 def cli():
-    """Aiwen Celery CLI - 后台任务管理"""
+    """Structure Celery CLI - 后台任务管理"""
     pass
 
 

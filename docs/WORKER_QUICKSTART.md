@@ -47,7 +47,7 @@ Step 1: Initializing Redis client...
 ✅ Agent Registry initialized successfully!
 📋 Registered templates: ['DEFAULT001']
 ✅ DEFAULT001 is registered and ready
-✅ Database session factory configured for 'aiwen' database
+✅ Database session factory configured for 'structure' database
 ============================================================
 🚀 Starting Worker Loop...
 ============================================================
@@ -83,7 +83,7 @@ Agent template 'DEFAULT001' is not registered in AgentRegistry
 ```
 
 **解决方案:**
-这个问题已经在最新版本中修复。确保使用 `src/aiwen/start_worker.py` 启动。
+这个问题已经在最新版本中修复。确保使用 `src/structure/start_worker.py` 启动。
 
 ### 问题 3: 数据库连接失败
 
@@ -93,7 +93,7 @@ Database 'primary' is not configured
 ```
 
 **解决方案:**
-这个问题已修复。新版本会自动使用 `aiwen` 数据库。
+这个问题已修复。新版本会自动使用 `structure` 数据库。
 
 ## 📋 使用 screen 管理 Worker（推荐）
 

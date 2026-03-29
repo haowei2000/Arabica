@@ -2,13 +2,13 @@
 
 ## Overview
 
-This guide shows how to migrate from the old scattered registry system to the new centralized `aiwen.registries` module.
+This guide shows how to migrate from the old scattered registry system to the new centralized `structure.registries` module.
 
 ## Benefits of Migration
 
 | Before | After | Benefit |
 |--------|-------|---------|
-| Multiple import locations | Single `aiwen.registries` | **Consistency** |
+| Multiple import locations | Single `structure.registries` | **Consistency** |
 | Separate sync functions | `sync_all_registries()` | **Simplicity** |
 | Duplicated code | Inherited from `BaseRegistry` | **Maintainability** |
 | Hard to extend | Extend `BaseRegistry` | **Extensibility** |
@@ -270,7 +270,7 @@ if self.config.init_registries:  # Single flag!
 - ✅ **61 lines → 35 lines** (43% reduction)
 - ✅ **2 functions → 1 function**
 - ✅ **2 config flags → 1 config flag**
-- ✅ **Cleaner imports** from `aiwen.registries`
+- ✅ **Cleaner imports** from `structure.registries`
 - ✅ **Single sync call** replaces multiple sync operations
 
 ### Step 5: Update BootstrapConfig
@@ -415,14 +415,14 @@ def test_my_tool():
 
 ### Core Files
 
-- [ ] `src/aiwen/core/bootstrap.py` → Update to use `bootstrap_v2.py` or merge changes
-- [ ] `src/aiwen/routers/tools/user_tools.py` → Update imports
-- [ ] `src/aiwen/workers/run_worker.py` → Update imports (if applicable)
+- [ ] `src/structure/core/bootstrap.py` → Update to use `bootstrap_v2.py` or merge changes
+- [ ] `src/structure/routers/tools/user_tools.py` → Update imports
+- [ ] `src/structure/workers/run_worker.py` → Update imports (if applicable)
 
 ### Service Files
 
-- [ ] `src/aiwen/services/tools/dynamic_tool_loader.py` → Update imports
-- [ ] `src/aiwen/services/executor/base.py` → Update imports (if applicable)
+- [ ] `src/structure/services/tools/dynamic_tool_loader.py` → Update imports
+- [ ] `src/structure/services/executor/base.py` → Update imports (if applicable)
 - [ ] Any custom tools/executors → Update decorator imports
 
 ### Test Files
@@ -481,11 +481,11 @@ uv run structure-api
 
 **Error:**
 ```
-ImportError: cannot import name 'get_registry' from 'aiwen.registries'
+ImportError: cannot import name 'get_registry' from 'structure.registries'
 ```
 
 **Solution:**
-Ensure you've created all the registry files. Check that `src/aiwen/registries/__init__.py` exports `get_registry`.
+Ensure you've created all the registry files. Check that `src/structure/registries/__init__.py` exports `get_registry`.
 
 ### Issue 2: Circular Import
 
@@ -551,8 +551,8 @@ You can migrate gradually:
 
 | Component | Old | New |
 |-----------|-----|-----|
-| **Tool Registry Import** | `aiwen.services.tools.tool_registry` | `aiwen.registries` |
-| **Executor Registry Import** | `aiwen.services.executor.executor_registry` | `aiwen.registries` |
+| **Tool Registry Import** | `structure.services.tools.tool_registry` | `structure.registries` |
+| **Executor Registry Import** | `structure.services.executor.executor_registry` | `structure.registries` |
 | **Registry Access** | Class methods | Instance via `get_registry()` |
 | **Database Sync** | 2 separate functions | `sync_all_registries()` |
 | **Bootstrap Config** | 2 flags | 1 flag |
@@ -577,6 +577,6 @@ You can migrate gradually:
 ---
 
 **Questions?** Check the comprehensive documentation:
-- `src/aiwen/registries/README.md` - Usage guide
+- `src/structure/registries/README.md` - Usage guide
 - `docs/registry_system.md` - Architecture details
 - `REGISTRY_SYSTEM_SUMMARY.md` - Quick reference

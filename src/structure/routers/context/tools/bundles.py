@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.context.tools.tool_bundle import (
     ToolBundleCreate,
@@ -50,7 +50,7 @@ def _build_bundle_response(bundle) -> ToolBundleResponse:
 async def create_tool_bundle(
     data: ToolBundleCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolBundleCRUD(db)
     try:
@@ -67,7 +67,7 @@ async def create_tool_bundle(
 )
 async def list_tool_bundles(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
     include_public: bool = True,
     tags: str | None = None,
 ):
@@ -90,7 +90,7 @@ async def list_tool_bundles(
 async def get_tool_bundle(
     bundle_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolBundleCRUD(db)
     bundle = await crud.get_by_id(bundle_id, current_user.id)
@@ -108,7 +108,7 @@ async def update_tool_bundle(
     bundle_id: UUID,
     data: ToolBundleUpdate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolBundleCRUD(db)
     try:
@@ -132,7 +132,7 @@ async def update_tool_bundle(
 async def delete_tool_bundle(
     bundle_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     crud = ToolBundleCRUD(db)
     success = await crud.delete(bundle_id, current_user.id)

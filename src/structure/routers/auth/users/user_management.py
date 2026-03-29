@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_admin_user, get_current_user
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserCreate, UserResponse
 from structure.services.auth.auth_service import AuthService
 from structure.services.auth.user_crud import UserCRUD
@@ -15,7 +15,7 @@ from structure.services.auth.user_crud import UserCRUD
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def get_user_crud(db: Annotated[AsyncSession, Depends(get_aiwen_db)]):
+async def get_user_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]):
     """Dependency to get UserCRUD instance."""
     return UserCRUD(db)
 

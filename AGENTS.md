@@ -1,4 +1,4 @@
-# Aiwen Service - Agent Development Guide
+# Structure Service - Agent Development Guide
 
 **Version**: 5.5.0  
 **Description**: Enterprise-grade AI-powered agent orchestration platform with event-sourced architecture
@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-Aiwen Service is a production-ready backend for running intelligent AI agents at scale. It provides a complete orchestration layer — from LLM interaction and tool execution to real-time streaming and distributed worker coordination — all built on an immutable event-sourcing foundation.
+Structure Service is a production-ready backend for running intelligent AI agents at scale. It provides a complete orchestration layer — from LLM interaction and tool execution to real-time streaming and distributed worker coordination — all built on an immutable event-sourcing foundation.
 
 ### Key Characteristics
 
@@ -56,7 +56,7 @@ Aiwen Service is a production-ready backend for running intelligent AI agents at
 
 ```
 agent_chat/
-├── src/aiwen/                    # Backend source code
+├── src/structure/                    # Backend source code
 │   ├── app.py                    # FastAPI application factory
 │   ├── worker_cli.py             # Worker process entry point
 │   ├── cli.py                    # CLI commands
@@ -373,10 +373,10 @@ docker compose --profile all up -d       # Everything
 
 | Service | Port | Description |
 |---------|------|-------------|
-| aiwen-app | 8000 | Main FastAPI application |
-| aiwen-mcp | 9000 | MCP service |
-| aiwen-celery-worker | - | Background task worker |
-| aiwen-frontend | 3000 | React frontend |
+| structure-app | 8000 | Main FastAPI application |
+| structure-mcp | 9000 | MCP service |
+| structure-celery-worker | - | Background task worker |
+| structure-frontend | 3000 | React frontend |
 | nginx | 80 | Reverse proxy |
 | postgres | 5432 | PostgreSQL with pgvector |
 | mysql | 3306 | MySQL database |

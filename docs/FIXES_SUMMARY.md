@@ -23,8 +23,8 @@ if not AgentRegistry.is_registered(template.template_code):
 ```
 
 **修改的文件：**
-- `src/aiwen/workers/agent_worker.py`
-- `src/aiwen/routers/agents/chat.py`
+- `src/structure/workers/agent_worker.py`
+- `src/structure/routers/agents/chat.py`
 
 ---
 
@@ -77,9 +77,9 @@ class AppAgentFactory:
 ```
 
 **修改的文件：**
-- `src/aiwen/services/agents/app_factory.py`
-- `src/aiwen/workers/agent_worker.py`
-- `src/aiwen/routers/agents/chat.py`
+- `src/structure/services/agents/app_factory.py`
+- `src/structure/workers/agent_worker.py`
+- `src/structure/routers/agents/chat.py`
 
 ---
 
@@ -189,7 +189,7 @@ python src/scripts/test_agent_registry.py
 预期输出：
 ```
 ✓ DEFAULT001 is registered
-✓ Agent class: <class 'aiwen.services.agents.agent_template.default.concrete.DefaultAgentTemplate'>
+✓ Agent class: <class 'structure.services.agents.agent_template.default.concrete.DefaultAgentTemplate'>
 ✓ All tests passed!
 ```
 
@@ -228,9 +228,9 @@ Starting worker loop...
 ## 修改文件清单
 
 ### 核心修复
-- ✅ `src/aiwen/workers/agent_worker.py`
-- ✅ `src/aiwen/routers/agents/chat.py`
-- ✅ `src/aiwen/services/agents/app_factory.py`
+- ✅ `src/structure/workers/agent_worker.py`
+- ✅ `src/structure/routers/agents/chat.py`
+- ✅ `src/structure/services/agents/app_factory.py`
 
 ### 启动脚本
 - ✅ `src/scripts/run_agent_worker.py`

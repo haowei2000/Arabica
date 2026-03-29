@@ -7,7 +7,7 @@ The registry system has been refactored to merge BaseRegistry with concrete impl
 ## Before: Split Structure (4 files)
 
 ```
-src/aiwen/registries/
+src/structure/registries/
 ├── __init__.py                    # Exports
 ├── base.py                        # BaseRegistry abstract class (11 KB)
 ├── manager.py                     # RegistryManager coordinator (6 KB)
@@ -24,7 +24,7 @@ src/aiwen/registries/
 ## After: Unified Structure (2 files)
 
 ```
-src/aiwen/registries/
+src/structure/registries/
 ├── __init__.py                    # Exports
 ├── core.py                        # ⭐ BaseRegistry + ToolRegistry + ExecutorRegistry (27 KB)
 └── manager.py                     # RegistryManager coordinator (6 KB)

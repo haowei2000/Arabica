@@ -27,7 +27,7 @@ asyncio.run(run_bootstrap())
 settings = get_settings()
 config = context.config
 # Get the structure database URL from settings
-db_urls = settings.postgres.aiwen_sqlalchemy_bind
+db_urls = settings.postgres.structure_sqlalchemy_bind
 if db_urls:
     # Convert async URL to sync URL for Alembic
     async_url = list(db_urls.values())[0]

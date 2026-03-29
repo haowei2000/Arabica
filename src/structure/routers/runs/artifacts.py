@@ -7,7 +7,7 @@ from fastapi.responses import Response
 
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import WorkspaceCRUDDep
-from structure.extensions.database import get_aiwen_db
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.runs.artifact import ArtifactListResponse, ArtifactResponse
 from structure.services.runs.artifact_crud import ArtifactCRUD
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/artifacts", tags=["artifac
 
 
 async def get_artifact_crud(
-    db: Annotated[AsyncSession, Depends(get_aiwen_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> ArtifactCRUD:
     return ArtifactCRUD(db)
 

@@ -30,7 +30,7 @@ FastAPI 官方推荐使用依赖注入而不是全局中间件，因为：
 
 ## 认证依赖
 
-所有认证依赖都在 `aiwen/dependencies/auth.py` 中定义：
+所有认证依赖都在 `structure/dependencies/auth.py` 中定义：
 
 ### 1. `get_current_user`
 
@@ -346,7 +346,7 @@ A:
 - Access Token: 30 分钟
 - Refresh Token: 7 天
 
-可以在 `aiwen/services/auth/token_service.py` 中修改。
+可以在 `structure/services/auth/token_service.py` 中修改。
 
 ### Q: 如何在 Swagger UI 中测试认证？
 
@@ -398,12 +398,12 @@ nl2sql 相关的 API 端点被明确设计为公开 API，不需要认证。这�
 
 ## 相关文件
 
-- `src/aiwen/dependencies/auth.py` - 认证依赖定义
-- `src/aiwen/routers/auth.py` - 认证相关路由（登录、注册等）
-- `src/aiwen/routers/test_auth.py` - 认证功能测试路由
-- `src/aiwen/routers/user_examples.py` - 使用示例路由
-- `src/aiwen/services/auth/token_service.py` - Token 服务
-- `src/aiwen/utils/jwt_utils.py` - JWT 工具函数
+- `src/structure/dependencies/auth.py` - 认证依赖定义
+- `src/structure/routers/auth.py` - 认证相关路由（登录、注册等）
+- `src/structure/routers/test_auth.py` - 认证功能测试路由
+- `src/structure/routers/user_examples.py` - 使用示例路由
+- `src/structure/services/auth/token_service.py` - Token 服务
+- `src/structure/utils/jwt_utils.py` - JWT 工具函数
 
 ## 迁移说明
 

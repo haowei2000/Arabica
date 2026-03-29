@@ -17,6 +17,7 @@ from structure.config.factory import get_settings
 from structure.models.events.event import Event
 from structure.models.runs.run import Run
 from structure.schemas.events.event_payloads import EventType
+from structure.services.events.event_codec import RE_CODE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
@@ -320,8 +321,7 @@ class EventPublisher:
 
         Streams written:
           - run:{id}:events       – SSE clients subscribed to this run
-          - workspace:{id}:events – SSE clients subscribed to the workspace
-          - executor stream       – worker consumers (actionable events only)
+          - workspace:{id}:events – SSE clients subscribed to the workspace / worker consumers
         """
         if not self.redis:
             return
@@ -332,16 +332,14 @@ class EventPublisher:
                     run_stream = f"{REDIS_RUN_LABEL}:{event.run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
                     pipe.xadd(run_stream, fields, maxlen=1000, approximate=True)
 
-                workspace_stream = f"{REDIS_WORKSPACE_LABEL}:{event.workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                workspace_id = str(event.workspace_id)
+                # Primary stream for both SSE and worker consumers
+                workspace_stream = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
                 pipe.xadd(workspace_stream, fields, maxlen=10000, approximate=True)
-
-                # Actionable events that workers must consume and act on.
-                if event.event_type in _EXECUTOR_STREAM_TYPES and event.run_id:
-                    pipe.xadd(REDIS_EXECUTOR_LABEL, fields, maxlen=10000, approximate=True)
 
                 await pipe.execute()
 
-            logger.debug(f"Broadcast event {event.event_type} run={event.run_id}")
+            logger.debug(f"Broadcast event {event.event_type} workspace={workspace_id} run={event.run_id}")
         except Exception as e:
             logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")
             # Don't fail the whole publication if Redis broadcast fails

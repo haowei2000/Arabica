@@ -24,9 +24,9 @@ Workspace Level
 ## 1. Skill 生命周期
 
 **相关文件：**
-- Model: `src/aiwen/models/context/skill.py`
-- CRUD: `src/aiwen/services/context/skill_crud.py`
-- Router: `src/aiwen/routers/context/skills.py`
+- Model: `src/structure/models/context/skill.py`
+- CRUD: `src/structure/services/context/skill_crud.py`
+- Router: `src/structure/routers/context/skills.py`
 
 **字段：** `id, user_id, name, description, content, glance, summary, path, source_id, tags, meta, files, created_at, updated_at`
 
@@ -60,11 +60,11 @@ ContextCRUD.create(type=SKILL)      ← 同步到 context 表（含向量嵌入�
 ## 2. Knowledge 生命周期
 
 **相关文件：**
-- Model: `src/aiwen/models/context/knowledge/knowledge.py`
-- CRUD: `src/aiwen/services/context/knowledge/knowledge_crud.py`
-- Document CRUD: `src/aiwen/services/context/knowledge/document_crud.py`
-- Chunker: `src/aiwen/services/context/knowledge/chunker.py`
-- Embeddings: `src/aiwen/services/context/knowledge/embeddings.py`
+- Model: `src/structure/models/context/knowledge/knowledge.py`
+- CRUD: `src/structure/services/context/knowledge/knowledge_crud.py`
+- Document CRUD: `src/structure/services/context/knowledge/document_crud.py`
+- Chunker: `src/structure/services/context/knowledge/chunker.py`
+- Embeddings: `src/structure/services/context/knowledge/embeddings.py`
 
 **实体关系：** `Knowledge` → `Document` → `Chunk`（层级关系）
 
@@ -118,10 +118,10 @@ Knowledge 计数更新 (document_count, chunk_count)
 ## 3. Tool 生命周期
 
 **相关文件：**
-- Model: `src/aiwen/models/context/tools/tool.py`
-- CRUD: `src/aiwen/services/context/tools/tool_crud.py`
-- Bundle CRUD: `src/aiwen/services/context/tools/tool_bundle_crud.py`
-- Inner tools: `src/aiwen/plugins/tools/`
+- Model: `src/structure/models/context/tools/tool.py`
+- CRUD: `src/structure/services/context/tools/tool_crud.py`
+- Bundle CRUD: `src/structure/services/context/tools/tool_bundle_crud.py`
+- Inner tools: `src/structure/plugins/tools/`
 
 ### 3a. Inner Tool（系统内置）
 
@@ -192,8 +192,8 @@ ToolBundleCRUD.create()             ← PostgreSQL: tool_bundle + tool_bundle_it
 ### 4a. Global Context（全局持久化 + 向量检索）
 
 **相关文件：**
-- Model: `src/aiwen/models/context/context.py`
-- CRUD: `src/aiwen/services/context/context_crud.py`
+- Model: `src/structure/models/context/context.py`
+- CRUD: `src/structure/services/context/context_crud.py`
 
 **Context Type 枚举：**
 `CHUNK` / `CONVERSATION` / `MESSAGE` / `SHORT_MEMORY` / `SKILL` / `TOOL` / `KNOWLEDGE`
@@ -223,9 +223,9 @@ ToolBundleCRUD.create()             ← PostgreSQL: tool_bundle + tool_bundle_it
 ### 4b. WorkspaceContext（工作区运行时内存）
 
 **相关文件：**
-- Model: `src/aiwen/models/context/workspace_context.py`
-- Service: `src/aiwen/services/workspace_context/workspace_context_service.py`
-- Framework: `src/aiwen/frameworks/context/layer.py`（ContextStore）
+- Model: `src/structure/models/context/workspace_context.py`
+- Service: `src/structure/services/workspace_context/workspace_context_service.py`
+- Framework: `src/structure/frameworks/context/layer.py`（ContextStore）
 
 **双层存储架构：**
 ```
@@ -296,8 +296,8 @@ service.delete(path, recursive=False/True)
 ## 5. Trigger 生命周期
 
 **相关文件：**
-- Model: `src/aiwen/models/workspaces/workspace_trigger.py`
-- Processor: `src/aiwen/services/triggers/trigger_processor.py`
+- Model: `src/structure/models/workspaces/workspace_trigger.py`
+- Processor: `src/structure/services/triggers/trigger_processor.py`
 
 **字段：** `id, workspace_id, user_id, name, event_type, condition_type, condition_value, condition_field, tool_name, action_params, priority, enabled`
 

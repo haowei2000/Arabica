@@ -518,7 +518,7 @@ async def update_task_status(task_id: UUID, new_status: str, user_id: UUID):
 
 ## Related Files
 
-- **Event Types**: `src/aiwen/core/enums/events.py`
-- **Event Worker**: `src/aiwen/services/events/event_worker.py`
-- **Event Publisher**: `src/aiwen/services/events/event_publisher.py`
-- **Executor Base**: `src/aiwen/core/interfaces/executor.py`
+- **Event Types**: `src/structure/core/enums/events.py`
+- **Event Worker**: `src/structure/services/events/event_worker.py`
+- **Event Publisher**: `src/structure/services/events/event_publisher.py`
+- **Executor Base**: `src/structure/core/interfaces/executor.py`

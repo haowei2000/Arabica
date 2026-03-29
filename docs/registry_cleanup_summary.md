@@ -9,9 +9,9 @@ Successfully merged the split registry structure into a unified, cohesive system
 ### Deleted Files (41 KB total)
 
 ```
-❌ src/aiwen/registries/base.py              (11 KB) - Abstract BaseRegistry class
-❌ src/aiwen/registries/tool_registry.py     (13 KB) - ToolRegistry concrete implementation
-❌ src/aiwen/registries/executor_registry.py (17 KB) - ExecutorRegistry concrete implementation
+❌ src/structure/registries/base.py              (11 KB) - Abstract BaseRegistry class
+❌ src/structure/registries/tool_registry.py     (13 KB) - ToolRegistry concrete implementation
+❌ src/structure/registries/executor_registry.py (17 KB) - ExecutorRegistry concrete implementation
 ```
 
 **Reason:** All functionality merged into `core.py` with better organization
@@ -21,11 +21,11 @@ Successfully merged the split registry structure into a unified, cohesive system
 ### Active Files (40 KB total)
 
 ```
-✅ src/aiwen/registries/__init__.py          (1.6 KB) - Public API exports
-✅ src/aiwen/registries/core.py              (27 KB)  - Unified registry (all-in-one)
-✅ src/aiwen/registries/manager.py           (6 KB)   - Registry coordinator
-✅ src/aiwen/registries/README.md            (13 KB)  - Documentation
-✅ src/aiwen/registries/examples/
+✅ src/structure/registries/__init__.py          (1.6 KB) - Public API exports
+✅ src/structure/registries/core.py              (27 KB)  - Unified registry (all-in-one)
+✅ src/structure/registries/manager.py           (6 KB)   - Registry coordinator
+✅ src/structure/registries/README.md            (13 KB)  - Documentation
+✅ src/structure/registries/examples/
    └── model_registry_example.py            (8.6 KB) - Extension example
 ```
 

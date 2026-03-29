@@ -453,10 +453,10 @@ for ctx in contexts:
 
 ```bash
 # Test model imports
-uv run python -c "from aiwen.models.context import Context, WorkspaceContext; print('✓ Models OK')"
+uv run python -c "from structure.models.context import Context, WorkspaceContext; print('✓ Models OK')"
 
 # Test schema imports
-uv run python -c "from aiwen.schemas.context import ContextCreate; print('✓ Schemas OK')"
+uv run python -c "from structure.schemas.context import ContextCreate; print('✓ Schemas OK')"
 
 # Run migration
 uv run alembic upgrade head

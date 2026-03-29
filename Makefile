@@ -24,13 +24,13 @@ help: ## 显示帮助信息
 # ============================================================================
 
 docker-build: ## Build Docker image (backend)
-	cd docker && docker build -f Dockerfile -t aiwen:latest ..
+	cd docker && docker build -f Dockerfile -t structure-service:latest ..
 
 docker-build-frontend: ## Build Docker image (frontend)
-	cd docker && docker build -f Dockerfile.frontend -t aiwen-frontend:latest ..
+	cd docker && docker build -f Dockerfile.frontend -t structure-frontend:latest ..
 
 docker-build-context-service: ## Build Docker image (context-service)
-	cd docker && docker build -f Dockerfile.context-service -t aiwen-context-service:latest ..
+	cd docker && docker build -f Dockerfile.context-service -t structure-context-service:latest ..
 
 docker-build-all: ## Build all Docker images (backend + frontend + context-service)
 	$(MAKE) docker-build
@@ -40,8 +40,17 @@ docker-build-all: ## Build all Docker images (backend + frontend + context-servi
 docker-up: ## Start all containers (infra + app + celery worker)
 	cd docker && docker compose --env-file .env --profile infra --profile app --profile celery up -d
 
-docker-up-infra: ## Start infrastructure only (postgres, redis, etc.)
+docker-up-infra: ## Start infrastructure only (postgres, redis, rustfs, context-service)
 	cd docker && docker compose --env-file .env --profile infra up -d
+
+dev-infra: docker-up-infra ## Start infra in docker, run migrations, and prepare for local development
+	@echo "$(BLUE)等待数据库就绪...$(NC)"
+	@sleep 3
+	$(MAKE) db-upgrade
+	@echo "$(GREEN)基础设施已就绪。现在你可以运行 'make start-api', 'make start-worker', 'make start-frontend' 等命令进行本地开发。$(NC)"
+
+dev-local: dev-infra ## Start infra in docker and then start all other services locally
+	$(MAKE) start-all
 
 docker-down: ## Stop all containers
 	cd docker && docker compose --env-file .env --profile all down
@@ -110,19 +119,19 @@ db-status: ## 显示迁移状态
 # ============================================================================
 
 start-api: ## 启动 API 服务 (端口 8000)
-	cd src && uv run aiwen-api
+	cd src && uv run structure-api
 
 start-worker: ## 启动 Worker 服务
-	cd src && uv run aiwen-worker
+	cd src && uv run structure-worker
 
 start-celery: ## 启动 Celery Worker
-	cd src && uv run aiwen-celery worker --concurrency=4 --loglevel=info
+	cd src && uv run structure-celery worker --concurrency=4 --loglevel=info
 
 start-celery-beat: ## 启动 Celery Beat 调度器
-	cd src && uv run aiwen-celery beat --loglevel=info
+	cd src && uv run structure-celery beat --loglevel=info
 
 start-mcp: ## 启动 MCP 服务 (端口 9000)
-	cd src && uv run aiwen-mcp
+	cd src && uv run structure-mcp
 
 start-frontend: ## 启动前端开发服务器
 	cd frontend && npm run dev
@@ -134,19 +143,19 @@ start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
 	@# 先运行数据库迁移
 	uv run alembic upgrade head
 	@# 启动后端服务
-	cd src && uv run aiwen-api & \
-	cd src && uv run aiwen-worker & \
-	cd src && uv run aiwen-celery worker --concurrency=4 --loglevel=info & \
+	cd src && uv run structure-api & \
+	cd src && uv run structure-worker & \
+	cd src && uv run structure-celery worker --concurrency=4 --loglevel=info & \
 	cd frontend && npm run dev & \
 	wait
 
 resync-tools: ## 重新同步所有工具到 Context/WorkspaceContext 表
-	cd src && uv run python -c "from aiwen.celery_worker.tasks.context_sync_tasks import resync_all_tools_to_contexts; resync_all_tools_to_contexts()"
+	cd src && uv run python -c "from structure.celery_worker.tasks.context_sync_tasks import resync_all_tools_to_contexts; resync_all_tools_to_contexts()"
 
 stop-all: ## 停止所有本地服务
 	@echo "$(YELLOW)停止所有服务...$(NC)"
-	@-pkill -f "aiwen-api" 2>/dev/null || true
-	@-pkill -f "aiwen-worker" 2>/dev/null || true
-	@-pkill -f "aiwen-celery" 2>/dev/null || true
+	@-pkill -f "structure-api" 2>/dev/null || true
+	@-pkill -f "structure-worker" 2>/dev/null || true
+	@-pkill -f "structure-celery" 2>/dev/null || true
 	@-pkill -f "vite" 2>/dev/null || true
 	@echo "$(GREEN)所有服务已停止$(NC)"

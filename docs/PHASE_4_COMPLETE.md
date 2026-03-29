@@ -21,16 +21,16 @@ Successfully completed the final cleanup phase of the registry system migration:
 ### 1. Old Registry Files Removed ✅
 
 **Deleted:**
-- `src/aiwen/services/tools/tool_registry.py` (371 lines)
-- `src/aiwen/services/executor/executor_registry.py` (372 lines)
+- `src/structure/services/tools/tool_registry.py` (371 lines)
+- `src/structure/services/executor/executor_registry.py` (372 lines)
 
 **Total code removed:** ~743 lines
 
 **Verification:**
 ```bash
 # No code references remain (except deprecated examples in README)
-grep -r "from aiwen.services.tools.tool_registry" src --include="*.py"
-grep -r "from aiwen.services.executor.executor_registry" src --include="*.py"
+grep -r "from structure.services.tools.tool_registry" src --include="*.py"
+grep -r "from structure.services.executor.executor_registry" src --include="*.py"
 # Result: Only README.md (documentation)
 ```
 
@@ -41,15 +41,15 @@ grep -r "from aiwen.services.executor.executor_registry" src --include="*.py"
 - `bootstrap_v2.py` → `bootstrap.py` (promoted unified version)
 
 **Files updated (5):**
-1. ✅ `src/aiwen/core/lifespan.py` - API service
-2. ✅ `src/aiwen/worker_cli.py` - Worker service
-3. ✅ `src/aiwen/mcp_cli.py` - MCP service
-4. ✅ `src/aiwen/celery_worker/celery_app.py` - Celery service (2 imports)
-5. ✅ `src/aiwen/migrations/env.py` - Alembic
+1. ✅ `src/structure/core/lifespan.py` - API service
+2. ✅ `src/structure/worker_cli.py` - Worker service
+3. ✅ `src/structure/mcp_cli.py` - MCP service
+4. ✅ `src/structure/celery_worker/celery_app.py` - Celery service (2 imports)
+5. ✅ `src/structure/migrations/env.py` - Alembic
 
 **Import changes:**
-- **Before:** `from aiwen.core.bootstrap_v2 import ...`
-- **After:** `from aiwen.core.bootstrap import ...`
+- **Before:** `from structure.core.bootstrap_v2 import ...`
+- **After:** `from structure.core.bootstrap import ...`
 
 ### 3. Verification Results ✅
 
@@ -57,13 +57,13 @@ All tests passed:
 
 #### Import Tests
 ```bash
-uv run python -c "from aiwen.registries import ToolRegistry, ExecutorRegistry, RegistryManager, register_tool, register_executor; from aiwen.core.bootstrap import bootstrap_api, bootstrap_worker, bootstrap_mcp, bootstrap_celery, bootstrap_alembic; print('All imports successful')"
+uv run python -c "from structure.registries import ToolRegistry, ExecutorRegistry, RegistryManager, register_tool, register_executor; from structure.core.bootstrap import bootstrap_api, bootstrap_worker, bootstrap_mcp, bootstrap_celery, bootstrap_alembic; print('All imports successful')"
 # Result: All imports successful ✓
 ```
 
 #### Bootstrap Initialization
 ```bash
-uv run python -c "import asyncio; from aiwen.core.bootstrap import bootstrap_api; bootstrap = asyncio.run(bootstrap_api())"
+uv run python -c "import asyncio; from structure.core.bootstrap import bootstrap_api; bootstrap = asyncio.run(bootstrap_api())"
 # Result: Bootstrap successful ✓
 # Output shows:
 #   📦 Initializing centralized registry system...
@@ -113,7 +113,7 @@ uv run alembic current
 
 #### Before (Old System):
 ```
-src/aiwen/
+src/structure/
 ├── services/
 │   ├── tools/
 │   │   └── tool_registry.py (scattered, 371 lines)
@@ -125,7 +125,7 @@ src/aiwen/
 
 #### After (New System):
 ```
-src/aiwen/
+src/structure/
 ├── registries/
 │   ├── __init__.py (public API)
 │   ├── core.py (unified ToolRegistry + ExecutorRegistry, 800 lines)
@@ -140,7 +140,7 @@ src/aiwen/
 - ✅ Centralized registry architecture
 - ✅ Single initialization flow
 - ✅ Unified management via RegistryManager
-- ✅ Consistent import patterns: `from aiwen.registries import ...`
+- ✅ Consistent import patterns: `from structure.registries import ...`
 - ✅ Better separation of concerns
 - ✅ Easier to extend with new registry types
 
@@ -154,7 +154,7 @@ src/aiwen/
 - Updated `bootstrap_v2.py` to use new discovery
 
 ### Phase 2: Updated All Imports ✅
-- 13 files migrated from old imports to `aiwen.registries`
+- 13 files migrated from old imports to `structure.registries`
 - 7 Tool Registry imports updated
 - 6 Executor Registry imports updated
 - Replaced `init_executor_registry()` with `discover_and_import_executors()`
@@ -197,7 +197,7 @@ src/aiwen/
 
 2. **Update CLAUDE.md documentation**
    - Document the new registry system architecture
-   - Add examples of using `from aiwen.registries import ...`
+   - Add examples of using `from structure.registries import ...`
 
 3. **Remove bootstrap_v1_deprecated.py** (after 1-2 releases)
    - Currently archived for reference
@@ -237,7 +237,7 @@ However, with successful verification of all services, rollback should not be ne
 The registry system migration is **100% complete**. The codebase now uses a clean, unified registry architecture with:
 
 - **Centralized management** through `RegistryManager`
-- **Consistent imports** via `from aiwen.registries import ...`
+- **Consistent imports** via `from structure.registries import ...`
 - **Unified bootstrap** with single initialization flow
 - **Better maintainability** with fewer, more focused files
 - **Full backward compatibility** - no breaking changes

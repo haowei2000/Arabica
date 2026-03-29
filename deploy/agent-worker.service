@@ -1,15 +1,15 @@
 [Unit]
-Description=AIWen Agent Worker
+Description=Structure Agent Worker
 After=network.target postgresql.service redis.service
 
 [Service]
 Type=simple
-User=aiwen
-Group=aiwen
-WorkingDirectory=/opt/aiwen
-Environment=PYTHONPATH=/opt/aiwen
-Environment=ENV_FILE=/opt/aiwen/.env
-ExecStart=/opt/aiwen/.venv/bin/python -m src.aiwen.workers
+User=structure
+Group=structure
+WorkingDirectory=/opt/structure
+Environment=PYTHONPATH=/opt/structure
+Environment=ENV_FILE=/opt/structure/.env
+ExecStart=/opt/structure/.venv/bin/python -m src.structure.workers
 Restart=always
 RestartSec=10
 StandardOutput=journal

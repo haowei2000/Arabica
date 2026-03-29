@@ -13,15 +13,15 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 }
 
 Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "  配置 Aiwen 防火墙规则" -ForegroundColor Cyan
+Write-Host "  配置 Structure 防火墙规则" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # 定义规则
 $rules = @(
-    @{Name="Aiwen API"; Port=8000; Description="允许访问 Aiwen API 服务"},
-    @{Name="Aiwen Frontend"; Port=3000; Description="允许访问 Aiwen 前端"},
-    @{Name="Aiwen Nginx"; Port=80; Description="允许访问 Aiwen Nginx 代理"}
+    @{Name="Structure API"; Port=8000; Description="允许访问 Structure API 服务"},
+    @{Name="Structure Frontend"; Port=3000; Description="允许访问 Structure 前端"},
+    @{Name="Structure Nginx"; Port=80; Description="允许访问 Structure Nginx 代理"}
 )
 
 # 创建或更新规则

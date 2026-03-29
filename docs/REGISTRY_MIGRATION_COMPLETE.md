@@ -24,7 +24,7 @@ Successfully migrated the codebase from the old scattered registry system to the
 ### Verification:
 ```bash
 # All imports work correctly
-uv run python -c "from aiwen.registries import ToolRegistry, ExecutorRegistry, RegistryManager; print('✓ Imports work')"
+uv run python -c "from structure.registries import ToolRegistry, ExecutorRegistry, RegistryManager; print('✓ Imports work')"
 
 # Bootstrap initializes without errors
 uv run python test_phase1.py
@@ -39,38 +39,38 @@ uv run python test_phase1.py
 **Files Modified:** 13 (7 Tool Registry + 6 Executor Registry)
 
 ### Tool Registry Imports (7 files):
-1. ✅ `src/aiwen/routers/tools/user_tools.py`
-2. ✅ `src/aiwen/services/tools/dynamic_tool_loader.py`
-3. ✅ `src/aiwen/services/tools/base_tool.py`
-4. ✅ `src/aiwen/services/tools/examples/example_tools.py`
-5. ✅ `src/aiwen/services/executor/executor_template/default/concrete.py`
-6. ✅ `src/aiwen/schemas/tools/tool_template.py`
-7. ✅ `src/aiwen/registries/README.md` (documentation)
+1. ✅ `src/structure/routers/tools/user_tools.py`
+2. ✅ `src/structure/services/tools/dynamic_tool_loader.py`
+3. ✅ `src/structure/services/tools/base_tool.py`
+4. ✅ `src/structure/services/tools/examples/example_tools.py`
+5. ✅ `src/structure/services/executor/executor_template/default/concrete.py`
+6. ✅ `src/structure/schemas/tools/tool_template.py`
+7. ✅ `src/structure/registries/README.md` (documentation)
 
 ### Executor Registry Imports (6 files):
-1. ✅ `src/aiwen/services/executor/executor_template/conflict/concrete.py`
-2. ✅ `src/aiwen/services/events/event_worker.py`
-3. ✅ `src/aiwen/services/executor/app_factory.py`
+1. ✅ `src/structure/services/executor/executor_template/conflict/concrete.py`
+2. ✅ `src/structure/services/events/event_worker.py`
+3. ✅ `src/structure/services/executor/app_factory.py`
 4. ✅ `src/scripts/test_agent_registry.py`
 5. ✅ `src/scripts/run_agent_worker.py`
-6. ✅ `src/aiwen/core/bootstrap.py` (old bootstrap - will be deprecated in Phase 4)
+6. ✅ `src/structure/core/bootstrap.py` (old bootstrap - will be deprecated in Phase 4)
 
 ### Changes Made:
-- **Old:** `from aiwen.services.tools.tool_registry import ToolRegistry`
-- **New:** `from aiwen.registries import ToolRegistry`
+- **Old:** `from structure.services.tools.tool_registry import ToolRegistry`
+- **New:** `from structure.registries import ToolRegistry`
 
-- **Old:** `from aiwen.services.executor.executor_registry import ExecutorRegistry, init_executor_registry`
-- **New:** `from aiwen.registries import ExecutorRegistry`
+- **Old:** `from structure.services.executor.executor_registry import ExecutorRegistry, init_executor_registry`
+- **New:** `from structure.registries import ExecutorRegistry`
 
 - **Replaced:** `init_executor_registry()` → `ExecutorRegistry.discover_and_import_executors()`
 
 ### Verification:
 ```bash
 # No old imports remain (except in README documentation)
-grep -r "from aiwen.services.tools.tool_registry import" src/structure --include="*.py"
+grep -r "from structure.services.tools.tool_registry import" src/structure --include="*.py"
 # Result: Only README.md (marked as deprecated)
 
-grep -r "from aiwen.services.executor.executor_registry import" src/structure --include="*.py"
+grep -r "from structure.services.executor.executor_registry import" src/structure --include="*.py"
 # Result: Only README.md (marked as deprecated)
 ```
 
@@ -82,23 +82,23 @@ grep -r "from aiwen.services.executor.executor_registry import" src/structure --
 **Files Modified:** 5 (all entry points)
 
 ### Service Migration:
-1. ✅ **Alembic** (`src/aiwen/migrations/env.py`)
+1. ✅ **Alembic** (`src/structure/migrations/env.py`)
    - **Risk:** Lowest - only used for migrations
    - **Test:** `uv run alembic current` → Success
 
-2. ✅ **MCP** (`src/aiwen/mcp_cli.py`)
+2. ✅ **MCP** (`src/structure/mcp_cli.py`)
    - **Risk:** Low - external service integration
    - **Change:** Import `bootstrap_mcp` from `bootstrap_v2`
 
-3. ✅ **Celery** (`src/aiwen/celery_worker/celery_app.py`)
+3. ✅ **Celery** (`src/structure/celery_worker/celery_app.py`)
    - **Risk:** Low - background job processing
    - **Change:** Import `bootstrap_celery` from `bootstrap_v2`
 
-4. ✅ **Worker** (`src/aiwen/worker_cli.py`)
+4. ✅ **Worker** (`src/structure/worker_cli.py`)
    - **Risk:** Medium - critical for agent execution
    - **Change:** Import `bootstrap_worker` from `bootstrap_v2`
 
-5. ✅ **API** (`src/aiwen/core/lifespan.py`)
+5. ✅ **API** (`src/structure/core/lifespan.py`)
    - **Risk:** Highest - user-facing service
    - **Change:** Import `bootstrap_api` from `bootstrap_v2`
    - **Test:** Bootstrap initializes successfully with new registry system
@@ -106,10 +106,10 @@ grep -r "from aiwen.services.executor.executor_registry import" src/structure --
 ### Verification:
 All services now use `bootstrap_v2`:
 ```bash
-grep -r "from aiwen.core.bootstrap import" src/structure --include="*.py"
+grep -r "from structure.core.bootstrap import" src/structure --include="*.py"
 # Result: No matches (all migrated to bootstrap_v2)
 
-grep -r "from aiwen.core.bootstrap_v2 import" src/structure --include="*.py"
+grep -r "from structure.core.bootstrap_v2 import" src/structure --include="*.py"
 # Result: 5 files (lifespan.py, worker_cli.py, celery_app.py, mcp_cli.py, env.py)
 ```
 
@@ -154,7 +154,7 @@ grep -r "from aiwen.core.bootstrap_v2 import" src/structure --include="*.py"
 1. **Rename bootstrap_v2.py → bootstrap.py**
    - Archive old `bootstrap.py` as `bootstrap_v1_deprecated.py`
    - Promote `bootstrap_v2.py` to canonical `bootstrap.py`
-   - Update all imports back to `from aiwen.core.bootstrap import`
+   - Update all imports back to `from structure.core.bootstrap import`
 
 2. **Remove Old Registry Files**
    - Delete `services/tools/tool_registry.py`
@@ -210,16 +210,16 @@ git checkout HEAD~1 -- src/structure/worker_cli.py     # Revert Worker
 ## Key Files Modified
 
 ### Core Registry System:
-- `src/aiwen/registries/manager.py` - Fixed import
-- `src/aiwen/registries/core.py` - Added discovery method
-- `src/aiwen/core/bootstrap_v2.py` - Updated imports
+- `src/structure/registries/manager.py` - Fixed import
+- `src/structure/registries/core.py` - Added discovery method
+- `src/structure/core/bootstrap_v2.py` - Updated imports
 
 ### Service Entry Points:
-- `src/aiwen/core/lifespan.py` - API service
-- `src/aiwen/worker_cli.py` - Worker service
-- `src/aiwen/mcp_cli.py` - MCP service
-- `src/aiwen/celery_worker/celery_app.py` - Celery service
-- `src/aiwen/migrations/env.py` - Alembic migrations
+- `src/structure/core/lifespan.py` - API service
+- `src/structure/worker_cli.py` - Worker service
+- `src/structure/mcp_cli.py` - MCP service
+- `src/structure/celery_worker/celery_app.py` - Celery service
+- `src/structure/migrations/env.py` - Alembic migrations
 
 ### Import Updates (13 files):
 - Routes, services, schemas, executors, scripts

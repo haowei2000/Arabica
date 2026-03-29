@@ -83,8 +83,8 @@ const toggleTag = (tag: string) => {
 ## 文件修改清单
 
 ### 后端
-- ✅ `src/aiwen/services/context/tools/tool_crud.py` - 添加tags参数
-- ✅ `src/aiwen/routers/context/tools/tools.py` - 添加tags查询参数
+- ✅ `src/structure/services/context/tools/tool_crud.py` - 添加tags参数
+- ✅ `src/structure/routers/context/tools/tools.py` - 添加tags查询参数
 
 ### 前端
 - ✅ `frontend/src/services/toolService.ts` - 添加tags类型定义
