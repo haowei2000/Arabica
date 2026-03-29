@@ -30,6 +30,41 @@ import { useArtifacts } from '@/hooks/useArtifacts';
 import { artifactService, type Artifact } from '@/services/artifactService';
 import { useQueryClient } from '@tanstack/react-query';
 
+import remarkGfm from 'remark-gfm';
+
+// ─── Polished Markdown Component ──────────────────────────────────────────
+
+function Markdown({ content }: { content: string }) {
+  return (
+    <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/50 prose-code:text-primary prose-code:bg-primary/5 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-img:rounded-xl prose-img:border prose-img:border-border/50 prose-img:shadow-sm">
+      <ReactMarkdown 
+        remarkPlugins={[remarkGfm]}
+        components={{
+          img: ({ ...props }) => (
+            <span className="block my-3">
+              <img {...props} className="max-w-full h-auto rounded-lg border border-border/40 shadow-sm hover:shadow-md transition-shadow duration-200" loading="lazy" />
+              {props.alt && <span className="block text-center text-[10px] text-muted-foreground mt-1.5 font-medium">{props.alt}</span>}
+            </span>
+          ),
+          a: ({ ...props }) => (
+            <a {...props} className="text-primary hover:underline font-medium" target="_blank" rel="noopener noreferrer" />
+          ),
+          table: ({ ...props }) => (
+            <div className="my-4 w-full overflow-x-auto rounded-xl border border-border/60 bg-card/30">
+              <table {...props} className="w-full border-collapse text-xs" />
+            </div>
+          ),
+          thead: ({ ...props }) => <thead {...props} className="bg-muted/50 border-b border-border/60" />,
+          th: ({ ...props }) => <th {...props} className="px-3 py-2 text-left font-semibold text-foreground/80" />,
+          td: ({ ...props }) => <td {...props} className="px-3 py-1.5 border-t border-border/40" />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 // ─── Run timeline helpers ──────────────────────────────────────────────────
 
 // Keyframe for the running-event sweep animation (injected once)
@@ -351,9 +386,13 @@ function RunEventRow({
 function RunTimelineItem({
   run,
   latestSseEvent,
+  isActive,
+  onSelect,
 }: {
   run: Run;
   latestSseEvent: Event | undefined;
+  isActive: boolean;
+  onSelect: (runId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -382,36 +421,48 @@ function RunTimelineItem({
 
   return (
     <div className={cn(
-      'group relative rounded-lg border transition-colors',
-      'border-border bg-card hover:bg-muted/30',
+      'group relative rounded-lg border transition-all duration-200',
+      isActive 
+        ? 'border-primary/50 bg-primary/5 shadow-sm' 
+        : 'border-border bg-card hover:bg-muted/30 hover:border-border/80',
     )}>
-      <div
-        className="flex items-center gap-2 px-2.5 py-2 cursor-pointer select-none transition-colors"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span className={cn('size-1.5 rounded-full shrink-0', dotCls)} />
-        <span className="text-xs truncate flex-1 min-w-0 text-foreground/75">
-          {title}
-        </span>
-        {isRunning && validPreview && (
-          <span className="text-[10px] text-yellow-400/80 truncate max-w-20 shrink-0 hidden sm:block">
-            {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
+      <div className="flex items-center gap-1 px-1">
+        <div
+          className="flex-1 flex items-center gap-2 px-1.5 py-2 cursor-pointer select-none min-w-0"
+          onClick={() => onSelect(run.id)}
+        >
+          <span className={cn('size-1.5 rounded-full shrink-0', dotCls)} />
+          <span className={cn(
+            'text-xs truncate flex-1 min-w-0',
+            isActive ? 'font-semibold text-foreground' : 'text-foreground/75'
+          )}>
+            {title}
           </span>
-        )}
-        {!isRunning && ((run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
-          <span className="text-[9px] text-sky-400/60 shrink-0 tabular-nums font-mono hidden sm:block">
-            ↑{run.input_tokens ?? 0} ↓{run.output_tokens ?? 0}
+          {isRunning && validPreview && (
+            <span className="text-[10px] text-yellow-400/80 truncate max-w-20 shrink-0 hidden sm:block">
+              {EVENT_LABEL[previewEvent.event_type] ?? previewEvent.event_type}
+            </span>
+          )}
+          {!isRunning && ((run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
+            <span className="text-[9px] text-sky-400/60 shrink-0 tabular-nums font-mono hidden sm:block">
+              ↑{run.input_tokens ?? 0} ↓{run.output_tokens ?? 0}
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums">
+            {formatRelativeTime(run.created_at)}
           </span>
-        )}
-        <span className="text-[10px] text-muted-foreground/40 shrink-0 tabular-nums">
-          {formatRelativeTime(run.created_at)}
-        </span>
-        <span className={cn(
-          'shrink-0 transition-opacity text-muted-foreground/40',
-          expanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'
-        )}>
-          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        </span>
+        </div>
+        
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+          className={cn(
+            'size-7 flex items-center justify-center rounded-md transition-all shrink-0',
+            expanded ? 'text-primary' : 'text-muted-foreground/40 hover:text-foreground hover:bg-muted/60'
+          )}
+        >
+          {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        </button>
       </div>
 
       {/* Hover tooltip */}
@@ -506,6 +557,7 @@ export default function WorkspaceConsole() {
     pendingQueries,
     streamingInputTokens,
     streamingOutputTokens,
+    loadRun,
     startNewRun,
   } = useChatStore();
 
@@ -513,6 +565,17 @@ export default function WorkspaceConsole() {
     page: 1,
     page_size: 50,
   });
+
+  // Automatically load latest run history when entering workspace
+  useEffect(() => {
+    if (currentWorkspaceId && runsData?.items && runsData.items.length > 0 && !currentRunId && !isStreaming) {
+      // Find the most recent run (sorted by created_at desc in backend)
+      const latestRun = runsData.items[0];
+      if (latestRun) {
+        loadRun(latestRun.id);
+      }
+    }
+  }, [currentWorkspaceId, runsData?.items, currentRunId, isStreaming, loadRun]);
 
   const latestRunEvents = useRunEventsStore((s) => s.latestEvents);
 
@@ -538,7 +601,7 @@ export default function WorkspaceConsole() {
     setSModelName(wsModel?.name ?? '');
     setSModelProvider(wsModel?.provider ?? 'tongyi');
     setSGlobalEvent(wsConfig?.global_event !== undefined ? Boolean(wsConfig.global_event) : true);
-  }, [currentWorkspaceId, currentWorkspace?.executor_code, wsConfig?.global_event, wsModel?.name, wsModel?.provider]);
+  }, [currentWorkspaceId, currentWorkspace, wsConfig?.global_event, wsModel?.name, wsModel?.provider]);
 
   const handleSettingsSave = async () => {
     if (!currentWorkspaceId) return;
@@ -706,7 +769,7 @@ export default function WorkspaceConsole() {
               <div
                 key={message.id}
                 className={cn(
-                  'flex gap-3 animate-fade-in',
+                  'flex gap-3 animate-fade-in group/message',
                   message.role === MessageRole.USER ? 'justify-end' : 'justify-start'
                 )}
               >
@@ -717,11 +780,11 @@ export default function WorkspaceConsole() {
                 )}
 
                 {message.role === MessageRole.USER ? (
-                  <div className="max-w-2xl rounded-2xl rounded-br-md px-4 py-3 bg-primary text-primary-foreground shadow-sm">
-                    <p className="text-sm leading-relaxed">{message.content}</p>
+                  <div className="max-w-2xl rounded-2xl rounded-br-md px-4 py-2.5 bg-primary text-primary-foreground shadow-sm hover:shadow-md transition-shadow duration-200">
+                    <p className="text-[13px] sm:text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
                   </div>
                 ) : (
-                  <div className="max-w-2xl w-full space-y-2">
+                  <div className="max-w-2xl w-full space-y-2.5">
                     {message.thinkingContent && (
                       <ThinkingBlock content={message.thinkingContent} defaultCollapsed />
                     )}
@@ -736,14 +799,12 @@ export default function WorkspaceConsole() {
                       <PlanStepList steps={message.planSteps} />
                     )}
                     {message.content && (
-                      <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm">
-                        <div className="prose prose-sm dark:prose-invert max-w-none">
-                          <ReactMarkdown>{message.content}</ReactMarkdown>
-                        </div>
+                      <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm hover:shadow-md hover:border-border/80 transition-all duration-200">
+                        <Markdown content={message.content} />
                       </div>
                     )}
                     {(message.inputTokens || message.outputTokens) && (
-                      <div className="flex items-center gap-1.5 px-1">
+                      <div className="flex items-center gap-1.5 px-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
                         <span className="text-[10px] text-muted-foreground/40 tabular-nums font-mono">
                           ↑{message.inputTokens ?? 0} ↓{message.outputTokens ?? 0} tokens
                         </span>
@@ -753,8 +814,8 @@ export default function WorkspaceConsole() {
                 )}
 
                 {message.role === MessageRole.USER && (
-                  <div className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center text-secondary-foreground text-xs shrink-0 font-medium shadow-sm">
-                    You
+                  <div className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center text-secondary-foreground text-[10px] shrink-0 font-bold shadow-sm ring-1 ring-border/20">
+                    YOU
                   </div>
                 )}
               </div>
@@ -765,7 +826,7 @@ export default function WorkspaceConsole() {
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-sm shadow-primary-500/20">
                   <Bot className="size-4" />
                 </div>
-                <div className="max-w-2xl w-full space-y-2">
+                <div className="max-w-2xl w-full space-y-2.5">
                   {thinkingContent && <ThinkingBlock content={thinkingContent} />}
                   {activeToolCalls.length > 0 && (
                     <div className="space-y-1">
@@ -783,14 +844,16 @@ export default function WorkspaceConsole() {
                   ))}
                   {streamingMessage && (
                     <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm">
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <ReactMarkdown>{streamingMessage}</ReactMarkdown>
-                      </div>
+                      <Markdown content={streamingMessage} />
                     </div>
                   )}
                   <div className="flex items-center gap-2 text-muted-foreground px-1">
-                    <span className={cn('w-2 h-2 rounded-full animate-pulse', pendingApprovals.length > 0 ? 'bg-amber-500' : pendingQueries.length > 0 ? 'bg-indigo-500' : 'bg-primary')} />
-                    <span className="text-xs">
+                    <span className={cn('w-1.5 h-1.5 rounded-full animate-pulse', 
+                      pendingApprovals.length > 0 ? 'bg-amber-500' : 
+                      pendingQueries.length > 0 ? 'bg-indigo-500' : 
+                      'bg-primary')} 
+                    />
+                    <span className="text-[11px] font-medium tracking-wide uppercase opacity-70">
                       {pendingApprovals.length > 0
                         ? 'Waiting for your approval...'
                         : pendingQueries.length > 0
@@ -922,14 +985,13 @@ export default function WorkspaceConsole() {
               </div>
             ) : runsData?.items && runsData.items.length > 0 ? (
               <div className="space-y-1">
-                {[
-                  ...runsData.items.filter((r) => r.id === currentRunId),
-                  ...runsData.items.filter((r) => r.id !== currentRunId),
-                ].map((run) => (
+                {runsData.items.map((run) => (
                   <RunTimelineItem
                     key={run.id}
                     run={run}
                     latestSseEvent={latestRunEvents[run.id]}
+                    isActive={run.id === currentRunId}
+                    onSelect={(id) => loadRun(id)}
                   />
                 ))}
               </div>
@@ -1079,7 +1141,7 @@ export default function WorkspaceConsole() {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                 >
                   <option value="">— default —</option>
-                  {templates.map((t: any) => (
+                  {templates.map((t) => (
                     <option key={t.executor_code} value={t.executor_code}>
                       {t.executor_name || t.executor_code}
                     </option>
