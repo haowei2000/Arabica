@@ -160,6 +160,24 @@ export const API_ENDPOINTS = {
         DOWNLOAD: (workspaceId: string, artifactId: string) => `/workspaces/${workspaceId}/artifacts/${artifactId}/download`,
     },
 
+    // LLM Model Management
+    LLM_CHAT_MODELS: {
+        LIST: '/llm/chat-models',
+        CREATE: '/llm/chat-models',
+        GET: (id: string) => `/llm/chat-models/${id}`,
+        UPDATE: (id: string) => `/llm/chat-models/${id}`,
+        DELETE: (id: string) => `/llm/chat-models/${id}`,
+        SEARCH: '/llm/chat-models/search',
+    },
+    LLM_EMBEDDING_MODELS: {
+        LIST: '/llm/embedding-models',
+        CREATE: '/llm/embedding-models',
+        GET: (id: string) => `/llm/embedding-models/${id}`,
+        UPDATE: (id: string) => `/llm/embedding-models/${id}`,
+        DELETE: (id: string) => `/llm/embedding-models/${id}`,
+        SEARCH: '/llm/embedding-models/search',
+    },
+
     // Events 管理
     EVENTS: {
         GET: (id: string) => `/events/${id}`,
