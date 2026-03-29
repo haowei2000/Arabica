@@ -26,12 +26,15 @@ celery_app.conf.update(
     # Task discovery
     imports=[
         "structure.celery_worker.tasks.knowledge_tasks",
+        "structure.celery_worker.tasks.summarize_tasks",
+        "structure.celery_worker.tasks.background_tasks",
+        "structure.celery_worker.tasks.context_sync_tasks",
+        "structure.celery_worker.tasks.workspace_context_sync",
         "structure.celery_worker.tasks.context_sync.sync_knowledge",
         "structure.celery_worker.tasks.context_sync.sync_skill",
         "structure.celery_worker.tasks.context_sync.sync_tool",
         "structure.celery_worker.tasks.context_sync.sync_memory",
         "structure.celery_worker.tasks.context_sync.sync_run",
-        "structure.celery_worker.tasks.background_tasks",
     ],
 )
 

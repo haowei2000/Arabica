@@ -103,6 +103,7 @@ structure = "structure.service_manager:main"
 structure-api = "structure.api_cli:run"
 structure-mcp = "structure.mcp_cli:main"
 structure-worker = "structure.worker_cli:main_sync"
+structure-celery = "structure.celery_cli:main"
 # 工具
 sync-env = "scripts.sync_env:main"
 
