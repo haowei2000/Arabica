@@ -14,6 +14,8 @@ from structure.services.context.knowledge.knowledge_crud import KnowledgeCRUD
 from structure.services.context.skill_crud import SkillCRUD
 from structure.services.context.tools.tool_crud import ToolCRUD
 from structure.services.executor.executor_crud import ExecutorCRUD
+from structure.services.llm.chat_model_crud import ChatModelCRUD
+from structure.services.llm.embedding_model_crud import EmbeddingModelCRUD
 
 
 async def get_app_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]) -> AppCRUD:
@@ -105,3 +107,15 @@ async def get_skill_crud(
 
 async def get_redis_client_dep():
     return get_redis_client(is_async=True)
+
+
+async def get_chat_model_crud(
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+) -> ChatModelCRUD:
+    return ChatModelCRUD(db)
+
+
+async def get_embedding_model_crud(
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+) -> EmbeddingModelCRUD:
+    return EmbeddingModelCRUD(db)

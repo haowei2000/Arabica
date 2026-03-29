@@ -30,6 +30,8 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     # Unified tool management (inner + external tools + templates)
     from structure.routers.context.tools.tools import router as tools_router
     from structure.routers.context.tools.bundles import router as tool_bundles_router
+    from structure.routers.llm.chat_models import router as chat_models_router
+    from structure.routers.llm.embedding_models import router as embedding_models_router
 
     # Event and run routers
     from structure.routers.events.event_crud import router as event_crud_router
@@ -75,6 +77,9 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         # Unified Tool Management
         (tools_router, "/api"),
         (tool_bundles_router, "/api"),
+        # LLM Model Management
+        (chat_models_router, "/api"),
+        (embedding_models_router, "/api"),
     ]
 
 

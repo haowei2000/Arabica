@@ -10,7 +10,7 @@ function randomAppCode() {
   return `${adj}-${noun}-${num}`;
 }
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Layers, Library, Wrench, Brain, Sparkles, FolderKanban } from 'lucide-react';
+import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Layers, Library, Wrench, Brain, Sparkles, FolderKanban, Cpu } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -31,6 +31,7 @@ import KnowledgePage from './context/KnowledgePage';
 import ToolPage from './context/ToolPage';
 import MemoryPage from './context/MemoryPage';
 import SkillPage from './context/SkillPage';
+import LLMModelsPage from './LLMModelsPage';
 
 export default function HomePage() {
   const [showCreateAppForm, setShowCreateAppForm] = useState(false);
@@ -303,6 +304,7 @@ export default function HomePage() {
           <TabsList className="h-8">
             <TabsTrigger value="app" className="text-xs px-3 gap-1.5"><Bot className="size-3" />App</TabsTrigger>
             <TabsTrigger value="context" className="text-xs px-3 gap-1.5"><Layers className="size-3" />Context</TabsTrigger>
+            <TabsTrigger value="models" className="text-xs px-3 gap-1.5"><Cpu className="size-3" />Models</TabsTrigger>
           </TabsList>
 
           <TabsContent value="app">
@@ -322,6 +324,10 @@ export default function HomePage() {
               <TabsContent value="memory"><MemoryPage /></TabsContent>
               <TabsContent value="skill"><SkillPage /></TabsContent>
             </Tabs>
+          </TabsContent>
+
+          <TabsContent value="models">
+            <LLMModelsPage />
           </TabsContent>
         </Tabs>
       </div>
