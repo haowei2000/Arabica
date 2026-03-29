@@ -14,7 +14,7 @@ def verify_protocol_imports():
     """Verify that protocols can be imported."""
     print("1. Verifying protocol imports...")
     try:
-        from aiwen.core.interfaces import (
+        from structure.core.interfaces import (
             PROTOCOL_REGISTRY,
             ExecutorProtocol,
             RegistrableProtocol,
@@ -35,7 +35,7 @@ def verify_protocol_metadata():
     """Verify that protocol metadata is available."""
     print("\n2. Verifying protocol metadata...")
     try:
-        from aiwen.core.interfaces import PROTOCOL_REGISTRY
+        from structure.core.interfaces import PROTOCOL_REGISTRY
 
         expected_protocols = [
             "RegistrableProtocol",
@@ -60,8 +60,8 @@ def verify_tool_protocol():
     """Verify that BaseTool implements ToolProtocol."""
     print("\n3. Verifying BaseTool implements ToolProtocol...")
     try:
-        from aiwen.core.interfaces import ToolProtocol, is_tool
-        from aiwen.core.interfaces.tool import BaseTool, ToolMetadata, ToolOutputSchema
+        from structure.core.interfaces import ToolProtocol, is_tool
+        from structure.core.interfaces.tool import BaseTool, ToolMetadata, ToolOutputSchema
 
         class TestTool(BaseTool):
             METADATA: ClassVar[ToolMetadata] = ToolMetadata(
@@ -113,8 +113,8 @@ def verify_registry_protocol():
     """Verify that registries implement RegistryProtocol."""
     print("\n4. Verifying registries implement RegistryProtocol...")
     try:
-        from aiwen.core.interfaces import RegistryProtocol, is_registry
-        from aiwen.registries.core import ExecutorRegistry, ToolRegistry
+        from structure.core.interfaces import RegistryProtocol, is_registry
+        from structure.registries.core import ExecutorRegistry, ToolRegistry
 
         # Test ToolRegistry
         tool_registry = ToolRegistry()
@@ -147,8 +147,8 @@ def verify_type_checkers():
     """Verify that type checker functions work."""
     print("\n5. Verifying type checker functions...")
     try:
-        from aiwen.core.interfaces import is_executor, is_registry, is_tool
-        from aiwen.registries.core import ToolRegistry
+        from structure.core.interfaces import is_executor, is_registry, is_tool
+        from structure.registries.core import ToolRegistry
 
         # Test with valid objects
         registry = ToolRegistry()
@@ -177,7 +177,7 @@ def verify_direct_imports():
     """Verify that all source modules are directly importable."""
     print("\n6. Verifying direct source module imports...")
     try:
-        from aiwen.core.interfaces import (
+        from structure.core.interfaces import (
             AgentEvent,
             Executor,
             ExecutorProtocol,
@@ -185,14 +185,14 @@ def verify_direct_imports():
             ToolProtocol,
             WaitingForTool,
         )
-        from aiwen.core.interfaces.tool import BaseTool, InnerTool, ToolMetadata
-        from aiwen.registries.core import (
+        from structure.core.interfaces.tool import BaseTool, InnerTool, ToolMetadata
+        from structure.registries.core import (
             ExecutorRegistry,
             ToolRegistry,
             register_executor,
             register_tool,
         )
-        from aiwen.registries.manager import RegistryManager, get_registry
+        from structure.registries.manager import RegistryManager, get_registry
         print("   ✓ All source modules importable directly")
         return True
     except ImportError as e:

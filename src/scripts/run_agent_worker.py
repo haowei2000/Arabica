@@ -15,7 +15,7 @@ import sys
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# 加载环境变量 - CRITICAL: Must be before importing any aiwen modules!
+# 加载环境变量 - CRITICAL: Must be before importing any structure modules!
 from dotenv import load_dotenv
 
 env_file = project_root / "src" / ".env"
@@ -27,11 +27,11 @@ else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
     print("   Worker may fail if environment variables are not set!")
 
-from aiwen.celery_worker.task_worker import start_worker
+from structure.celery_worker.task_worker import start_worker
 
-from aiwen.extensions.database import get_session
-from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
-from aiwen.registries.core import ExecutorRegistry
+from structure.extensions.database import get_session
+from structure.middleware.cache_middleware import get_redis_client, init_redis_client
+from structure.registries.core import ExecutorRegistry
 
 # 确保日志目录存在
 log_dir = project_root / "logs"
@@ -100,10 +100,10 @@ async def main():
             logger.error(f"Agent Registry initialization failed: {e}", exc_info=True)
             raise
 
-        # 获取数据库会话工厂 - 明确指定使用 aiwen 数据库
+        # 获取数据库会话工厂 - 明确指定使用 structure 数据库
         from functools import partial
 
-        db_factory = partial(get_session, db_name="aiwen")
+        db_factory = partial(get_session, db_name="structure")
 
         # 启动 worker
         logger.info("Starting worker loop...")

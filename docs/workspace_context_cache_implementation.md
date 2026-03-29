@@ -45,14 +45,17 @@ def get_cache_info() -> str
 #### 2.1 `src/aiwen/plugins/tools/context/create_context.py`
 
 **修改**:
+
 ```python
 # 旧代码
-from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
+from structure.services.workspace_context.workspace_context_service import WorkspaceContextService
+
 service = WorkspaceContextService(db, input_data.workspace_id)
 await service.load()
 
 # 新代码
-from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+from structure.utils.workspace_context_cache import get_cached_workspace_context
+
 service = await get_cached_workspace_context(db, input_data.workspace_id)
 ```
 
@@ -229,15 +232,15 @@ tools = [
 如果需要在其他地方使用 WorkspaceContextService：
 
 ```python
-from aiwen.extensions.database import get_session
-from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+from structure.extensions.database import get_session
+from structure.utils.workspace_context_cache import get_cached_workspace_context
 
-async with get_session("aiwen") as db:
-    # 使用缓存版本
-    service = await get_cached_workspace_context(db, workspace_id)
+async with get_session("structure") as db:
+   # 使用缓存版本
+   service = await get_cached_workspace_context(db, workspace_id)
 
-    # 正常使用
-    result = await service.glob("tools/**")
+   # 正常使用
+   result = await service.glob("tools/**")
 ```
 
 ### 强制刷新缓存
@@ -255,7 +258,7 @@ service = await get_cached_workspace_context(
 如果直接修改了数据库（不推荐）：
 
 ```python
-from aiwen.utils.workspace_context_cache import invalidate_workspace_context_cache
+from structure.utils.workspace_context_cache import invalidate_workspace_context_cache
 
 # 修改数据库后
 await db.execute(update(WorkspaceContext).where(...))
@@ -274,7 +277,7 @@ invalidate_workspace_context_cache(workspace_id)
 **方式 1：在代码中**
 
 ```python
-from aiwen.utils.workspace_context_cache import get_cache_stats, get_cache_info
+from structure.utils.workspace_context_cache import get_cache_stats, get_cache_info
 
 # 详细统计
 stats = get_cache_stats()
@@ -309,11 +312,12 @@ python scripts/monitor_workspace_cache.py --watch
 在 `src/aiwen/routers/monitoring.py` 添加：
 
 ```python
-from aiwen.utils.workspace_context_cache import get_cache_stats
+from structure.utils.workspace_context_cache import get_cache_stats
+
 
 @router.get("/cache/stats")
 async def get_workspace_cache_stats():
-    return get_cache_stats()
+   return get_cache_stats()
 ```
 
 访问：`GET http://localhost:8000/monitoring/cache/stats`
@@ -325,7 +329,7 @@ async def get_workspace_cache_stats():
 ```python
 # config/logging.py
 "loggers": {
-    "aiwen.utils.workspace_context_cache": {
+    "structure.utils.workspace_context_cache": {
         "level": "DEBUG",
         "handlers": ["console"],
     },
@@ -378,27 +382,28 @@ DEBUG - WorkspaceContext cache miss, loading: ws-002
 
 ```python
 import time
-from aiwen.extensions.database import get_session
-from aiwen.utils.workspace_context_cache import get_cached_workspace_context
+from structure.extensions.database import get_session
+from structure.utils.workspace_context_cache import get_cached_workspace_context
+
 
 async def test_cache_performance():
-    workspace_id = "test-ws"
+   workspace_id = "test-ws"
 
-    async with get_session("aiwen") as db:
-        # 首次加载（应该慢）
-        start = time.perf_counter()
-        service1 = await get_cached_workspace_context(db, workspace_id)
-        duration1 = (time.perf_counter() - start) * 1000
-        print(f"First load: {duration1:.2f}ms")
+   async with get_session("structure") as db:
+      # 首次加载（应该慢）
+      start = time.perf_counter()
+      service1 = await get_cached_workspace_context(db, workspace_id)
+      duration1 = (time.perf_counter() - start) * 1000
+      print(f"First load: {duration1:.2f}ms")
 
-        # 缓存命中（应该快）
-        start = time.perf_counter()
-        service2 = await get_cached_workspace_context(db, workspace_id)
-        duration2 = (time.perf_counter() - start) * 1000
-        print(f"Cached load: {duration2:.2f}ms")
+      # 缓存命中（应该快）
+      start = time.perf_counter()
+      service2 = await get_cached_workspace_context(db, workspace_id)
+      duration2 = (time.perf_counter() - start) * 1000
+      print(f"Cached load: {duration2:.2f}ms")
 
-        print(f"Speedup: {duration1 / duration2:.0f}x")
-        assert duration2 < duration1 * 0.1, "Cache should be 10x faster"
+      print(f"Speedup: {duration1 / duration2:.0f}x")
+      assert duration2 < duration1 * 0.1, "Cache should be 10x faster"
 
 # 预期输出：
 # First load: 15.23ms
@@ -424,8 +429,8 @@ pytest tests/plugins/tools/context/ -v
 
 ```python
 # 在任何工具文件中，改回原来的导入
-from aiwen.services.workspace_context.workspace_context_service import (
-    WorkspaceContextService,
+from structure.services.workspace_context.workspace_context_service import (
+   WorkspaceContextService,
 )
 
 service = WorkspaceContextService(db, workspace_id)
@@ -442,17 +447,17 @@ import os
 USE_CACHE = os.getenv("WORKSPACE_CONTEXT_USE_CACHE", "true").lower() == "true"
 
 if USE_CACHE:
-    from aiwen.utils.workspace_context_cache import (
-        get_cached_workspace_context as get_context
-    )
+   from structure.utils.workspace_context_cache import (
+      get_cached_workspace_context as get_context
+   )
 else:
-    async def get_context(session, workspace_id, force_reload=False):
-        from aiwen.services.workspace_context.workspace_context_service import (
-            WorkspaceContextService,
-        )
-        service = WorkspaceContextService(session, workspace_id)
-        await service.load()
-        return service
+   async def get_context(session, workspace_id, force_reload=False):
+      from structure.services.workspace_context.workspace_context_service import (
+         WorkspaceContextService,
+      )
+      service = WorkspaceContextService(session, workspace_id)
+      await service.load()
+      return service
 ```
 
 然后在环境变量中设置：

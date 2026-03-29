@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Initialize built-in tools by importing all inner tools from the aiwen-mcp server.
+Initialize built-in tools by importing all inner tools from the structure-mcp server.
 
 Runs once on startup. Probes the MCP server, then imports every tool it
 exposes into the tool library as a public MCP tool so all agents can use them.

@@ -15,10 +15,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.extensions.database import get_base, get_session
-from aiwen.models.auth.tenant import Tenant
-from aiwen.models.auth.user import User
-from aiwen.utils.security import hash_password
+from structure.extensions.database import get_base, get_session
+from structure.models.auth.tenant import Tenant
+from structure.models.auth.user import User
+from structure.utils.security import hash_password
 
 
 async def create_admin_user():
@@ -26,7 +26,7 @@ async def create_admin_user():
 
     try:
         # Use the database session context manager
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             # Check if default tenant exists, create if not
             result = await session.execute(
                 select(Tenant).where(Tenant.name == "default")

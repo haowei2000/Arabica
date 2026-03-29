@@ -7,10 +7,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
-from aiwen.core.dependencies.agents import get_knowledge_crud
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.extensions.database import get_aiwen_db
+from structure.app import app
+from structure.core.dependencies.agents import get_knowledge_crud
+from structure.core.dependencies.auth import get_current_user
+from structure.extensions.database import get_aiwen_db
 from tests.unit.routers.conftest import make_user, USER_ID, KNOWLEDGE_ID
 
 BASE = "/api/agent/knowledge"
@@ -75,7 +75,7 @@ def client(mock_knowledge_crud, mock_db, patch_bootstrap):
 
 class TestCreateKnowledge:
     def test_create_success(self, client):
-        with patch("aiwen.celery_worker.tasks.context_sync_tasks.sync_knowledge_to_contexts") as mock_task:
+        with patch("structure.celery_worker.tasks.context_sync_tasks.sync_knowledge_to_contexts") as mock_task:
             mock_task.delay = MagicMock()
 
             resp = client.post(

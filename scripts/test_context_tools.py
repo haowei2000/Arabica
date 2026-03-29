@@ -9,9 +9,9 @@ sys.path.insert(0, "/Users/wanghaowei/PycharmProjects/agent_chat/src")
 
 async def test_context_tools():
     """Test all context operation tools."""
-    from aiwen.extensions.database import get_session
-    from aiwen.models.workspaces.workspace import Workspace
-    from aiwen.plugins.tools.context import (
+    from structure.extensions.database import get_session
+    from structure.models.workspaces.workspace import Workspace
+    from structure.plugins.tools.context import (
         CreateContextTool,
         DeleteContextTool,
         GlanceContextTool,
@@ -28,7 +28,7 @@ async def test_context_tools():
 
     workspace_id = str(uuid4())
 
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         # Create test workspace
         workspace = Workspace(
             id=workspace_id,

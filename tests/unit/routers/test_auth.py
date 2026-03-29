@@ -4,9 +4,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.extensions.database import get_aiwen_db
+from structure.app import app
+from structure.core.dependencies.auth import get_current_user
+from structure.extensions.database import get_aiwen_db
 from tests.unit.routers.conftest import make_user, USER_ID, TENANT_ID
 
 
@@ -35,7 +35,7 @@ class TestRegister:
         tenant = MagicMock(id=TENANT_ID)
 
         with (
-            patch("aiwen.routers.auth.auth.AuthService") as MockService,
+            patch("structure.routers.auth.auth.AuthService") as MockService,
         ):
             svc = MockService.return_value
             svc.get_user_by_username = AsyncMock(return_value=None)
@@ -58,7 +58,7 @@ class TestRegister:
     def test_register_duplicate_username(self, client):
         existing = make_user()
 
-        with patch("aiwen.routers.auth.auth.AuthService") as MockService:
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
             svc = MockService.return_value
             svc.get_user_by_username = AsyncMock(return_value=existing)
 
@@ -77,7 +77,7 @@ class TestRegister:
     def test_register_duplicate_email(self, client):
         existing = make_user()
 
-        with patch("aiwen.routers.auth.auth.AuthService") as MockService:
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
             svc = MockService.return_value
             svc.get_user_by_username = AsyncMock(return_value=None)
             svc.get_user_by_email = AsyncMock(return_value=existing)
@@ -98,7 +98,7 @@ class TestRegister:
         user = make_user()
         tenant = MagicMock(id=TENANT_ID)
 
-        with patch("aiwen.routers.auth.auth.AuthService") as MockService:
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
             svc = MockService.return_value
             svc.get_user_by_username = AsyncMock(return_value=None)
             svc.get_user_by_email = AsyncMock(return_value=None)
@@ -123,8 +123,8 @@ class TestLogin:
         user = make_user()
 
         with (
-            patch("aiwen.routers.auth.auth.AuthService") as MockService,
-            patch("aiwen.routers.auth.auth.TokenService") as MockToken,
+            patch("structure.routers.auth.auth.AuthService") as MockService,
+            patch("structure.routers.auth.auth.TokenService") as MockToken,
         ):
             svc = MockService.return_value
             svc.authenticate_user = AsyncMock(return_value=user)
@@ -141,7 +141,7 @@ class TestLogin:
         assert body["token_type"] == "bearer"
 
     def test_login_invalid_credentials(self, client):
-        with patch("aiwen.routers.auth.auth.AuthService") as MockService:
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
             svc = MockService.return_value
             svc.authenticate_user = AsyncMock(return_value=None)
 
@@ -158,7 +158,7 @@ class TestLogin:
 
 class TestRefresh:
     def test_refresh_success(self, client):
-        with patch("aiwen.routers.auth.auth.TokenService") as MockToken:
+        with patch("structure.routers.auth.auth.TokenService") as MockToken:
             MockToken.refresh_tokens.return_value = ("new_access", "new_refresh")
 
             resp = client.post(
@@ -170,7 +170,7 @@ class TestRefresh:
         assert resp.json()["access_token"] == "new_access"
 
     def test_refresh_invalid_token(self, client):
-        with patch("aiwen.routers.auth.auth.TokenService") as MockToken:
+        with patch("structure.routers.auth.auth.TokenService") as MockToken:
             MockToken.refresh_tokens.return_value = None
 
             resp = client.post(

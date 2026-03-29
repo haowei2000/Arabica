@@ -1,4 +1,4 @@
-# ty.toml - ty type checker configuration for src/aiwen
+# ty.toml - ty type checker configuration for src/structure
 # ============================================================================
 
 [environment]

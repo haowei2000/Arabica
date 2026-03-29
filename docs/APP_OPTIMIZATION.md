@@ -216,9 +216,10 @@ def register_middleware(app):
 ```
 
 ### 添加新的路由
+
 ```python
 # 在 core/routers.py 的 get_api_routers() 中添加
-from aiwen.routers.new_feature import router as new_router
+from structure.routers.new_feature import router as new_router
 
 return [
     ...
@@ -257,10 +258,10 @@ curl http://localhost:8000/
 
 ```python
 # 旧的导入
-from aiwen.app import validation_exception_handler
+from structure.app import validation_exception_handler
 
 # 新的导入
-from aiwen.core.exceptions import validation_exception_handler
+from structure.core.exceptions import validation_exception_handler
 ```
 
 ## 总结

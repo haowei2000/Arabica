@@ -33,14 +33,15 @@ The Redis cache integration provides:
 Use the `@cache_ttl(seconds)` decorator to cache the response of any FastAPI route:
 
 ```python
-from aiwen.extensions.redis import cache_ttl
+from structure.extensions.redis import cache_ttl
+
 
 @app.get("/expensive-operation")
 @cache_ttl(300)  # Cache for 5 minutes
 async def expensive_operation():
-    # This operation will be cached for 300 seconds
-    result = perform_expensive_computation()
-    return result
+   # This operation will be cached for 300 seconds
+   result = perform_expensive_computation()
+   return result
 ```
 
 ### 2. Test Endpoint

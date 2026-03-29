@@ -95,15 +95,15 @@ fi
 
 cd /app/src
 
-# uv run aiwen-mcp &
+# uv run structure-mcp &
 # MCP_PID=$!
 
 cd /app/src
 
-aiwen-api &
+strucuture-api &
 API_PID=$!
 
-aiwen-worker &
+strucuture-worker &
 WORKER_PID=$!
 
 echo "==> All services started (API PID: $API_PID, Worker PID: $WORKER_PID)"

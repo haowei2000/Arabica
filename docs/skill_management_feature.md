@@ -324,7 +324,7 @@ async def process_skill(self, skill_id: UUID, embedding_model: str | None = None
     # ... 现有代码 ...
 
     # 生成embedding
-    from aiwen.services.embedding import EmbeddingService
+    from structure.services.embedding import EmbeddingService
     embedding_service = EmbeddingService()
     embeddings = await embedding_service.generate(
         skill.content,

@@ -35,17 +35,17 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from aiwen.models.executor.agent_task import AgentTask
-from aiwen.models.executor.conversation import Conversation
-from aiwen.models.executor.event import Event
-from aiwen.models.executor.message import Message
-from aiwen.models.executor.run import Run
-from aiwen.models.executor.workspace import Workspace
-from aiwen.models.executor.workspace_member import WorkspaceMember
+from structure.models.executor.agent_task import AgentTask
+from structure.models.executor.conversation import Conversation
+from structure.models.executor.event import Event
+from structure.models.executor.message import Message
+from structure.models.executor.run import Run
+from structure.models.executor.workspace import Workspace
+from structure.models.executor.workspace_member import WorkspaceMember
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiwen.extensions.database import get_session
+from structure.extensions.database import get_session
 
 logging.basicConfig(
     level=logging.INFO,
@@ -109,7 +109,7 @@ class WorkspaceMigration:
         """Execute the full migration."""
         logger.info(f"Starting migration (dry_run={self.dry_run})")
 
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             # Step 1: Migrate Conversations to Workspaces
             await self.migrate_conversations(session)
 

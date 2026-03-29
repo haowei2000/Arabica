@@ -121,7 +121,7 @@ Advanced context management with path-addressable nodes:
 #### 7. **Distributed Worker System** (`worker_cli.py`)
 Horizontal scaling with Redis consumer groups:
 ```bash
-aiwen-worker -n 4  # Start 4 parallel workers
+structure-worker -n 4  # Start 4 parallel workers
 ```
 - Consumer group coordination
 - Stuck run detection and recovery
@@ -222,10 +222,10 @@ make stop-all         # Stop all services
 
 ### CLI Commands
 ```bash
-uv run aiwen          # Unified service manager (recommended)
-uv run aiwen-api      # API service
-uv run aiwen-mcp      # MCP service
-uv run aiwen-worker   # Worker service
+uv run structure          # Unified service manager (recommended)
+uv run structure-api      # API service
+uv run structure-mcp      # MCP service
+uv run structure-worker   # Worker service
 ```
 
 ### Database Migrations (Alembic)
@@ -244,7 +244,7 @@ make db-status        # Show migration status
 
 ```python
 # API 路由中 - 使用依赖注入
-from aiwen.core.dependencies import get_db
+from structure.core.dependencies import get_db
 
 
 @router.get("/items")
@@ -254,9 +254,9 @@ async def get_items(db: AsyncSession = Depends(get_db)):
 
 
 # Worker/Service 中 - 使用 context manager
-from aiwen.extensions.database import get_session
+from structure.extensions.database import get_session
 
-async with get_session("aiwen") as session:
+async with get_session("structure") as session:
     result = await session.execute(select(Run))
 ```
 
@@ -490,7 +490,7 @@ pytest -m integration   # Integration tests
 pytest -m smoke         # Smoke tests
 
 # Coverage report
-pytest --cov=src/aiwen --cov-report=html
+pytest --cov=src/structure --cov-report=html
 ```
 
 - **Framework**: pytest + pytest-asyncio

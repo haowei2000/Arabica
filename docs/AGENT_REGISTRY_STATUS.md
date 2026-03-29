@@ -149,20 +149,20 @@ MYSQL__DBNAME=unimax55_5509_710
 
 ```bash
 # 启动应用
-uvicorn aiwen.app:app --reload
+uvicorn structure.app:app --reload
 
 # 日志输出
-INFO:aiwen.core.lifespan:=== Application starting up ===
-INFO:aiwen.services.agent.agent_registry:=== Registering default agent templates ===
-INFO:aiwen.services.agent.agent_registry:✓ Registered new agent template: DEFAULT001
-INFO:aiwen.services.agent.agent_registry:=== Agent template registration complete: 1 succeeded, 0 failed ===
-INFO:aiwen.core.lifespan:Agent registry initialized successfully
+INFO:structure.core.lifespan:=== Application starting up ===
+INFO:structure.services.agent.agent_registry:=== Registering default agent templates ===
+INFO:structure.services.agent.agent_registry:✓ Registered new agent template: DEFAULT001
+INFO:structure.services.agent.agent_registry:=== Agent template registration complete: 1 succeeded, 0 failed ===
+INFO:structure.core.lifespan:Agent registry initialized successfully
 ```
 
 ### 在代码中使用
 
 ```python
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
 
 # 获取 Agent 类
 template_cls = ExecutorRegistry.get("DEFAULT001")
@@ -241,8 +241,8 @@ alembic heads
 ### 步骤 1: 创建模板类
 
 ```python
-# src/aiwen/services/agent/agent_template/my_agent/concrete.py
-from aiwen.registries.base_class.base_executor import BaseAgentTemplate
+# src/structure/services/agent/agent_template/my_agent/concrete.py
+from structure.registries.base_class.base_executor import BaseAgentTemplate
 
 
 class MyCustomAgent(BaseAgentTemplate):
@@ -277,22 +277,22 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-    from aiwen.plugins.executors.default import DefaultAgentTemplate
-    from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
+   from structure.plugins.executors.default import DefaultAgentTemplate
+   from structure.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
 
-    templates = [
-        (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
-        (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
-    ]
+   templates = [
+      (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
+      (MyCustomAgent, MyCustomAgent.TEMPLATE),  # 新增
+   ]
 
-    # ... 注册逻辑保持不变
+   # ... 注册逻辑保持不变
 ```
 
 ### 步骤 3: 重启应用
 
 ```bash
 # 重启应用，新模板会自动注册
-uvicorn aiwen.app:app --reload
+uvicorn structure.app:app --reload
 ```
 
 ## 故障排查
@@ -343,7 +343,7 @@ conversation_id: Mapped[str] = mapped_column(
 ### 查看注册的模板数量
 
 ```python
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
 
 template_count = len(ExecutorRegistry.list())
 print(f"Registered templates: {template_count}")

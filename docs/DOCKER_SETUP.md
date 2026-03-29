@@ -83,19 +83,19 @@ docker-compose ps
 docker-compose logs
 
 # View specific service logs
-docker-compose logs aiwen-app
+docker-compose logs structure-app
 
 # Follow logs in real-time
-docker-compose logs -f aiwen-app
+docker-compose logs -f structure-app
 ```
 
 ### Execute Commands in Containers
 ```bash
 # Execute a command in the main app container
-docker-compose exec aiwen-app bash
+docker-compose exec structure-app bash
 
 # Execute database migrations (if applicable)
-docker-compose exec aiwen-app python -m alembic upgrade head
+docker-compose exec structure-app python -m alembic upgrade head
 ```
 
 ### Stop Services
@@ -110,7 +110,7 @@ docker-compose down -v
 ### Scale Services
 ```bash
 # Scale the main application to 2 instances
-docker-compose up -d --scale aiwen-app=2
+docker-compose up -d --scale structure-app=2
 ```
 
 ## Configuration Details

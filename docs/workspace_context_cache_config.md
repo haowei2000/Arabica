@@ -112,7 +112,7 @@ WORKSPACE_CONTEXT_CACHE_TTL=180   # 3分钟
 ### 查看当前缓存状态
 
 ```python
-from aiwen.utils.workspace_context_cache import get_cache_stats, get_cache_info
+from structure.utils.workspace_context_cache import get_cache_stats, get_cache_info
 
 # 获取详细统计
 stats = get_cache_stats()
@@ -135,16 +135,17 @@ print(info)
 ### 添加到 API 端点（可选）
 
 ```python
-# src/aiwen/routers/monitoring.py
+# src/structure/routers/monitoring.py
 from fastapi import APIRouter
-from aiwen.utils.workspace_context_cache import get_cache_stats
+from structure.utils.workspace_context_cache import get_cache_stats
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
+
 @router.get("/cache/stats")
 async def get_workspace_cache_stats():
-    """获取 WorkspaceContext 缓存统计"""
-    return get_cache_stats()
+   """获取 WorkspaceContext 缓存统计"""
+   return get_cache_stats()
 ```
 
 访问：`http://localhost:8000/monitoring/cache/stats`
@@ -202,8 +203,9 @@ WORKSPACE_CONTEXT_CACHE_TTL=60  # 1分钟过期
 ```
 
 **方案 B**：手动失效缓存（推荐）
+
 ```python
-from aiwen.utils.workspace_context_cache import invalidate_workspace_context_cache
+from structure.utils.workspace_context_cache import invalidate_workspace_context_cache
 
 # 在修改后立即失效
 await update_workspace_context(...)
@@ -242,7 +244,7 @@ service = await get_cached_workspace_context(
 
 4. **在应用启动时打印配置**
    ```python
-   from aiwen.utils.workspace_context_cache import get_cache_info
+   from structure.utils.workspace_context_cache import get_cache_info
    logger.info(f"Cache initialized: {get_cache_info()}")
    ```
 
@@ -290,7 +292,7 @@ service = await get_cached_workspace_context(
 
 2. 检查缓存统计
    ```python
-   from aiwen.utils.workspace_context_cache import get_cache_stats
+   from structure.utils.workspace_context_cache import get_cache_stats
    stats = get_cache_stats()
    print(f"Cache size: {stats['size']}/{stats['maxsize']}")
    ```

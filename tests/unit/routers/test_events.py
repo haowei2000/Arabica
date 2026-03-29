@@ -7,14 +7,14 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.core.dependencies.workspace import (
+from structure.app import app
+from structure.core.dependencies.auth import get_current_user
+from structure.core.dependencies.workspace import (
     get_event_crud,
     get_workspace_crud,
     get_run_crud,
 )
-from aiwen.extensions.database import get_aiwen_db
+from structure.extensions.database import get_aiwen_db
 from tests.unit.routers.conftest import make_user, USER_ID, WORKSPACE_ID, RUN_ID
 
 EVENT_ID = uuid4()

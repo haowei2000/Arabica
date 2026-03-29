@@ -327,6 +327,8 @@ class StreamService {
             query: eventPayload?.query as string | undefined,
             results_count: eventPayload?.results_count as number | undefined,
             details: eventPayload?.details as Record<string, unknown> | undefined,
+            tool_names: eventPayload?.tool_names as string[] | undefined,
+            tool_count: eventPayload?.tool_count as number | undefined,
           });
           return;
         }

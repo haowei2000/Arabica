@@ -130,7 +130,7 @@ config = {
 ## Complete Configuration Example
 
 ```python
-from aiwen.plugins.executors.default import (
+from structure.plugins.executors.default import (
     DefaultAgentTemplate,
 )
 
@@ -249,7 +249,7 @@ config = {
 }
 
 # User tools are loaded separately via ToolRegistry
-from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
+from structure.services.tools.dynamic_tool_loader import DynamicToolLoader
 
 loader = DynamicToolLoader(db)
 await loader.load_user_tools(user_id)
@@ -364,7 +364,7 @@ result = await search_context(
 Test tools before using in agent:
 
 ```python
-from aiwen.services.tools.inner_tool.server_tools import get_current_time
+from structure.services.tools.inner_tool.server_tools import get_current_time
 
 # Test directly
 result = await get_current_time(
@@ -379,7 +379,7 @@ print(result)  # {'time': '2026-02-08 14:30:00', 'timezone': 'Asia/Shanghai', ..
 Test tools through agent:
 
 ```python
-from aiwen.schemas.events.event_payloads import UserMessage
+from structure.schemas.events.event_payloads import UserMessage
 
 message = UserMessage(message="What time is it in Tokyo?")
 result = await agent.run(message)

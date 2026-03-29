@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ValidationError
 import pytest
 
-from aiwen.utils.model_converters import (
+from structure.utils.model_converters import (
     convert_uuid_fields,
     extract_enum_dict,
     extract_enum_value,

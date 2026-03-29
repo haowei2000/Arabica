@@ -24,7 +24,7 @@ export POSTGRES__HOST=10.1.2.111
 export POSTGRES__PORT=5435
 export POSTGRES__USERNAME=postgres
 export POSTGRES__PASSWORD=difyai123456
-export POSTGRES__AIWEN_DBNAME=aiwen
+export POSTGRES__AIWEN_DBNAME=structure
 
 # 可选：自定义管理员用户设置
 export ADMIN_PASSWORD=admin123
@@ -54,12 +54,13 @@ os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
 os.environ.setdefault("POSTGRES__PORT", "5435")
 os.environ.setdefault("POSTGRES__USERNAME", "postgres")
 os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
-os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "aiwen")
+os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "structure")
 
 # 尝试从项目配置获取数据库URL
 db_url = None
 try:
-    from aiwen.config.factory import get_settings
+    from structure.config.factory import get_settings
+
     settings = get_settings()
     # 从设置中获取aiwen数据库URL
     db_urls = settings.postgres.aiwen_sqlalchemy_bind
@@ -76,13 +77,13 @@ if not db_url:
     db_url = (
         f"postgresql+psycopg2://"
         f"{quote_plus(os.environ.get('POSTGRES__USERNAME', 'postgres'))}:{quote_plus(os.environ.get('POSTGRES__PASSWORD', '123456'))}@"
-        f"{os.environ.get('POSTGRES__HOST', 'localhost')}:{os.environ.get('POSTGRES__PORT', '5432')}/{os.environ.get('POSTGRES__AIWEN_DBNAME', 'aiwen')}"
+        f"{os.environ.get('POSTGRES__HOST', 'localhost')}:{os.environ.get('POSTGRES__PORT', '5432')}/{os.environ.get('POSTGRES__AIWEN_DBNAME', 'structure')}"
     )
 
 # 导入模型
-from aiwen.extensions.database import get_base
-from aiwen.models.auth.user import User
-from aiwen.models.auth.tenant import Tenant
+from structure.extensions.database import get_base
+from structure.models.auth.user import User
+from structure.models.auth.tenant import Tenant
 
 # Alembic配置对象
 config = context.config
@@ -92,7 +93,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # 获取元数据
-target_metadata = get_base("aiwen").metadata
+target_metadata = get_base("structure").metadata
 
 # 设置数据库URL
 if db_url:
@@ -119,12 +120,12 @@ os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
 os.environ.setdefault("POSTGRES__PORT", "5435")
 os.environ.setdefault("POSTGRES__USERNAME", "postgres")
 os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
-os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "aiwen")
+os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "structure")
 
 # 导入模型
-from aiwen.extensions.database import get_base
-from aiwen.models.auth.user import User
-from aiwen.models.auth.tenant import Tenant
+from structure.extensions.database import get_base
+from structure.models.auth.user import User
+from structure.models.auth.tenant import Tenant
 
 # Alembic配置对象
 config = context.config
@@ -134,7 +135,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # 获取元数据
-target_metadata = get_base("aiwen").metadata
+target_metadata = get_base("structure").metadata
 
 # 动态设置数据库URL
 db_url = (
@@ -380,7 +381,7 @@ alembic upgrade head
 要验证默认管理员用户是否已成功创建，请运行以下SQL查询：
 
 ```bash
-export PGPASSWORD=difyai123456 && psql -h 10.1.2.111 -p 5435 -U postgres -d aiwen -c "SELECT u.username, u.email, u.role, u.is_superuser, t.name as tenant_name FROM auth_user u JOIN auth_tenant t ON u.tenant_id = t.id WHERE u.username = 'admin';"
+export PGPASSWORD=difyai123456 && psql -h 10.1.2.111 -p 5435 -U postgres -d structure -c "SELECT u.username, u.email, u.role, u.is_superuser, t.name as tenant_name FROM auth_user u JOIN auth_tenant t ON u.tenant_id = t.id WHERE u.username = 'admin';"
 ```
 
 预期输出：

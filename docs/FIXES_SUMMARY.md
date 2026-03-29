@@ -38,7 +38,7 @@ Worker 是独立进程，不会执行 FastAPI 的 `lifespan` 钩子，因此 `Ag
 
 ```python
 # src/scripts/run_agent_worker.py
-from aiwen.services.executor.executor_registry import init_executor_registry
+from structure.services.executor.executor_registry import init_executor_registry
 
 
 async def main():
@@ -196,13 +196,13 @@ python src/scripts/test_agent_registry.py
 ### 2. 启动 Worker
 ```bash
 # 方法 1: 直接启动（推荐）
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 
 # 方法 2: 使用模块方式启动
-python -m aiwen.start_worker
+python -m structure.start_worker
 
 # 方法 3: 后台运行
-nohup python src/aiwen/worker_cli.py > logs/agent_worker.log 2>&1 &
+nohup python src/structure/worker_cli.py > logs/agent_worker.log 2>&1 &
 ```
 
 预期日志：

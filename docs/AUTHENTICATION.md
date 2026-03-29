@@ -39,8 +39,8 @@ FastAPI 官方推荐使用依赖注入而不是全局中间件，因为：
 ```python
 from typing import Annotated
 from fastapi import Depends
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.schemas.auth.user import UserResponse
+from structure.core.dependencies.auth import get_current_user
+from structure.schemas.auth.user import UserResponse
 
 
 @router.get("/profile")
@@ -59,7 +59,7 @@ async def get_profile(
 确保用户不仅已认证，而且账户状态为激活。
 
 ```python
-from aiwen.core.dependencies.auth import get_current_active_user
+from structure.core.dependencies.auth import get_current_active_user
 
 
 @router.get("/admin")
@@ -75,8 +75,8 @@ async def admin_panel(
 仅获取 token 中的声明数据，不进行数据库查询（更高效）。
 
 ```python
-from aiwen.core.dependencies.auth import get_token_data
-from aiwen.schemas.auth.auth import TokenData
+from structure.core.dependencies.auth import get_token_data
+from structure.schemas.auth.auth import TokenData
 
 
 @router.get("/quick-check")
@@ -94,8 +94,8 @@ async def quick_check(
 ```python
 from typing import Annotated
 from fastapi import APIRouter, Depends
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.schemas.auth.user import UserResponse
+from structure.core.dependencies.auth import get_current_user
+from structure.schemas.auth.user import UserResponse
 
 router = APIRouter()
 
@@ -159,7 +159,7 @@ async def moderator_area(
 当你只需要 token 中的信息而不需要完整用户数据时：
 
 ```python
-from aiwen.core.dependencies.auth import get_token_data
+from structure.core.dependencies.auth import get_token_data
 
 
 @router.get("/fast-check")
@@ -365,7 +365,7 @@ A:
 ### Q: 如何创建自定义的角色依赖？
 
 ```python
-from aiwen.core.dependencies.auth import get_current_user
+from structure.core.dependencies.auth import get_current_user
 
 
 def require_role(required_role: str):

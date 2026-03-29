@@ -164,12 +164,12 @@ make docker-down      # Stop Docker containers
 
 ```bash
 # Unified service manager (recommended)
-uv run aiwen
+uv run structure
 
 # Individual services
-uv run aiwen-api      # API service
-uv run aiwen-mcp      # MCP service
-uv run aiwen-worker   # Worker service (supports -n for parallel workers)
+uv run structure-api      # API service
+uv run structure-mcp      # MCP service
+uv run structure-worker   # Worker service (supports -n for parallel workers)
 ```
 
 ### Frontend Commands
@@ -223,17 +223,19 @@ ruff format .
 
 ```python
 # API routes - use dependency injection
-from aiwen.core.dependencies import get_db
+from structure.core.dependencies import get_db
+
 
 @router.get("/items")
 async def get_items(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Item))
     return result.scalars().all()
 
-# Workers/Services - use context manager
-from aiwen.extensions.database import get_session
 
-async with get_session("aiwen") as session:
+# Workers/Services - use context manager
+from structure.extensions.database import get_session
+
+async with get_session("structure") as session:
     result = await session.execute(select(Run))
 ```
 
@@ -256,12 +258,14 @@ async with db.begin():
 #### Tool Registration
 
 ```python
-from aiwen.registries.core import register_tool
-from aiwen.core.interfaces import BaseTool
+from structure.registries.core import register_tool
+from structure.core.interfaces import BaseTool
 from pydantic import BaseModel
+
 
 class MyToolInput(BaseModel):
     query: str
+
 
 @register_tool
 class MyTool(BaseTool):
@@ -298,7 +302,7 @@ pytest -m smoke         # Smoke tests
 pytest -m slow          # Slow tests (requires --run-slow)
 
 # Coverage report
-pytest --cov=src/aiwen --cov-report=html
+pytest --cov=src/structure --cov-report=html
 ```
 
 ### Test Markers
@@ -357,7 +361,7 @@ System prompt enforces strict trust levels:
 
 ```bash
 # Production deployment
-docker compose -f docker/docker-compose.yml -p aiwen up -d
+docker compose -f docker/docker-compose.yml -p structure up -d
 
 # Specific profiles
 docker compose --profile infra up -d     # Infrastructure only

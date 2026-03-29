@@ -56,32 +56,32 @@
 ### 创建 Workspace Context Service
 
 ```python
-from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
-from aiwen.extensions.database import get_session
+from structure.services.workspace_context.workspace_context_service import WorkspaceContextService
+from structure.extensions.database import get_session
 
-async with get_session("aiwen") as session:
-    # 创建服务
-    service = WorkspaceContextService(session, workspace_id)
+async with get_session("structure") as session:
+  # 创建服务
+  service = WorkspaceContextService(session, workspace_id)
 
-    # 加载数据（首次创建或服务重启后）
-    await service.load()
+  # 加载数据（首次创建或服务重启后）
+  await service.load()
 
-    # 添加上下文（自动保存到数据库）
-    await service.set(
-        path=f"{workspace_id}/tools/web_search",
-        glance="Web Search Tool — ✅ Available",
-        overview={"provider": "DuckDuckGo", "rate_limit": "100/hour"},
-        detail={"description": "Search the web"},
-        tags=["tool", "search", "web"],
-        # WorkspaceContext 额外字段
-        name="Web Search Tool",
-        content_type="application/json"
-    )
+  # 添加上下文（自动保存到数据库）
+  await service.set(
+    path=f"{workspace_id}/tools/web_search",
+    glance="Web Search Tool — ✅ Available",
+    overview={"provider": "DuckDuckGo", "rate_limit": "100/hour"},
+    detail={"description": "Search the web"},
+    tags=["tool", "search", "web"],
+    # WorkspaceContext 额外字段
+    name="Web Search Tool",
+    content_type="application/json"
+  )
 
-    # 快速查询（内存操作，微秒级）
-    tools = await service.glob(f"{workspace_id}/tools/**")
-    tree = await service.tree(f"{workspace_id}/tools", level="overview")
-    glances = await service.glance(f"{workspace_id}/tools")
+  # 快速查询（内存操作，微秒级）
+  tools = await service.glob(f"{workspace_id}/tools/**")
+  tree = await service.tree(f"{workspace_id}/tools", level="overview")
+  glances = await service.glance(f"{workspace_id}/tools")
 ```
 
 ### 服务重启后恢复

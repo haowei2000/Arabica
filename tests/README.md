@@ -304,7 +304,7 @@ pytest -n 4
 
 ```bash
 # 生成覆盖率报告
-pytest --cov=src/aiwen --cov-report=html
+pytest --cov=src/structure --cov-report=html
 
 # 查看 HTML 报告
 open htmlcov/index.html

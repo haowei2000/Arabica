@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
-from aiwen.mcp_router.nl2sql import (
+from structure.mcp_router.nl2sql import (
     check_data,
     execute_sql,
     generate_chart,
@@ -10,20 +10,20 @@ from aiwen.mcp_router.nl2sql import (
     query_indicator_data,
     select_indicator,
 )
-from aiwen.schemas.nl2sql.generate_chart import ChartRequestSchema, ChartResponseSchema
-from aiwen.schemas.nl2sql.indicator_info import (
+from structure.schemas.nl2sql.generate_chart import ChartRequestSchema, ChartResponseSchema
+from structure.schemas.nl2sql.indicator_info import (
     DimensionInfoSchema,
     IndicatorInfoSchema,
     TableSchema,
 )
-from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
+from structure.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
 import pytest
 
 
 class TestNl2sqlMcpTools:
     """测试Nl2sql MCP工具"""
 
-    @patch("aiwen.mcp_router.nl2sql.select_indicator_service")
+    @patch("structure.mcp_router.nl2sql.select_indicator_service")
     async def test_select_indicator(self, mock_service):
         """测试select_indicator工具"""
         # Arrange
@@ -43,7 +43,7 @@ class TestNl2sqlMcpTools:
             query=query, db=mock_service.call_args[1]["db_session"]
         )
 
-    @patch("aiwen.mcp_router.nl2sql.get_indicator_info_service")
+    @patch("structure.mcp_router.nl2sql.get_indicator_info_service")
     async def test_get_indicator_info(self, mock_service):
         """测试get_indicator_info工具"""
         # Arrange
@@ -66,7 +66,7 @@ class TestNl2sqlMcpTools:
             indicator_name=indicator_name, db=mock_service.call_args[1]["db_session"]
         )
 
-    @patch("aiwen.mcp_router.nl2sql.generate_sql_service")
+    @patch("structure.mcp_router.nl2sql.generate_sql_service")
     async def test_generate_sql(self, mock_service):
         """测试generate_sql工具"""
         # Arrange
@@ -90,7 +90,7 @@ class TestNl2sqlMcpTools:
         assert result["sql"] == "SELECT * FROM scrap_rate WHERE month = 11"
         mock_service.assert_called_once()
 
-    @patch("aiwen.mcp_router.nl2sql.auto_chart")
+    @patch("structure.mcp_router.nl2sql.auto_chart")
     async def test_generate_chart(self, mock_auto_chart):
         """测试generate_chart工具"""
         # Arrange
@@ -110,7 +110,7 @@ class TestNl2sqlMcpTools:
     async def test_nl2sql_prompt(self):
         """测试nl2sql_prompt函数"""
         # Act
-        from aiwen.mcp_router.nl2sql import nl2sql_prompt
+        from structure.mcp_router.nl2sql import nl2sql_prompt
 
         prompt = nl2sql_prompt()
 
@@ -119,9 +119,9 @@ class TestNl2sqlMcpTools:
         assert len(prompt) > 0
         assert "指标查询助手" in prompt
 
-    @patch("aiwen.mcp_router.nl2sql.select_indicator_service")
-    @patch("aiwen.mcp_router.nl2sql.get_indicator_info_service")
-    @patch("aiwen.mcp_router.nl2sql.generate_sql_service")
+    @patch("structure.mcp_router.nl2sql.select_indicator_service")
+    @patch("structure.mcp_router.nl2sql.get_indicator_info_service")
+    @patch("structure.mcp_router.nl2sql.generate_sql_service")
     async def test_query_indicator_data_success(
         self, mock_generate_sql, mock_get_info, mock_select_indicator
     ):
@@ -148,7 +148,7 @@ class TestNl2sqlMcpTools:
         mock_generate_sql.return_value = mock_sql_response
 
         # Mock数据库执行结果
-        with patch("aiwen.mcp_router.nl2sql.get_readonly_session") as mock_session:
+        with patch("structure.mcp_router.nl2sql.get_readonly_session") as mock_session:
             mock_session_ctx = AsyncMock()
             mock_session.return_value = mock_session_ctx
             mock_session_ctx.__aenter__.return_value = mock_session_ctx
@@ -173,7 +173,7 @@ class TestNl2sqlMcpTools:
             )
             assert len(result["data"]) == 2
 
-    @patch("aiwen.mcp_router.nl2sql.check_data_service")
+    @patch("structure.mcp_router.nl2sql.check_data_service")
     async def test_check_data(self, mock_check_data_service):
         """测试check_data工具"""
         # Arrange

@@ -104,7 +104,7 @@ CREATE INDEX ix_ws_ctx_workspace_deleted ON workspace_context (workspace_id, is_
 ### ContextCreate
 
 ```python
-from aiwen.schemas.context import ContextCreate
+from structure.schemas.context import ContextCreate
 
 context = ContextCreate(
     context_type="knowledge",
@@ -120,7 +120,7 @@ context = ContextCreate(
 ### ContextResponse
 
 ```python
-from aiwen.schemas.context import ContextResponse
+from structure.schemas.context import ContextResponse
 
 # Response now includes progressive disclosure
 response = ContextResponse(
@@ -154,8 +154,8 @@ detail_view = response.disclose("detail")
 ### Creating Contexts with Progressive Disclosure
 
 ```python
-from aiwen.models.context.context import Context
-from aiwen.core.enums import ContextType
+from structure.models.context.context import Context
+from structure.core.enums import ContextType
 
 # Create a tool context
 tool_ctx = Context(
@@ -190,7 +190,7 @@ knowledge_ctx = Context(
 
 ```python
 from sqlalchemy import select
-from aiwen.models.context.context import Context
+from structure.models.context.context import Context
 
 # Get all contexts under a workspace
 stmt = select(Context).where(
@@ -259,7 +259,7 @@ for ctx in contexts:
 ### WorkspaceContext Examples
 
 ```python
-from aiwen.models.context.workspace_context import WorkspaceContext
+from structure.models.context.workspace_context import WorkspaceContext
 
 # Create a temporary file context
 file_ctx = WorkspaceContext(
@@ -327,7 +327,7 @@ context = Context(
 ### Using with ContextPathSuffix Constants
 
 ```python
-from aiwen.plugins.executors.conflict.prompts import (
+from structure.plugins.executors.conflict.prompts import (
     ContextPathSuffix,
     build_context_path,
     get_all_context_paths

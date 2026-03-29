@@ -14,10 +14,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from aiwen.plugins.executors.default import (
+from structure.plugins.executors.default import (
     DefaultAgentTemplate,
 )
-from aiwen.schemas.events.event_payloads import UserMessage
+from structure.schemas.events.event_payloads import UserMessage
 
 
 async def main():

@@ -81,6 +81,8 @@ export interface MCPImportResponse {
   imported: string[];
   skipped: string[];
   failed: string[];
+  bundle_id?: string;
+  bundle_name?: string;
 }
 
 // ─── Inner Tool Info (subset of UserTool, for tool pickers) ──────────────────

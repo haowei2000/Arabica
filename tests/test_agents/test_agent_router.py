@@ -1,7 +1,7 @@
 # tests/test_agents/test_agent_router.py
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
+from structure.app import app
 
 client = TestClient(app)
 

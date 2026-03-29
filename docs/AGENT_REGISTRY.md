@@ -132,7 +132,7 @@ async def lifespan(app: FastAPI):
 ### 2. 获取已注册的模板
 
 ```python
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
 
 # 获取模板类
 template_cls = ExecutorRegistry.get("DEFAULT001")
@@ -165,8 +165,8 @@ if AgentRegistry.is_registered("DEFAULT001"):
 ### 步骤 1: 创建模板类
 
 ```python
-# src/aiwen/services/agent/agent_template/my_agent/concrete.py
-from aiwen.registries.base_class.base_executor import BaseAgentTemplate
+# src/structure/services/agent/agent_template/my_agent/concrete.py
+from structure.registries.base_class.base_executor import BaseAgentTemplate
 
 
 class MyCustomAgent(BaseAgentTemplate):
@@ -194,8 +194,8 @@ class MyCustomAgent(BaseAgentTemplate):
 
 ```python
 async def register_default_templates(db_session: AsyncSession) -> None:
-   from aiwen.plugins.executors.default import DefaultAgentTemplate
-   from aiwen.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
+   from structure.plugins.executors.default import DefaultAgentTemplate
+   from structure.services.executor.executor_template.my_agent.concrete import MyCustomAgent  # 新增
 
    templates = [
       (DefaultAgentTemplate, DefaultAgentTemplate.TEMPLATE),
@@ -247,14 +247,14 @@ INFO:aiwen.core.lifespan:Agent registry initialized successfully
 ### 查看已注册的模板
 
 ```python
-from aiwen.extensions.database import get_session
-from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
+from structure.extensions.database import get_session
+from structure.services.crud.agent_template_crud import AgentTemplateCRUD
 
-async with get_session("aiwen") as session:
-    crud = AgentTemplateCRUD(session)
-    templates = await crud.list_templates()
-    for template in templates:
-        print(f"{template.template_code}: {template.template_name}")
+async with get_session("structure") as session:
+   crud = AgentTemplateCRUD(session)
+   templates = await crud.list_templates()
+   for template in templates:
+      print(f"{template.template_code}: {template.template_name}")
 ```
 
 ### SQL 查询
@@ -277,7 +277,7 @@ SELECT COUNT(*) FROM agent_template WHERE enabled = true;
 
 ```python
 import asyncio
-from aiwen.services.executor.executor_registry import ExecutorRegistry, init_executor_registry
+from structure.services.executor.executor_registry import ExecutorRegistry, init_executor_registry
 
 
 async def test_agent_registry():
@@ -293,10 +293,10 @@ async def test_agent_registry():
    assert template_cls is not None
 
    # 测试数据库持久化
-   from aiwen.extensions.database import get_session
-   from aiwen.services.crud.agent_template_crud import AgentTemplateCRUD
+   from structure.extensions.database import get_session
+   from structure.services.crud.agent_template_crud import AgentTemplateCRUD
 
-   async with get_session("aiwen") as session:
+   async with get_session("structure") as session:
       crud = AgentTemplateCRUD(session)
       template = await crud.get_template_by_code("DEFAULT001")
       assert template is not None

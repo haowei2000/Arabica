@@ -1,8 +1,8 @@
 # tests/test_agents/test_agent_manager.py
 from unittest.mock import AsyncMock
 
-from aiwen.services.executor.executor_factory import AppFactory
-from aiwen.services.executor.manager import AgentManager
+from structure.services.executor.executor_factory import AppFactory
+from structure.services.executor.manager import AgentManager
 import pytest
 
 

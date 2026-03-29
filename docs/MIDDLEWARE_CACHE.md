@@ -74,13 +74,15 @@ DELETE /api/nl2sql/flush-cache?pattern=cache:*
 ### 3. Route-level Caching
 
 For more control, use the `@cache_route()` decorator:
+
 ```python
-from aiwen.middleware.cache_middleware import cache_route
+from structure.middleware.cache_middleware import cache_route
+
 
 @app.get("/custom-cache")
 @cache_route(expire=600)  # Cache for 10 minutes
 async def custom_cached_endpoint():
-    return {"data": "custom cached response"}
+   return {"data": "custom cached response"}
 ```
 
 ## Configuration

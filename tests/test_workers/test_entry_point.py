@@ -2,7 +2,7 @@
 import sys
 from unittest.mock import AsyncMock, patch
 
-from aiwen.celery_worker.cli import WorkerCLI, main
+from structure.celery_worker.cli import WorkerCLI, main
 import pytest
 
 
@@ -20,7 +20,7 @@ async def test_worker_cli_start_failure():
 
     # Mock the database initialization to fail
     with patch(
-        "aiwen.workers.cli._ensure_registered", side_effect=Exception("DB Error")
+        "structure.workers.cli._ensure_registered", side_effect=Exception("DB Error")
     ):
         result = await cli.start()
         assert result is False
@@ -30,7 +30,7 @@ async def test_worker_cli_start_failure():
 async def test_main_function():
     """Test the main function."""
     # Mock the CLI to avoid actual startup
-    with patch("aiwen.workers.cli.WorkerCLI") as mock_cli_class:
+    with patch("structure.workers.cli.WorkerCLI") as mock_cli_class:
         mock_cli = AsyncMock()
         mock_cli.start.return_value = True
         mock_cli_class.return_value = mock_cli

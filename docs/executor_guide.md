@@ -34,8 +34,8 @@ Executor 是 Aiwen 中 Agent 的执行引擎。每种 Executor 代表一种 Agen
 每个 Executor 是一个继承自 `Executor` ABC 的 Python 类，通过 `@register_executor` 装饰器声明注册。
 
 ```python
-from aiwen.registries import register_executor
-from aiwen.core.interfaces import Executor, AgentEvent
+from structure.registries import register_executor
+from structure.core.interfaces import Executor, AgentEvent
 
 
 @register_executor
@@ -113,23 +113,23 @@ PENDING ──start()──→ RUNNING ──complete()──→ COMPLETED
 ### Step 1: 创建文件
 
 ```bash
-mkdir -p src/aiwen/plugins/executors/my_executor
-touch src/aiwen/plugins/executors/my_executor/__init__.py
-touch src/aiwen/plugins/executors/my_executor/concrete.py
+mkdir -p src/structure/plugins/executors/my_executor
+touch src/structure/plugins/executors/my_executor/__init__.py
+touch src/structure/plugins/executors/my_executor/concrete.py
 ```
 
 ### Step 2: 实现 Executor
 
 ```python
-# src/aiwen/plugins/executors/my_executor/concrete.py
+# src/structure/plugins/executors/my_executor/concrete.py
 
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from aiwen.core.interfaces import ToolCaller, ToolProvider
-from aiwen.registries import register_executor
-from aiwen.core.interfaces import AgentEvent, Executor
-from aiwen.schemas.events.event_payloads import UserMessage
+from structure.core.interfaces import ToolCaller, ToolProvider
+from structure.registries import register_executor
+from structure.core.interfaces import AgentEvent, Executor
+from structure.schemas.events.event_payloads import UserMessage
 
 
 @register_executor
@@ -231,7 +231,7 @@ INFO  Executor sync: 3 synced, 0 deleted, 0 failed
 - `_sync_to_database()` 将 DB 中对应记录标记为 `enabled=False`（软删除）
 
 ```bash
-rm -rf src/aiwen/plugins/executors/my_executor/
+rm -rf src/structure/plugins/executors/my_executor/
 ```
 
 启动日志：
@@ -429,7 +429,7 @@ CREATE TABLE executor (
 CRUD 操作通过 `ExecutorCRUD` 类：
 
 ```python
-from aiwen.services.executor.executor_template_crud import ExecutorCRUD
+from structure.services.executor.executor_template_crud import ExecutorCRUD
 
 crud = ExecutorCRUD(db_session)
 await crud.create_executor("code", "name", config={})

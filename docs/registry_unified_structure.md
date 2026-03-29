@@ -173,17 +173,17 @@ def register_executor(executor_cls):
 
 ```python
 # Multiple imports from different modules
-from aiwen.registries.base import BaseRegistry, RegistryConfig
-from aiwen.registries.tool_registry import ToolRegistry, register_tool
-from aiwen.registries.executor_registry import ExecutorRegistry, register_executor
-from aiwen.registries.manager import RegistryManager, get_registry
+from structure.registries.base import BaseRegistry, RegistryConfig
+from structure.registries.tool_registry import ToolRegistry, register_tool
+from structure.registries.executor_registry import ExecutorRegistry, register_executor
+from structure.registries.manager import RegistryManager, get_registry
 ```
 
 ### After (unified structure)
 
 ```python
 # Single import from core module + manager
-from aiwen.registries import (
+from structure.registries import (
     BaseRegistry,
     RegistryConfig,
     ToolRegistry,
@@ -325,10 +325,10 @@ Single import reduces overhead
 
 ```python
 # These still work exactly as before!
-from aiwen.registries import ToolRegistry
-from aiwen.registries import ExecutorRegistry
-from aiwen.registries import BaseRegistry
-from aiwen.registries import get_registry
+from structure.registries import ToolRegistry
+from structure.registries import ExecutorRegistry
+from structure.registries import BaseRegistry
+from structure.registries import get_registry
 ```
 
 The `__init__.py` re-exports everything from `core.py`, so old code continues to work without any changes.
@@ -338,23 +338,27 @@ The `__init__.py` re-exports everything from `core.py`, so old code continues to
 ### Test Code Simplification
 
 **Before:**
+
 ```python
 # Need to know which file contains what
-from aiwen.registries.base import BaseRegistry
-from aiwen.registries.tool_registry import ToolRegistry
-from aiwen.registries.executor_registry import ExecutorRegistry
+from structure.registries.base import BaseRegistry
+from structure.registries.tool_registry import ToolRegistry
+from structure.registries.executor_registry import ExecutorRegistry
+
 
 def test_registry():
-    # Test code...
+# Test code...
 ```
 
 **After:**
+
 ```python
 # Everything from one place
-from aiwen.registries import BaseRegistry, ToolRegistry, ExecutorRegistry
+from structure.registries import BaseRegistry, ToolRegistry, ExecutorRegistry
+
 
 def test_registry():
-    # Same test code, simpler imports
+# Same test code, simpler imports
 ```
 
 ## Migration Guide
@@ -366,13 +370,15 @@ def test_registry():
 ### For Contributors/Maintainers
 
 **Option 1: Keep old imports (works fine)**
+
 ```python
-from aiwen.registries import ToolRegistry, ExecutorRegistry
+from structure.registries import ToolRegistry, ExecutorRegistry
 ```
 
 **Option 2: Update to unified imports (recommended)**
+
 ```python
-from aiwen.registries import (
+from structure.registries import (
     ToolRegistry,
     ExecutorRegistry,
     register_tool,

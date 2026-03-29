@@ -1,11 +1,11 @@
 from unittest.mock import AsyncMock, patch
 import uuid
 
-from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
+from structure.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
 from fastapi.testclient import TestClient
 import pytest
 
-from aiwen.app import app
+from structure.app import app
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def mock_indicator_response():
 class TestSelectIndicatorEndpoint:
     """测试 /api/nl2sql/select_indicator 端点"""
 
-    @patch("aiwen.routers.nl2sql.select_indicator_service")
+    @patch("structure.routers.nl2sql.select_indicator_service")
     def test_select_indicator_success(
         self, mock_service, test_client, valid_query, mock_indicator_response
     ):
@@ -78,7 +78,7 @@ class TestSelectIndicatorEndpoint:
         assert data["code"] == 422
         assert data["input"] == "请求参数验证失败"
 
-    @patch("aiwen.routers.nl2sql.select_indicator_service")
+    @patch("structure.routers.nl2sql.select_indicator_service")
     def test_select_indicator_service_exception(
         self, mock_service, test_client, valid_query
     ):

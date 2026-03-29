@@ -36,25 +36,30 @@ The codebase contained a complex executor routing system (ExecutionRouter, async
 
 ```python
 # Removed imports
-from aiwen.services.tools.execution_mode import (
+from structure.services.tools.execution_mode import (
     ToolExecutionMode,
     get_tool_metadata,
 )
-from aiwen.services.tools.execution_router import ExecutionRouter
-from aiwen.schemas.tools.execution import ExecutionContext
+from structure.services.tools.execution_router import ExecutionRouter
+from structure.schemas.tools.execution import ExecutionContext
 
 # Removed initialization
 self._execution_router = ExecutionRouter()
 self._execution_router.register_tools_from_list(tools)
 
+
 # Removed methods (3 methods, ~40 lines)
 def _get_tool_execution_mode(self, tool_name: str)
-def _requires_special_execution(self, tool_name: str)
-async def _execute_via_router(self, tool_name, tool_id, arguments, context)
+
+
+    def _requires_special_execution(self, tool_name: str)
+
+    async def _execute_via_router(self, tool_name, tool_id, arguments, context)
+
 
 # Removed CLIENT tool check from stream() method (~25 lines)
 if tool_mode == ToolExecutionMode.CLIENT:
-    # ... client execution logic
+# ... client execution logic
 ```
 
 ### Exports Removed from __init__.py
@@ -292,13 +297,16 @@ async def __call__(self, **kwargs):
 ### If Code References Old Executors
 
 **Problem:** Import errors after cleanup
+
 ```python
-from aiwen.services.tools import ExecutionRouter  # ❌ No longer exists
+from structure.services.tools import ExecutionRouter  # ❌ No longer exists
 ```
 
 **Solution:** Use BaseTool directly
+
 ```python
-from aiwen.services.tools.base_tool import BaseTool
+from structure.services.tools.base_tool import BaseTool
+
 
 class MyTool(BaseTool):
     # All execution handled by BaseTool.__call__()

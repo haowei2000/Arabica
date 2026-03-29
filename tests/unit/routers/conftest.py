@@ -7,9 +7,9 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.extensions.database import get_aiwen_db
-from aiwen.schemas.auth.user import UserResponse
+from structure.core.dependencies.auth import get_current_user
+from structure.extensions.database import get_aiwen_db
+from structure.schemas.auth.user import UserResponse
 
 # Fixed UUIDs for deterministic tests
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -63,5 +63,5 @@ def patch_bootstrap():
     mock_bootstrap = MagicMock()
     mock_bootstrap.redis_client = MagicMock()
     mock_bootstrap.cleanup = AsyncMock()
-    with patch("aiwen.core.lifespan.bootstrap_api", return_value=mock_bootstrap):
+    with patch("structure.core.lifespan.bootstrap_api", return_value=mock_bootstrap):
         yield

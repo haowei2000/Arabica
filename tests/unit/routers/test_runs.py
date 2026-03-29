@@ -7,16 +7,16 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.core.dependencies.workspace import (
+from structure.app import app
+from structure.core.dependencies.auth import get_current_user
+from structure.core.dependencies.workspace import (
     get_workspace_crud,
     get_run_crud,
     get_run_state_machine,
     get_event_publisher,
 )
-from aiwen.extensions.database import get_aiwen_db
-from aiwen.core.enums.runs import RunStatus, TriggerType
+from structure.extensions.database import get_aiwen_db
+from structure.core.enums.runs import RunStatus, TriggerType
 from tests.unit.routers.conftest import (
     make_user,
     USER_ID,

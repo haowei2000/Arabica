@@ -86,7 +86,7 @@ ToolRegistry                    ExecutorRegistry
 ### 1. Import the Registry System
 
 ```python
-from aiwen.registries import (
+from structure.registries import (
     get_registry,
     ToolRegistry,
     ExecutorRegistry,
@@ -101,7 +101,8 @@ Your existing registration code continues to work without changes:
 
 ```python
 # Tools (existing code)
-from aiwen.registries import register_tool
+from structure.registries import register_tool
+
 
 @register_tool
 class MyTool(BaseTool):
@@ -114,8 +115,10 @@ class MyTool(BaseTool):
     async def execute(self, **kwargs):
         return {"result": "..."}
 
+
 # Executors (existing code)
-from aiwen.registries import register_executor
+from structure.registries import register_executor
+
 
 @register_executor
 class MyExecutor(Executor):
@@ -160,11 +163,11 @@ stats = tool_registry.get_statistics()
 ### 4. Database Synchronization (Startup)
 
 ```python
-from aiwen.registries import sync_all_registries
-from aiwen.extensions.database import get_session
+from structure.registries import sync_all_registries
+from structure.extensions.database import get_session
 
 # In bootstrap.py
-async with get_session("aiwen") as db:
+async with get_session("structure") as db:
     await sync_all_registries(db)
 ```
 
@@ -323,24 +326,24 @@ Current measurements (26 InnerTools, 1 Executor):
 
 ```python
 # Old
-from aiwen.services.tools.tool_registry import ToolRegistry
+from structure.services.tools.tool_registry import ToolRegistry
 
 # New
-from aiwen.registries import ToolRegistry
+from structure.registries import ToolRegistry
 ```
 
 ### Phase 2: Update Bootstrap (Recommended)
 
 ```python
 # Old
-from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
-from aiwen.services.executor.executor_registry import init_executor_registry
+from structure.services.tools.inner_tool_sync import sync_inner_tools_to_db
+from structure.services.executor.executor_registry import init_executor_registry
 
 await sync_inner_tools_to_db(db)
 await init_executor_registry()
 
 # New (simpler!)
-from aiwen.registries import sync_all_registries
+from structure.registries import sync_all_registries
 
 await sync_all_registries(db)
 ```
@@ -350,8 +353,9 @@ await sync_all_registries(db)
 Add in old locations if needed:
 
 ```python
-# src/aiwen/services/tools/tool_registry.py
-from aiwen.registries import ToolRegistry, register_tool
+# src/structure/services/tools/tool_registry.py
+from structure.registries import ToolRegistry, register_tool
+
 __all__ = ["ToolRegistry", "register_tool"]
 ```
 
@@ -360,7 +364,8 @@ __all__ = ["ToolRegistry", "register_tool"]
 ### Clear Registries in Tests
 
 ```python
-from aiwen.registries import RegistryManager
+from structure.registries import RegistryManager
+
 
 def setup_function():
     """Clear all registries before each test."""

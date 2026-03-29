@@ -226,7 +226,9 @@ function eventSummary(event: Event): string {
     case 'tool.result':      return String(p.tool_name || p.name || '');
     case 'tool.error':       return String(p.tool_name || p.name || '');
     case 'run.state.change': return String(p.new_state || p.to_state || p.status || '');
-    case 'context.using':    return String(p.context_type || p.context_name || '');
+    case 'context.using':    return p.tool_names
+      ? `Tools loaded: ${(p.tool_names as string[]).join(', ')}`
+      : String(p.context_type || p.context_name || '');
     case 'agent.plan.step':  return String(p.step_description || '').slice(0, 80);
     default:                 return '';
   }
@@ -553,6 +555,7 @@ export default function WorkspaceConsole() {
     thinkingContent,
     activeToolCalls,
     planSteps,
+    contextUsages,
     pendingApprovals,
     pendingQueries,
     streamingInputTokens,
@@ -785,6 +788,15 @@ export default function WorkspaceConsole() {
                   </div>
                 ) : (
                   <div className="max-w-2xl w-full space-y-2.5">
+                    {message.contextUsages && message.contextUsages.some(c => c.tool_names) && (
+                      <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-muted-foreground/70 px-1">
+                        <Wrench className="size-3 shrink-0" />
+                        <span className="font-medium">Tools:</span>
+                        {message.contextUsages.filter(c => c.tool_names).flatMap(c => c.tool_names!).map(name => (
+                          <span key={name} className="px-1.5 py-0.5 rounded bg-muted border border-border/50 font-mono">{name}</span>
+                        ))}
+                      </div>
+                    )}
                     {message.thinkingContent && (
                       <ThinkingBlock content={message.thinkingContent} defaultCollapsed />
                     )}
@@ -827,6 +839,15 @@ export default function WorkspaceConsole() {
                   <Bot className="size-4" />
                 </div>
                 <div className="max-w-2xl w-full space-y-2.5">
+                  {contextUsages.some(c => c.tool_names) && (
+                    <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-muted-foreground/70 px-1">
+                      <Wrench className="size-3 shrink-0" />
+                      <span className="font-medium">Tools:</span>
+                      {contextUsages.filter(c => c.tool_names).flatMap(c => c.tool_names!).map(name => (
+                        <span key={name} className="px-1.5 py-0.5 rounded bg-muted border border-border/50 font-mono">{name}</span>
+                      ))}
+                    </div>
+                  )}
                   {thinkingContent && <ThinkingBlock content={thinkingContent} />}
                   {activeToolCalls.length > 0 && (
                     <div className="space-y-1">

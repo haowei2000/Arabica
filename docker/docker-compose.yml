@@ -32,7 +32,7 @@ services:
     ports:
       - "${EXPOSE_PORT_AIWEN_PY:-8000}:8000"
     volumes:
-      - aiwen-logs:/app/logs
+      - structure-logs:/app/logs
       # Uncomment for development to mount source code
       # - ./src:/app/src:ro
     env_file:
@@ -100,11 +100,11 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    command: ["aiwen-mcp"]
+    command: ["structure-mcp"]
     ports:
       - "9090:9000"
     volumes:
-      - aiwen-logs:/app/logs
+      - structure-logs:/app/logs
     env_file:
       - .env
     environment:
@@ -179,9 +179,9 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    command: celery -A aiwen.celery_worker.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A structure.celery_worker.celery_app worker --loglevel=info --concurrency=4
     volumes:
-      - aiwen-logs:/app/logs
+      - structure-logs:/app/logs
     env_file:
       - .env
     environment:
@@ -192,7 +192,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -226,9 +226,9 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    command: celery -A aiwen.celery_worker.celery_app beat --loglevel=info
+    command: celery -A structure.celery_worker.celery_app beat --loglevel=info
     volumes:
-      - aiwen-logs:/app/logs
+      - structure-logs:/app/logs
     env_file:
       - .env
     environment:
@@ -239,7 +239,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -274,7 +274,7 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
         UV_VERSION: ${UV_VERSION:-0.5.24}
     image: aiwen-service:${VERSION:-latest}
-    command: celery -A aiwen.celery_worker.celery_app flower --port=5555
+    command: celery -A structure.celery_worker.celery_app flower --port=5555
     ports:
       - "${FLOWER_PORT:-5555}:5555"
     env_file:
@@ -287,7 +287,7 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-aiwen}
+      POSTGRES__AIWEN_DBNAME: ${POSTGRES__AIWEN_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
@@ -369,7 +369,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-123456}
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__AIWEN_DBNAME:-aiwen}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__AIWEN_DBNAME:-structure}"]
     restart: unless-stopped
     logging: *default-logging
     networks:
@@ -518,7 +518,7 @@ services:
     ports:
       - "${EXPOSE_PORT_CONTEXT_SERVICE:-8080}:8080"
     volumes:
-      - aiwen-context-data:/app/data/context
+      - structure-context-data:/app/data/context
     environment:
       <<: *common-env
     restart: unless-stopped
@@ -529,7 +529,7 @@ services:
 networks:
   aiwen-network:
     driver: bridge
-    name: aiwen-network
+    name: structure-network
 
 volumes:
   aiwen-logs:

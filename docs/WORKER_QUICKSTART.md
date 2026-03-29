@@ -6,13 +6,13 @@
 
 ```bash
 # 方法 1: 直接启动（推荐用于开发/调试）
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 
 # 方法 2: 模块方式启动
-python -m aiwen.start_worker
+python -m structure.start_worker
 
 # 方法 3: 后台运行（生产环境）
-nohup python src/aiwen/worker_cli.py > logs/agent_worker.log 2>&1 &
+nohup python src/structure/worker_cli.py > logs/agent_worker.log 2>&1 &
 ```
 
 ### 管理 Worker
@@ -104,7 +104,7 @@ Database 'primary' is not configured
 screen -S agent_worker
 
 # 启动 worker
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 
 # 按 Ctrl+A 然后按 D 离开 screen（worker 继续运行）
 ```
@@ -140,7 +140,7 @@ exit
 tmux new -s agent_worker
 
 # 启动 worker
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 
 # 按 Ctrl+B 然后按 D 离开（worker 继续运行）
 ```

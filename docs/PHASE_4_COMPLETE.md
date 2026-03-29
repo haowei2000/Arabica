@@ -216,11 +216,11 @@ If critical issues are discovered:
 
 ```bash
 # Restore old registry files from git history
-git checkout HEAD~4 -- src/aiwen/services/tools/tool_registry.py
-git checkout HEAD~4 -- src/aiwen/services/executor/executor_registry.py
+git checkout HEAD~4 -- src/structure/services/tools/tool_registry.py
+git checkout HEAD~4 -- src/structure/services/executor/executor_registry.py
 
 # Restore old bootstrap
-git checkout HEAD~4 -- src/aiwen/core/bootstrap.py
+git checkout HEAD~4 -- src/structure/core/bootstrap.py
 
 # Update imports back to old locations (reverse Phase 2)
 # Revert service entry points (reverse Phase 3)

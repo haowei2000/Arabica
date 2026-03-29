@@ -9,7 +9,7 @@ The `Prompt` class provides a simple, type-safe way to create and render prompt 
 ### 1. Simple Prompt
 
 ```python
-from aiwen.utils.prompt import Prompt
+from structure.utils.prompt import Prompt
 
 # Create a prompt template
 greeting = Prompt("Hello, {name}! Welcome to {place}.")
@@ -45,7 +45,7 @@ result = prompt.render(name="Charlie")  # ❌ KeyError
 ### Template Concatenation
 
 ```python
-from aiwen.utils.prompt import Prompt
+from structure.utils.prompt import Prompt
 
 base = Prompt("You are a helpful assistant.")
 task = Prompt("\nTask: {task}")
@@ -63,7 +63,7 @@ result = full_prompt.render(
 ### SystemPrompt with Defaults
 
 ```python
-from aiwen.utils.prompt import SystemPrompt
+from structure.utils.prompt import SystemPrompt
 
 # Use default template
 system = SystemPrompt()
@@ -81,7 +81,7 @@ result = custom_system.render(language="Python", style="PEP 8")
 ### Load from File
 
 ```python
-from aiwen.utils.prompt import Prompt
+from structure.utils.prompt import Prompt
 
 # Load template from file
 prompt = Prompt.from_file("prompts/system_prompt.txt")
@@ -91,7 +91,7 @@ result = prompt.render(workspace_id="ws_123", tools="read, write")
 ### Quick Rendering Utility
 
 ```python
-from aiwen.utils.prompt import render_prompt
+from structure.utils.prompt import render_prompt
 
 # One-off rendering without creating Prompt object
 result = render_prompt(
@@ -107,7 +107,8 @@ result = render_prompt(
 
 ```python
 # prompts.py
-from aiwen.utils.prompt import Prompt, SystemPrompt
+from structure.utils.prompt import Prompt, SystemPrompt
+
 
 class MyExecutorPrompts:
     SYSTEM_PROMPT = SystemPrompt("""
@@ -142,7 +143,7 @@ History: {history}
 
 ```python
 # executor.py
-from aiwen.core.interfaces import Executor
+from structure.core.interfaces import Executor
 from .prompts import MyExecutorPrompts
 
 
@@ -228,7 +229,7 @@ prompt = system_prompt_en.replace("{{workspace_id}}", ws_id).replace("{{tools}}"
 
 ```python
 # New approach
-from aiwen.utils.prompt import SystemPrompt
+from structure.utils.prompt import SystemPrompt
 
 SYSTEM_PROMPT = SystemPrompt("""
 You are an AI assistant in workspace {workspace_id}.

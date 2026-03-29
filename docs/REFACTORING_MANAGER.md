@@ -263,7 +263,7 @@ class MyWorker:
 **用途:** 管理 agent 模板的注册
 
 ```python
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
 
 # 注册新的 agent 模板
 await ExecutorRegistry.register(
@@ -288,13 +288,13 @@ templates = ExecutorRegistry.list()
 **用途:** 为单个应用创建配置好的 agent 实例
 
 ```python
-from aiwen.services.executor.executor_factory import AppAgentFactory
+from structure.services.executor.executor_factory import AppAgentFactory
 
 # 创建工厂
 factory = AppAgentFactory(
-    appid="uuid-string",
-    agent_type="chat",  # 必须在 AgentRegistry 中注册
-    app_config={"model": "gpt-4", "temperature": 0.7}
+   appid="uuid-string",
+   agent_type="chat",  # 必须在 AgentRegistry 中注册
+   app_config={"model": "gpt-4", "temperature": 0.7}
 )
 
 # 创建实例（会合并 app_config 和 text_message）
@@ -309,7 +309,7 @@ result = await agent.run({"query": "Hello"})
 **用途:** 管理运行中的 agent 实例生命周期
 
 ```python
-from aiwen.services.executor.runtime import AgentRuntime
+from structure.services.executor.runtime import AgentRuntime
 
 runtime = AgentRuntime()
 
@@ -331,7 +331,7 @@ all_instances = runtime._instances
 **用途:** 辅助处理对话和消息
 
 ```python
-from aiwen.services.executor.chat.chat_helper import (
+from structure.services.executor.chat.chat_helper import (
    create_conversation,
    create_message,
    stream_and_finalize

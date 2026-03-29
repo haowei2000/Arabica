@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiwen.extensions.database import (
+from structure.extensions.database import (
     _ensure_registered,
     _mask_url,
     check_all_databases,
@@ -42,7 +42,7 @@ class TestDatabaseExtensions:
         # Assert
         assert masked_url == url_without_password
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     def test_list_registered_databases(self, mock_engines):
         """测试列出已注册的数据库"""
         # Arrange
@@ -57,7 +57,7 @@ class TestDatabaseExtensions:
         assert "dify" in databases
         assert "mes" in databases
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     def test_is_database_registered_true(self, mock_engines):
         """测试数据库已注册的情况"""
         # Arrange
@@ -69,7 +69,7 @@ class TestDatabaseExtensions:
         # Assert
         assert result is True
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     def test_is_database_registered_false(self, mock_engines):
         """测试数据库未注册的情况"""
         # Arrange
@@ -81,8 +81,8 @@ class TestDatabaseExtensions:
         # Assert
         assert result is False
 
-    @patch("aiwen.extensions.database._bases")
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._bases")
+    @patch("structure.extensions.database._engines")
     def test_get_base_success(self, mock_engines, mock_bases):
         """测试成功获取Base类"""
         # Arrange
@@ -96,7 +96,7 @@ class TestDatabaseExtensions:
         # Assert
         assert base == mock_base_class
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     def test_get_base_not_found(self, mock_engines):
         """测试获取不存在的Base类"""
         # Arrange
@@ -108,7 +108,7 @@ class TestDatabaseExtensions:
         ):
             get_base("nonexistent")
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     def test_get_engine_success(self, mock_engines):
         """测试成功获取引擎"""
         # Arrange
@@ -122,7 +122,7 @@ class TestDatabaseExtensions:
         # Assert
         assert engine == mock_engine
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     def test_get_engine_not_found(self, mock_engines):
         """测试获取不存在的引擎"""
         # Arrange
@@ -132,7 +132,7 @@ class TestDatabaseExtensions:
         with pytest.raises(ValueError, match="Engine for 'nonexistent' not found"):
             get_engine("nonexistent")
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     async def test_check_database_health_success(self, mock_engines):
         """测试数据库健康检查成功"""
         # Arrange
@@ -157,7 +157,7 @@ class TestDatabaseExtensions:
         assert "pool" in result
         assert result["pool"]["size"] == 5
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     async def test_check_database_health_failure(self, mock_engines):
         """测试数据库健康检查失败"""
         # Arrange
@@ -176,7 +176,7 @@ class TestDatabaseExtensions:
         assert result["bind_name"] == "primary"
         assert "error" in result
 
-    @patch("aiwen.extensions.database._engines")
+    @patch("structure.extensions.database._engines")
     async def test_check_all_databases(self, mock_engines):
         """测试检查所有数据库"""
         # Arrange
@@ -199,11 +199,11 @@ class TestDatabaseExtensions:
         assert result["primary"]["status"] == "healthy"
         assert result["mes"]["status"] == "healthy"
 
-    @patch("aiwen.extensions.database.get_settings")
+    @patch("structure.extensions.database.get_settings")
     def test_ensure_registered_already_initialized(self, mock_get_settings):
         """测试数据库已经初始化的情况"""
         # Arrange
-        import aiwen.extensions.database as db_module
+        import structure.extensions.database as db_module
 
         db_module._initialized = True
 

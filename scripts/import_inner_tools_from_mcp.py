@@ -2,11 +2,11 @@ import asyncio
 import logging
 from uuid import UUID
 
-from aiwen.config.factory import get_settings
-from aiwen.core.bootstrap import bootstrap_api
-from aiwen.extensions.database import get_session
-from aiwen.routers.context.tools.tools import MCPImportRequest, import_from_mcp
-from aiwen.models.auth.user import User
+from structure.config.factory import get_settings
+from structure.core.bootstrap import bootstrap_api
+from structure.extensions.database import get_session
+from structure.routers.context.tools.tools import MCPImportRequest, import_from_mcp
+from structure.models.auth.user import User
 from sqlalchemy import select
 
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +25,7 @@ async def main():
     logger.info(f"Connecting to Aiwen MCP at {mcp_url}")
     
     try:
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             # Get admin user
             result = await session.execute(
                 select(User).where(User.username == settings.auth.admin_username)
@@ -37,7 +37,7 @@ async def main():
 
             # Prepare import request
             # We'll first probe to see what's available
-            from aiwen.registries.mcp_loader import probe_mcp_server
+            from structure.registries.mcp_loader import probe_mcp_server
             client_config = {"mcp_transport": "sse", "mcp_url": mcp_url}
             
             logger.info("Probing MCP server...")
@@ -60,7 +60,7 @@ async def main():
             
             # Use the existing router logic (or call it directly)
             # We need a mock user response for the Depends
-            from aiwen.schemas.auth.user import UserResponse
+            from structure.schemas.auth.user import UserResponse
             current_user = UserResponse.model_validate(admin_user)
             
             # Note: import_from_mcp returns MCPImportResponse, not successes/failures list directly

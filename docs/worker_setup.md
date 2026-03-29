@@ -29,10 +29,10 @@ cd /path/to/ai630
 source .venv/bin/activate
 
 # Start the worker (new method)
-python -m src.aiwen.workers
+python -m src.structure.workers
 
 # Or the old method (still works)
-python -m src.aiwen.workers.start_worker
+python -m src.structure.workers.start_worker
 ```
 
 ### Production Environment
@@ -70,7 +70,7 @@ version: '3.8'
 services:
   agent-worker:
     build: .
-    command: python -m src.aiwen.workers.start_worker
+    command: python -m src.structure.workers.start_worker
     environment:
       - ENV_FILE=.env
     volumes:
@@ -99,7 +99,7 @@ View worker logs:
 sudo journalctl -u agent-worker -f
 
 # For direct execution
-tail -f /var/log/aiwen/worker.log
+tail -f /var/log/structure/worker.log
 ```
 
 ### Scaling

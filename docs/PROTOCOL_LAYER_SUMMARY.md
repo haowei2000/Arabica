@@ -112,7 +112,7 @@ Protocols serve as explicit documentation:
 
 ```python
 # See exactly what a tool must implement
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 # Type checkers show all required methods and attributes
 reveal_type(ToolProtocol)
@@ -144,10 +144,12 @@ All existing code continues to work exactly as before. Protocols are purely addi
 
 ```python
 # This code doesn't need to change
-from aiwen.registries.base_class import BaseTool
+from structure.registries.base_class import BaseTool
+
 
 class MyTool(BaseTool):
     METADATA = ...
+
     async def execute(self, input_data): ...
 ```
 
@@ -206,8 +208,8 @@ tool: ToolProtocol = IncompleteTool()  # Type error!
 ### Basic Tool with Protocol
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
-from aiwen.registries.base_class import BaseTool
+from structure.core.interfaces import ToolProtocol
+from structure.registries.base_class import BaseTool
 
 
 # Recommended: Inherit from BaseTool (implements ToolProtocol)
@@ -230,7 +232,7 @@ assert isinstance(MyTool(), ToolProtocol)
 ### Type-Safe Function
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 
 async def safe_execute(tool: ToolProtocol, params: dict) -> dict:
@@ -244,7 +246,7 @@ async def safe_execute(tool: ToolProtocol, params: dict) -> dict:
 ### Runtime Validation
 
 ```python
-from aiwen.core.interfaces import is_tool, is_executor
+from structure.core.interfaces import is_tool, is_executor
 
 components = [MyTool(), MyExecutor(), SomeObject()]
 
@@ -255,7 +257,7 @@ executors = [c for c in components if is_executor(c)]
 ### Protocol Introspection
 
 ```python
-from aiwen.core.interfaces import PROTOCOL_REGISTRY
+from structure.core.interfaces import PROTOCOL_REGISTRY
 
 # Check what a tool needs to implement
 tool_requirements = PROTOCOL_REGISTRY["ToolProtocol"]
@@ -275,10 +277,12 @@ print(f"Optional methods: {tool_requirements['optional_methods']}")
 **Option 1: Inherit from base classes (Recommended)**
 
 ```python
-from aiwen.registries.base_class import BaseTool
+from structure.registries.base_class import BaseTool
+
 
 class MyTool(BaseTool):  # Inherits all protocol methods
     METADATA = ...
+
     async def execute(self, input_data): ...
 ```
 
@@ -305,7 +309,7 @@ def process(tool: BaseTool) -> dict: ...
 
 
 # After (more flexible)
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 
 def process(tool: ToolProtocol) -> dict: ...

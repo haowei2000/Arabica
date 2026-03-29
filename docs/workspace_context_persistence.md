@@ -31,12 +31,12 @@
 ### 1. 创建 Workspace 时
 
 ```python
-from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
-from aiwen.extensions.database import get_session
+from structure.services.workspace_context.workspace_context_service import WorkspaceContextService
+from structure.extensions.database import get_session
 
 
 async def create_workspace(workspace_id: str, user_id: str):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         # 1. 创建 service
         service = WorkspaceContextService(session, workspace_id)
 
@@ -61,7 +61,7 @@ async def create_workspace(workspace_id: str, user_id: str):
 
 ```python
 async def restore_workspace(workspace_id: str):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         # 从数据库恢复到内存
         service = WorkspaceContextService(session, workspace_id)
         await service.load()  # ← 从 WorkspaceContext 表加载
@@ -75,7 +75,7 @@ async def restore_workspace(workspace_id: str):
 
 ```python
 async def query_workspace_contexts(workspace_id: str):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         service = WorkspaceContextService(session, workspace_id)
         await service.load()
 
@@ -99,7 +99,7 @@ async def query_workspace_contexts(workspace_id: str):
 
 ```python
 async def add_workspace_context(workspace_id: str):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         service = WorkspaceContextService(session, workspace_id)
         await service.load()
 
@@ -129,7 +129,7 @@ async def add_workspace_context(workspace_id: str):
 
 ```python
 async def delete_workspace_context(workspace_id: str):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         service = WorkspaceContextService(session, workspace_id)
         await service.load()
 
@@ -145,7 +145,7 @@ async def delete_workspace_context(workspace_id: str):
 ## 🔄 完整生命周期示例
 
 ```python
-from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
+from structure.services.workspace_context.workspace_context_service import WorkspaceContextService
 
 
 class WorkspaceManager:
@@ -191,7 +191,7 @@ class WorkspaceManager:
 
 # 使用示例
 async def main():
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         # 创建 workspace
         ws = WorkspaceManager("ws_123")
         await ws.start(session)

@@ -9,17 +9,17 @@ This document describes the context path constants used in the conflict executor
 All context path suffixes are defined in `ContextPathSuffix` class:
 
 ```python
-from aiwen.plugins.executors.conflict.prompts import ContextPathSuffix
+from structure.plugins.executors.conflict.prompts import ContextPathSuffix
 
 # Available constants
-ContextPathSuffix.ALL_RUNS           # "all_runs"
-ContextPathSuffix.JOINED_USERS       # "joined_users"
-ContextPathSuffix.OWNER              # "owner"
+ContextPathSuffix.ALL_RUNS  # "all_runs"
+ContextPathSuffix.JOINED_USERS  # "joined_users"
+ContextPathSuffix.OWNER  # "owner"
 ContextPathSuffix.WORKSPACE_HISTORY  # "workspace_history"
-ContextPathSuffix.KNOWLEDGE          # "knowledge"
-ContextPathSuffix.TOOLS              # "tools"
-ContextPathSuffix.SKILLS             # "skills"
-ContextPathSuffix.USER_HISTORY       # "history"
+ContextPathSuffix.KNOWLEDGE  # "knowledge"
+ContextPathSuffix.TOOLS  # "tools"
+ContextPathSuffix.SKILLS  # "skills"
+ContextPathSuffix.USER_HISTORY  # "history"
 ```
 
 ## Helper Functions
@@ -29,7 +29,7 @@ ContextPathSuffix.USER_HISTORY       # "history"
 Build a complete context path from workspace ID and suffix.
 
 ```python
-from aiwen.plugins.executors.conflict.prompts import (
+from structure.plugins.executors.conflict.prompts import (
     build_context_path,
     ContextPathSuffix,
 )
@@ -44,14 +44,14 @@ tools_path = build_context_path("ws_123", ContextPathSuffix.TOOLS)
 Get all context paths for a workspace at once.
 
 ```python
-from aiwen.plugins.executors.conflict.prompts import get_all_context_paths
+from structure.plugins.executors.conflict.prompts import get_all_context_paths
 
 # Get all paths as a dictionary
 paths = get_all_context_paths("ws_123")
 
 # Access individual paths
-print(paths["tools"])            # "/ws_123/tools"
-print(paths["skills"])           # "/ws_123/skills"
+print(paths["tools"])  # "/ws_123/tools"
+print(paths["skills"])  # "/ws_123/skills"
 print(paths["workspace_history"])  # "/ws_123/workspace_history"
 ```
 
@@ -60,7 +60,7 @@ print(paths["workspace_history"])  # "/ws_123/workspace_history"
 The constants are automatically passed to templates by the render functions:
 
 ```python
-from aiwen.plugins.executors.conflict.prompts import (
+from structure.plugins.executors.conflict.prompts import (
     render_system_prompt,
     render_available_context,
 )
@@ -115,7 +115,7 @@ skills_path = f"/{workspace_id}/skilss"  # Typo!
 
 ```python
 # ✅ Type-safe constants
-from aiwen.plugins.executors.conflict.prompts import (
+from structure.plugins.executors.conflict.prompts import (
     build_context_path,
     ContextPathSuffix,
 )

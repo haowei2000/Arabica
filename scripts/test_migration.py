@@ -13,7 +13,7 @@ async def test_framework():
     print("1. Testing ContextLayer Framework")
     print("=" * 60)
 
-    from aiwen.core.frameworks.context_layer import (
+    from structure.core.frameworks.context_layer import (
         ContextStore,
         DetailLevel,
         count_aggregator,
@@ -70,11 +70,11 @@ async def test_models():
     print("2. Testing Database Models")
     print("=" * 60)
 
-    from aiwen.core.enums import ContextType
-    from aiwen.extensions.database import get_session
-    from aiwen.models.context.context import Context
+    from structure.core.enums import ContextType
+    from structure.extensions.database import get_session
+    from structure.models.context.context import Context
 
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         # Create a test context
         test_ctx = Context(
             user_id=uuid4(),
@@ -126,15 +126,15 @@ async def test_service():
     print("3. Testing WorkspaceContextService")
     print("=" * 60)
 
-    from aiwen.extensions.database import get_session
-    from aiwen.models.workspaces.workspace import Workspace
-    from aiwen.services.workspace_context.workspace_context_service import (
+    from structure.extensions.database import get_session
+    from structure.models.workspaces.workspace import Workspace
+    from structure.services.workspace_context.workspace_context_service import (
         WorkspaceContextService,
     )
 
     workspace_id = uuid4()
 
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         # Create a real workspace for testing
         test_workspace = Workspace(
             id=workspace_id,

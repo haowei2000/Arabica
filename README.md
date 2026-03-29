@@ -234,8 +234,9 @@ Aiwen uses a **decorator-based registration** system. Importing a module is suff
 ### Registering an Executor
 
 ```python
-from aiwen.registries.core import register_executor
-from aiwen.core.interfaces import Executor
+from structure.registries.core import register_executor
+from structure.core.interfaces import Executor
+
 
 @register_executor
 class MyExecutor(Executor):
@@ -257,12 +258,14 @@ class MyExecutor(Executor):
 ### Registering a Tool
 
 ```python
-from aiwen.registries.core import register_tool
-from aiwen.core.interfaces import BaseTool
+from structure.registries.core import register_tool
+from structure.core.interfaces import BaseTool
 from pydantic import BaseModel
+
 
 class MyToolInput(BaseModel):
     query: str
+
 
 @register_tool
 class MyTool(BaseTool):
@@ -333,7 +336,7 @@ async def endpoint(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run))
 
 # In workers / services
-async with get_session("aiwen") as session:
+async with get_session("structure") as session:
     result = await session.execute(select(Run))
 ```
 
@@ -356,8 +359,8 @@ Redis serves two distinct roles:
 Workers consume from Redis Streams using consumer groups. Multiple worker instances can run in parallel without coordination conflicts:
 
 ```bash
-uv run aiwen-worker   # single worker
-aiwen-worker -n 4     # 4 parallel consumers
+uv run structure-worker   # single worker
+structure-worker -n 4     # 4 parallel consumers
 ```
 
 Workers also run a **stuck-run detector** that automatically recovers runs that have been in `running` state longer than a configurable timeout.
@@ -440,7 +443,7 @@ make start-all
 ### Docker
 
 ```bash
-docker compose -p aiwen up -d
+docker compose -p structure up -d
 ```
 
 ---
@@ -480,7 +483,7 @@ uv add --dev <package>     # add a dev dependency
 pytest                          # all tests
 pytest -m unit                  # unit tests only
 pytest -m integration           # integration tests only
-pytest --cov=src/aiwen          # with coverage report
+pytest --cov=src/structure          # with coverage report
 ```
 
 Coverage threshold: **60%**
@@ -498,10 +501,10 @@ make db-history     # show full migration history
 ### CLI Commands
 
 ```bash
-uv run aiwen          # unified service manager
-uv run aiwen-api      # API server only
-uv run aiwen-worker   # worker only
-uv run aiwen-mcp      # MCP service (port 9000)
+uv run structure          # unified service manager
+uv run structure-api      # API server only
+uv run structure-worker   # worker only
+uv run structure-mcp      # MCP service (port 9000)
 ```
 
 ---
@@ -518,7 +521,7 @@ git pull --rebase
 cd src && uv run sync-env
 
 # Start all services
-docker compose -p aiwen up -d
+docker compose -p structure up -d
 ```
 
 ### Scaling Workers
@@ -527,7 +530,7 @@ Workers are stateless and can be scaled horizontally. Redis consumer groups hand
 
 ```bash
 # Run 8 worker instances
-aiwen-worker -n 8
+structure-worker -n 8
 ```
 
 ### Health Check

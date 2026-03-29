@@ -122,7 +122,7 @@ cache:
 lint:ruff-check:
   stage: lint
   script:
-    - uv run ruff check src/aiwen tests
+    - uv run ruff check src/structure tests
 ```
 
 **作用**:
@@ -138,7 +138,7 @@ lint:ruff-check:
 lint:ruff-format:
   stage: lint
   script:
-    - uv run ruff format --check src/aiwen tests
+    - uv run ruff format --check src/structure tests
 ```
 
 **作用**:
@@ -184,7 +184,7 @@ test:fast:
 test:coverage:
   stage: test
   script:
-    - uv run pytest --cov=src/aiwen --cov-report=xml
+    - uv run pytest --cov=src/structure --cov-report=xml
   coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
 ```
 
@@ -268,13 +268,13 @@ https://<your-gitlab-domain>/<group>/<project>/-/pages
 uv sync --group dev
 
 # 运行 lint
-uv run ruff check src/aiwen tests
-uv run ruff format --check src/aiwen tests
+uv run ruff check src/structure tests
+uv run ruff format --check src/structure tests
 
 # 运行测试
 uv run pytest -m unit -v
 uv run pytest -m "not slow" -v
-uv run pytest --cov=src/aiwen --cov-report=html
+uv run pytest --cov=src/structure --cov-report=html
 
 # 查看覆盖率
 open htmlcov/index.html
@@ -337,7 +337,7 @@ git push origin develop
 3. **本地复现**
    ```bash
    # 复现 lint 失败
-   uv run ruff check src/aiwen tests
+   uv run ruff check src/structure tests
    
    # 复现测试失败
    uv run pytest -v
@@ -633,7 +633,7 @@ def clean_state():
 
 ```bash
 # 本地生成覆盖率报告
-uv run pytest --cov=src/aiwen --cov-report=html
+uv run pytest --cov=src/structure --cov-report=html
 open htmlcov/index.html
 ```
 

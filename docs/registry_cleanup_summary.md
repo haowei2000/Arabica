@@ -152,17 +152,17 @@ def register_executor(executor_cls):
 
 ```python
 # Multiple import paths (now removed)
-from aiwen.registries.base import BaseRegistry, RegistryConfig
-from aiwen.registries.tool_registry import ToolRegistry, register_tool
-from aiwen.registries.executor_registry import ExecutorRegistry, register_executor
-from aiwen.registries.manager import RegistryManager, get_registry
+from structure.registries.base import BaseRegistry, RegistryConfig
+from structure.registries.tool_registry import ToolRegistry, register_tool
+from structure.registries.executor_registry import ExecutorRegistry, register_executor
+from structure.registries.manager import RegistryManager, get_registry
 ```
 
 ### New Imports (After Cleanup)
 
 ```python
 # Single unified import path
-from aiwen.registries import (
+from structure.registries import (
     # Base classes
     BaseRegistry,
     RegistryConfig,
@@ -264,7 +264,7 @@ git log core.py          # See ALL registry changes in one place
 ### Compilation Check
 
 ```bash
-$ python -m py_compile src/aiwen/registries/*.py
+$ python -m py_compile src/structure/registries/*.py
 ✅ All files compile successfully!
 ```
 
@@ -282,8 +282,8 @@ manager.py:  11 top-level statements (manager + utilities)
 
 ```python
 # Old code (still works)
-from aiwen.registries import ToolRegistry, ExecutorRegistry
-from aiwen.registries import get_registry, register_tool
+from structure.registries import ToolRegistry, ExecutorRegistry
+from structure.registries import get_registry, register_tool
 
 # These imports are redirected from __init__.py to core.py
 # No code changes needed in your application!
@@ -332,9 +332,10 @@ Examples:
 ### For New Code
 
 **✅ Simpler Imports**
+
 ```python
 # Just use the unified import
-from aiwen.registries import (
+from structure.registries import (
     ToolRegistry,
     ExecutorRegistry,
     register_tool,

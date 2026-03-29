@@ -93,30 +93,31 @@ async def get_current_time(timezone: str = "UTC") -> dict:
 ### After: Unified BaseTool System
 
 ```python
-from aiwen.services.tools.base_tool import (
-    BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
+from structure.services.tools.base_tool import (
+   BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
 
+
 class GetCurrentTimeTool(BaseTool):
-    METADATA = ToolMetadata(
-        name="get_current_time",
-        description="Get current server time",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
-        category="utility",
-        tags=["time", "datetime"],
-        timeout=5,
-    )
+   METADATA = ToolMetadata(
+      name="get_current_time",
+      description="Get current server time",
+      execution_mode=ToolExecutionMode.SERVER_RUN,
+      category="utility",
+      tags=["time", "datetime"],
+      timeout=5,
+   )
 
-    class InputSchema(ToolInputSchema):
-        timezone: str = Field(default="UTC", description="Timezone name")
+   class InputSchema(ToolInputSchema):
+      timezone: str = Field(default="UTC", description="Timezone name")
 
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        # Implementation
-        return ToolOutputSchema(
-            success=True,
-            message="Current time retrieved",
-            data={"time": "...", "timezone": input_data.timezone}
-        )
+   async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+      # Implementation
+      return ToolOutputSchema(
+         success=True,
+         message="Current time retrieved",
+         data={"time": "...", "timezone": input_data.timezone}
+      )
 
 # Benefits:
 # ✅ No LangChain decorator dependency
@@ -440,48 +441,49 @@ schema = GetCurrentTimeTool.get_langchain_schema()
 ### Creating a New Tool
 
 ```python
-from aiwen.services.tools.base_tool import (
-    BaseTool,
-    ToolExecutionMode,
-    ToolInputSchema,
-    ToolMetadata,
-    ToolOutputSchema,
+from structure.services.tools.base_tool import (
+   BaseTool,
+   ToolExecutionMode,
+   ToolInputSchema,
+   ToolMetadata,
+   ToolOutputSchema,
 )
 from pydantic import Field
 
+
 class MyCustomTool(BaseTool):
-    """Tool description for documentation"""
+   """Tool description for documentation"""
 
-    METADATA = ToolMetadata(
-        name="my_custom_tool",
-        display_name="My Custom Tool",
-        description="What this tool does",
-        execution_mode=ToolExecutionMode.SERVER_RUN,
-        category="custom",
-        tags=["tag1", "tag2"],
-        timeout=30,
-    )
+   METADATA = ToolMetadata(
+      name="my_custom_tool",
+      display_name="My Custom Tool",
+      description="What this tool does",
+      execution_mode=ToolExecutionMode.SERVER_RUN,
+      category="custom",
+      tags=["tag1", "tag2"],
+      timeout=30,
+   )
 
-    class InputSchema(ToolInputSchema):
-        param1: str = Field(description="First parameter")
-        param2: int = Field(default=10, description="Optional parameter")
+   class InputSchema(ToolInputSchema):
+      param1: str = Field(description="First parameter")
+      param2: int = Field(default=10, description="Optional parameter")
 
-    async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        try:
-            # Your implementation here
-            result = await do_something(input_data.param1, input_data.param2)
+   async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
+      try:
+         # Your implementation here
+         result = await do_something(input_data.param1, input_data.param2)
 
-            return ToolOutputSchema(
-                success=True,
-                message="Operation completed",
-                data={"result": result}
-            )
-        except Exception as e:
-            return ToolOutputSchema(
-                success=False,
-                message=f"Operation failed: {str(e)}",
-                error=str(e)
-            )
+         return ToolOutputSchema(
+            success=True,
+            message="Operation completed",
+            data={"result": result}
+         )
+      except Exception as e:
+         return ToolOutputSchema(
+            success=False,
+            message=f"Operation failed: {str(e)}",
+            error=str(e)
+         )
 ```
 
 ### Adding to Tool Registry

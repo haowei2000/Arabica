@@ -20,7 +20,7 @@ def setup_environment():
     os.environ.setdefault("POSTGRES__PORT", "5435")
     os.environ.setdefault("POSTGRES__USERNAME", "postgres")
     os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
-    os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "aiwen")
+    os.environ.setdefault("POSTGRES__AIWEN_DBNAME", "structure")
     print("环境变量已设置")
 
 

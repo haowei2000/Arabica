@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ValidationError
 import pytest
 
-from aiwen.utils.schema_mixins import (
+from structure.utils.schema_mixins import (
     CreatedAtMixin,
     EnumStringMixin,
     ORMConfigMixin,

@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from aiwen.schemas.nl2sql.indicator_info import (
+from structure.schemas.nl2sql.indicator_info import (
     DimensionInfoSchema,
     IndicatorInfoSchema,
     TableSchema,
@@ -8,7 +8,7 @@ from aiwen.schemas.nl2sql.indicator_info import (
 from fastapi.testclient import TestClient
 import pytest
 
-from aiwen.app import app
+from structure.app import app
 
 
 @pytest.fixture
@@ -37,13 +37,13 @@ def mock_indicator_info():
 class TestGetIndicatorInfoService:
     """测试指标信息服务"""
 
-    @patch("aiwen.services.nl2sql.get_indicator_info.get_indicator_info_service")
+    @patch("structure.services.nl2sql.get_indicator_info.get_indicator_info_service")
     def test_get_indicator_info_success(
         self, mock_service, sample_indicator_name, mock_indicator_info
     ):
         """测试成功获取指标信息的情况"""
         # Arrange
-        from aiwen.extensions.database import get_readonly_session
+        from structure.extensions.database import get_readonly_session
 
         mock_service.return_value = mock_indicator_info
 
@@ -64,11 +64,11 @@ class TestGetIndicatorInfoService:
         assert len(result.related_tables) == 1
         mock_service.assert_called_once()
 
-    @patch("aiwen.services.nl2sql.get_indicator_info.get_indicator_info_service")
+    @patch("structure.services.nl2sql.get_indicator_info.get_indicator_info_service")
     def test_get_indicator_info_not_found(self, mock_service, sample_indicator_name):
         """测试指标不存在的情况"""
         # Arrange
-        from aiwen.extensions.database import get_readonly_session
+        from structure.extensions.database import get_readonly_session
 
         mock_service.side_effect = ValueError("指标 设备开机率（生产） 不存在")
 

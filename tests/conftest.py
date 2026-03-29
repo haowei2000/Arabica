@@ -54,8 +54,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 def mock_database_connections():
     """全局数据库连接 mock - 避免测试时连接真实数据库"""
     with (
-        patch("aiwen.extensions.database.create_async_engine") as mock_create_engine,
-        patch("aiwen.extensions.database._ensure_registered") as mock_ensure_registered,
+        patch("structure.extensions.database.create_async_engine") as mock_create_engine,
+        patch("structure.extensions.database._ensure_registered") as mock_ensure_registered,
     ):
         mock_engine = MagicMock()
         mock_create_engine.return_value = mock_engine
@@ -119,10 +119,10 @@ def test_client() -> TestClient:
             assert response.status_code == 200
     """
     with (
-        patch("aiwen.extensions.database._ensure_registered"),
-        patch("aiwen.extensions.database.check_database_health"),
+        patch("structure.extensions.database._ensure_registered"),
+        patch("structure.extensions.database.check_database_health"),
     ):
-        from aiwen.app import app
+        from structure.app import app
 
         with TestClient(app) as client:
             yield client
@@ -155,7 +155,7 @@ def mock_agent():
 def mock_get_llm(mock_llm):
     """Mock get_llm 函数"""
     with patch(
-        "aiwen.services.nl2sql.select_indicator.get_llm", return_value=mock_llm
+        "structure.services.nl2sql.select_indicator.get_llm", return_value=mock_llm
     ) as mock:
         yield mock
 
@@ -164,7 +164,7 @@ def mock_get_llm(mock_llm):
 def mock_create_agent(mock_agent):
     """Mock create_agent 函数"""
     with patch(
-        "aiwen.services.nl2sql.select_indicator.create_agent", return_value=mock_agent
+        "structure.services.nl2sql.select_indicator.create_agent", return_value=mock_agent
     ) as mock:
         yield mock
 

@@ -34,12 +34,13 @@ src/aiwen/
 - ✅ 生命周期长 - 在应用启动时初始化,全局共享
 
 **示例**:
+
 ```python
 # database.py - 可以在 Flask、Django 等任何框架中使用
-from aiwen.extensions.database import get_db_session
+from structure.extensions.database import get_db_session
 
 # logger.py - 通用日志配置
-from aiwen.extensions.logger import setup_logging
+from structure.extensions.logger import setup_logging
 ```
 
 **依赖方向**: 被其他所有模块依赖
@@ -128,9 +129,9 @@ from .get_current_user import get_current_user  # 依赖注入
 **好的设计** (当前):
 
 ```python
-from aiwen.extensions.database import get_db_session  # 基础设施
-from aiwen.middleware.cache_middleware import CacheMiddleware  # 中间件
-from aiwen.core.dependencies.auth import get_current_user  # 依赖注入
+from structure.extensions.database import get_db_session  # 基础设施
+from structure.middleware.cache_middleware import CacheMiddleware  # 中间件
+from structure.core.dependencies.auth import get_current_user  # 依赖注入
 
 # 清晰的层次和职责
 ```
@@ -144,13 +145,13 @@ from aiwen.core.dependencies.auth import get_current_user  # 依赖注入
 ```python
 # ✅ 当前设计 - extensions 可以在其他项目中使用
 # project1/main.py (FastAPI)
-from aiwen.extensions.database import get_db_session
+from structure.extensions.database import get_db_session
 
 # project2/app.py (Flask)
-from aiwen.extensions.database import get_db_session
+from structure.extensions.database import get_db_session
 
 # project3/script.py (纯 Python 脚本)
-from aiwen.extensions.logger import setup_logging
+from structure.extensions.logger import setup_logging
 ```
 
 **合并后**: extensions 和 FastAPI 耦合,无法单独使用
@@ -170,19 +171,19 @@ from infrastructure import get_db_session  # ImportError: fastapi not found
 ```python
 # ✅ 测试 extensions - 不需要 FastAPI
 def test_database_connection():
-    from aiwen.extensions.database import get_db_session
+    from structure.extensions.database import get_db_session
     # 测试数据库连接...
 
 
 # ✅ 测试 dependencies - 只需要 FastAPI
 def test_get_current_user():
-    from aiwen.core.dependencies.auth import get_current_user
+    from structure.core.dependencies.auth import get_current_user
     # Mock token 测试...
 
 
 # ✅ 测试 middleware - 需要完整请求上下文
 def test_cache_middleware():
-    from aiwen.middleware.cache_middleware import CacheMiddleware
+    from structure.middleware.cache_middleware import CacheMiddleware
     # 测试缓存逻辑...
 ```
 
@@ -348,9 +349,9 @@ from infrastructure import (
 
 ```python
 # app.py - 清晰的层次结构
-from aiwen.extensions.database import get_db_session  # 基础设施层
-from aiwen.middleware.cache import CacheMiddleware  # 中间件层
-from aiwen.core.dependencies.auth import get_current_user  # 依赖注入层
+from structure.extensions.database import get_db_session  # 基础设施层
+from structure.middleware.cache import CacheMiddleware  # 中间件层
+from structure.core.dependencies.auth import get_current_user  # 依赖注入层
 
 # 一眼就能看出每个导入的用途和层次
 ```

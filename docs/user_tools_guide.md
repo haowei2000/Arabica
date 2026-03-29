@@ -131,44 +131,45 @@ curl "http://localhost:8000/tools/registry/schemas?format=openai"
 **Python Code:**
 
 ```python
-from aiwen.services.tools.tool_registry import ToolRegistry
-from aiwen.services.tools.dynamic_tool_loader import DynamicToolLoader
+from structure.services.tools.tool_registry import ToolRegistry
+from structure.services.tools.dynamic_tool_loader import DynamicToolLoader
+
 
 # In your agent initialization
 async def initialize_agent(user_id: UUID, db: AsyncSession):
-    # Load user tools
-    loader = DynamicToolLoader(db)
-    await loader.load_user_tools(user_id)
+   # Load user tools
+   loader = DynamicToolLoader(db)
+   await loader.load_user_tools(user_id)
 
-    # Get all tool schemas for LLM
-    tool_schemas = ToolRegistry.get_all_schemas(format="openai")
+   # Get all tool schemas for LLM
+   tool_schemas = ToolRegistry.get_all_schemas(format="openai")
 
-    # Pass to your LLM (example with OpenAI)
-    from openai import AsyncOpenAI
+   # Pass to your LLM (example with OpenAI)
+   from openai import AsyncOpenAI
 
-    client = AsyncOpenAI()
+   client = AsyncOpenAI()
 
-    response = await client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant with access to tools."},
-            {"role": "user", "content": "What is 15 + 27?"}
-        ],
-        tools=tool_schemas,  # Pass tool schemas
-        tool_choice="auto"
-    )
+   response = await client.chat.completions.create(
+      model="gpt-4",
+      messages=[
+         {"role": "system", "content": "You are a helpful assistant with access to tools."},
+         {"role": "user", "content": "What is 15 + 27?"}
+      ],
+      tools=tool_schemas,  # Pass tool schemas
+      tool_choice="auto"
+   )
 
-    # Handle tool calls
-    if response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            tool_args = json.loads(tool_call.function.arguments)
+   # Handle tool calls
+   if response.choices[0].message.tool_calls:
+      for tool_call in response.choices[0].message.tool_calls:
+         tool_name = tool_call.function.name
+         tool_args = json.loads(tool_call.function.arguments)
 
-            # Execute tool
-            tool_instance = ToolRegistry.get_tool_instance(tool_name)
-            result = await tool_instance(**tool_args)
+         # Execute tool
+         tool_instance = ToolRegistry.get_tool_instance(tool_name)
+         result = await tool_instance(**tool_args)
 
-            print(f"Tool result: {result}")
+         print(f"Tool result: {result}")
 ```
 
 ## More Examples
@@ -230,7 +231,7 @@ async def initialize_agent(user_id: UUID, db: AsyncSession):
       "limit": {"type": "integer", "description": "Max results", "default": 10}
     }
   },
-  "code": "from sqlalchemy import select, text\\nfrom aiwen.extensions.database import get_session\\nimport asyncio\\n\\nasync def query():\\n    async with get_session('aiwen') as db:\\n        result = await db.execute(text(f\\\"SELECT id, name FROM users LIMIT {input_data.get('limit', 10)}\\\"))\\n        return [{'id': str(row[0]), 'name': row[1]} for row in result.fetchall()]\\n\\nresult = {'users': asyncio.run(query())}"
+  "code": "from sqlalchemy import select, text\\nfrom structure.extensions.database import get_session\\nimport asyncio\\n\\nasync def query():\\n    async with get_session('structure') as db:\\n        result = await db.execute(text(f\\\"SELECT id, name FROM users LIMIT {input_data.get('limit', 10)}\\\"))\\n        return [{'id': str(row[0]), 'name': row[1]} for row in result.fetchall()]\\n\\nresult = {'users': asyncio.run(query())}"
 }
 ```
 

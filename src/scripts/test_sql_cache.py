@@ -15,13 +15,13 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from aiwen.schemas.nl2sql.generate_sql import SqlResponse
-from aiwen.schemas.nl2sql.indicator_info import (
+from structure.schemas.nl2sql.generate_sql import SqlResponse
+from structure.schemas.nl2sql.indicator_info import (
     DimensionInfoSchema,
     IndicatorInfoSchema,
     TableSchema,
 )
-from aiwen.services.nl2sql.generate_sql import generate_sql
+from structure.services.nl2sql.generate_sql import generate_sql
 
 
 async def test_sql_cache():

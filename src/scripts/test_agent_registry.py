@@ -15,7 +15,7 @@ import sys
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# 加载环境变量 - CRITICAL: Must be before importing any aiwen modules!
+# 加载环境变量 - CRITICAL: Must be before importing any structure modules!
 from dotenv import load_dotenv
 
 env_file = project_root / "src" / ".env"
@@ -26,7 +26,7 @@ if env_file.exists():
 else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
 
-from aiwen.registries.core import ExecutorRegistry
+from structure.registries.core import ExecutorRegistry
 
 # 配置日志
 logging.basicConfig(

@@ -34,7 +34,7 @@ def format_bytes(bytes_value: float) -> str:
 def print_cache_stats():
     """Print cache statistics."""
     try:
-        from aiwen.utils.workspace_context_cache import get_cache_stats
+        from structure.utils.workspace_context_cache import get_cache_stats
 
         stats = get_cache_stats()
 

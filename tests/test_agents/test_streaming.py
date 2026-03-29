@@ -2,7 +2,7 @@
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
-from aiwen.routers.agents.chat import event_generator
+from structure.routers.agents.chat import event_generator
 import pytest
 
 

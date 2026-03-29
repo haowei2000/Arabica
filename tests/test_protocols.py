@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from aiwen.core.interfaces import (
+from structure.core.interfaces import (
     PROTOCOL_REGISTRY,
     ExecutorProtocol,
     RegistryProtocol,
@@ -17,13 +17,13 @@ from aiwen.core.interfaces import (
     is_registry,
     is_tool,
 )
-from aiwen.core.interfaces.tool import (
+from structure.core.interfaces.tool import (
     BaseTool,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.registries.core import ExecutorRegistry, ToolRegistry
+from structure.registries.core import ExecutorRegistry, ToolRegistry
 
 
 class TestProtocolDefinitions:

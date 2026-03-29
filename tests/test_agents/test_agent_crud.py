@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from aiwen.models.app import App
+from structure.models.app import App
 
 
 @pytest.mark.asyncio

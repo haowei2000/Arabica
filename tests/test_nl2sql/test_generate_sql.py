@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
-from aiwen.schemas.nl2sql.generate_sql import SqlResponse
-from aiwen.schemas.nl2sql.indicator_info import (
+from structure.schemas.nl2sql.generate_sql import SqlResponse
+from structure.schemas.nl2sql.indicator_info import (
     DimensionInfoSchema,
     IndicatorInfoSchema,
     TableSchema,
@@ -9,7 +9,7 @@ from aiwen.schemas.nl2sql.indicator_info import (
 from fastapi.testclient import TestClient
 import pytest
 
-from aiwen.app import app
+from structure.app import app
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def mock_sql_response():
 class TestGenerateSqlEndpoint:
     """测试 /api/nl2sql/generate_sql 端点"""
 
-    @patch("aiwen.routers.nl2sql.generate_sql_service")
+    @patch("structure.routers.nl2sql.generate_sql_service")
     def test_generate_sql_success(
         self,
         mock_service,
@@ -111,7 +111,7 @@ class TestGenerateSqlEndpoint:
         assert data["code"] == 422
         assert data["input"] == "请求参数验证失败"
 
-    @patch("aiwen.routers.nl2sql.generate_sql_service")
+    @patch("structure.routers.nl2sql.generate_sql_service")
     def test_generate_sql_service_exception(
         self, mock_service, test_client, sample_query, sample_indicator_info
     ):

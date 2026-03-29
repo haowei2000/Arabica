@@ -88,9 +88,10 @@ UTILITY_TOOLS = [get_current_time, ...]  # Function references
 ### After (BaseTool)
 
 ```python
-from aiwen.services.tools.base_tool import (
+from structure.services.tools.base_tool import (
     BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
+
 
 class GetCurrentTimeTool(BaseTool):
     METADATA = ToolMetadata(
@@ -109,6 +110,7 @@ class GetCurrentTimeTool(BaseTool):
             success=True,
             data={"time": "...", "timezone": input_data.timezone}
         )
+
 
 # Usage
 UTILITY_TOOLS_V2 = [GetCurrentTimeTool, ...]  # Class references
@@ -249,10 +251,11 @@ schema = ToolClass.get_langchain_schema()
 ### Creating a New Tool
 
 ```python
-from aiwen.services.tools.base_tool import (
+from structure.services.tools.base_tool import (
     BaseTool, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
 from pydantic import Field
+
 
 class MyCustomTool(BaseTool):
     """My custom tool description"""

@@ -71,7 +71,7 @@
 ### Step 1: Create Tool Class Template
 
 ```python
-from aiwen.services.tools.base_tool import (
+from structure.services.tools.base_tool import (
     BaseTool,
     ToolExecutionMode,
     ToolInputSchema,
@@ -79,6 +79,7 @@ from aiwen.services.tools.base_tool import (
     ToolOutputSchema,
 )
 from pydantic import Field
+
 
 class ToolNameTool(BaseTool):
     """Tool description"""
@@ -111,9 +112,11 @@ class ToolNameTool(BaseTool):
 ### Step 2: Update Imports
 
 **Before:**
+
 ```python
 from langchain_core.tools import tool
-from aiwen.services.tools.execution_mode import server_tool
+from structure.services.tools.execution_mode import server_tool
+
 
 @tool("tool_name")
 @server_tool(timeout=30)
@@ -123,8 +126,9 @@ async def tool_function(param1: str, param2: int = 10) -> dict:
 ```
 
 **After:**
+
 ```python
-from aiwen.services.tools.base_tool import (
+from structure.services.tools.base_tool import (
     BaseTool,
     ToolExecutionMode,
     ToolInputSchema,
@@ -133,8 +137,9 @@ from aiwen.services.tools.base_tool import (
 )
 from pydantic import Field
 
+
 class ToolNameTool(BaseTool):
-    # ... (as shown above)
+# ... (as shown above)
 ```
 
 ### Step 3: Update Tool Collections

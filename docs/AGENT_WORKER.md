@@ -69,22 +69,22 @@ Agent Worker 是一个异步任务处理器，使用 `AgentRuntime` 管理 agent
 
 ```bash
 # 启动 worker（前台运行，推荐用于调试）
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 
 # 或使用模块方式
-python -m aiwen.start_worker
+python -m structure.start_worker
 
 # 后台运行（生产环境）
-nohup python src/aiwen/worker_cli.py > logs/agent_worker.log 2>&1 &
+nohup python src/structure/worker_cli.py > logs/agent_worker.log 2>&1 &
 
 # 使用 screen（推荐）
 screen -S agent_worker
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 # 按 Ctrl+A 然后 D 离开
 
 # 使用 tmux
 tmux new -s agent_worker
-python src/aiwen/worker_cli.py
+python src/structure/worker_cli.py
 # 按 Ctrl+B 然后 D 离开
 ```
 
@@ -114,28 +114,28 @@ Starting AgentWorker...
 
 ```python
 import asyncio
-from aiwen.celery_worker.task_worker import AgentWorker
-from aiwen.extensions.database import get_session
-from aiwen.middleware.cache_middleware import get_redis_client, init_redis_client
+from structure.celery_worker.task_worker import AgentWorker
+from structure.extensions.database import get_session
+from structure.middleware.cache_middleware import get_redis_client, init_redis_client
 
 
 async def main():
-    # 初始化 Redis
-    await init_redis_client()
-    redis_client = get_redis_client(is_async=True)
+   # 初始化 Redis
+   await init_redis_client()
+   redis_client = get_redis_client(is_async=True)
 
-    # 创建 worker
-    worker = AgentWorker(redis_client, get_session)
+   # 创建 worker
+   worker = AgentWorker(redis_client, get_session)
 
-    # 启动 worker
-    try:
-        await worker.start()
-    finally:
-        await worker.cleanup()
+   # 启动 worker
+   try:
+      await worker.start()
+   finally:
+      await worker.cleanup()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+   asyncio.run(main())
 ```
 
 ### 方式 3: 与 FastAPI 集成
@@ -251,7 +251,7 @@ POSTGRES__HOST=localhost
 POSTGRES__PORT=5432
 POSTGRES__USERNAME=postgres
 POSTGRES__PASSWORD=your_password
-POSTGRES__AIWEN_DBNAME=aiwen
+POSTGRES__AIWEN_DBNAME=structure
 ```
 
 ### 依赖项
@@ -276,7 +276,7 @@ Worker 会输出详细的日志信息：
 ### 查看运行状态
 
 ```python
-from aiwen.celery_worker.task_worker import AgentWorker
+from structure.celery_worker.task_worker import AgentWorker
 
 # 获取正在运行的任务数
 count = worker.get_running_task_count()
@@ -285,7 +285,7 @@ print(f"Running tasks: {count}")
 # 获取特定任务的 agent
 agent = worker.get_running_agent(task_id)
 if agent:
-    print(f"Agent config: {agent.config}")
+   print(f"Agent config: {agent.config}")
 ```
 
 ## 故障排除

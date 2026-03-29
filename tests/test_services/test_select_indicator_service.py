@@ -6,8 +6,8 @@
 
 from unittest.mock import AsyncMock, patch
 
-from aiwen.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
-from aiwen.services.nl2sql.select_indicator import select_indicator_service
+from structure.schemas.nl2sql.select_indicator import IndicatorSelectResponseSchema
+from structure.services.nl2sql.select_indicator import select_indicator_service
 import pytest
 
 # 从测试工具导入辅助函数
@@ -88,9 +88,9 @@ class TestSelectIndicatorService:
         mock_response = IndicatorSelectResponseSchema(indicator_name=expected_indicator)
 
         with (
-            patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
+            patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
             patch(
-                "aiwen.services.nl2sql.select_indicator.create_agent"
+                "structure.services.nl2sql.select_indicator.create_agent"
             ) as mock_create_agent,
         ):
             mock_agent = mock_agent_response(mock_response)
@@ -175,9 +175,9 @@ class TestSelectIndicatorService:
         mock_db.execute.return_value = mock_result
 
         with (
-            patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
+            patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
             patch(
-                "aiwen.services.nl2sql.select_indicator.create_agent"
+                "structure.services.nl2sql.select_indicator.create_agent"
             ) as mock_create_agent,
         ):
             # 配置 Agent 返回无效的结构化响应
@@ -206,7 +206,7 @@ class TestSelectIndicatorService:
         mock_result = create_mock_result(indicator_rows)
         mock_db.execute.return_value = mock_result
 
-        with patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm:
+        with patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm:
             # 配置 LLM 抛出异常
             mock_get_llm.side_effect = Exception("LLM service unavailable")
 
@@ -248,9 +248,9 @@ class TestSelectIndicatorService:
         mock_response = IndicatorSelectResponseSchema(indicator_name=expected_indicator)
 
         with (
-            patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
+            patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
             patch(
-                "aiwen.services.nl2sql.select_indicator.create_agent"
+                "structure.services.nl2sql.select_indicator.create_agent"
             ) as mock_create_agent,
         ):
             mock_agent = mock_agent_response(mock_response)
@@ -281,9 +281,9 @@ class TestSelectIndicatorService:
         mock_response = IndicatorSelectResponseSchema(indicator_name=expected_indicator)
 
         with (
-            patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
+            patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
             patch(
-                "aiwen.services.nl2sql.select_indicator.create_agent"
+                "structure.services.nl2sql.select_indicator.create_agent"
             ) as mock_create_agent,
         ):
             mock_agent = mock_agent_response(mock_response)
@@ -313,9 +313,9 @@ class TestSelectIndicatorService:
         mock_response = IndicatorSelectResponseSchema(indicator_name=expected_indicator)
 
         with (
-            patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
+            patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
             patch(
-                "aiwen.services.nl2sql.select_indicator.create_agent"
+                "structure.services.nl2sql.select_indicator.create_agent"
             ) as mock_create_agent,
         ):
             mock_agent = mock_agent_response(mock_response)
@@ -348,9 +348,9 @@ class TestSelectIndicatorService:
         mock_response = IndicatorSelectResponseSchema(indicator_name=expected_indicator)
 
         with (
-            patch("aiwen.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
+            patch("structure.services.nl2sql.select_indicator.get_llm") as mock_get_llm,
             patch(
-                "aiwen.services.nl2sql.select_indicator.create_agent"
+                "structure.services.nl2sql.select_indicator.create_agent"
             ) as mock_create_agent,
         ):
             mock_agent = mock_agent_response(mock_response)

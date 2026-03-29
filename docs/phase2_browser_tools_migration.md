@@ -51,10 +51,12 @@ async def browser_launch(
 ```
 
 **After (BaseTool):**
+
 ```python
-from aiwen.services.tools.base_tool import (
+from structure.services.tools.base_tool import (
     BaseTool, ToolExecutionMode, ToolInputSchema, ToolMetadata, ToolOutputSchema
 )
+
 
 class BrowserLaunchTool(BaseTool):
     """Launch a browser session and return a session_id"""

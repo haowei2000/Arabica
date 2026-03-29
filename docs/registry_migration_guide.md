@@ -20,16 +20,18 @@ This guide shows how to migrate from the old scattered registry system to the ne
 #### Tool Registry Imports
 
 **Before:**
+
 ```python
-from aiwen.services.tools.tool_registry import (
+from structure.services.tools.tool_registry import (
     ToolRegistry,
     register_tool,
 )
 ```
 
 **After:**
+
 ```python
-from aiwen.registries import (
+from structure.registries import (
     ToolRegistry,
     register_tool,
 )
@@ -38,8 +40,9 @@ from aiwen.registries import (
 #### Executor Registry Imports
 
 **Before:**
+
 ```python
-from aiwen.services.executor.executor_registry import (
+from structure.services.executor.executor_registry import (
     ExecutorRegistry,
     register_executor,
     init_executor_registry,
@@ -48,12 +51,13 @@ from aiwen.services.executor.executor_registry import (
 ```
 
 **After:**
+
 ```python
-from aiwen.registries import (
+from structure.registries import (
     ExecutorRegistry,
     register_executor,
 )
-from aiwen.registries.executor_registry import (
+from structure.registries.executor_registry import (
     init_executor_registry,  # If needed
     sync_registry_to_database,  # If needed
 )
@@ -62,8 +66,9 @@ from aiwen.registries.executor_registry import (
 #### Unified Registry Manager
 
 **New (recommended):**
+
 ```python
-from aiwen.registries import (
+from structure.registries import (
     get_registry,
     RegistryManager,
     sync_all_registries,  # ⭐ Replaces separate sync functions
@@ -76,7 +81,8 @@ from aiwen.registries import (
 
 ```python
 # This remains the same!
-from aiwen.registries import register_tool
+from structure.registries import register_tool
+
 
 @register_tool
 class MyTool(BaseTool):
@@ -90,8 +96,9 @@ class MyTool(BaseTool):
 #### Accessing Tools
 
 **Before (still works):**
+
 ```python
-from aiwen.services.tools.tool_registry import ToolRegistry
+from structure.services.tools.tool_registry import ToolRegistry
 
 tool_class = ToolRegistry.get_tool_class("my_tool")
 tool_instance = ToolRegistry.get_tool_instance("my_tool")
@@ -99,8 +106,9 @@ all_tools = ToolRegistry.list_tools()
 ```
 
 **After (recommended):**
+
 ```python
-from aiwen.registries import get_registry, ToolRegistry
+from structure.registries import get_registry, ToolRegistry
 
 # Get registry instance
 registry = get_registry(ToolRegistry)
@@ -119,7 +127,8 @@ all_tools = registry.list_tools()
 
 ```python
 # This remains the same!
-from aiwen.registries import register_executor
+from structure.registries import register_executor
+
 
 @register_executor
 class MyExecutor(Executor):
@@ -135,16 +144,18 @@ class MyExecutor(Executor):
 #### Accessing Executors
 
 **Before (still works):**
+
 ```python
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
 
 executor_cls = ExecutorRegistry.get("MY001")
 all_templates = ExecutorRegistry.list()
 ```
 
 **After (recommended):**
+
 ```python
-from aiwen.registries import get_registry, ExecutorRegistry
+from structure.registries import get_registry, ExecutorRegistry
 
 # Get registry instance
 registry = get_registry(ExecutorRegistry)
@@ -165,7 +176,7 @@ async def _initialize_agent_registry() -> None:
     """Initialize Agent Registry"""
     logger.info("🤖 Initializing Agent Registry...")
     try:
-        from aiwen.services.executor.executor_registry import (
+        from structure.services.executor.executor_registry import (
             init_executor_registry,
             ExecutorRegistry,
         )
@@ -182,17 +193,19 @@ async def _initialize_agent_registry() -> None:
     except Exception as e:
         logger.error(f"❌ Agent Registry initialization failed: {e}")
 
+
 async def _sync_inner_tools(self) -> None:
     """Sync InnerTool definitions to the database"""
     logger.info("Syncing InnerTool definitions to database...")
     try:
-        from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
+        from structure.services.tools.inner_tool_sync import sync_inner_tools_to_db
 
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             count = await sync_inner_tools_to_db(session)
         logger.info(f"Synced {count} InnerTools to database")
     except Exception as e:
         logger.error(f"Failed to sync InnerTools: {e}")
+
 
 # In initialize() method:
 if self.config.init_agent_registry:
@@ -216,13 +229,13 @@ async def _initialize_registries() -> None:
     logger.info("📦 Initializing centralized registry system...")
     try:
         # Import from new centralized location
-        from aiwen.registries import (
+        from structure.registries import (
             RegistryManager,
             ToolRegistry,
             ExecutorRegistry,
             sync_all_registries,  # ⭐ KEY: Single function!
         )
-        from aiwen.registries.executor_registry import _import_all_executor
+        from structure.registries.executor_registry import _import_all_executor
 
         # Auto-discover executors
         _import_all_executor()
@@ -237,7 +250,7 @@ async def _initialize_registries() -> None:
             manager.register_registry(ExecutorRegistry)
 
         # ⭐ Sync all registries in one call!
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             await sync_all_registries(session)
 
         # Report
@@ -246,6 +259,7 @@ async def _initialize_registries() -> None:
 
     except Exception as e:
         logger.error(f"❌ Registry initialization failed: {e}")
+
 
 # In initialize() method:
 if self.config.init_registries:  # Single flag!
@@ -288,20 +302,20 @@ If you want to use the new bootstrap:
 
 ```python
 # Before
-from aiwen.core.bootstrap import bootstrap_api
+from structure.core.bootstrap import bootstrap_api
 
 # After (using v2)
-from aiwen.core.bootstrap_v2 import bootstrap_api
+from structure.core.bootstrap_v2 import bootstrap_api
 ```
 
 #### Worker Service
 
 ```python
 # Before
-from aiwen.core.bootstrap import bootstrap_worker
+from structure.core.bootstrap import bootstrap_worker
 
 # After (using v2)
-from aiwen.core.bootstrap_v2 import bootstrap_worker
+from structure.core.bootstrap_v2 import bootstrap_worker
 ```
 
 ## Code Examples
@@ -309,9 +323,10 @@ from aiwen.core.bootstrap_v2 import bootstrap_worker
 ### Example 1: Filtering Tools
 
 **Before:**
+
 ```python
-from aiwen.services.tools.tool_registry import ToolRegistry
-from aiwen.services.tools.base_tool import ToolExecutionMode
+from structure.services.tools.tool_registry import ToolRegistry
+from structure.services.tools.base_tool import ToolExecutionMode
 
 server_tools = ToolRegistry.list_tools(
     execution_mode=ToolExecutionMode.SERVER_RUN,
@@ -320,9 +335,10 @@ server_tools = ToolRegistry.list_tools(
 ```
 
 **After:**
+
 ```python
-from aiwen.registries import get_registry, ToolRegistry
-from aiwen.services.tools.base_tool import ToolExecutionMode
+from structure.registries import get_registry, ToolRegistry
+from structure.services.tools.base_tool import ToolExecutionMode
 
 registry = get_registry(ToolRegistry)
 server_tools = registry.list_tools(
@@ -334,14 +350,17 @@ server_tools = registry.list_tools(
 ### Example 2: Custom Filtering
 
 **New capability:**
+
 ```python
-from aiwen.registries import get_registry, ToolRegistry
+from structure.registries import get_registry, ToolRegistry
 
 registry = get_registry(ToolRegistry)
+
 
 # Custom filter function
 def is_experimental(name: str, tool_class: type[BaseTool]) -> bool:
     return "experimental" in tool_class.METADATA.tags
+
 
 experimental_tools = registry.filter(is_experimental)
 ```
@@ -349,8 +368,9 @@ experimental_tools = registry.filter(is_experimental)
 ### Example 3: Registry Statistics
 
 **New capability:**
+
 ```python
-from aiwen.registries import RegistryManager
+from structure.registries import RegistryManager
 
 manager = RegistryManager.get_instance()
 
@@ -369,16 +389,19 @@ tool_stats = tool_registry.get_statistics()
 ### Example 4: Testing
 
 **New simplified testing:**
+
 ```python
-from aiwen.registries import RegistryManager
+from structure.registries import RegistryManager
+
 
 def setup_function():
     """Clear all registries before each test"""
     manager = RegistryManager.get_instance()
     manager.clear_all()  # ⭐ Clear all registries at once!
 
+
 def test_my_tool():
-    from aiwen.registries import get_registry, ToolRegistry, register_tool
+    from structure.registries import get_registry, ToolRegistry, register_tool
 
     @register_tool
     class TestTool(BaseTool):
@@ -425,7 +448,7 @@ The new system is **100% backward compatible**.
 # Start Python shell
 uv run python
 
->>> from aiwen.registries import get_registry, ToolRegistry
+>>> from structure.registries import get_registry, ToolRegistry
 >>> registry = get_registry(ToolRegistry)
 >>> tools = registry.list_tools()
 >>> print(f"Registered tools: {len(tools)}")
@@ -435,7 +458,7 @@ uv run python
 ### 2. Test Executor Registration
 
 ```bash
->>> from aiwen.registries import get_registry, ExecutorRegistry
+>>> from structure.registries import get_registry, ExecutorRegistry
 >>> registry = get_registry(ExecutorRegistry)
 >>> executors = registry.list_templates()
 >>> print(f"Registered executors: {executors}")
@@ -445,7 +468,7 @@ uv run python
 
 ```bash
 # Start API with new bootstrap
-uv run aiwen-api
+uv run structure-api
 
 # Check logs for:
 # "📦 Initializing centralized registry system..."
@@ -473,11 +496,12 @@ ImportError: cannot import name 'ToolRegistry' (circular import)
 
 **Solution:**
 Move import inside function or use `TYPE_CHECKING`:
+
 ```python
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aiwen.registries import ToolRegistry
+    from structure.registries import ToolRegistry
 ```
 
 ### Issue 3: Registry Not Found
@@ -489,8 +513,9 @@ KeyError: Registry ToolRegistry not registered
 
 **Solution:**
 Register the registry first:
+
 ```python
-from aiwen.registries import RegistryManager, ToolRegistry
+from structure.registries import RegistryManager, ToolRegistry
 
 manager = RegistryManager.get_instance()
 manager.register_registry(ToolRegistry)

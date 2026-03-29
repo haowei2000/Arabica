@@ -120,7 +120,7 @@ class AppCRUD:
 
 **新增**:
 ```python
-async def get_app_crud(db: AsyncSession = Depends(get_db_session("aiwen"))) -> AppCRUD:
+async def get_app_crud(db: AsyncSession = Depends(get_db_session("structure"))) -> AppCRUD:
     """Dependency to get AppCRUD instance."""
     return AppCRUD(db)
 ```
@@ -363,11 +363,11 @@ from dotenv import load_dotenv
 load_dotenv('.env')
 
 # 测试所有导入
-from aiwen.models.agents.app import App
-from aiwen.schemas.agents.app import AppCreate, AppUpdate, AppResponse, AppListResponse
-from aiwen.services.crud import AppCRUD
-from aiwen.routers.app.app import router
-from aiwen.core.dependencies.agents import get_app_crud
+from structure.models.agents.app import App
+from structure.schemas.agents.app import AppCreate, AppUpdate, AppResponse, AppListResponse
+from structure.services.crud import AppCRUD
+from structure.routers.app.app import router
+from structure.core.dependencies.agents import get_app_crud
 
 print('✓ All imports successful!')
 ```
@@ -375,7 +375,7 @@ print('✓ All imports successful!')
 ### 路由验证
 
 ```python
-from aiwen.routers.app.app import router
+from structure.routers.app.app import router
 
 print(f'Router prefix: {router.prefix}')  # /apps
 print(f'Router tags: {router.tags}')  # ['apps']

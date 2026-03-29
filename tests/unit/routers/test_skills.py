@@ -7,9 +7,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.extensions.database import get_aiwen_db
+from structure.app import app
+from structure.core.dependencies.auth import get_current_user
+from structure.extensions.database import get_aiwen_db
 from tests.unit.routers.conftest import make_user, USER_ID, SKILL_ID
 
 
@@ -60,9 +60,9 @@ class TestCreateSkill:
         skill = make_skill()
 
         with (
-            patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("aiwen.routers.context.skills.SkillProcessor") as MockProc,
-            patch("aiwen.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
+            patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
+            patch("structure.routers.context.skills.SkillProcessor") as MockProc,
+            patch("structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
         ):
             crud = MockCRUD.return_value
             crud.get_by_name = AsyncMock(return_value=None)
@@ -85,7 +85,7 @@ class TestCreateSkill:
     def test_create_duplicate_name(self, client):
         existing = make_skill()
 
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_by_name = AsyncMock(return_value=existing)
 
@@ -105,8 +105,8 @@ class TestCreateSkill:
         skill = make_skill()
 
         with (
-            patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("aiwen.routers.context.skills.SkillProcessor") as MockProc,
+            patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
+            patch("structure.routers.context.skills.SkillProcessor") as MockProc,
         ):
             crud = MockCRUD.return_value
             crud.get_by_name = AsyncMock(return_value=None)
@@ -127,7 +127,7 @@ class TestGetSkill:
     def test_get_success(self, client):
         skill = make_skill()
 
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_by_id = AsyncMock(return_value=skill)
 
@@ -137,7 +137,7 @@ class TestGetSkill:
         assert resp.json()["name"] == "Test Skill"
 
     def test_get_not_found(self, client):
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_by_id = AsyncMock(return_value=None)
 
@@ -151,9 +151,9 @@ class TestUpdateSkill:
         skill = make_skill()
 
         with (
-            patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("aiwen.routers.context.skills.SkillProcessor") as MockProc,
-            patch("aiwen.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
+            patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
+            patch("structure.routers.context.skills.SkillProcessor") as MockProc,
+            patch("structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
         ):
             crud = MockCRUD.return_value
             crud.update = AsyncMock(return_value=skill)
@@ -173,8 +173,8 @@ class TestUpdateSkill:
 
     def test_update_not_found(self, client):
         with (
-            patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("aiwen.routers.context.skills.SkillProcessor"),
+            patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
+            patch("structure.routers.context.skills.SkillProcessor"),
         ):
             crud = MockCRUD.return_value
             crud.update = AsyncMock(return_value=None)
@@ -189,7 +189,7 @@ class TestUpdateSkill:
 
 class TestDeleteSkill:
     def test_delete_success(self, client):
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.delete = AsyncMock(return_value=True)
 
@@ -198,7 +198,7 @@ class TestDeleteSkill:
         assert resp.status_code == 204
 
     def test_delete_not_found(self, client):
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.delete = AsyncMock(return_value=False)
 
@@ -211,7 +211,7 @@ class TestListSkills:
     def test_list_success(self, client):
         skill = make_skill()
 
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.list = AsyncMock(return_value=([skill], 1))
 
@@ -223,7 +223,7 @@ class TestListSkills:
         assert len(body["items"]) == 1
 
     def test_list_with_tags(self, client):
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.list = AsyncMock(return_value=([], 0))
 
@@ -236,7 +236,7 @@ class TestSearchSkills:
     def test_search_success(self, client):
         skill = make_skill()
 
-        with patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD:
+        with patch("structure.routers.context.skills.SkillCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.search = AsyncMock(return_value=([skill], 1))
 
@@ -255,9 +255,9 @@ class TestProcessSkill:
         skill = make_skill()
 
         with (
-            patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("aiwen.routers.context.skills.SkillProcessor") as MockProc,
-            patch("aiwen.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
+            patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
+            patch("structure.routers.context.skills.SkillProcessor") as MockProc,
+            patch("structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
         ):
             crud = MockCRUD.return_value
             crud.get_by_id = AsyncMock(return_value=skill)
@@ -274,8 +274,8 @@ class TestProcessSkill:
 
     def test_process_not_found(self, client):
         with (
-            patch("aiwen.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("aiwen.routers.context.skills.SkillProcessor"),
+            patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
+            patch("structure.routers.context.skills.SkillProcessor"),
         ):
             crud = MockCRUD.return_value
             crud.get_by_id = AsyncMock(return_value=None)

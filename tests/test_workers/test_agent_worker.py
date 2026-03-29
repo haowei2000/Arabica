@@ -1,7 +1,7 @@
 # tests/test_workers/test_agent_worker.py
 from unittest.mock import AsyncMock, Mock
 
-from aiwen.celery_worker.task_worker import AgentWorker
+from structure.celery_worker.task_worker import AgentWorker
 import pytest
 
 

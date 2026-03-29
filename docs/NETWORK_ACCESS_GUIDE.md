@@ -43,9 +43,9 @@ curl http://localhost:3000
 你的后端已经正确配置为 `0.0.0.0`：
 
 ```python
-# src/aiwen/api_cli.py (已正确)
+# src/structure/api_cli.py (已正确)
 uvicorn.run(
-    "aiwen.main:app",
+    "structure.main:app",
     host="0.0.0.0",  # ✓ 正确
     port=8000,
 )
@@ -68,7 +68,7 @@ server: {
 ```bash
 # 终端 1: 启动后端
 cd src
-uv run aiwen-api
+uv run structure-api
 
 # 终端 2: 启动前端
 cd frontend
@@ -196,7 +196,7 @@ version: '3.8'
 services:
   nginx:
     image: nginx:alpine
-    container_name: aiwen-nginx-dev
+    container_name: structure-nginx-dev
     ports:
       - "0.0.0.0:80:80"
     volumes:
@@ -209,7 +209,7 @@ services:
 
 ```bash
 # 终端 1: 后端
-cd src && uv run aiwen-api
+cd src && uv run structure-api
 
 # 终端 2: 前端
 cd frontend && npm run dev
@@ -277,7 +277,7 @@ New-NetFirewallRule -DisplayName "Aiwen API" -Direction Inbound -LocalPort 8000 
 如果前端和后端在不同端口：
 
 ```python
-# src/aiwen/main.py
+# src/structure/main.py
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(

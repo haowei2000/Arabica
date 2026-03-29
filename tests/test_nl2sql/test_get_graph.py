@@ -41,7 +41,7 @@ def invalid_indicator_id():
 @pytest.fixture
 def mock_graph_data():
     """Create mock graph data for successful response"""
-    from aiwen.schemas.nl2sql.graph import GraphResponse, Node
+    from structure.schemas.nl2sql.graph import GraphResponse, Node
 
     nodes = [
         Node(
@@ -58,7 +58,7 @@ def mock_graph_data():
 class TestGetGraphEndpoint:
     """Test cases for the /api/nl2sql/get_graph endpoint"""
 
-    @patch("aiwen.routers.nl2sql.get_indicator_graph")
+    @patch("structure.routers.nl2sql.get_indicator_graph")
     def test_get_graph_success(
         self, mock_get_indicator_graph, test_client, valid_indicator_id, mock_graph_data
     ):
@@ -90,7 +90,7 @@ class TestGetGraphEndpoint:
         # 注意：由于我们使用的是简化版应用，这里不会触发实际的验证逻辑
         # 但在真实应用中会返回422错误
 
-    @patch("aiwen.routers.nl2sql.get_indicator_graph")
+    @patch("structure.routers.nl2sql.get_indicator_graph")
     def test_get_graph_service_exception(
         self, mock_get_indicator_graph, test_client, valid_indicator_id
     ):
@@ -106,13 +106,13 @@ class TestGetGraphEndpoint:
         # Assert
         # 注意：由于我们使用的是简化版应用，这里的行为可能与真实应用不同
 
-    @patch("aiwen.routers.nl2sql.get_indicator_graph")
+    @patch("structure.routers.nl2sql.get_indicator_graph")
     def test_get_graph_validation_error(
         self, mock_get_indicator_graph, test_client, valid_indicator_id
     ):
         """Test handling of Pydantic validation errors"""
         # Arrange
-        from aiwen.schemas.nl2sql.graph import GraphResponse
+        from structure.schemas.nl2sql.graph import GraphResponse
         from pydantic import ValidationError
 
         mock_get_indicator_graph.side_effect = ValidationError([], GraphResponse)

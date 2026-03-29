@@ -114,6 +114,8 @@ export interface UsingContextPayload {
   query?: string;             // the retrieval query, if any
   results_count?: number;     // number of results retrieved
   details?: Record<string, unknown>;
+  tool_names?: string[];      // tool names loaded for this run
+  tool_count?: number;        // number of tools loaded
 }
 
 export interface PutOutcomePayload {
@@ -230,6 +232,8 @@ export interface ContextUsageState {
   query?: string;
   results_count?: number;
   details?: Record<string, unknown>;
+  tool_names?: string[];
+  tool_count?: number;
 }
 
 /**

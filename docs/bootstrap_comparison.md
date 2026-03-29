@@ -20,27 +20,29 @@ This document shows a side-by-side comparison of the old bootstrap code vs. the 
 ### Imports
 
 #### v1 (Old) - Scattered Imports
+
 ```python
 # Line 126-129
-from aiwen.services.executor.executor_registry import (
+from structure.services.executor.executor_registry import (
     init_executor_registry,
     ExecutorRegistry,
 )
 
 # Line 254
-from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
+from structure.services.tools.inner_tool_sync import sync_inner_tools_to_db
 ```
 
 #### v2 (New) - Centralized Imports
+
 ```python
 # All from one place!
-from aiwen.registries import (
+from structure.registries import (
     RegistryManager,
     ToolRegistry,
     ExecutorRegistry,
     sync_all_registries,  # ⭐ Single function for all!
 )
-from aiwen.registries.executor_registry import _import_all_executor
+from structure.registries.executor_registry import _import_all_executor
 ```
 
 **Benefit:** Single import location, easier to maintain
@@ -80,7 +82,7 @@ async def _initialize_agent_registry() -> None:
     """Initialize Agent Registry"""
     logger.info("🤖 Initialize Agent Registry...")
     try:
-        from aiwen.services.executor.executor_registry import (
+        from structure.services.executor.executor_registry import (
             init_executor_registry,
             ExecutorRegistry,
         )
@@ -106,9 +108,9 @@ async def _sync_inner_tools(self) -> None:
     """Sync InnerTool definitions to the database"""
     logger.info("Syncing InnerTool definitions to database...")
     try:
-        from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
+        from structure.services.tools.inner_tool_sync import sync_inner_tools_to_db
 
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             count = await sync_inner_tools_to_db(session)
         logger.info(f"Synced {count} InnerTools to database")
     except Exception as e:
@@ -133,13 +135,13 @@ async def _initialize_registries() -> None:
     logger.info("📦 Initializing centralized registry system...")
     try:
         # Import from new centralized location
-        from aiwen.registries import (
+        from structure.registries import (
             RegistryManager,
             ToolRegistry,
             ExecutorRegistry,
             sync_all_registries,  # ⭐ Single function!
         )
-        from aiwen.registries.executor_registry import _import_all_executor
+        from structure.registries.executor_registry import _import_all_executor
 
         # Step 1: Import all executor modules
         logger.info("   🔍 Auto-discovering executor modules...")
@@ -165,7 +167,7 @@ async def _initialize_registries() -> None:
 
         # Step 5: ⭐ Sync all registries in one call!
         logger.info("   💾 Syncing all registries to database...")
-        async with get_session("aiwen") as session:
+        async with get_session("structure") as session:
             await sync_all_registries(session)  # ⭐ Magic happens here!
 
         # Step 6: Verify and report
@@ -414,8 +416,9 @@ To add a ModelRegistry:
 ### v1 (Old) - Manual Cleanup
 
 ```python
-from aiwen.services.tools.tool_registry import ToolRegistry
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.tools.tool_registry import ToolRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
+
 
 def test_cleanup():
     # Have to clear each registry manually
@@ -427,7 +430,8 @@ def test_cleanup():
 ### v2 (New) - Centralized Cleanup
 
 ```python
-from aiwen.registries import RegistryManager
+from structure.registries import RegistryManager
+
 
 def test_cleanup():
     # Clear all registries at once!

@@ -86,7 +86,8 @@ scripts/
 
 ```python
 # skill_processor.py
-from aiwen.services.embedding import EmbeddingService
+from structure.services.embedding import EmbeddingService
+
 embeddings = await embedding_service.generate(skill.content)
 skill.embedding_768 = embeddings.get('768')
 ```

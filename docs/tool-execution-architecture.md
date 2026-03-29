@@ -49,7 +49,7 @@ Tools execute directly in the API server process. Best for trusted, lightweight 
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.tools import server_tool
+from structure.services.tools import server_tool
 
 
 @tool("database_query")
@@ -82,7 +82,7 @@ Tools execute in isolated Docker containers with configurable resource limits. B
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.tools import sandbox_tool
+from structure.services.tools import sandbox_tool
 
 
 @tool("execute_python")
@@ -153,7 +153,7 @@ Tools execute in the user's browser via SSE events and HTTP callbacks. Best for 
 
 ```python
 from langchain_core.tools import tool
-from aiwen.services.tools import client_tool
+from structure.services.tools import client_tool
 
 
 @tool("select_file")
@@ -205,7 +205,7 @@ async def select_file(
 The central hub that routes tool execution to the appropriate executor.
 
 ```python
-from aiwen.services.tools import ExecutionRouter, get_execution_router
+from structure.services.tools import ExecutionRouter, get_execution_router
 
 # Get singleton router
 router = get_execution_router()
@@ -230,7 +230,7 @@ result = await router.execute(
 Defines how a tool should be executed.
 
 ```python
-from aiwen.services.tools import ToolMetadata, ToolExecutionMode
+from structure.services.tools import ToolMetadata, ToolExecutionMode
 
 metadata = ToolMetadata(
     execution_mode=ToolExecutionMode.SANDBOX,
@@ -249,7 +249,7 @@ metadata = ToolMetadata(
 Provides context information for tool execution.
 
 ```python
-from aiwen.schemas.tools.execution import ExecutionContext
+from structure.schemas.tools.execution import ExecutionContext
 
 context = ExecutionContext(
     run_id=uuid4(),
@@ -484,7 +484,7 @@ All executors log execution details:
 
 ```python
 import logging
-logging.getLogger("aiwen.services.agent.tools").setLevel(logging.DEBUG)
+logging.getLogger("structure.services.agent.tools").setLevel(logging.DEBUG)
 ```
 
 ### Metrics
@@ -514,7 +514,7 @@ Complete example showing all three execution modes.
 """
 
 from langchain_core.tools import tool
-from aiwen.services.tools import (
+from structure.services.tools import (
     sandbox_tool,
     client_tool,
     server_tool,
@@ -526,9 +526,9 @@ from aiwen.services.tools import (
 @server_tool(timeout=30)
 async def search_database(query: str, limit: int = 10) -> dict:
     """Search the database for matching records."""
-    from aiwen.extensions.database import get_session
+    from structure.extensions.database import get_session
 
-    async with get_session("aiwen") as db:
+    async with get_session("structure") as db:
         result = await db.execute(
             "SELECT * FROM records WHERE content LIKE :q LIMIT :l",
             {"q": f"%{query}%", "l": limit}

@@ -67,10 +67,10 @@ uv run python test_phase1.py
 ### Verification:
 ```bash
 # No old imports remain (except in README documentation)
-grep -r "from aiwen.services.tools.tool_registry import" src/aiwen --include="*.py"
+grep -r "from aiwen.services.tools.tool_registry import" src/structure --include="*.py"
 # Result: Only README.md (marked as deprecated)
 
-grep -r "from aiwen.services.executor.executor_registry import" src/aiwen --include="*.py"
+grep -r "from aiwen.services.executor.executor_registry import" src/structure --include="*.py"
 # Result: Only README.md (marked as deprecated)
 ```
 
@@ -106,10 +106,10 @@ grep -r "from aiwen.services.executor.executor_registry import" src/aiwen --incl
 ### Verification:
 All services now use `bootstrap_v2`:
 ```bash
-grep -r "from aiwen.core.bootstrap import" src/aiwen --include="*.py"
+grep -r "from aiwen.core.bootstrap import" src/structure --include="*.py"
 # Result: No matches (all migrated to bootstrap_v2)
 
-grep -r "from aiwen.core.bootstrap_v2 import" src/aiwen --include="*.py"
+grep -r "from aiwen.core.bootstrap_v2 import" src/structure --include="*.py"
 # Result: 5 files (lifespan.py, worker_cli.py, celery_app.py, mcp_cli.py, env.py)
 ```
 
@@ -180,8 +180,8 @@ git reset --hard <phase-commit-id>
 git revert HEAD
 
 # Service-level rollback (if needed)
-git checkout HEAD~1 -- src/aiwen/core/lifespan.py  # Revert API
-git checkout HEAD~1 -- src/aiwen/worker_cli.py     # Revert Worker
+git checkout HEAD~1 -- src/structure/core/lifespan.py  # Revert API
+git checkout HEAD~1 -- src/structure/worker_cli.py     # Revert Worker
 # etc.
 ```
 

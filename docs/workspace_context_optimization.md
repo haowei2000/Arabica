@@ -17,8 +17,9 @@
 ### 方式 1：在 Executor 中使用（推荐）
 
 ```python
-from aiwen.core.interfaces.executor import Executor
-from aiwen.schemas.events.event_payloads import UserMessage
+from structure.core.interfaces.executor import Executor
+from structure.schemas.events.event_payloads import UserMessage
+
 
 class MyExecutor(Executor):
     async def run(self, user_message: UserMessage) -> dict:
@@ -60,13 +61,13 @@ class MyExecutor(Executor):
 ```python
 class GlobContextTool(InnerTool):
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from aiwen.extensions.database import get_session
-        from aiwen.services.workspace_context.workspace_context_service import (
+        from structure.extensions.database import get_session
+        from structure.services.workspace_context.workspace_context_service import (
             WorkspaceContextService,
         )
 
         # 每次调用都创建新的 service（适用于独立工具调用）
-        async with get_session("aiwen") as db:
+        async with get_session("structure") as db:
             service = WorkspaceContextService(db, input_data.workspace_id)
             await service.load()  # ~15ms
             result = await service.glob(input_data.pattern)
@@ -87,18 +88,18 @@ class GlobContextTool(InnerTool):
 ```python
 class GlobContextTool(InnerTool):
     async def execute(
-        self,
-        input_data: InputSchema,
-        # 可选：如果提供了 service，直接使用（避免重复加载）
-        _cached_service: WorkspaceContextService | None = None
+            self,
+            input_data: InputSchema,
+            # 可选：如果提供了 service，直接使用（避免重复加载）
+            _cached_service: WorkspaceContextService | None = None
     ) -> ToolOutputSchema:
         if _cached_service:
             # 使用缓存的 service（Executor 提供）
             service = _cached_service
         else:
             # 独立调用：创建新的 service
-            from aiwen.extensions.database import get_session
-            async with get_session("aiwen") as db:
+            from structure.extensions.database import get_session
+            async with get_session("structure") as db:
                 service = WorkspaceContextService(db, input_data.workspace_id)
                 await service.load()
 
@@ -133,7 +134,8 @@ class MyExecutor(Executor):
 ```python
 import pytest
 import time
-from aiwen.core.interfaces.executor import Executor
+from structure.core.interfaces.executor import Executor
+
 
 async def test_workspace_context_cache_performance(executor_instance):
     """测试缓存性能提升"""
@@ -155,9 +157,9 @@ async def test_workspace_context_cache_performance(executor_instance):
     # 缓存应该快至少 100 倍
     assert duration_cached < duration_first * 0.01
 
-    print(f"首次加载: {duration_first*1000:.2f}ms")
-    print(f"缓存命中: {duration_cached*1000:.2f}ms")
-    print(f"性能提升: {duration_first/duration_cached:.0f}x")
+    print(f"首次加载: {duration_first * 1000:.2f}ms")
+    print(f"缓存命中: {duration_cached * 1000:.2f}ms")
+    print(f"性能提升: {duration_first / duration_cached:.0f}x")
 ```
 
 ### 预期结果
@@ -248,7 +250,7 @@ class MyExecutor(Executor):
         # 多次使用 ctx，享受缓存
 
 # 2. 独立工具调用使用原方式
-async with get_session("aiwen") as db:
+async with get_session("structure") as db:
     service = WorkspaceContextService(db, workspace_id)
     await service.load()
 

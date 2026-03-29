@@ -9,7 +9,7 @@ The "Context" concept appears in multiple layers with different purposes. Here's
 ### 1. **Database Layer (Persistence)**
 
 ```python
-from aiwen.models.context.context import Context
+from structure.models.context.context import Context
 ```
 
 **Purpose**: PostgreSQL table ORM model for storing agent contexts with embeddings.
@@ -30,7 +30,7 @@ contexts = await session.execute(stmt)
 ### 2. **Framework Layer (In-Memory)**
 
 ```python
-from aiwen.frameworks.context import ContextStore, ContextEntry
+from structure.frameworks.context import ContextStore, ContextEntry
 ```
 
 **Purpose**: In-memory hierarchical storage with path-based addressing.
@@ -58,7 +58,7 @@ results = store.glob("cluster/**")  # Fast Trie-based search
 ### 3. **API Layer (Schemas)**
 
 ```python
-from aiwen.schemas.context.context_schema import (
+from structure.schemas.context.context_schema import (
     ContextCreate,
     ContextUpdate,
     ContextResponse,
@@ -84,8 +84,8 @@ async def create_context(data: ContextCreate):
 ### 4. **Service Layer (Business Logic)**
 
 ```python
-from aiwen.services.context.context_crud import ContextCRUD
-from aiwen.services.workspace_context.workspace_context_service import WorkspaceContextService
+from structure.services.context.context_crud import ContextCRUD
+from structure.services.workspace_context.workspace_context_service import WorkspaceContextService
 ```
 
 **Purpose**: Business logic combining database + framework layers.
@@ -114,7 +114,7 @@ await service.set("tools/new", glance="...")  # Auto-syncs to DB
 ### 1. **Interface (Abstract)**
 
 ```python
-from aiwen.core.interfaces.executor import Executor
+from structure.core.interfaces.executor import Executor
 ```
 
 **Purpose**: Abstract base class defining the executor interface.
@@ -126,7 +126,7 @@ from aiwen.core.interfaces.executor import Executor
 ### 2. **Database Model (Persistence)**
 
 ```python
-from aiwen.models.executor import ExecutorTemplate
+from structure.models.executor import ExecutorTemplate
 ```
 
 **Purpose**: Database table for storing executor configurations.
@@ -140,8 +140,8 @@ from aiwen.models.executor import ExecutorTemplate
 ### 3. **Service Layer**
 
 ```python
-from aiwen.services.executor.executor_crud import ExecutorCRUD
-from aiwen.services.executor.runtime import ExecutorInstanceManager
+from structure.services.executor.executor_crud import ExecutorCRUD
+from structure.services.executor.runtime import ExecutorInstanceManager
 ```
 
 **Key Classes**:
@@ -155,7 +155,7 @@ from aiwen.services.executor.runtime import ExecutorInstanceManager
 ### 1. **Interface**
 
 ```python
-from aiwen.core.interfaces.tool import BaseTool
+from structure.core.interfaces.tool import BaseTool
 ```
 
 **Purpose**: Abstract base class for all tools.
@@ -165,7 +165,7 @@ from aiwen.core.interfaces.tool import BaseTool
 ### 2. **Database Model**
 
 ```python
-from aiwen.models.context.tools import Tool
+from structure.models.context.tools import Tool
 ```
 
 **Purpose**: Database table for tool definitions.
@@ -177,7 +177,7 @@ from aiwen.models.context.tools import Tool
 ### 3. **Schemas**
 
 ```python
-from aiwen.schemas.context.tools.user_tool import (
+from structure.schemas.context.tools.user_tool import (
     UserToolCreate,
     UserToolUpdate,
     UserToolResponse,
@@ -250,7 +250,7 @@ from aiwen.schemas.context.tools.user_tool import (
 
 ```python
 # Old imports still work (with deprecation warnings)
-from aiwen.models.executor import Executor  # Works, but use ExecutorTemplate
+from structure.models.executor import Executor  # Works, but use ExecutorTemplate
 ```
 
 ---

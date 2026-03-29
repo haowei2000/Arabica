@@ -234,11 +234,11 @@ Update code to use new centralized location:
 
 ```python
 # Old imports
-from aiwen.services.tools.tool_registry import ToolRegistry
-from aiwen.services.executor.executor_registry import ExecutorRegistry
+from structure.services.tools.tool_registry import ToolRegistry
+from structure.services.executor.executor_registry import ExecutorRegistry
 
 # New imports
-from aiwen.registries import ToolRegistry, ExecutorRegistry, get_registry
+from structure.registries import ToolRegistry, ExecutorRegistry, get_registry
 ```
 
 ### Phase 3: Update Bootstrap Code (Recommended)
@@ -247,21 +247,25 @@ Simplify app initialization:
 
 ```python
 # Old code (core/bootstrap.py)
-from aiwen.services.tools.inner_tool_sync import sync_inner_tools_to_db
-from aiwen.services.executor.executor_registry import init_executor_registry
+from structure.services.tools.inner_tool_sync import sync_inner_tools_to_db
+from structure.services.executor.executor_registry import init_executor_registry
+
 
 async def _initialize_agent_registry(self):
     await init_executor_registry()
 
+
 async def _sync_inner_tools(self):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         await sync_inner_tools_to_db(session)
 
+
 # New code (simplified)
-from aiwen.registries import sync_all_registries
+from structure.registries import sync_all_registries
+
 
 async def _initialize_registries(self):
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         await sync_all_registries(session)
 ```
 
@@ -270,12 +274,12 @@ async def _initialize_registries(self):
 Keep old imports working during transition:
 
 ```python
-# src/aiwen/services/tools/tool_registry.py
+# src/structure/services/tools/tool_registry.py
 """
 Backward compatibility wrapper for ToolRegistry.
-New code should import from aiwen.registries instead.
+New code should import from structure.registries instead.
 """
-from aiwen.registries import ToolRegistry, register_tool
+from structure.registries import ToolRegistry, register_tool
 
 __all__ = ["ToolRegistry", "register_tool"]
 ```
@@ -288,8 +292,8 @@ Add deprecation warnings:
 import warnings
 
 warnings.warn(
-    "Importing from aiwen.services.tools.tool_registry is deprecated. "
-    "Use 'from aiwen.registries import ToolRegistry' instead.",
+    "Importing from structure.services.tools.tool_registry is deprecated. "
+    "Use 'from structure.registries import ToolRegistry' instead.",
     DeprecationWarning,
     stacklevel=2
 )
@@ -374,8 +378,10 @@ stats = manager.get_statistics()
 **Cause**: Module not imported (decorator not executed)
 
 **Solution**: Import module before accessing registry
+
 ```python
-import aiwen.services.tools.inner_tool.server_tools  # Trigger decorators
+import structure.services.tools.inner_tool.server_tools  # Trigger decorators
+
 tool = ToolRegistry.get_tool_instance("my_tool")
 ```
 

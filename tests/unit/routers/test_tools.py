@@ -7,9 +7,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from aiwen.app import app
-from aiwen.core.dependencies.auth import get_current_user
-from aiwen.extensions.database import get_aiwen_db
+from structure.app import app
+from structure.core.dependencies.auth import get_current_user
+from structure.extensions.database import get_aiwen_db
 from tests.unit.routers.conftest import make_user, USER_ID, TOOL_ID
 
 BASE = "/api/tools"
@@ -81,8 +81,8 @@ class TestCreateTool:
         tool = make_tool()
 
         with (
-            patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD,
-            patch("aiwen.celery_worker.tasks.context_sync_tasks.sync_tool_to_contexts") as mock_task,
+            patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD,
+            patch("structure.celery_worker.tasks.context_sync_tasks.sync_tool_to_contexts") as mock_task,
         ):
             crud = MockCRUD.return_value
             crud.create_tool = AsyncMock(return_value=tool)
@@ -94,7 +94,7 @@ class TestCreateTool:
         assert resp.json()["name"] == "my_api"
 
     def test_create_duplicate_name_raises_value_error(self, client):
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.create_tool = AsyncMock(side_effect=ValueError("Tool already exists"))
 
@@ -115,7 +115,7 @@ class TestListTools:
     def test_list_success(self, client):
         tool = make_tool()
 
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.list_user_tools = AsyncMock(return_value=[tool])
 
@@ -126,7 +126,7 @@ class TestListTools:
         assert body["total"] == 1
 
     def test_list_with_filters(self, client):
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.list_user_tools = AsyncMock(return_value=[])
 
@@ -142,7 +142,7 @@ class TestGetTool:
     def test_get_success(self, client):
         tool = make_tool()
 
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=tool)
 
@@ -151,7 +151,7 @@ class TestGetTool:
         assert resp.status_code == 200
 
     def test_get_not_found(self, client):
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=None)
 
@@ -168,8 +168,8 @@ class TestUpdateTool:
         tool = make_tool()
 
         with (
-            patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD,
-            patch("aiwen.celery_worker.tasks.context_sync_tasks.sync_tool_to_contexts") as mock_task,
+            patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD,
+            patch("structure.celery_worker.tasks.context_sync_tasks.sync_tool_to_contexts") as mock_task,
         ):
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=tool)  # first call (type check)
@@ -184,7 +184,7 @@ class TestUpdateTool:
         assert resp.status_code == 200
 
     def test_update_not_found(self, client):
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=None)
             crud.update_tool = AsyncMock(return_value=None)
@@ -199,7 +199,7 @@ class TestUpdateTool:
     def test_update_inner_tool_forbidden(self, client):
         inner = make_tool(tool_type="inner")
 
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=inner)
 
@@ -218,7 +218,7 @@ class TestDeleteTool:
     def test_delete_success(self, client):
         tool = make_tool()
 
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=tool)
             crud.delete_tool = AsyncMock(return_value=True)
@@ -228,7 +228,7 @@ class TestDeleteTool:
         assert resp.status_code == 204
 
     def test_delete_not_found(self, client):
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=None)
             crud.delete_tool = AsyncMock(return_value=False)
@@ -240,7 +240,7 @@ class TestDeleteTool:
     def test_delete_inner_tool_forbidden(self, client):
         inner = make_tool(tool_type="inner")
 
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=inner)
 
@@ -254,7 +254,7 @@ class TestDeleteTool:
 
 class TestTemplates:
     def test_list_templates(self, client):
-        with patch("aiwen.routers.context.tools.tools.get_all_templates") as mock_get:
+        with patch("structure.routers.context.tools.tools.get_all_templates") as mock_get:
             mock_get.return_value = []
             resp = client.get(f"{BASE}/templates")
 
@@ -262,8 +262,8 @@ class TestTemplates:
 
     def test_get_template_not_found(self, client):
         with (
-            patch.dict("aiwen.routers.context.tools.tools.TOOL_TEMPLATES", {}, clear=True),
-            patch("aiwen.routers.context.tools.tools.get_inner_tool_templates", return_value={}),
+            patch.dict("structure.routers.context.tools.tools.TOOL_TEMPLATES", {}, clear=True),
+            patch("structure.routers.context.tools.tools.get_inner_tool_templates", return_value={}),
         ):
             resp = client.get(f"{BASE}/templates/nonexistent")
 
@@ -275,7 +275,7 @@ class TestTemplates:
 
 class TestToolTest:
     def test_test_tool_not_found(self, client):
-        with patch("aiwen.routers.context.tools.tools.ToolCRUD") as MockCRUD:
+        with patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD:
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=None)
 

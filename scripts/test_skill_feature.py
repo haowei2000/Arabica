@@ -9,11 +9,11 @@ sys.path.insert(0, "/Users/wanghaowei/PycharmProjects/agent_chat/src")
 
 async def test_skill_feature():
     """Test skill CRUD operations and Markdown processing."""
-    from aiwen.core.enums import ContextType
-    from aiwen.extensions.database import get_session
-    from aiwen.schemas.context.skill import SkillCreate, SkillUpdate
-    from aiwen.services.context.skill_crud import SkillCRUD
-    from aiwen.services.context.skill_processor import SkillProcessor
+    from structure.core.enums import ContextType
+    from structure.extensions.database import get_session
+    from structure.schemas.context.skill import SkillCreate, SkillUpdate
+    from structure.services.context.skill_crud import SkillCRUD
+    from structure.services.context.skill_processor import SkillProcessor
 
     print("=" * 70)
     print("  Skill Management Feature Test")
@@ -63,7 +63,7 @@ def process_data(data: dict) -> dict:
 ```
 """
 
-    async with get_session("aiwen") as session:
+    async with get_session("structure") as session:
         crud = SkillCRUD(session)
         processor = SkillProcessor(session)
 

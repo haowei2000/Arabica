@@ -7,20 +7,20 @@ component registration and validation.
 
 from typing import Any, ClassVar
 
-from aiwen.core.interfaces import (
+from structure.core.interfaces import (
     PROTOCOL_REGISTRY,
     ExecutorProtocol,
     ToolProtocol,
     is_executor,
     is_tool,
 )
-from aiwen.core.interfaces.tool import (
+from structure.core.interfaces.tool import (
     BaseTool,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
-from aiwen.registries.core import ToolRegistry, register_tool
+from structure.registries.core import ToolRegistry, register_tool
 
 # ============================================================================
 # Example 1: Using ToolProtocol for Type Annotations
@@ -334,7 +334,7 @@ async def main():
 
     # 4. Registry integration
     print("\n4. Registry Integration:")
-    from aiwen.registries.manager import get_registry
+    from structure.registries.manager import get_registry
 
     registry = get_registry(ToolRegistry)
     executor = ToolExecutor(registry)

@@ -160,6 +160,7 @@ export default function ToolPage() {
       const summary = [`Imported: ${res.imported.length}`];
       if (res.skipped.length) summary.push(`Skipped (already exist): ${res.skipped.join(', ')}`);
       if (res.failed.length) summary.push(`Failed: ${res.failed.join(', ')}`);
+      if (res.bundle_name) summary.push(`Grouped into bundle: "${res.bundle_name}"`);
       alert(summary.join('\n'));
       setShowMcpModal(false);
     } catch (err) {

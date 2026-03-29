@@ -31,7 +31,7 @@ registries/base_class/
 Base protocol for all components that can be registered in a registry.
 
 ```python
-from aiwen.core.interfaces import RegistrableProtocol
+from structure.core.interfaces import RegistrableProtocol
 
 
 class MyComponent(RegistrableProtocol):
@@ -47,8 +47,8 @@ class MyComponent(RegistrableProtocol):
 Protocol for tool components registered in `ToolRegistry`.
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
-from aiwen.registries.base_class import (
+from structure.core.interfaces import ToolProtocol
+from structure.registries.base_class import (
     ToolMetadata,
     ToolInputSchema,
     ToolOutputSchema,
@@ -100,7 +100,8 @@ class MyTool(ToolProtocol):
 **Note**: In practice, you should inherit from `BaseTool` which already implements this protocol:
 
 ```python
-from aiwen.registries.base_class import BaseTool
+from structure.registries.base_class import BaseTool
+
 
 class MyTool(BaseTool):
     METADATA = ToolMetadata(...)
@@ -115,7 +116,7 @@ class MyTool(BaseTool):
 Protocol for executor (agent) components registered in `ExecutorRegistry`.
 
 ```python
-from aiwen.core.interfaces import ExecutorProtocol
+from structure.core.interfaces import ExecutorProtocol
 from typing import ClassVar
 
 
@@ -163,7 +164,7 @@ class MyExecutor(ExecutorProtocol):
 **Note**: The actual `Executor` in `core/interfaces/executor.py` is already defined as a Protocol, so you should use it directly:
 
 ```python
-from aiwen.core.interfaces import Executor
+from structure.core.interfaces import Executor
 
 
 class MyExecutor:
@@ -181,7 +182,7 @@ class MyExecutor:
 Protocol for registry implementations.
 
 ```python
-from aiwen.core.interfaces import RegistryProtocol
+from structure.core.interfaces import RegistryProtocol
 
 
 class MyRegistry(RegistryProtocol[str, MyComponentType]):
@@ -223,7 +224,8 @@ class MyRegistry(RegistryProtocol[str, MyComponentType]):
 **Note**: Inherit from `BaseRegistry` which already implements this protocol:
 
 ```python
-from aiwen.registries.core import BaseRegistry
+from structure.registries.core import BaseRegistry
+
 
 class MyRegistry(BaseRegistry[str, MyType]):
     def _validate_component(self, component):
@@ -238,7 +240,7 @@ class MyRegistry(BaseRegistry[str, MyType]):
 Use runtime type checking to verify protocol compliance:
 
 ```python
-from aiwen.core.interfaces import is_tool, is_executor, is_registry
+from structure.core.interfaces import is_tool, is_executor, is_registry
 
 # Check if an object implements a protocol
 if is_tool(my_object):
@@ -256,7 +258,7 @@ if is_registry(my_registry):
 Introspect protocol requirements programmatically:
 
 ```python
-from aiwen.core.interfaces import PROTOCOL_REGISTRY
+from structure.core.interfaces import PROTOCOL_REGISTRY
 
 # Get protocol information
 tool_info = PROTOCOL_REGISTRY["ToolProtocol"]
@@ -323,7 +325,7 @@ Protocols serve as explicit interface documentation:
 
 ```python
 # Anyone can see exactly what a tool needs to implement
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 reveal_type(ToolProtocol)  # Shows all required methods and attributes
 ```
@@ -336,16 +338,20 @@ While protocols enable structural typing, for actual components you should still
 
 ```python
 # ✅ Good: Inherit from BaseTool
-from aiwen.registries.base_class import BaseTool
+from structure.registries.base_class import BaseTool
+
 
 class MyTool(BaseTool):
     METADATA = ...
+
     async def execute(self, input_data):
         pass
+
 
 # ❌ Avoid: Implementing protocol from scratch
 class MyTool:  # Missing helper methods, validation, etc.
     METADATA = ...
+
     async def execute(self, input_data):
         pass
 ```
@@ -355,7 +361,7 @@ class MyTool:  # Missing helper methods, validation, etc.
 Use protocols in function signatures for maximum flexibility:
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 
 # ✅ Good: Accept any tool-like object
@@ -373,7 +379,7 @@ async def execute_tool(tool: BaseTool, input: dict) -> dict:
 Use `isinstance()` checks with `@runtime_checkable` protocols:
 
 ```python
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 if isinstance(obj, ToolProtocol):
     # Safe to call tool methods
@@ -420,10 +426,12 @@ No changes needed! Existing code that inherits from base classes automatically s
 
 ```python
 # This code continues to work exactly as before
-from aiwen.registries.base_class import BaseTool
+from structure.registries.base_class import BaseTool
+
 
 class MyTool(BaseTool):
     METADATA = ...
+
     async def execute(self, input_data):
         pass
 ```
@@ -439,7 +447,7 @@ def process_tool(tool: BaseTool) -> dict:
 
 
 # After (more flexible)
-from aiwen.core.interfaces import ToolProtocol
+from structure.core.interfaces import ToolProtocol
 
 
 def process_tool(tool: ToolProtocol) -> dict:
@@ -451,8 +459,8 @@ def process_tool(tool: ToolProtocol) -> dict:
 If you've created custom registries, consider having them implement `RegistryProtocol`:
 
 ```python
-from aiwen.core.interfaces import RegistryProtocol
-from aiwen.registries.core import BaseRegistry
+from structure.core.interfaces import RegistryProtocol
+from structure.registries.core import BaseRegistry
 
 
 # Option 1: Inherit from BaseRegistry (recommended)
@@ -475,7 +483,7 @@ Verify that your components satisfy protocols:
 
 ```python
 import pytest
-from aiwen.core.interfaces import ToolProtocol, is_tool
+from structure.core.interfaces import ToolProtocol, is_tool
 
 
 def test_my_tool_implements_protocol():
