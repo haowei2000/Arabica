@@ -149,7 +149,6 @@ export const useChatStore = create<ChatState>((set) => ({
         streamError: null,
       });
     } catch (error) {
-      console.error('Failed to load conversation:', error);
       set({ isLoadingConversation: false });
     }
   },

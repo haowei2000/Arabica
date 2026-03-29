@@ -108,24 +108,24 @@ export default function AppWorkspacePage() {
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-3 py-2 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
-              <Bot className="size-3.5 text-white" />
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
+              <Bot className="size-3 text-white" />
             </div>
             <span className="text-sm font-semibold cursor-default">AI Agent Platform</span>
           </div>
 
           <div className="flex items-center gap-1">
             <Button
-              variant="ghost" size="icon" className="size-7"
+              variant="ghost" size="icon" className="size-6"
               onClick={() => navigate('/home')} title="Home"
             >
               <Home className="size-3.5 text-muted-foreground" />
             </Button>
             <Button
-              variant="ghost" size="icon" className="size-7"
+              variant="ghost" size="icon" className="size-6"
               onClick={toggleTheme}
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
@@ -134,7 +134,7 @@ export default function AppWorkspacePage() {
                 : <Moon className="size-3.5 text-muted-foreground" />}
             </Button>
             <Button
-              variant="ghost" size="icon" className="size-7"
+              variant="ghost" size="icon" className="size-6"
               onClick={handleLogout} title="Logout"
             >
               <LogOut className="size-3.5 text-muted-foreground" />
@@ -148,12 +148,12 @@ export default function AppWorkspacePage() {
         <aside
           className={cn(
             'border-r border-border bg-card flex flex-col transition-all duration-200 shrink-0 overflow-hidden',
-            historyOpen ? 'lg:w-64 w-full' : 'lg:w-0 w-full'
+            historyOpen ? 'lg:w-60 w-full' : 'lg:w-0 w-full'
           )}
         >
           <div className="flex flex-col h-full">
             {/* Sidebar header */}
-            <div className="px-3 py-2.5 border-b border-border flex items-center justify-between shrink-0">
+            <div className="px-2.5 py-2 border-b border-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-1.5">
                 <FolderKanban className="size-3.5 text-muted-foreground" />
                 <span className="text-xs font-semibold">Workspaces</span>
@@ -172,7 +172,7 @@ export default function AppWorkspacePage() {
             </div>
 
             {/* Create button */}
-            <div className="px-3 py-2 shrink-0">
+            <div className="px-2 py-1.5 shrink-0">
               <Button
                 size="sm" className="w-full gap-1.5 h-7 text-xs"
                 onClick={() => setShowCreateForm(true)}
@@ -183,7 +183,7 @@ export default function AppWorkspacePage() {
             </div>
 
             {/* Workspace list */}
-            <ScrollArea className="flex-1 px-2 pb-2">
+            <ScrollArea className="flex-1 px-1.5 pb-1.5">
               {workspacesLoading ? (
                 <div className="flex items-center justify-center py-10">
                   <span className="text-[10px] text-muted-foreground">Loading…</span>
@@ -201,7 +201,7 @@ export default function AppWorkspacePage() {
                         onClick={() => handleOpenWorkspace(workspace.id, workspace.name, workspace.app_id)}
                         onKeyDown={(e) => e.key === 'Enter' && handleOpenWorkspace(workspace.id, workspace.name, workspace.app_id)}
                         className={cn(
-                          'group relative w-full text-left px-2.5 py-2 rounded-lg border transition-colors cursor-pointer',
+                          'group relative w-full text-left px-2 py-1.5 rounded-md border transition-colors cursor-pointer',
                           isActive
                             ? 'bg-primary/8 border-primary/20'
                             : 'border-transparent hover:bg-muted/60'
@@ -286,7 +286,7 @@ export default function AppWorkspacePage() {
 
         {/* Expand toggle (desktop, when collapsed) */}
         {!historyOpen && (
-          <div className="hidden lg:flex items-start px-1 pt-2 border-r border-border bg-card shrink-0">
+          <div className="hidden lg:flex items-start px-1 pt-1.5 border-r border-border bg-card shrink-0">
             <Button
               variant="ghost" size="icon" className="size-7"
               onClick={() => setHistoryOpen(true)} title="Expand sidebar"

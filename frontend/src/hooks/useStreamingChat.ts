@@ -96,7 +96,6 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
   const sendMessage = useCallback(
     async (content: string, forcedTools?: string[]) => {
       if (!workspaceId) {
-        console.error('No workspace selected');
         return;
       }
 

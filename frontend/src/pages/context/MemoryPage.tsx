@@ -94,7 +94,6 @@ export default function MemoryPage() {
       expandedWorkspaces.delete(workspaceId);
       setExpandedWorkspaces(new Set(expandedWorkspaces));
     } catch (error) {
-      console.error('Failed to delete workspace:', error);
       alert('Failed to delete workspace. Please try again.');
     }
   };

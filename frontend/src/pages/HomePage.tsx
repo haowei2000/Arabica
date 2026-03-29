@@ -10,7 +10,7 @@ function randomAppCode() {
   return `${adj}-${noun}-${num}`;
 }
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Zap, Layers, Library, Wrench, Brain, Sparkles, FolderKanban } from 'lucide-react';
+import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Layers, Library, Wrench, Brain, Sparkles, FolderKanban } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -31,7 +31,6 @@ import KnowledgePage from './context/KnowledgePage';
 import ToolPage from './context/ToolPage';
 import MemoryPage from './context/MemoryPage';
 import SkillPage from './context/SkillPage';
-import TriggerPage from './TriggerPage';
 
 export default function HomePage() {
   const [showCreateAppForm, setShowCreateAppForm] = useState(false);
@@ -260,10 +259,10 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-6 py-3 sticky top-0 z-30">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2 sticky top-0 z-30">
         <div className="flex items-center justify-between max-w-5xl mx-auto">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
               <Bot className="size-3.5 text-white" />
             </div>
             <h1 className="text-sm font-semibold text-foreground">AI Agent Platform</h1>
@@ -303,16 +302,11 @@ export default function HomePage() {
         <Tabs defaultValue="app" className="space-y-5">
           <TabsList className="h-8">
             <TabsTrigger value="app" className="text-xs px-3 gap-1.5"><Bot className="size-3" />App</TabsTrigger>
-            <TabsTrigger value="trigger" className="text-xs px-3 gap-1.5"><Zap className="size-3" />Trigger</TabsTrigger>
             <TabsTrigger value="context" className="text-xs px-3 gap-1.5"><Layers className="size-3" />Context</TabsTrigger>
           </TabsList>
 
           <TabsContent value="app">
             {renderAppContent()}
-          </TabsContent>
-
-          <TabsContent value="trigger">
-            <TriggerPage />
           </TabsContent>
 
           <TabsContent value="context">

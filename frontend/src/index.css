@@ -26,96 +26,111 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* shadcn/ui CSS variables — light mode */
+/* JetBrains inspired light mode */
 :root {
   --radius: 0.5rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --background: oklch(0.985 0 0); /* JetBrains light background #f7f8fa */
+  --foreground: oklch(0.2 0 0);    /* JetBrains light text #000000 / #1e1e1e */
+  --card: oklch(1 0 0);            /* Pure white cards #ffffff */
+  --card-foreground: oklch(0.2 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.67 0.23 45);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0.02 250);
-  --secondary-foreground: oklch(0.205 0.05 250);
-  --muted: oklch(0.96 0.01 250);
-  --muted-foreground: oklch(0.46 0.13 250);
-  --accent: oklch(0.94 0.08 45);
-  --accent-foreground: oklch(0.48 0.18 45);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.85 0.03 250);
-  --input: oklch(0.85 0.03 250);
-  --ring: oklch(0.67 0.23 45);
+  --popover-foreground: oklch(0.2 0 0);
+
+  /* JetBrains Blue/Purple gradient vibe */
+  --primary: oklch(0.55 0.2 260);        /* JetBrains blue #3574F0 */
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.95 0 0);          /* JetBrains light gray #ebecf0 */
+  --secondary-foreground: oklch(0.3 0 0);
+
+  --muted: oklch(0.96 0 0);              /* JetBrains muted #f0f1f2 */
+  --muted-foreground: oklch(0.5 0 0);    /* JetBrains muted text #6c707e */
+
+  --accent: oklch(0.94 0.02 260);        /* Light blue accent #e8f0fe */
+  --accent-foreground: oklch(0.4 0.1 260);
+
+  --destructive: oklch(0.6 0.2 25);      /* JetBrains error red #e5575b */
+
+  --border: oklch(0.88 0 0);             /* JetBrains border #d1d5da */
+  --input: oklch(0.98 0 0);              /* JetBrains input bg #f5f6f7 */
+  --ring: oklch(0.55 0.2 260);           /* Primary focus ring */
 }
 
-/* shadcn/ui CSS variables — dark mode */
+/* JetBrains inspired dark mode (Darcula/New UI) */
 html.dark {
-  --background: oklch(0.08 0.02 250);    /* page bg — deep navy */
-  --foreground: oklch(0.95 0 0);
-  --card: oklch(0.15 0.03 250);          /* card — clear lift above bg (+0.07) */
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.20 0.04 250);       /* popover — elevated above card */
-  --popover-foreground: oklch(0.95 0 0);
-  --primary: oklch(0.67 0.23 45);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.24 0.05 250);     /* interactive elements */
-  --secondary-foreground: oklch(0.95 0 0);
-  --muted: oklch(0.18 0.04 250);         /* subtle tint — between card & secondary */
-  --muted-foreground: oklch(0.65 0.05 250);
-  --accent: oklch(0.26 0.06 250);        /* hover / focus accent */
-  --accent-foreground: oklch(0.95 0 0);
-  --destructive: oklch(0.65 0.22 22);
-  --border: oklch(0.30 0.05 250 / 0.8); /* more visible borders */
-  --input: oklch(0.22 0.05 250);         /* input bg distinct from card */
-  --ring: oklch(0.67 0.23 45);
+  --background: oklch(0.21 0 0);         /* JetBrains Dark page bg #2b2d30 */
+  --foreground: oklch(0.9 0 0);          /* JetBrains Dark text #dfe1e5 */
+
+  --card: oklch(0.18 0 0);               /* JetBrains Dark card bg #1e1f22 */
+  --card-foreground: oklch(0.9 0 0);
+
+  --popover: oklch(0.22 0 0);            /* JetBrains Dark popover #2b2d30 */
+  --popover-foreground: oklch(0.9 0 0);
+
+  --primary: oklch(0.6 0.15 260);        /* JetBrains Dark primary blue #3574f0 */
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.26 0 0);          /* JetBrains Dark secondary/hover #43454a */
+  --secondary-foreground: oklch(0.9 0 0);
+
+  --muted: oklch(0.25 0 0);              /* JetBrains Dark muted #393b40 */
+  --muted-foreground: oklch(0.65 0 0);   /* JetBrains Dark muted text #a8adbd */
+
+  --accent: oklch(0.3 0 0);              /* JetBrains Dark accent/hover #4e5157 */
+  --accent-foreground: oklch(0.9 0 0);
+
+  --destructive: oklch(0.65 0.2 25);     /* JetBrains Dark error red #ff5261 */
+
+  --border: oklch(0.3 0 0);              /* JetBrains Dark border #43454a */
+  --input: oklch(0.26 0 0);              /* JetBrains Dark input #43454a */
+  --ring: oklch(0.6 0.15 260);           /* Primary focus ring */
 }
 
 @theme {
-    /* Primary - Orange #FF6500 with enhanced vibrancy */
-    --color-primary-50: oklch(0.98 0.03 45);
-    --color-primary-100: oklch(0.94 0.08 45);
-    --color-primary-200: oklch(0.88 0.14 45);
-    --color-primary-300: oklch(0.82 0.18 45);
-    --color-primary-400: oklch(0.74 0.21 45);
-    --color-primary-500: oklch(0.67 0.23 45);
-    --color-primary-600: oklch(0.58 0.21 45);
-    --color-primary-700: oklch(0.48 0.18 45);
-    --color-primary-800: oklch(0.38 0.14 45);
-    --color-primary-900: oklch(0.28 0.10 45);
-    --color-primary-950: oklch(0.20 0.06 45);
+    /* Primary - JetBrains Blue */
+    --color-primary-50: oklch(0.96 0.02 260);
+    --color-primary-100: oklch(0.92 0.05 260);
+    --color-primary-200: oklch(0.85 0.08 260);
+    --color-primary-300: oklch(0.75 0.12 260);
+    --color-primary-400: oklch(0.65 0.16 260);
+    --color-primary-500: oklch(0.55 0.20 260); /* JetBrains Blue */
+    --color-primary-600: oklch(0.48 0.18 260);
+    --color-primary-700: oklch(0.40 0.15 260);
+    --color-primary-800: oklch(0.32 0.12 260);
+    --color-primary-900: oklch(0.25 0.08 260);
+    --color-primary-950: oklch(0.18 0.05 260);
 
-    /* Secondary - Enhanced Blue */
-    --color-secondary-50: oklch(0.97 0.02 250);
-    --color-secondary-100: oklch(0.92 0.05 250);
-    --color-secondary-200: oklch(0.84 0.08 250);
-    --color-secondary-300: oklch(0.72 0.11 250);
-    --color-secondary-400: oklch(0.58 0.13 250);
-    --color-secondary-500: oklch(0.46 0.13 250);
-    --color-secondary-600: oklch(0.36 0.11 250);
-    --color-secondary-700: oklch(0.28 0.09 250);
-    --color-secondary-800: oklch(0.22 0.07 250);
-    --color-secondary-900: oklch(0.17 0.05 250);
-    --color-secondary-950: oklch(0.12 0.03 250);
+    /* Secondary - Neutral Gray */
+    --color-secondary-50: oklch(0.98 0 0);
+    --color-secondary-100: oklch(0.95 0 0);
+    --color-secondary-200: oklch(0.88 0 0);
+    --color-secondary-300: oklch(0.80 0 0);
+    --color-secondary-400: oklch(0.70 0 0);
+    --color-secondary-500: oklch(0.60 0 0);
+    --color-secondary-600: oklch(0.50 0 0);
+    --color-secondary-700: oklch(0.40 0 0);
+    --color-secondary-800: oklch(0.30 0 0);
+    --color-secondary-900: oklch(0.20 0 0);
+    --color-secondary-950: oklch(0.15 0 0);
 
-    /* Dark - Navy with better contrast */
-    --color-navy-50: oklch(0.98 0.01 250);
-    --color-navy-100: oklch(0.94 0.02 250);
-    --color-navy-200: oklch(0.85 0.03 250);
-    --color-navy-300: oklch(0.70 0.04 250);
-    --color-navy-400: oklch(0.54 0.05 250);
-    --color-navy-500: oklch(0.38 0.05 250);
-    --color-navy-600: oklch(0.28 0.05 250);
-    --color-navy-700: oklch(0.20 0.05 250);
-    --color-navy-800: oklch(0.15 0.04 250);
-    --color-navy-900: oklch(0.11 0.03 250);
-    --color-navy-950: oklch(0.07 0.02 250);
+    /* Dark - JetBrains Dark (Darcula) base colors */
+    --color-navy-50: oklch(0.98 0 0);
+    --color-navy-100: oklch(0.90 0 0);
+    --color-navy-200: oklch(0.80 0 0);
+    --color-navy-300: oklch(0.70 0 0);
+    --color-navy-400: oklch(0.60 0 0);
+    --color-navy-500: oklch(0.50 0 0);
+    --color-navy-600: oklch(0.40 0 0);
+    --color-navy-700: oklch(0.30 0 0);
+    --color-navy-800: oklch(0.26 0 0);
+    --color-navy-900: oklch(0.21 0 0);
+    --color-navy-950: oklch(0.18 0 0); /* JetBrains New UI Dark bg */
 
     /* Glass effect variables */
-    --glass-bg: oklch(0.98 0 0 / 0.7);
-    --glass-bg-dark: oklch(0.12 0.02 250 / 0.6);
-    --glass-border: oklch(0.95 0 0 / 0.2);
-    --glass-border-dark: oklch(0.2 0.03 250 / 0.2);
+    --glass-bg: oklch(0.98 0 0 / 0.85);
+    --glass-bg-dark: oklch(0.21 0 0 / 0.85);
+    --glass-border: oklch(0.85 0 0 / 0.3);
+    --glass-border-dark: oklch(0.35 0 0 / 0.3);
 }
 
 /* Light mode base styles */
@@ -124,9 +139,10 @@ html {
 }
 
 body {
-    @apply bg-gradient-to-br from-navy-50 via-secondary-50/30 to-primary-50/20
-           text-navy-900 antialiased;
+    @apply bg-background text-foreground antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    /* JetBrains typically uses system fonts, often Inter or JetBrains Mono for code */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     min-height: 100vh;
 }
 
@@ -136,8 +152,7 @@ html.dark {
 }
 
 html.dark body {
-    @apply bg-gradient-to-br from-navy-950 via-navy-800/60 to-secondary-900/30
-           text-navy-50;
+    @apply bg-background text-foreground;
 }
 
 /* Modern Scrollbar */
@@ -252,52 +267,43 @@ html.dark .glass {
 
 /* Improved card styles */
 .card {
-    @apply bg-white dark:bg-navy-800/80
-           rounded-xl border border-secondary-100 dark:border-navy-700/50
-           shadow-sm hover:shadow-lg dark:shadow-navy-900/30
-           transition-all duration-300 ease-out
-           backdrop-blur-sm;
+    @apply bg-card text-card-foreground
+           rounded-xl border border-border
+           shadow-sm hover:shadow-md
+           transition-all duration-300 ease-out;
 }
 
 .card-hover {
-    @apply hover:scale-[1.02] hover:border-primary-200 dark:hover:border-primary-700/50;
+    @apply hover:border-primary-300 dark:hover:border-primary-700/80;
 }
 
 /* Button improvements */
 .btn-primary {
-    @apply bg-gradient-to-r from-primary-500 to-primary-600
-           hover:from-primary-600 hover:to-primary-700
-           text-white font-medium rounded-lg
-           shadow-md hover:shadow-xl shadow-primary-500/20
-           transition-all duration-200
-           active:scale-95;
+    @apply bg-primary hover:bg-primary/90
+           text-primary-foreground font-medium rounded-lg
+           shadow-sm transition-all duration-200
+           active:scale-[0.98];
 }
 
 .btn-secondary {
-    @apply bg-white dark:bg-navy-800
-           border border-secondary-200 dark:border-navy-700
-           text-secondary-700 dark:text-secondary-300
-           hover:bg-secondary-50 dark:hover:bg-navy-700
-           font-medium rounded-lg
+    @apply bg-secondary hover:bg-secondary/80
+           text-secondary-foreground font-medium rounded-lg
            transition-all duration-200
-           active:scale-95;
+           active:scale-[0.98];
 }
 
 .btn-ghost {
-    @apply text-secondary-600 dark:text-secondary-400
-           hover:bg-secondary-100 dark:hover:bg-navy-800
+    @apply text-foreground hover:bg-secondary
            rounded-lg transition-all duration-200
-           active:scale-95;
+           active:scale-[0.98];
 }
 
 /* Input improvements */
 .input-modern {
-    @apply bg-white dark:bg-navy-800/50
-           border border-secondary-200 dark:border-navy-700
-           rounded-lg px-4 py-2.5
-           text-navy-900 dark:text-navy-100
-           placeholder-secondary-400 dark:placeholder-secondary-500
-           focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500
+    @apply bg-input border border-border
+           rounded-lg px-4 py-2.5 text-foreground
+           placeholder-muted-foreground
+           focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent
            transition-all duration-200;
 }
 
@@ -349,12 +355,14 @@ html.dark .glass {
 
 /* Improved prose styles for chat */
 .prose pre {
-    @apply bg-navy-50 dark:bg-navy-900/50 border border-border rounded-lg;
+    @apply bg-navy-50 dark:bg-navy-900 border border-border rounded-lg;
+    font-family: "JetBrains Mono", Consolas, Menlo, Monaco, "Courier New", monospace;
 }
 
 .prose code:not(pre code) {
-    @apply bg-primary-50 dark:bg-primary-950/30 text-primary-700 dark:text-primary-300
-           px-1.5 py-0.5 rounded text-[0.85em] font-mono;
+    @apply bg-secondary dark:bg-secondary text-foreground
+           px-1.5 py-0.5 rounded text-[0.85em];
+    font-family: "JetBrains Mono", Consolas, Menlo, Monaco, "Courier New", monospace;
 }
 
 /* Thin scrollbar variant */
@@ -368,5 +376,5 @@ html.dark .glass {
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-    @apply bg-secondary-300/40 dark:bg-navy-600/40 rounded-full;
+    @apply bg-border rounded-full;
 }

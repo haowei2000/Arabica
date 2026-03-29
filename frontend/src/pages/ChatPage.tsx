@@ -27,18 +27,18 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2.5 shrink-0">
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-3 py-2 shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="size-7" onClick={handleBackToWorkspaces} title="Back to workspaces">
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="icon" className="size-6" onClick={handleBackToWorkspaces} title="Back to workspaces">
               <ArrowLeft className="size-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" className="size-7" onClick={handleGoHome} title="Home">
+            <Button variant="ghost" size="icon" className="size-6" onClick={handleGoHome} title="Home">
               <Home className="size-3.5" />
             </Button>
-            <div className="h-4 w-px bg-border" />
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
-              <Bot className="size-3.5 text-white" />
+            <div className="h-4 w-px bg-border mx-1" />
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
+              <Bot className="size-3 text-white" />
             </div>
             <div>
               <h1 className="text-sm font-semibold leading-tight">{currentWorkspaceName || 'Workspace'}</h1>
@@ -47,10 +47,10 @@ export default function ChatPage() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" size="icon" onClick={toggleTheme}
+          <div className="flex items-center gap-1">
+            <Button type="button" variant="ghost" size="icon" className="size-6" onClick={toggleTheme}
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-              {theme === 'dark' ? <Sun className="size-5" /> : <Moon className="size-5" />}
+              {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
             <Button variant="ghost" size="sm" onClick={handleLogout}>Logout</Button>
           </div>

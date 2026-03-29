@@ -15,7 +15,6 @@ export const useAppStore = create<AppState>()(
       currentAppCode: null,
 
       setCurrentApp: (id, code) => {
-        console.log('📝 setCurrentApp called:', { id, code });
         set({
           currentAppId: id,
           currentAppCode: code,
@@ -23,7 +22,6 @@ export const useAppStore = create<AppState>()(
       },
 
       clearCurrentApp: () => {
-        console.log('🗑️  clearCurrentApp called');
         set({
           currentAppId: null,
           currentAppCode: null,

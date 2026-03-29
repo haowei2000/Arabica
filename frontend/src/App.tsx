@@ -39,8 +39,6 @@ function App() {
             <Route path="/knowledge/:knowledgeId/documents" element={<DocumentPage/>}/>
             <Route path="/skills/:skillId/files" element={<SkillFilesPage/>}/>
             <Route path="/" element={<Navigate to="/app" replace/>}/>
-            {/* Backwards compatibility */}
-            <Route path="/apps" element={<Navigate to="/home" replace/>}/>
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

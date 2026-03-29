@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
@@ -490,6 +490,9 @@ export default function ToolPage() {
             <DialogTitle className="flex items-center gap-2">
               <Play className="size-4" /> Test — {testingTool?.display_name || testingTool?.name}
             </DialogTitle>
+            <DialogDescription>
+              Provide parameters and run the tool to verify its behavior.
+            </DialogDescription>
           </DialogHeader>
           {testingTool && (
             <div className="space-y-4">
@@ -498,13 +501,36 @@ export default function ToolPage() {
                 return Object.keys(props).length > 0 && (
                   <div>
                     <p className="text-[10px] text-muted-foreground mb-1.5 font-semibold uppercase tracking-wide">Expected Parameters</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {Object.entries(props).map(([name, prop]) => (
-                        <span key={name} className={cn('text-[10px] px-2 py-0.5 rounded border font-mono',
-                          required.has(name) ? 'bg-foreground/5 border-foreground/20 text-foreground' : 'bg-muted text-muted-foreground border-border/50')}>
-                          {name}{prop.type ? `: ${prop.type}` : ''}
-                        </span>
-                      ))}
+                    <div className="space-y-1.5">
+                      {Object.entries(props).map(([name, prop]) => {
+                        const isRequired = required.has(name);
+                        return (
+                          <div key={name} className={cn(
+                            'rounded border px-2.5 py-2 text-xs',
+                            isRequired ? 'bg-foreground/5 border-foreground/15' : 'bg-muted/40 border-border/50'
+                          )}>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-semibold text-foreground">{name}</span>
+                              {prop.type && (
+                                <span className="text-[10px] font-mono text-primary/70 bg-primary/8 border border-primary/15 px-1.5 py-0.5 rounded">
+                                  {prop.type}
+                                </span>
+                              )}
+                              <span className={cn(
+                                'text-[10px] px-1.5 py-0.5 rounded border ml-auto',
+                                isRequired
+                                  ? 'text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 border-orange-200/70 dark:border-orange-800/50'
+                                  : 'text-muted-foreground bg-muted border-border/50'
+                              )}>
+                                {isRequired ? 'required' : 'optional'}
+                              </span>
+                            </div>
+                            {prop.description && (
+                              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{prop.description}</p>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -552,6 +578,9 @@ export default function ToolPage() {
             <DialogTitle className="flex items-center gap-2 text-base">
               <Link2 className="size-4" /> Import Tools from MCP Server
             </DialogTitle>
+            <DialogDescription>
+              Connect to an MCP server to discover and import available tools.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-1">
