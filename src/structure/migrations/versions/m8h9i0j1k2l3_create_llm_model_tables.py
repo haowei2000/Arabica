@@ -19,6 +19,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names()
+
+    if "chat_model" in existing_tables and "embedding_model" in existing_tables:
+        return
+
     # Create chat_model table
     op.create_table(
         "chat_model",

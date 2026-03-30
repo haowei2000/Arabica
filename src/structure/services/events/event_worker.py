@@ -558,8 +558,8 @@ class Worker:
                     logger.debug("Skipping %s for run %s: terminal (%s)", event.event_type, run_id, s)
 
                 case s if s.endswith("b"):
-                    # Pass full workspace events to executor
-                    await self._handle_to_executor(event, workspace_events, ctx)
+                    # Pass current-run events only — the executor recomputes sequence internally
+                    await self._handle_to_executor(event, run_events, ctx)
 
                 case s if s.endswith("0"):
                     await self._run_triggers(event, ctx)
