@@ -760,51 +760,50 @@ export default function WorkspaceConsole() {
     <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-background">
       {/* ── Chat Column ── */}
       <div className="flex flex-col flex-1 min-h-0 overflow-hidden lg:border-r border-border">
-        <ScrollArea className="flex-1 px-4 sm:px-6 py-4">
-          <div className="max-w-3xl mx-auto space-y-5">
+        <ScrollArea className="flex-1 px-4 sm:px-8 py-6">
+          <div className="max-w-4xl xl:max-w-5xl mx-auto space-y-6">
             {isLoadingConversation ? (
               <div className="flex items-center justify-center h-40">
-                <Loader2 className="size-8 animate-spin text-muted-foreground/40" />
+                <Loader2 className="size-10 animate-spin text-muted-foreground/30" />
               </div>
             ) : messages.length === 0 && !streamingMessage ? (
-              <div className="flex flex-col items-center justify-center pt-20 pb-10 animate-fade-in">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-100 to-primary-200 dark:from-primary-900/40 dark:to-primary-800/30 flex items-center justify-center mb-5">
-                  <MessageSquare className="size-8 text-primary-500" />
+              <div className="flex flex-col items-center justify-center pt-24 pb-12 animate-fade-in">
+                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-primary-100 to-primary-200 dark:from-primary-900/40 dark:to-primary-800/30 flex items-center justify-center mb-6 shadow-sm">
+                  <MessageSquare className="size-10 text-primary-500" />
                 </div>
-                <h3 className="text-lg font-semibold text-foreground mb-2">Start a conversation</h3>
-                <p className="text-sm text-muted-foreground text-center max-w-sm">
+                <h3 className="text-xl font-bold text-foreground mb-3 tracking-tight">Start a conversation</h3>
+                <p className="text-base text-muted-foreground text-center max-w-sm leading-relaxed">
                   Type a message below to begin interacting with the AI agent.
                 </p>
               </div>
             ) : null}
 
-            {console.log('Rendering messages:', messages)}
             {messages.map((message) => (
               <div
                 key={message.id}
                 className={cn(
-                  'flex gap-3 animate-fade-in group/message',
+                  'flex gap-4 animate-fade-in group/message',
                   message.role === MessageRole.USER ? 'justify-end' : 'justify-start'
                 )}
               >
                 {message.role === MessageRole.ASSISTANT && (
-                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-sm shadow-primary-500/20">
-                    <Bot className="size-4" />
+                  <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-md shadow-primary-500/20">
+                    <Bot className="size-5" />
                   </div>
                 )}
 
                 {message.role === MessageRole.USER ? (
-                  <div className="max-w-2xl rounded-2xl rounded-br-md px-4 py-2.5 bg-primary text-primary-foreground shadow-sm hover:shadow-md transition-shadow duration-200">
-                    <p className="text-[13px] sm:text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                  <div className="max-w-[85%] sm:max-w-2xl rounded-2xl rounded-br-md px-5 py-3 bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all duration-200">
+                    <p className="text-sm sm:text-[15px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
                   </div>
                 ) : (
-                  <div className="max-w-2xl w-full space-y-2.5">
+                  <div className="max-w-[90%] sm:max-w-3xl w-full space-y-3">
                     {message.contextUsages && message.contextUsages.some(c => c.tool_names) && (
-                      <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-muted-foreground/70 px-1">
-                        <Wrench className="size-3 shrink-0" />
-                        <span className="font-medium">Tools:</span>
+                      <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground/80 px-1">
+                        <Wrench className="size-3.5 shrink-0" />
+                        <span className="font-semibold">Tools:</span>
                         {message.contextUsages.filter(c => c.tool_names).flatMap(c => c.tool_names!).map(name => (
-                          <span key={name} className="px-1.5 py-0.5 rounded bg-muted border border-border/50 font-mono">{name}</span>
+                          <span key={name} className="px-2 py-0.5 rounded-md bg-muted border border-border/50 font-mono font-medium">{name}</span>
                         ))}
                       </div>
                     )}
@@ -812,7 +811,7 @@ export default function WorkspaceConsole() {
                       <ThinkingBlock content={message.thinkingContent} defaultCollapsed />
                     )}
                     {message.toolCalls && message.toolCalls.length > 0 && (
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {message.toolCalls.map((tc) => (
                           <ToolCallCard key={tc.tool_id} toolCall={tc} />
                         ))}
@@ -822,13 +821,13 @@ export default function WorkspaceConsole() {
                       <PlanStepList steps={message.planSteps} />
                     )}
                     {message.content && (
-                      <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm hover:shadow-md hover:border-border/80 transition-all duration-200">
+                      <div className="rounded-2xl rounded-bl-md px-5 py-4 bg-card border border-border/60 shadow-md hover:shadow-lg hover:border-border/80 transition-all duration-300">
                         <Markdown content={message.content} />
                       </div>
                     )}
                     {(message.inputTokens || message.outputTokens) && (
-                      <div className="flex items-center gap-1.5 px-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
-                        <span className="text-[10px] text-muted-foreground/40 tabular-nums font-mono">
+                      <div className="flex items-center gap-2 px-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
+                        <span className="text-[11px] text-muted-foreground/50 tabular-nums font-mono">
                           ↑{message.inputTokens ?? 0} ↓{message.outputTokens ?? 0} tokens
                         </span>
                       </div>
@@ -837,7 +836,7 @@ export default function WorkspaceConsole() {
                 )}
 
                 {message.role === MessageRole.USER && (
-                  <div className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center text-secondary-foreground text-[10px] shrink-0 font-bold shadow-sm ring-1 ring-border/20">
+                  <div className="w-9 h-9 rounded-2xl bg-secondary flex items-center justify-center text-secondary-foreground text-[11px] shrink-0 font-black shadow-md ring-1 ring-border/20">
                     YOU
                   </div>
                 )}
@@ -845,23 +844,23 @@ export default function WorkspaceConsole() {
             ))}
 
             {isStreaming && (
-              <div className="flex gap-3 justify-start animate-fade-in">
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-sm shadow-primary-500/20">
-                  <Bot className="size-4" />
+              <div className="flex gap-4 justify-start animate-fade-in">
+                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-md shadow-primary-500/20">
+                  <Bot className="size-5" />
                 </div>
-                <div className="max-w-2xl w-full space-y-2.5">
+                <div className="max-w-[90%] sm:max-w-3xl w-full space-y-3">
                   {contextUsages.some(c => c.tool_names) && (
-                    <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-muted-foreground/70 px-1">
-                      <Wrench className="size-3 shrink-0" />
-                      <span className="font-medium">Tools:</span>
+                    <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground/80 px-1">
+                      <Wrench className="size-3.5 shrink-0" />
+                      <span className="font-semibold">Tools:</span>
                       {contextUsages.filter(c => c.tool_names).flatMap(c => c.tool_names!).map(name => (
-                        <span key={name} className="px-1.5 py-0.5 rounded bg-muted border border-border/50 font-mono">{name}</span>
+                        <span key={name} className="px-2 py-0.5 rounded-md bg-muted border border-border/50 font-mono font-medium">{name}</span>
                       ))}
                     </div>
                   )}
                   {thinkingContent && <ThinkingBlock content={thinkingContent} />}
                   {activeToolCalls.length > 0 && (
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       {activeToolCalls.map((tc) => (
                         <ToolCallCard key={tc.tool_id} toolCall={tc} />
                       ))}
@@ -875,17 +874,17 @@ export default function WorkspaceConsole() {
                     <QueryCard key={query.tool_id} query={query} onRespond={respondToQuery} />
                   ))}
                   {streamingMessage && (
-                    <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-card border border-border/60 shadow-sm">
+                    <div className="rounded-2xl rounded-bl-md px-5 py-4 bg-card border border-border/60 shadow-md">
                       <Markdown content={streamingMessage} />
                     </div>
                   )}
-                  <div className="flex items-center gap-2 text-muted-foreground px-1">
-                    <span className={cn('w-1.5 h-1.5 rounded-full animate-pulse', 
+                  <div className="flex items-center gap-3 text-muted-foreground px-1">
+                    <span className={cn('w-2 h-2 rounded-full animate-pulse', 
                       pendingApprovals.length > 0 ? 'bg-amber-500' : 
                       pendingQueries.length > 0 ? 'bg-indigo-500' : 
                       'bg-primary')} 
                     />
-                    <span className="text-[11px] font-medium tracking-wide uppercase opacity-70">
+                    <span className="text-xs font-bold tracking-wider uppercase opacity-80">
                       {pendingApprovals.length > 0
                         ? 'Waiting for your approval...'
                         : pendingQueries.length > 0
@@ -897,7 +896,7 @@ export default function WorkspaceConsole() {
                               : 'Preparing response...'}
                     </span>
                     {(streamingInputTokens > 0 || streamingOutputTokens > 0) && (
-                      <span className="text-[10px] text-sky-400/70 tabular-nums font-mono ml-auto">
+                      <span className="text-[11px] text-sky-400/80 tabular-nums font-mono ml-auto">
                         ↑{streamingInputTokens} ↓{streamingOutputTokens}
                       </span>
                     )}
@@ -911,59 +910,59 @@ export default function WorkspaceConsole() {
         </ScrollArea>
 
         {/* ── Modern input area ── */}
-        <div className="border-t border-border/60 bg-gradient-to-t from-background to-background/80 px-4 sm:px-6 py-4">
-          <div className="max-w-3xl mx-auto">
+        <div className="border-t border-border/60 bg-gradient-to-t from-background to-background/80 px-4 sm:px-8 py-6">
+          <div className="max-w-4xl xl:max-w-5xl mx-auto">
             <form onSubmit={handleSubmit} className="relative">
               {/* @ mention dropdown */}
               {mentionQuery !== null && mentionMatches.length > 0 && (
-                <div className="absolute bottom-full mb-1 left-0 right-0 z-50 rounded-xl border border-border bg-card shadow-lg shadow-black/10 overflow-hidden">
-                  <div className="px-3 py-1.5 border-b border-border/40 flex items-center gap-1.5">
-                    <Wrench className="size-3 text-muted-foreground/50" />
-                    <span className="text-[10px] text-muted-foreground/60 font-medium">Tools</span>
+                <div className="absolute bottom-full mb-2 left-0 right-0 z-50 rounded-2xl border border-border bg-card shadow-xl shadow-black/20 overflow-hidden">
+                  <div className="px-4 py-2 border-b border-border/40 flex items-center gap-2 bg-muted/30">
+                    <Wrench className="size-3.5 text-muted-foreground/50" />
+                    <span className="text-[11px] text-muted-foreground/70 font-bold uppercase tracking-tight">Tools</span>
                   </div>
-                  <div className="max-h-52 overflow-y-auto">
+                  <div className="max-h-64 overflow-y-auto">
                     {mentionMatches.map((tool, i) => (
                       <button
                         key={tool.name}
                         type="button"
                         onMouseDown={(e) => { e.preventDefault(); insertMention(tool.name); }}
                         className={cn(
-                          'w-full flex items-start gap-2 px-3 py-2 text-left transition-colors',
+                          'w-full flex items-start gap-3 px-4 py-2.5 text-left transition-colors',
                           i === mentionIndex ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/50 text-foreground/80',
                         )}
                       >
-                        <Wrench className="size-3 shrink-0 mt-0.5 text-muted-foreground/50" />
+                        <Wrench className="size-4 shrink-0 mt-0.5 text-muted-foreground/50" />
                         <div className="min-w-0">
-                          <p className="text-xs font-medium truncate">{tool.display_name}</p>
-                          <p className="text-[10px] text-muted-foreground/60 font-mono">{tool.name}</p>
+                          <p className="text-sm font-semibold truncate">{tool.display_name}</p>
+                          <p className="text-[11px] text-muted-foreground/60 font-mono">{tool.name}</p>
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
               )}
-              <div className="flex items-end gap-2 rounded-2xl border border-border/80 bg-card shadow-sm focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all duration-200">
+              <div className="flex items-end gap-3 rounded-2xl border border-border/80 bg-card shadow-md focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/5 transition-all duration-300">
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  placeholder="Type a message… use @tool_name to invoke a tool (Shift+Enter for new line)"
+                  placeholder="Type a message… use @tool_name to invoke a tool"
                   disabled={isStreaming}
                   rows={1}
-                  className="flex-1 resize-none bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50 max-h-40"
+                  className="flex-1 resize-none bg-transparent px-5 py-4 text-base text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
                 />
-                <div className="pr-2 pb-2 shrink-0">
+                <div className="pr-3 pb-3 shrink-0">
                   {isStreaming ? (
                     <Button
                       type="button"
                       size="icon"
                       variant="destructive"
                       onClick={stopStreaming}
-                      className="size-8 rounded-xl"
+                      className="size-10 rounded-xl shadow-md"
                       title="Stop generating"
                     >
-                      <Square className="size-3.5" />
+                      <Square className="size-4" />
                     </Button>
                   ) : (
                     <Button
@@ -971,14 +970,14 @@ export default function WorkspaceConsole() {
                       size="icon"
                       disabled={!input.trim()}
                       className={cn(
-                        'size-8 rounded-xl transition-all duration-200',
+                        'size-10 rounded-xl transition-all duration-300 shadow-md',
                         input.trim()
-                          ? 'bg-primary hover:bg-primary/90 shadow-sm shadow-primary/20'
-                          : 'bg-muted text-muted-foreground'
+                          ? 'bg-primary hover:bg-primary/90 shadow-primary/20'
+                          : 'bg-muted text-muted-foreground opacity-50'
                       )}
                       title="Send message"
                     >
-                      <Send className="size-3.5" />
+                      <Send className="size-4" />
                     </Button>
                   )}
                 </div>
@@ -989,7 +988,7 @@ export default function WorkspaceConsole() {
       </div>
 
       {/* ── Right Panel ── */}
-      <aside className="w-full lg:w-96 border-t lg:border-t-0 border-border bg-card flex flex-col overflow-hidden">
+      <aside className="w-full lg:w-[400px] xl:w-[450px] border-t lg:border-t-0 border-border bg-card/50 backdrop-blur-sm flex flex-col overflow-hidden transition-all duration-300">
         <Tabs defaultValue="runs" className="flex flex-col flex-1 min-h-0">
           <div className="px-4 pt-3 border-b border-border shrink-0">
             <TabsList className="w-full">

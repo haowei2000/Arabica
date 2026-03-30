@@ -260,38 +260,38 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 py-2 sticky top-0 z-30">
-        <div className="flex items-center justify-between max-w-5xl mx-auto">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/20">
-              <Bot className="size-3.5 text-white" />
+      <header className="bg-card/80 backdrop-blur-sm border-b border-border px-4 sm:px-6 py-3 sticky top-0 z-30">
+        <div className="flex items-center justify-between max-w-[1600px] mx-auto">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-md shadow-primary-500/20">
+              <Bot className="size-4 text-white" />
             </div>
-            <h1 className="text-sm font-semibold text-foreground">AI Agent Platform</h1>
+            <h1 className="text-base font-bold text-foreground tracking-tight">AI Agent Platform</h1>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => { resetChat(); navigate('/app'); }}
-              className="h-8 px-3 text-xs text-muted-foreground rounded-lg hover:bg-muted transition-colors flex items-center gap-1.5"
+              className="h-9 px-4 text-sm font-medium text-muted-foreground rounded-xl hover:bg-muted hover:text-foreground transition-all flex items-center gap-2"
               title="Open Workspaces"
             >
-              <FolderKanban className="size-3.5" />
-              Workspaces
+              <FolderKanban className="size-4" />
+              <span className="hidden sm:inline">Workspaces</span>
             </button>
             <button
               type="button"
               onClick={toggleTheme}
-              className="size-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+              className="size-9 flex items-center justify-center rounded-xl hover:bg-muted transition-all"
               title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
             >
               {theme === 'dark'
-                ? <Sun className="size-4 text-muted-foreground" />
-                : <Moon className="size-4 text-muted-foreground" />}
+                ? <Sun className="size-4.5 text-muted-foreground" />
+                : <Moon className="size-4.5 text-muted-foreground" />}
             </button>
             <button
               type="button"
               onClick={handleLogout}
-              className="h-8 px-3 text-xs text-muted-foreground rounded-lg hover:bg-muted transition-colors"
+              className="h-9 px-4 text-sm font-medium text-muted-foreground rounded-xl hover:bg-muted hover:text-foreground transition-all"
             >
               Logout
             </button>
@@ -299,34 +299,34 @@ export default function HomePage() {
         </div>
       </header>
 
-      <div className="max-w-5xl mx-auto px-6 py-6">
-        <Tabs defaultValue="app" className="space-y-5">
-          <TabsList className="h-8">
-            <TabsTrigger value="app" className="text-xs px-3 gap-1.5"><Bot className="size-3" />App</TabsTrigger>
-            <TabsTrigger value="context" className="text-xs px-3 gap-1.5"><Layers className="size-3" />Context</TabsTrigger>
-            <TabsTrigger value="models" className="text-xs px-3 gap-1.5"><Cpu className="size-3" />Models</TabsTrigger>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-8 py-8">
+        <Tabs defaultValue="app" className="space-y-6">
+          <TabsList className="h-10 p-1 bg-muted/50">
+            <TabsTrigger value="app" className="text-sm px-4 gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Bot className="size-3.5" />App</TabsTrigger>
+            <TabsTrigger value="context" className="text-sm px-4 gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Layers className="size-3.5" />Context</TabsTrigger>
+            <TabsTrigger value="models" className="text-sm px-4 gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Cpu className="size-3.5" />Models</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="app">
+          <TabsContent value="app" className="mt-0 outline-none">
             {renderAppContent()}
           </TabsContent>
 
-          <TabsContent value="context">
+          <TabsContent value="context" className="mt-0 outline-none">
             <Tabs defaultValue="knowledge">
-              <TabsList className="h-7 mb-4">
-                <TabsTrigger value="knowledge" className="text-xs px-3 gap-1.5"><Library className="size-3" />Knowledge</TabsTrigger>
-                <TabsTrigger value="tool" className="text-xs px-3 gap-1.5"><Wrench className="size-3" />Tool</TabsTrigger>
-                <TabsTrigger value="memory" className="text-xs px-3 gap-1.5"><Brain className="size-3" />Memory</TabsTrigger>
-                <TabsTrigger value="skill" className="text-xs px-3 gap-1.5"><Sparkles className="size-3" />Skill</TabsTrigger>
+              <TabsList className="h-9 p-1 bg-muted/30 mb-6">
+                <TabsTrigger value="knowledge" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Library className="size-3.5" />Knowledge</TabsTrigger>
+                <TabsTrigger value="tool" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Wrench className="size-3.5" />Tool</TabsTrigger>
+                <TabsTrigger value="memory" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Brain className="size-3.5" />Memory</TabsTrigger>
+                <TabsTrigger value="skill" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Sparkles className="size-3.5" />Skill</TabsTrigger>
               </TabsList>
-              <TabsContent value="knowledge"><KnowledgePage /></TabsContent>
-              <TabsContent value="tool"><ToolPage /></TabsContent>
-              <TabsContent value="memory"><MemoryPage /></TabsContent>
-              <TabsContent value="skill"><SkillPage /></TabsContent>
+              <TabsContent value="knowledge" className="outline-none"><KnowledgePage /></TabsContent>
+              <TabsContent value="tool" className="outline-none"><ToolPage /></TabsContent>
+              <TabsContent value="memory" className="outline-none"><MemoryPage /></TabsContent>
+              <TabsContent value="skill" className="outline-none"><SkillPage /></TabsContent>
             </Tabs>
           </TabsContent>
 
-          <TabsContent value="models">
+          <TabsContent value="models" className="mt-0 outline-none">
             <LLMModelsPage />
           </TabsContent>
         </Tabs>

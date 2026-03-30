@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Cpu, Plus, Trash2, Pencil, Loader2, Search, CheckCircle2,
-  XCircle, Star, Eye, Zap, Layers,
+  XCircle, Star, Eye, Zap, Layers, Settings2, Globe, MessageSquare
 } from 'lucide-react';
 import {
   useChatModels, useCreateChatModel, useUpdateChatModel, useDeleteChatModel,
@@ -11,6 +11,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -354,6 +357,107 @@ function EmbeddingModelDialog({
   );
 }
 
+// ─── Default Model Quick Config ───────────────────────────────────────────────
+
+function GlobalDefaultConfig() {
+  const { data: chatData, isLoading: chatLoading } = useChatModels({ enabled: true });
+  const { data: embedData, isLoading: embedLoading } = useEmbeddingModels({ enabled: true });
+  
+  const updateChat = useUpdateChatModel();
+  const updateEmbed = useUpdateEmbeddingModel();
+
+  const chatModels = chatData?.items ?? [];
+  const embedModels = embedData?.items ?? [];
+
+  const defaultChat = chatModels.find(m => m.is_default && !m.supports_vision);
+  const defaultVision = chatModels.find(m => m.is_default && m.supports_vision);
+  const defaultEmbed = embedModels.find(m => m.is_default);
+
+  const handleSetDefaultChat = async (id: string) => {
+    const model = chatModels.find(m => m.id === id);
+    if (!model) return;
+    try {
+      await updateChat.mutateAsync({ id, data: { is_default: true } });
+    } catch (err) {
+      alert(`Failed to set default: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleSetDefaultEmbed = async (id: string) => {
+    try {
+      await updateEmbed.mutateAsync({ id, data: { is_default: true } });
+    } catch (err) {
+      alert(`Failed to set default: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
+  if (chatLoading || embedLoading) return null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl border border-primary/20 bg-primary/5 mb-6">
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="size-4 text-primary" />
+          <Label className="text-sm font-bold">Default Chat Model</Label>
+        </div>
+        <Select value={defaultChat?.id} onValueChange={handleSetDefaultChat}>
+          <SelectTrigger className="h-9 bg-background">
+            <SelectValue placeholder="Select default chat" />
+          </SelectTrigger>
+          <SelectContent>
+            {chatModels.filter(m => !m.supports_vision).map(m => (
+              <SelectItem key={m.id} value={m.id}>
+                {m.name} ({m.provider})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[10px] text-muted-foreground">Global fallback for text-only conversations.</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Eye className="size-4 text-primary" />
+          <Label className="text-sm font-bold">Default Multi-modal</Label>
+        </div>
+        <Select value={defaultVision?.id} onValueChange={handleSetDefaultChat}>
+          <SelectTrigger className="h-9 bg-background">
+            <SelectValue placeholder="Select default vision" />
+          </SelectTrigger>
+          <SelectContent>
+            {chatModels.filter(m => m.supports_vision).map(m => (
+              <SelectItem key={m.id} value={m.id}>
+                {m.name} ({m.provider})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[10px] text-muted-foreground">Used when images or files are provided.</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Globe className="size-4 text-primary" />
+          <Label className="text-sm font-bold">Default Embedding</Label>
+        </div>
+        <Select value={defaultEmbed?.id} onValueChange={handleSetDefaultEmbed}>
+          <SelectTrigger className="h-9 bg-background">
+            <SelectValue placeholder="Select default embedding" />
+          </SelectTrigger>
+          <SelectContent>
+            {embedModels.map(m => (
+              <SelectItem key={m.id} value={m.id}>
+                {m.name} ({m.provider})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[10px] text-muted-foreground">Global fallback for knowledge base indexing.</p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Chat Models Table ────────────────────────────────────────────────────────
 
 function ChatModelsTab() {
@@ -363,6 +467,7 @@ function ChatModelsTab() {
 
   const { data, isLoading } = useChatModels({ page: 1, page_size: 50 });
   const deleteMutation = useDeleteChatModel();
+  const updateMutation = useUpdateChatModel();
 
   const filtered = (data?.items ?? []).filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -376,6 +481,14 @@ function ChatModelsTab() {
       await deleteMutation.mutateAsync(m.id);
     } catch (err) {
       alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleToggleDefault = async (m: ChatModel) => {
+    try {
+      await updateMutation.mutateAsync({ id: m.id, data: { is_default: !m.is_default } });
+    } catch (err) {
+      alert(`Update failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -430,7 +543,12 @@ function ChatModelsTab() {
                 <tr key={m.id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      {m.is_default && <Star className="size-3 text-yellow-500 fill-yellow-500 shrink-0" />}
+                      <button 
+                        onClick={() => handleToggleDefault(m)}
+                        className={cn("transition-colors", m.is_default ? "text-yellow-500 hover:text-yellow-600" : "text-muted-foreground/20 hover:text-yellow-500/50")}
+                      >
+                        <Star className={cn("size-3.5", m.is_default && "fill-yellow-500")} />
+                      </button>
                       <span className="font-medium truncate max-w-[140px]">{m.name}</span>
                     </div>
                     {m.description && (
@@ -491,6 +609,7 @@ function EmbeddingModelsTab() {
 
   const { data, isLoading } = useEmbeddingModels({ page: 1, page_size: 50 });
   const deleteMutation = useDeleteEmbeddingModel();
+  const updateMutation = useUpdateEmbeddingModel();
 
   const filtered = (data?.items ?? []).filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -504,6 +623,14 @@ function EmbeddingModelsTab() {
       await deleteMutation.mutateAsync(m.id);
     } catch (err) {
       alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleToggleDefault = async (m: EmbeddingModel) => {
+    try {
+      await updateMutation.mutateAsync({ id: m.id, data: { is_default: !m.is_default } });
+    } catch (err) {
+      alert(`Update failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -559,7 +686,12 @@ function EmbeddingModelsTab() {
                 <tr key={m.id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      {m.is_default && <Star className="size-3 text-yellow-500 fill-yellow-500 shrink-0" />}
+                      <button 
+                        onClick={() => handleToggleDefault(m)}
+                        className={cn("transition-colors", m.is_default ? "text-yellow-500 hover:text-yellow-600" : "text-muted-foreground/20 hover:text-yellow-500/50")}
+                      >
+                        <Star className={cn("size-3.5", m.is_default && "fill-yellow-500")} />
+                      </button>
                       <span className="font-medium truncate max-w-[140px]">{m.name}</span>
                     </div>
                     {m.description && (
@@ -610,17 +742,26 @@ function EmbeddingModelsTab() {
 
 export default function LLMModelsPage() {
   return (
-    <Tabs defaultValue="chat">
-      <TabsList className="h-7 mb-4">
-        <TabsTrigger value="chat" className="text-xs px-3 gap-1.5">
-          <Cpu className="size-3" />Chat Models
-        </TabsTrigger>
-        <TabsTrigger value="embedding" className="text-xs px-3 gap-1.5">
-          <Layers className="size-3" />Embedding Models
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="chat"><ChatModelsTab /></TabsContent>
-      <TabsContent value="embedding"><EmbeddingModelsTab /></TabsContent>
-    </Tabs>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Settings2 className="size-4 text-primary" />
+        <h3 className="text-sm font-bold uppercase tracking-tight text-foreground/80">Global Model Defaults</h3>
+      </div>
+      
+      <GlobalDefaultConfig />
+
+      <Tabs defaultValue="chat">
+        <TabsList className="h-7 mb-4">
+          <TabsTrigger value="chat" className="text-xs px-3 gap-1.5">
+            <Cpu className="size-3" />Chat Models
+          </TabsTrigger>
+          <TabsTrigger value="embedding" className="text-xs px-3 gap-1.5">
+            <Layers className="size-3" />Embedding Models
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="chat"><ChatModelsTab /></TabsContent>
+        <TabsContent value="embedding"><EmbeddingModelsTab /></TabsContent>
+      </Tabs>
+    </div>
   );
 }
