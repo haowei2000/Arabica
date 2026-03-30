@@ -17,10 +17,10 @@ from structure.celery_worker.celery_app import celery_app
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.context_sync._base import (
     _fetch_embedding_service,
-    _generate_embedding,
     _store_embedding,
     _upsert_context_at_path,
 )
+from structure.services.context.context_embedding import embed_batch_for_context
 from structure.core.enums import ContextType
 from structure.utils.context import build_path
 
@@ -182,17 +182,17 @@ def sync_document_to_contexts(
 
         logger.info(f"sync_document: {document_id} ({original_name}) → {len(cores)} context(s)")
 
-        # ── Phase 5: Embed ────────────────────────────────────────────────────
-        for ctx_id, embed_text in ctx_ids_need_embed:
-            if embed_text.strip():
-                vector, field = _generate_embedding(embed_text, emb_svc)
-                async with get_session("structure") as session:
+        # ── Phase 5: Embed (batched — one session for all chunks) ────────────────
+        to_embed = [(cid, txt) for cid, txt in ctx_ids_need_embed if txt.strip()]
+        if to_embed:
+            texts = [txt for _, txt in to_embed]
+            vectors, field = embed_batch_for_context(texts, emb_svc)
+            async with get_session("structure") as session:
+                for (ctx_id, _), vector in zip(to_embed, vectors):
                     await _store_embedding(session, ctx_id, vector, field)
-                    await session.commit()
-
-        if ctx_ids_need_embed:
+                await session.commit()
             logger.info(
-                f"sync_document: embedded {len(ctx_ids_need_embed)} chunk(s) for {document_id}"
+                f"sync_document: embedded {len(to_embed)} chunk(s) for {document_id}"
             )
 
         return {

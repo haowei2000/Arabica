@@ -47,7 +47,7 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
-                context_type="workspace",
+                context_type=ContextType.WORKSPACE,
                 source_id=workspace_id,
                 glance=ws.name,
                 content=content,
@@ -129,7 +129,7 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
-                context_type="run",
+                context_type=ContextType.RUN,
                 source_id=run_id,
                 glance=glance,
                 content=content,
@@ -304,7 +304,7 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
-                context_type="short_memory",
+                context_type=ContextType.SHORT_MEMORY,
                 source_id=run_id,
                 glance=glance,
                 content=content,
