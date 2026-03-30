@@ -467,6 +467,29 @@ class Worker:
 
             workspace_id = str(run.workspace_id)
 
+            # Inject default ChatModel config (api_key, base_url, model) from DB.
+            # This takes priority over environment variables so users can configure
+            # the LLM provider entirely from the UI without touching .env files.
+            try:
+                from structure.services.llm.chat_model_crud import ChatModelCRUD
+                default_model = await ChatModelCRUD(ctx.db).get_default()
+                if default_model:
+                    if app_config is None:
+                        app_config = {}
+                    # Only inject values not already explicitly set by the app/workspace config.
+                    app_config.setdefault("model_provider", default_model.provider)
+                    app_config.setdefault("model_name", default_model.model_id)
+                    if default_model.api_key_ref:
+                        app_config.setdefault("api_key", default_model.api_key_ref)
+                    if default_model.base_url:
+                        app_config.setdefault("base_url", default_model.base_url)
+                    logger.info(
+                        "_create_executor_for_run: using default ChatModel '%s' (%s/%s) for run %s",
+                        default_model.name, default_model.provider, default_model.model_id, run_id,
+                    )
+            except Exception as model_err:
+                logger.warning("Failed to load default ChatModel (non-critical): %s", model_err)
+
             # Pre-warm the workspace context cache so _load_history() inside
             # the executor hits the cache instead of opening a separate DB
             # session and doing a cold DB load on the first run.

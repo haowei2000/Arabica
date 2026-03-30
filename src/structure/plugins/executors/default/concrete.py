@@ -499,6 +499,7 @@ class DefaultExecutor(Executor):
 
     def __init__(self, config: dict):
         super().__init__(config)
+        self._config = config  # kept for _resolve_llm_config
         self.model_provider = config.get("model_provider", "tongyi")
         self.model_name = config.get("model_name", "qwen-plus")
         self.max_history_messages = config.get("max_history_messages", 20)
@@ -788,27 +789,28 @@ class DefaultExecutor(Executor):
     # ── LLM config ────────────────────────────────────────────────
 
     def _resolve_llm_config(self) -> tuple[str, str]:
-        """Return ``(api_key, base_url)`` for the configured provider."""
-        from structure.config.factory import get_settings
+        """Return ``(api_key, base_url)`` from the database ChatModel config.
 
-        settings = get_settings()
-        match self.model_provider:
-            case "tongyi":
-                if settings.openai:
-                    api_key = settings.openai.api_key or settings.dashscope_api_key
-                    base_url = settings.openai.base_url
-                else:
-                    api_key = settings.dashscope_api_key
-                    base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            case "ollama":
-                api_key = "ollama"  # Ollama doesn't require a real key
-                base_url = (
-                    settings.ollama.base_url + "/v1"
-                    if settings.ollama
-                    else "http://127.0.0.1:11434/v1"
-                )
-            case _:
-                raise ValueError(f"Unsupported provider: {self.model_provider}")
+        Values are injected by the event worker from the default ChatModel
+        record.  Ollama is the only exception — it never needs a real key.
+        """
+        api_key = self._config.get("api_key") or ""
+        base_url = self._config.get("base_url") or ""
+
+        if self.model_provider == "ollama":
+            from structure.config.factory import get_settings
+            settings = get_settings()
+            api_key = "ollama"
+            base_url = base_url or (
+                settings.ollama.base_url + "/v1" if settings.ollama else "http://127.0.0.1:11434/v1"
+            )
+            return api_key, base_url
+
+        if not api_key or not base_url:
+            raise ValueError(
+                "No LLM model configured. Please add a default chat model "
+                "with an API key and base URL in the LLM Models settings page."
+            )
         return api_key, base_url
 
 

@@ -138,8 +138,8 @@ function ChatModelDialog({
               <Input value={form.base_url ?? ''} onChange={e => set('base_url', e.target.value || null)} placeholder="https://api.openai.com/v1" />
             </div>
             <div className="space-y-1 col-span-2">
-              <Label>API Key Reference</Label>
-              <Input value={form.api_key_ref ?? ''} onChange={e => set('api_key_ref', e.target.value || null)} placeholder="env var name or key alias" />
+              <Label>API Key</Label>
+              <Input value={form.api_key_ref ?? ''} onChange={e => set('api_key_ref', e.target.value || null)} placeholder="sk-..." type="password" />
             </div>
             <div className="space-y-1">
               <Label>Context Window</Label>
@@ -297,8 +297,8 @@ function EmbeddingModelDialog({
               <Input value={form.base_url ?? ''} onChange={e => set('base_url', e.target.value || null)} placeholder="https://api.openai.com/v1" />
             </div>
             <div className="space-y-1 col-span-2">
-              <Label>API Key Reference</Label>
-              <Input value={form.api_key_ref ?? ''} onChange={e => set('api_key_ref', e.target.value || null)} placeholder="env var name or key alias" />
+              <Label>API Key</Label>
+              <Input value={form.api_key_ref ?? ''} onChange={e => set('api_key_ref', e.target.value || null)} placeholder="sk-..." type="password" />
             </div>
             <div className="space-y-1">
               <Label>Dimension *</Label>

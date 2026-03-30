@@ -51,23 +51,21 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__DBNAME: ${POSTGRES__DBNAME:-structure}
+      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
       REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
-      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__DB: ${REDIS__DB:-1}
       REDIS__USERNAME: ${REDIS__USERNAME:-}
       # Authentication
       AUTH__JWT_SECRET_KEY: ${AUTH__JWT_SECRET_KEY:-your-super-secret-jwt-key-here-change-in-production}
       AUTH__JWT_ALGORITHM: ${AUTH__JWT_ALGORITHM:-HS256}
       AUTH__ACCESS_TOKEN_EXPIRE_MINUTES: ${AUTH__ACCESS_TOKEN_EXPIRE_MINUTES:-30}
-      AUTH__REFRESH_TOKEN_EXPIRE_MINUTES: ${AUTH__REFRESH_TOKEN_EXPIRE_MINUTES:-10080}
+      AUTH__REFRESH_TOKEN_EXPIRE_DAYS: ${AUTH__REFRESH_TOKEN_EXPIRE_DAYS:-7}
       AUTH__ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
       AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-123456}
-      # External Services
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       OLLAMA__HOST: ollama
       OLLAMA__PORT: 11434
       OLLAMA__PROTOCOL: http
@@ -117,13 +115,13 @@ services:
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__DBNAME: ${POSTGRES__DBNAME:-structure}
+      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
       REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
-      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__DB: ${REDIS__DB:-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,7 +137,7 @@ services:
           memory: 1G
         reservations:
           memory: 256M
-  
+
   # One-shot container: imports all inner tools from the MCP server on startup
   tool-initializer:
     profiles:
@@ -190,7 +188,7 @@ services:
       # Database Configuration - PostgreSQL
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
+      POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
@@ -198,7 +196,7 @@ services:
       REDIS__HOST: redis
       REDIS__PORT: 6379
       REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
-      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__DB: ${REDIS__DB:-1}
       REDIS__USERNAME: ${REDIS__USERNAME:-}
     depends_on:
       redis:
@@ -213,7 +211,7 @@ services:
           memory: 1G
         reservations:
           memory: 256M
-  
+
   # Celery Beat for scheduled tasks (optional)
   celery-beat:
     profiles:
@@ -237,7 +235,7 @@ services:
       # Database Configuration - PostgreSQL
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
+      POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
@@ -245,7 +243,7 @@ services:
       REDIS__HOST: redis
       REDIS__PORT: 6379
       REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
-      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__DB: ${REDIS__DB:-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -261,7 +259,7 @@ services:
           memory: 256M
         reservations:
           memory: 64M
-  
+
   # Flower - Celery monitoring (optional)
   flower:
     profiles:
@@ -285,7 +283,7 @@ services:
       # Database Configuration - PostgreSQL
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: ${POSTGRES__USER:-postgres}
+      POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
@@ -293,7 +291,7 @@ services:
       REDIS__HOST: redis
       REDIS__PORT: 6379
       REDIS__PASSWORD: ${REDIS__PASSWORD:-}
-      REDIS__DB: ${REDIS_DB:-1}
+      REDIS__DB: ${REDIS__DB:-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -364,12 +362,12 @@ services:
       - ./postgres/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       <<: *common-env
-      POSTGRES_DB: ${POSTGRES__DBNAME:-structure}
-      POSTGRES_USER: ${POSTGRES__USER:-postgres}
+      POSTGRES_DB: ${POSTGRES__STRUCTURE_DBNAME:-structure}
+      POSTGRES_USER: ${POSTGRES__USERNAME:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-123456}
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__DBNAME:-structure}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USERNAME:-postgres} -d ${POSTGRES__STRUCTURE_DBNAME:-structure}"]
     restart: unless-stopped
     logging: *default-logging
     networks:
