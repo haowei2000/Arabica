@@ -9,6 +9,7 @@ from structure.celery_worker.tasks.workspace_context_sync import (
     _update_workspace_contexts,
 )
 from structure.celery_worker.tasks.context_sync._base import (
+    _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
 )
@@ -70,6 +71,7 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):
             )
 
             embed_text = " ".join(filter(None, [mem.glance, mem.content]))
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         logger.info(
@@ -78,7 +80,7 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):
 
         # ── 2. Generate embedding only when missing ────────────────────────
         if needs_embedding and embed_text.strip():
-            vector, field = _generate_embedding(embed_text)
+            vector, field = _generate_embedding(embed_text, emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, memory_id, vector, field)
                 await session.commit()
@@ -130,7 +132,7 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
                 if row[0]
             })
 
-            # Bulk delete user-scoped Context rows
+            # Bulk delete user-scoped Context rows matched by source_id + type
             user_del = await session.execute(
                 delete(Context).where(
                     Context.source_id == UUID(resource_id),
@@ -139,6 +141,16 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
                 )
             )
             ctx_count = user_del.rowcount
+
+            # Also delete user-scoped Context rows matched by meta key (e.g. document
+            # chunks that store knowledge_id in meta but have document_id as source_id)
+            meta_user_del = await session.execute(
+                delete(Context).where(
+                    Context.scope == ContextScope.USER,
+                    Context.meta[meta_key].astext == resource_id,
+                )
+            )
+            ctx_count += meta_user_del.rowcount
 
             # Bulk delete workspace-scoped Context rows
             ws_del = await session.execute(

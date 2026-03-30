@@ -469,11 +469,12 @@ function ChatModelsTab() {
   const deleteMutation = useDeleteChatModel();
   const updateMutation = useUpdateChatModel();
 
-  const filtered = (data?.items ?? []).filter(m =>
+  const chatModels = data?.items ?? [];
+  const filtered = useMemo(() => chatModels.filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase()) ||
     m.model_id.toLowerCase().includes(search.toLowerCase()) ||
     m.provider.toLowerCase().includes(search.toLowerCase())
-  );
+  ), [chatModels, search]);
 
   const handleDelete = async (m: ChatModel) => {
     if (!confirm(`Delete model "${m.name}"?`)) return;
@@ -559,9 +560,9 @@ function ChatModelsTab() {
                   <td className="px-3 py-2.5 font-mono text-[11px] text-muted-foreground">{m.model_id}</td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">
-                      {m.supports_vision && <Eye className="size-3 text-blue-500" title="Vision" />}
-                      {m.supports_function_call && <Zap className="size-3 text-yellow-500" title="Function Call" />}
-                      {m.supports_streaming && <Layers className="size-3 text-green-500" title="Streaming" />}
+                      {m.supports_vision && <span title="Vision"><Eye className="size-3 text-blue-500" /></span>}
+                      {m.supports_function_call && <span title="Function Call"><Zap className="size-3 text-yellow-500" /></span>}
+                      {m.supports_streaming && <span title="Streaming"><Layers className="size-3 text-green-500" /></span>}
                     </div>
                   </td>
                   <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
@@ -611,11 +612,12 @@ function EmbeddingModelsTab() {
   const deleteMutation = useDeleteEmbeddingModel();
   const updateMutation = useUpdateEmbeddingModel();
 
-  const filtered = (data?.items ?? []).filter(m =>
+  const embedModels = data?.items ?? [];
+  const filtered = useMemo(() => embedModels.filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase()) ||
     m.model_id.toLowerCase().includes(search.toLowerCase()) ||
     m.provider.toLowerCase().includes(search.toLowerCase())
-  );
+  ), [embedModels, search]);
 
   const handleDelete = async (m: EmbeddingModel) => {
     if (!confirm(`Delete model "${m.name}"?`)) return;

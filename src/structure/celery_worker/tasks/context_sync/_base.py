@@ -1,14 +1,17 @@
 """Shared helpers and constants for context-sync Celery tasks."""
 
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from structure.services.context.context_embedding import (
-    DEFAULT_DIMENSION as _DEFAULT_DIMENSION,
-    DEFAULT_MODEL as _DEFAULT_MODEL,
-    DEFAULT_PROVIDER as _DEFAULT_PROVIDER,
     embed_for_context as _embed_for_context,
+    load_default_embedding_service,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from structure.services.context.knowledge.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -68,16 +71,18 @@ async def _upsert_context_at_path(session, *, user_id: str, context_type: str, s
     )
 
 
-def _generate_embedding(text: str, *,
-                         provider: str = _DEFAULT_PROVIDER,
-                         model: str = _DEFAULT_MODEL,
-                         dimension: int = _DEFAULT_DIMENSION) -> tuple[list[float], str]:
+async def _fetch_embedding_service(session: "AsyncSession") -> "EmbeddingService":
+    """Load the default EmbeddingService from DB. Call once per task, outside DB session scope."""
+    return await load_default_embedding_service(session)
+
+
+def _generate_embedding(text: str, svc: "EmbeddingService") -> tuple[list[float], str]:
     """Embed text synchronously; returns (vector, field_name).
 
     Must be called OUTSIDE any async DB session to avoid blocking the event loop.
-    Delegates to the centralized context_embedding module.
+    Obtain ``svc`` by awaiting ``_fetch_embedding_service(session)`` beforehand.
     """
-    return _embed_for_context(text, provider=provider, model=model, dimension=dimension)
+    return _embed_for_context(text, svc)
 
 
 async def _store_embedding(session, ctx_id: str, vector: list[float], field: str):

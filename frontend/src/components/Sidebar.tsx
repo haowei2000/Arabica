@@ -6,6 +6,7 @@ import { formatRelativeTime } from '@/utils/formatDate';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import type { Run } from '@/types/run';
 
 interface SidebarProps {
   workspaceId: string;
@@ -42,7 +43,7 @@ export default function Sidebar({ workspaceId, onNewChat }: SidebarProps) {
           </div>
         ) : runsData?.items && runsData.items.length > 0 ? (
           <div className="space-y-0.5 pb-4">
-            {runsData.items.map((run) => (
+            {runsData.items.map((run: Run) => (
               <div
                 key={run.id}
                 onClick={() => loadRun(run.id)}

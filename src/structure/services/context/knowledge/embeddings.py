@@ -6,8 +6,6 @@ from typing import Literal
 from langchain_ollama import OllamaEmbeddings
 from langchain_openai import OpenAIEmbeddings
 
-from structure.config.factory import get_settings
-
 logger = logging.getLogger(__name__)
 
 EmbeddingProvider = Literal["tongyi", "openai", "ollama"]
@@ -43,17 +41,14 @@ class EmbeddingService:
         provider: EmbeddingProvider = "tongyi",
         model: str = "text-embedding-v3",
         dimension: int = 1536,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
-        """Initialize embedding service.
-
-        Args:
-            provider: Embedding provider (tongyi, openai, ollama).
-            model: ChatLLM name.
-            dimension: Embedding dimension.
-        """
         self.provider = provider
         self.model = model
         self.dimension = dimension
+        self._api_key = api_key or ""
+        self._base_url = base_url or ""
         self._client = self._create_client()
 
         logger.info(
@@ -62,47 +57,28 @@ class EmbeddingService:
         )
 
     def _create_client(self) -> OpenAIEmbeddings | OllamaEmbeddings:
-        """Create embedding client based on provider.
-
-        Returns:
-            Embedding client instance.
-        """
-        settings = get_settings()
-
+        """Create embedding client based on provider."""
         match self.provider:
-            case "tongyi":
-                if settings.openai:
-                    api_key = settings.openai.api_key or settings.dashscope_api_key
-                    base_url = settings.openai.base_url
-                else:
-                    api_key = settings.dashscope_api_key
-                    base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
+            case "tongyi" | "openai":
+                if not self._api_key or not self._base_url:
+                    raise ValueError(
+                        "No embedding model configured. Please add a default embedding model "
+                        "with an API key and base URL in the LLM Models settings page."
+                    )
                 return OpenAIEmbeddings(
                     model=self.model,
-                    openai_api_key=api_key,
-                    openai_api_base=base_url,
-                    dimensions=self.dimension,  # Pass dimension for text-embedding-v3
-                )
-
-            case "openai":
-                if not settings.openai:
-                    raise ValueError("OpenAI configuration is not set")
-
-                return OpenAIEmbeddings(
-                    model=self.model,
-                    openai_api_key=settings.openai.api_key,
-                    openai_api_base=settings.openai.base_url,
+                    openai_api_key=self._api_key,
+                    openai_api_base=self._base_url,
+                    dimensions=self.dimension,
                 )
 
             case "ollama":
-                if not settings.ollama:
-                    raise ValueError("Ollama configuration is not set")
-
-                return OllamaEmbeddings(
-                    model=self.model,
-                    base_url=settings.ollama.base_url,
+                from structure.config.factory import get_settings
+                settings = get_settings()
+                base_url = self._base_url or (
+                    settings.ollama.base_url if settings.ollama else "http://127.0.0.1:11434"
                 )
+                return OllamaEmbeddings(model=self.model, base_url=base_url)
 
             case _:
                 raise ValueError(f"Unsupported embedding provider: {self.provider}")
@@ -205,28 +181,14 @@ class EmbeddingService:
             raise
 
     def _embed_tongyi_direct(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts using direct DashScope API call.
+        """Embed texts using direct DashScope-compatible API call.
 
-        This bypasses langchain to avoid compatibility issues.
-
-        Args:
-            texts: List of texts to embed.
-
-        Returns:
-            list[list[float]]: List of embedding vectors.
+        Bypasses LangChain to avoid tokenisation issues.
         """
         from openai import OpenAI
 
-        settings = get_settings()
-        if settings.openai:
-            api_key = settings.openai.api_key or settings.dashscope_api_key
-            base_url = (
-                settings.openai.base_url
-                or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            )
-        else:
-            api_key = settings.dashscope_api_key
-            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        api_key = self._api_key
+        base_url = self._base_url
 
         # Process in batches of 10 strings each
         all_embeddings = []

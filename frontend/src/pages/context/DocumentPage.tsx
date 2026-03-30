@@ -4,14 +4,13 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, Loader2, Download, Eye, Trash2,
   FolderOpen, Folder, FileText, ChevronDown, ChevronRight,
-  Table2, Code2, FileCode, Rows3, Wand2,
-  BookOpen, Book, AlignLeft, Search, ChevronsDownUp, ChevronsUpDown, Brain,
-  FolderInput, FolderTree,
+  AlignLeft, Search, ChevronsDownUp, ChevronsUpDown, Brain,
+  FolderInput,
 } from 'lucide-react';
 import { useKnowledge } from '@/hooks/useKnowledge';
 import { useDeleteDocument, useDocumentList, useUploadDocument } from '@/hooks/useDocuments';
 import { useChunksByDocument } from '@/hooks/useChunks';
-import { documentService, detectStructureType } from '@/services/documentService';
+import { documentService } from '@/services/documentService';
 import type { StructureType, FolderUploadResult } from '@/services/documentService';
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
 import { Button } from '@/components/ui/button';
@@ -24,21 +23,20 @@ import type { Chunk } from '@/types/chunk';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type UploadMode = StructureType | 'auto';
-
 type UploadingFile = {
   file: File;
   taskId: string | null;
   status: 'uploading' | 'processing' | 'success' | 'error' | 'duplicate';
-  detectedType: StructureType;
   error?: string;
 };
 
 type ViewMode = 'documents' | 'sections' | 'preview';
 
-interface SectionNode {
-  section: Chunk;
-  children: SectionNode[];
+interface PathNode {
+  name: string;       // display label
+  fullPath: string;   // full original path (used as key)
+  chunk?: Chunk;      // only set for leaf nodes (chunks)
+  children: PathNode[];
 }
 
 // ─── Folder-picker tree (for upload dialog) ───────────────────────────────────
@@ -75,12 +73,6 @@ function getLeafPaths(node: FolderTreeNode): string[] {
   return node.children.flatMap(getLeafPaths);
 }
 
-const STRUCTURE_TYPE_BADGE: Record<StructureType, { label: string; cls: string }> = {
-  markdown: { label: 'md',  cls: 'bg-indigo-500/15 text-indigo-600' },
-  document: { label: 'doc', cls: 'bg-blue-500/15 text-blue-600' },
-  table:    { label: 'tbl', cls: 'bg-emerald-500/15 text-emerald-600' },
-  code:     { label: 'code',cls: 'bg-violet-500/15 text-violet-600' },
-};
 
 function IndeterminateCheckbox({
   checked, indeterminate, onChange, disabled,
@@ -107,11 +99,10 @@ function IndeterminateCheckbox({
 }
 
 function FolderFileNode({
-  node, selected, fileMap, onToggleFile, onToggleDir, level = 0,
+  node, selected, onToggleFile, onToggleDir, level = 0,
 }: {
   node: FolderTreeNode;
   selected: Set<string>;
-  fileMap: Map<string, File>; // path → File (for structure type detection on leaves)
   onToggleFile: (path: string) => void;
   onToggleDir: (leafPaths: string[], allSelected: boolean) => void;
   level?: number;
@@ -119,9 +110,6 @@ function FolderFileNode({
   const pl = level * 14;
 
   if (!node.isDir) {
-    const file = fileMap.get(node.fullPath);
-    const st = file ? detectStructureType(file) : 'document';
-    const badge = STRUCTURE_TYPE_BADGE[st];
     return (
       <div style={{ paddingLeft: pl }} className="flex items-center gap-1.5 py-[3px] group">
         <IndeterminateCheckbox
@@ -130,9 +118,6 @@ function FolderFileNode({
         />
         <span className="text-[11px] font-mono text-muted-foreground group-hover:text-foreground transition-colors flex-1 min-w-0 truncate">
           {node.name}
-        </span>
-        <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded leading-none shrink-0', badge.cls)}>
-          {badge.label}
         </span>
       </div>
     );
@@ -163,7 +148,6 @@ function FolderFileNode({
           key={child.fullPath}
           node={child}
           selected={selected}
-          fileMap={fileMap}
           onToggleFile={onToggleFile}
           onToggleDir={onToggleDir}
           level={level + 1}
@@ -175,102 +159,75 @@ function FolderFileNode({
 
 // ─── Tree builder ─────────────────────────────────────────────────────────────
 
-function buildSectionTree(sections: Chunk[]): SectionNode[] {
-  const roots: SectionNode[] = [];
-  // Stack tracks ancestors: each entry is { node, level }
-  const stack: { node: SectionNode; level: number }[] = [];
+function buildPathTree(chunks: Chunk[]): PathNode[] {
+  if (chunks.length === 0) return [];
 
-  for (const section of sections) {
-    const level = section.meta?.section_level ?? 1;
-    const node: SectionNode = { section, children: [] };
+  // Find the longest common path prefix to strip (keeps display compact)
+  const allParts = chunks.map(c => (c.path ?? '').split('/').filter(Boolean));
+  const minLen = Math.min(...allParts.map(p => p.length));
+  let prefixLen = 0;
+  // Keep at least the last segment distinct per chunk so we never strip everything
+  for (let i = 0; i < minLen - 1; i++) {
+    if (allParts.every(p => p[i] === allParts[0][i])) prefixLen++;
+    else break;
+  }
 
-    // Pop stack entries that are same level or deeper
-    while (stack.length > 0 && stack[stack.length - 1].level >= level) {
-      stack.pop();
+  const roots: PathNode[] = [];
+
+  function insert(nodes: PathNode[], segs: string[], idx: number, chunk: Chunk, parentPath: string) {
+    if (idx >= segs.length) return;
+    const seg = segs[idx];
+    const nodePath = parentPath + '/' + seg;
+    const isLeaf = idx === segs.length - 1;
+
+    let node = nodes.find(n => n.fullPath === nodePath);
+    if (!node) {
+      node = { name: seg, fullPath: nodePath, children: [] };
+      nodes.push(node);
     }
-
-    if (stack.length === 0) {
-      roots.push(node);
+    if (isLeaf) {
+      node.chunk = chunk;
+      node.name = chunk.glance ?? seg;
     } else {
-      stack[stack.length - 1].node.children.push(node);
+      insert(node.children, segs, idx + 1, chunk, nodePath);
     }
-    stack.push({ node, level });
+  }
+
+  for (const chunk of chunks) {
+    const parts = (chunk.path ?? '').split('/').filter(Boolean);
+    const relative = parts.slice(prefixLen);
+    if (relative.length === 0) {
+      // Single-chunk document — the chunk IS the root node
+      roots.push({
+        name: chunk.glance ?? parts[parts.length - 1] ?? chunk.id,
+        fullPath: chunk.path ?? chunk.id,
+        chunk,
+        children: [],
+      });
+    } else {
+      insert(roots, relative, 0, chunk, '');
+    }
   }
 
   return roots;
 }
 
-// ─── Lang badge ───────────────────────────────────────────────────────────────
 
-const LANG_BADGE: Record<string, string> = {
-  python:     'bg-blue-500/15 text-blue-600',
-  typescript: 'bg-sky-500/15 text-sky-600',
-  javascript: 'bg-yellow-500/15 text-yellow-700',
-  java:       'bg-orange-500/15 text-orange-600',
-  go:         'bg-cyan-500/15 text-cyan-700',
-  sql:        'bg-rose-500/15 text-rose-600',
-};
+// ─── Recursive path tree node ─────────────────────────────────────────────────
 
-function langBadgeCls(lang: string) {
-  return LANG_BADGE[lang.toLowerCase()] ?? 'bg-muted text-muted-foreground';
-}
-
-// ─── Node icon ────────────────────────────────────────────────────────────────
-
-function NodeIcon({ node, open }: { node: SectionNode; open: boolean }) {
-  const st = node.section.meta?.structure_type ?? 'document';
-  const hasChildren = node.children.length > 0;
-  const level = node.section.meta?.section_level ?? 1;
-
-  if (st === 'code') {
-    return hasChildren
-      ? <FileCode className="size-[15px] text-violet-500 shrink-0" />
-      : <Code2 className="size-[15px] text-violet-400 shrink-0" />;
-  }
-  if (st === 'table') {
-    return <Table2 className="size-[15px] text-emerald-500 shrink-0" />;
-  }
-
-  // document
-  if (!hasChildren) return <AlignLeft className="size-[15px] text-muted-foreground/70 shrink-0" />;
-  if (level === 1) {
-    return open
-      ? <BookOpen className="size-[15px] text-primary shrink-0" />
-      : <Book className="size-[15px] text-primary/80 shrink-0" />;
-  }
-  return open
-    ? <FolderOpen className="size-[15px] text-amber-500 shrink-0" />
-    : <Folder className="size-[15px] text-amber-400 shrink-0" />;
-}
-
-// ─── Recursive tree node ─────────────────────────────────────────────────────
-
-interface SectionTreeNodeProps {
-  node: SectionNode;
-  depth?: number;
-  expandAll?: boolean; // undefined = user-controlled; true/false = forced
-}
-
-function SectionTreeNode({ node, depth = 0, expandAll }: SectionTreeNodeProps) {
-  const defaultOpen = depth < 2;
-  const [open, setOpen] = useState(defaultOpen);
+function PathTreeNode({ node, depth = 0, expandAll }: { node: PathNode; depth?: number; expandAll?: boolean }) {
+  const isLeaf = node.children.length === 0;
+  const [open, setOpen] = useState(depth < 2);
   const [contentOpen, setContentOpen] = useState(false);
 
-  // Sync with expand-all toggle
   const prevExpandAll = useRef<boolean | undefined>(undefined);
   if (expandAll !== undefined && expandAll !== prevExpandAll.current) {
     prevExpandAll.current = expandAll;
     if (open !== expandAll) setOpen(expandAll);
   }
 
-  const st = node.section.meta?.structure_type ?? 'document';
-  const level = node.section.meta?.section_level ?? 1;
-  const title = node.section.meta?.section_title || node.section.content.slice(0, 80);
-  const hasChildren = node.children.length > 0;
-  const hasContent = node.section.content.trim().length > 0;
-  const langTag = st === 'code' ? node.section.meta?.code_language : undefined;
-  const rowIdx = st === 'table' ? node.section.meta?.row_index : undefined;
-  const sectionPath = st === 'markdown' ? (node.section.meta?.section_path as string | undefined) : undefined;
+  const displayName = node.name || node.fullPath.split('/').pop() || 'Unnamed';
+  const hasContent = (node.chunk?.content?.trim().length ?? 0) > 0;
 
   return (
     <div>
@@ -278,89 +235,61 @@ function SectionTreeNode({ node, depth = 0, expandAll }: SectionTreeNodeProps) {
       <div
         className="flex items-center gap-1.5 py-1 px-1.5 rounded hover:bg-muted/60 cursor-pointer group select-none min-h-[28px]"
         style={{ paddingLeft: `${6 + depth * 18}px` }}
-        onClick={() => hasChildren ? setOpen(v => !v) : setContentOpen(v => !v)}
+        onClick={() => isLeaf ? setContentOpen(v => !v) : setOpen(v => !v)}
       >
-        {/* Expand chevron */}
+        {/* Chevron */}
         <span className="w-4 shrink-0 flex items-center justify-center text-muted-foreground/60">
-          {hasChildren
-            ? (open
-                ? <ChevronDown className="size-3.5" />
-                : <ChevronRight className="size-3.5" />)
+          {!isLeaf
+            ? (open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />)
             : <span className="size-3.5" />}
         </span>
 
         {/* Icon */}
-        <NodeIcon node={node} open={open} />
+        {!isLeaf
+          ? (open
+              ? <FolderOpen className="size-[15px] text-amber-500 shrink-0" />
+              : <Folder className="size-[15px] text-amber-400 shrink-0" />)
+          : <AlignLeft className="size-[15px] text-muted-foreground/70 shrink-0" />}
 
-        {/* Lang badge */}
-        {langTag && (
-          <span className={cn('text-[10px] font-mono font-bold px-1 py-0.5 rounded leading-none shrink-0', langBadgeCls(langTag))}>
-            {langTag}
-          </span>
-        )}
-
-        {/* Row index */}
-        {rowIdx !== undefined && (
-          <span className="text-[10px] font-mono bg-muted text-muted-foreground px-1 py-0.5 rounded leading-none shrink-0">
-            #{rowIdx + 1}
-          </span>
-        )}
-
-        {/* Level chip for deep document sections */}
-        {st === 'document' && level > 2 && (
-          <span className="text-[10px] text-muted-foreground/60 font-mono shrink-0">
-            H{level}
-          </span>
-        )}
-
-        {/* Title */}
-        <span
-          className="flex-1 text-sm text-foreground truncate leading-snug"
-          title={sectionPath ?? title}
-        >
-          {title || <span className="text-muted-foreground italic">Untitled</span>}
+        {/* Name */}
+        <span className="flex-1 text-sm text-foreground truncate leading-snug" title={displayName}>
+          {displayName || <span className="text-muted-foreground italic">Unnamed</span>}
         </span>
 
-        {/* Markdown path chip — visible on hover */}
-        {sectionPath && (
-          <span className="shrink-0 text-[10px] font-mono text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity truncate max-w-[180px]">
-            {sectionPath}
+        {/* Path hint on hover */}
+        {node.chunk?.path && (
+          <span className="shrink-0 text-[10px] font-mono text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity truncate max-w-[200px]">
+            {node.chunk.path}
           </span>
         )}
 
         {/* Char count toggle */}
-        {hasContent && (
+        {isLeaf && hasContent && (
           <button
             type="button"
             className="shrink-0 text-[11px] text-muted-foreground/50 opacity-0 group-hover:opacity-100 hover:text-primary transition-opacity px-1"
             onClick={e => { e.stopPropagation(); setContentOpen(v => !v); }}
           >
-            {contentOpen ? 'hide' : `${node.section.content.length}c`}
+            {contentOpen ? 'hide' : `${node.chunk!.content.length}c`}
           </button>
         )}
       </div>
 
       {/* Inline content panel */}
-      {contentOpen && hasContent && (
+      {contentOpen && node.chunk && hasContent && (
         <div
-          className={cn(
-            'mb-1.5 p-3 rounded text-xs leading-relaxed whitespace-pre-wrap break-words border border-border/50',
-            st === 'code' ? 'bg-zinc-950 text-zinc-200 font-mono' : 'bg-muted/30 text-foreground'
-          )}
+          className="mb-1.5 p-3 rounded text-xs leading-relaxed whitespace-pre-wrap break-words border border-border/50 bg-muted/30 text-foreground"
           style={{ marginLeft: `${6 + depth * 18 + 38}px`, marginRight: '8px' }}
         >
-          {node.section.content}
+          {node.chunk.content}
         </div>
       )}
 
-      {/* Children — with guide line */}
-      {open && hasChildren && (
-        <div
-          className="border-l border-border/40"
-          style={{ marginLeft: `${6 + depth * 18 + 14}px` }}
-        >
+      {/* Children */}
+      {!isLeaf && open && (
+        <div className="border-l border-border/40" style={{ marginLeft: `${6 + depth * 18 + 14}px` }}>
           {node.children.map(child => (
-            <SectionTreeNode key={child.section.id} node={child} depth={depth + 1} expandAll={expandAll} />
+            <PathTreeNode key={child.fullPath} node={child} depth={depth + 1} expandAll={expandAll} />
           ))}
         </div>
       )}
@@ -383,17 +312,17 @@ function SectionsView({ document, onBack }: { document: Document; onBack: () => 
 
   const allSections = sectionsData?.items ?? [];
 
-  // Filter: keep sections whose title or content matches the query
+  // Filter: keep sections whose glance/title or content matches the query
   const filtered = useMemo(() => {
     if (!search.trim()) return allSections;
     const q = search.toLowerCase();
     return allSections.filter(s =>
-      (s.meta?.section_title ?? '').toLowerCase().includes(q) ||
+      (s.glance ?? s.meta?.section_title ?? '').toLowerCase().includes(q) ||
       s.content.toLowerCase().includes(q)
     );
   }, [allSections, search]);
 
-  const tree = useMemo(() => buildSectionTree(filtered), [filtered]);
+  const tree = useMemo(() => buildPathTree(filtered), [filtered]);
 
   const dominantType = allSections[0]?.meta?.structure_type ?? 'document';
 
@@ -472,8 +401,8 @@ function SectionsView({ document, onBack }: { document: Document; onBack: () => 
       ) : tree.length > 0 ? (
         <div className="bg-card rounded-lg border border-border py-2 px-1">
           {tree.map(node => (
-            <SectionTreeNode
-              key={`${node.section.id}-${expandKey.current}`}
+            <PathTreeNode
+              key={`${node.fullPath}-${expandKey.current}`}
               node={node}
               depth={0}
               expandAll={expandAll}
@@ -544,78 +473,6 @@ function PreviewView({ document, onBack }: { document: Document; onBack: () => v
   );
 }
 
-// ─── Structure type selector ──────────────────────────────────────────────────
-
-const STRUCTURE_OPTIONS: { value: UploadMode; label: string; desc: string; icon: React.ReactNode }[] = [
-  {
-    value: 'auto',
-    label: 'Auto',
-    desc: 'Detected from file type',
-    icon: <Wand2 className="size-4" />,
-  },
-  {
-    value: 'document',
-    label: 'Document',
-    desc: 'Headings & paragraphs',
-    icon: <FileText className="size-4" />,
-  },
-  {
-    value: 'markdown',
-    label: 'Markdown',
-    desc: 'Heading hierarchy as paths',
-    icon: <FolderTree className="size-4" />,
-  },
-  {
-    value: 'table',
-    label: 'Table',
-    desc: 'Rows & columns',
-    icon: <Table2 className="size-4" />,
-  },
-  {
-    value: 'code',
-    label: 'Code',
-    desc: 'Functions & classes',
-    icon: <Code2 className="size-4" />,
-  },
-];
-
-const DETECTED_TYPE_LABEL: Record<StructureType, string> = {
-  document: 'Document',
-  markdown: 'Markdown',
-  table: 'Table',
-  code: 'Code',
-};
-
-function StructureTypeSelector({
-  value,
-  onChange,
-}: {
-  value: UploadMode;
-  onChange: (v: UploadMode) => void;
-}) {
-  return (
-    <div className="flex gap-2 flex-wrap">
-      {STRUCTURE_OPTIONS.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          onClick={() => onChange(opt.value)}
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm border transition-colors',
-            value === opt.value
-              ? 'border-primary bg-primary/10 text-primary font-medium'
-              : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
-          )}
-        >
-          {opt.icon}
-          <span>{opt.label}</span>
-          <span className="hidden sm:inline text-xs text-muted-foreground">— {opt.desc}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 const docStatusVariant = (s: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
@@ -640,7 +497,6 @@ export default function DocumentPage() {
 
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  const [structureType, setStructureType] = useState<UploadMode>('auto');
   const [viewMode, setViewMode] = useState<ViewMode>('documents');
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [contextViewDoc, setContextViewDoc] = useState<Document | null>(null);
@@ -660,17 +516,12 @@ export default function DocumentPage() {
   const handleFileUpload = useCallback(async (files: FileList | null) => {
     if (!files || !knowledgeId) return;
     for (const file of Array.from(files)) {
-      const effectiveType: StructureType =
-        structureType === 'auto' ? detectStructureType(file) : structureType;
-      const uploadingFile: UploadingFile = {
-        file, taskId: null, status: 'uploading', detectedType: effectiveType,
-      };
+      const uploadingFile: UploadingFile = { file, taskId: null, status: 'uploading' };
       setUploadingFiles((prev) => [...prev, uploadingFile]);
       try {
         const result = await uploadMutation.mutateAsync({
           file,
           knowledge_id: knowledgeId,
-          structure_type: effectiveType,
         });
         setUploadingFiles((prev) =>
           prev.map((f) => f.file === file
@@ -686,7 +537,7 @@ export default function DocumentPage() {
         );
       }
     }
-  }, [knowledgeId, uploadMutation, structureType]);
+  }, [knowledgeId, uploadMutation]);
 
   // Folder modal: pick files from OS
   const handleFolderSelect = useCallback((input: HTMLInputElement) => {
@@ -738,7 +589,6 @@ export default function DocumentPage() {
       file,
       taskId: null,
       status: 'uploading' as const,
-      detectedType: detectStructureType(file),
     }));
 
     resetFolderModal();
@@ -869,14 +719,6 @@ export default function DocumentPage() {
           <>
             {/* Upload Area */}
             <div className="mb-8 bg-card rounded-lg border border-border overflow-hidden">
-              {/* Structure type selector bar */}
-              <div className="px-5 pt-4 pb-3 border-b border-border">
-                <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-                  Structuring strategy
-                </p>
-                <StructureTypeSelector value={structureType} onChange={setStructureType} />
-              </div>
-
               {/* Drop zone */}
               <div
                 className={cn(
@@ -924,7 +766,7 @@ export default function DocumentPage() {
                   </button>
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  PDF, DOCX, TXT, MD, HTML, CSV · Folder upload auto-detects structure type per file
+                  PDF, DOCX, TXT, MD, HTML, CSV · .md files are split by section, others stored whole
                 </p>
               </div>
             </div>
@@ -939,9 +781,6 @@ export default function DocumentPage() {
                       <p className="text-sm font-medium">{uploadingFile.file.name}</p>
                       <p className="text-xs text-muted-foreground">
                         {formatFileSize(uploadingFile.file.size)}
-                        <span className="ml-2 capitalize font-medium text-primary/80">
-                          {DETECTED_TYPE_LABEL[uploadingFile.detectedType]}
-                        </span>
                       </p>
                     </div>
                     <div>
@@ -1107,12 +946,6 @@ export default function DocumentPage() {
       {/* ── Folder upload dialog ─────────────────────────────────────────── */}
       {(() => {
         const fileTree = buildFolderTree(folderPaths);
-        const fileMap = new Map(
-          folderFiles.map((f) => [
-            (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
-            f,
-          ])
-        );
         const selectedCount = selectedFilePaths.size;
         return (
           <Dialog
@@ -1126,7 +959,7 @@ export default function DocumentPage() {
 
               <div className="space-y-4 py-1">
                 <p className="text-xs text-muted-foreground">
-                  Check the files you want to upload. Structure type is auto-detected per file.
+                  Check the files you want to upload. .md files are split by section; others stored whole.
                   Use <span className="font-medium">Upload Folder</span> again to pick a different folder.
                 </p>
 
@@ -1174,7 +1007,6 @@ export default function DocumentPage() {
                           key={node.fullPath}
                           node={node}
                           selected={selectedFilePaths}
-                          fileMap={fileMap}
                           onToggleFile={handleToggleFile}
                           onToggleDir={handleToggleDir}
                         />

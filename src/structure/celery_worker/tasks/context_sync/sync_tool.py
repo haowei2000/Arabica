@@ -12,6 +12,7 @@ from structure.celery_worker.tasks.workspace_context_sync import (
     _update_workspace_contexts,
 )
 from structure.celery_worker.tasks.context_sync._base import (
+    _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
     _upsert_context,
@@ -68,7 +69,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
                 source_id=tool_id,
                 glance=glance,
                 content=schema_str,
-                path=f"tools/{_slugify(tool_name)}",
+                path=f"/tools/{_slugify(tool_name)}",
                 tags=["tool"] + tool_tags,
                 meta={"tool_id": tool_id, "tool_code": tool_name},
             )
@@ -86,10 +87,11 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             ctx_id = str(ctx.id)
             tool_description = tool.description
             embed_text = " ".join(filter(None, [display_name, tool_description, schema_str]))
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         # ── 2. Sync WorkspaceContext at tools/{name} for each workspace ───
-        path = f"tools/{_slugify(tool_name)}"
+        path = f"/tools/{_slugify(tool_name)}"
         dirty_ids = await _sync_path_to_workspaces(
             workspace_ids,
             path=path,
@@ -109,7 +111,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
 
         # ── 3. Generate embedding only when content changed ────────────────
         if needs_embedding and embed_text.strip():
-            vector, field = _generate_embedding(embed_text)
+            vector, field = _generate_embedding(embed_text, emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
@@ -187,11 +189,12 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
                 )
             )
             ctx_ids = [str(row) for row in ctx_result.scalars().all()]
+            emb_svc = await _fetch_embedding_service(session)
 
         # ── 1. Sync WorkspaceContext paths ────────────────────────────────
         dirty_ids = await _sync_path_to_workspaces(
             all_workspace_ids,
-            path=f"tools/{_slugify(tool_name)}",
+            path=f"/tools/{_slugify(tool_name)}",
             glance=glance,
             overview=tool.description,
             detail=schema_str,
@@ -204,7 +207,7 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
         # ── 2. Generate embedding and store for all per-user Context rows ─
         embed_text = " ".join(filter(None, [display_name, tool.description, schema_str]))
         if embed_text.strip() and ctx_ids:
-            vector, field = _generate_embedding(embed_text)
+            vector, field = _generate_embedding(embed_text, emb_svc)
             async with get_session("structure") as session:
                 for ctx_id in ctx_ids:
                     await _store_embedding(session, ctx_id, vector, field)
@@ -301,7 +304,7 @@ def resync_all_tools_to_contexts(self):
                     tool_tags = list(tool.tags or [])
                     dirty_ids = await _sync_path_to_workspaces(
                         all_workspace_ids,
-                        path=f"tools/{_slugify(tool_name)}",
+                        path=f"/tools/{_slugify(tool_name)}",
                         glance=glance,
                         overview=tool.description,
                         detail=schema_str,

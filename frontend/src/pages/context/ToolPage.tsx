@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Wrench, Loader2, Trash2, ToggleLeft, ToggleRight,
-  Search, Play, X, ChevronRight, ChevronDown,
+  Search, Play, ChevronRight, ChevronDown,
   Link2, Layers, Brain, MoveRight,
 } from 'lucide-react';
 import {
@@ -214,7 +215,7 @@ export default function ToolPage() {
 
   // ─── Per-tool renderer (card / list / drawer) ─────────────────────────────
 
-  const renderTool = (tool: UserTool): JSX.Element => {
+  const renderTool = (tool: UserTool): React.ReactNode => {
     const inner = isInner(tool);
     const modeKey = tool.tool_type || 'mcp';
 

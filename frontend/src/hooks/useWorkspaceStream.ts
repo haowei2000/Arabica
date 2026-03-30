@@ -18,6 +18,7 @@ export function useWorkspaceStream(workspaceId: string | null) {
 
   useEffect(() => {
     if (!workspaceId) return;
+    const id = workspaceId;
 
     let stopped = false;
     let abortController: AbortController | null = null;
@@ -33,7 +34,7 @@ export function useWorkspaceStream(workspaceId: string | null) {
 
       try {
         const token = localStorage.getItem('access_token');
-        let url = `${API_BASE_URL}${API_ENDPOINTS.EVENTS.WORKSPACE_STREAM(workspaceId)}`;
+        let url = `${API_BASE_URL}${API_ENDPOINTS.EVENTS.WORKSPACE_STREAM(id)}`;
         if (lastEventId && lastEventId !== '$') {
           url += `?last_event_id=${encodeURIComponent(lastEventId)}`;
         }
@@ -87,7 +88,7 @@ export function useWorkspaceStream(workspaceId: string | null) {
           if (runId && type) {
             const event: import('@/types/event').Event = {
               id: (payload.id as string) || '',
-              workspace_id: workspaceId,
+              workspace_id: id,
               run_id: runId,
               app_id: (payload.app_id as string) || '',
               user_id: (payload.user_id as string) || '',
@@ -110,7 +111,7 @@ export function useWorkspaceStream(workspaceId: string | null) {
             case 'run.completed':
             case 'run.failed':
             case 'run.cancelled':
-              queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+              queryClient.invalidateQueries({ queryKey: ['runs', id] });
               break;
 
             // Workspace metadata changes
@@ -122,7 +123,7 @@ export function useWorkspaceStream(workspaceId: string | null) {
 
             // Context tree changes
             case 'context.put_outcome':
-              queryClient.invalidateQueries({ queryKey: ['workspace-contexts', workspaceId] });
+              queryClient.invalidateQueries({ queryKey: ['workspace-contexts', id] });
               break;
           }
         }

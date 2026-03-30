@@ -18,6 +18,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import type { Workspace } from '@/types/workspace';
 import type { Run } from '@/types/run';
 import type { Event } from '@/types/event';
 

@@ -131,10 +131,30 @@ class MarkdownStructurer(BaseStructurer):
             })
             position += 1
 
+        in_fence = False
+        fence_marker = ""
+
         i = 0
         while i < len(lines):
             line = lines[i]
             next_line = lines[i + 1] if i + 1 < len(lines) else None
+
+            # Track fenced code blocks (``` or ~~~) to avoid treating
+            # # lines inside them as headings.
+            stripped = line.strip()
+            if not in_fence:
+                if stripped.startswith("```") or stripped.startswith("~~~"):
+                    in_fence = True
+                    fence_marker = stripped[:3]
+                    cur_lines.append(line)
+                    i += 1
+                    continue
+            else:
+                if stripped.startswith(fence_marker):
+                    in_fence = False
+                cur_lines.append(line)
+                i += 1
+                continue
 
             # Setext must be checked before ATX (the underline line would
             # otherwise be picked up as a stray separator).

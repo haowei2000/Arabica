@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2, Save, Cpu, Globe } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Database, Wrench, Zap, History, Brain, Loader2, Save, Cpu, Globe, Activity } from 'lucide-react';
 import { useToolList } from '@/hooks/useTools';
 import { useKnowledgeList } from '@/hooks/useKnowledge';
 import { useSkills } from '@/hooks/useSkills';
 import { useWorkspaces, useUserContexts, useWorkspaceContexts, useUpdateWorkspace, useReinitWorkspaceContext } from '@/hooks/useWorkspaces';
 import { useTemplates } from '@/hooks/useApps';
+import { useChatModels } from '@/hooks/useLLMModels';
+import { useTriggers } from '@/hooks/useTriggers';
 import type { Workspace, WorkspaceContextConfig } from '@/types/workspace';
 import {
   Dialog,
@@ -120,17 +122,20 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   const [selectedExecutorCode, setSelectedExecutorCode] = useState<string>(workspace.executor_code ?? '');
 
   const existingConfig = workspace.executor_config as Record<string, unknown> | null;
-  const existingModel = existingConfig?.model as { name?: string; provider?: string } | undefined;
-  const [modelName, setModelName] = useState<string>(existingModel?.name ?? '');
-  const [modelProvider, setModelProvider] = useState<string>(existingModel?.provider ?? 'tongyi');
+  const [selectedChatModelId, setSelectedChatModelId] = useState<string>(
+    (existingConfig?.chat_model_id as string) ?? ''
+  );
   const [globalEvent, setGlobalEvent] = useState<boolean>(
     existingConfig?.global_event !== undefined ? Boolean(existingConfig.global_event) : true
   );
 
   const { data: templates = [] } = useTemplates();
+  const { data: chatModelsData } = useChatModels({ enabled: true, page_size: 100 });
+  const chatModels = chatModelsData?.items ?? [];
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [selectedKnowledge, setSelectedKnowledge] = useState<Set<string>>(new Set());
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+  const [selectedTriggers, setSelectedTriggers] = useState<Set<string>>(new Set());
   const [selectedSourceWorkspaces, setSelectedSourceWorkspaces] = useState<Set<string>>(new Set());
   const [selectedMemories, setSelectedMemories] = useState<Set<string>>(new Set());
   const preselected = useRef(false);
@@ -142,6 +147,7 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   const { data: toolsData } = useToolList({ enabled_only: true, include_public: true });
   const { data: knowledgeData } = useKnowledgeList({ page: 1, page_size: 50 });
   const { data: skillsData } = useSkills({ page: 1, page_size: 50 });
+  const { data: triggersData } = useTriggers({ page: 1, page_size: 50 });
   const { data: workspacesData } = useWorkspaces({ page: 1, page_size: 50 });
   const { data: memoriesData } = useUserContexts({ context_type: 'user_memory', page: 1, page_size: 50 });
 
@@ -156,6 +162,9 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   }));
   const skills: ResourceItem[] = (skillsData?.items ?? []).map((s: any) => ({
     id: s.id, name: s.name, description: s.description,
+  }));
+  const triggers: ResourceItem[] = (triggersData?.items ?? []).map((t: any) => ({
+    id: t.id, name: t.name, description: t.trigger_type,
   }));
   const sourceWorkspaces: ResourceItem[] = (workspacesData?.items ?? [])
     .filter((w: any) => w.id !== workspace.id)
@@ -177,6 +186,7 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
     const toolIds = new Set<string>();
     const knowledgeIds = new Set<string>();
     const skillIds = new Set<string>();
+    const triggerIds = new Set<string>();
     const memoryIds = new Set<string>();
 
     for (const item of currentContextData.items) {
@@ -185,12 +195,14 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
       if (meta.tool_id) toolIds.add(meta.tool_id);
       if (meta.knowledge_id) knowledgeIds.add(meta.knowledge_id);
       if (meta.skill_id) skillIds.add(meta.skill_id);
+      if (meta.trigger_id) triggerIds.add(meta.trigger_id);
       if (meta.memory_id) memoryIds.add(meta.memory_id);
     }
 
     setSelectedTools(toolIds);
     setSelectedKnowledge(knowledgeIds);
     setSelectedSkills(skillIds);
+    setSelectedTriggers(triggerIds);
     setSelectedMemories(memoryIds);
   }, [currentContextData]);
 
@@ -202,10 +214,10 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
 
   const totalSelected =
     selectedTools.size + selectedKnowledge.size + selectedSkills.size +
-    selectedSourceWorkspaces.size + selectedMemories.size;
+    selectedTriggers.size + selectedSourceWorkspaces.size + selectedMemories.size;
 
   const totalItems =
-    tools.length + knowledge.length + skills.length +
+    tools.length + knowledge.length + skills.length + triggers.length +
     sourceWorkspaces.length + memories.length;
 
   const allSelected = totalItems > 0 && totalSelected === totalItems;
@@ -215,12 +227,14 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
       setSelectedTools(new Set());
       setSelectedKnowledge(new Set());
       setSelectedSkills(new Set());
+      setSelectedTriggers(new Set());
       setSelectedSourceWorkspaces(new Set());
       setSelectedMemories(new Set());
     } else {
       setSelectedTools(new Set(tools.map(t => t.id)));
       setSelectedKnowledge(new Set(knowledge.map(k => k.id)));
       setSelectedSkills(new Set(skills.map(s => s.id)));
+      setSelectedTriggers(new Set(triggers.map(t => t.id)));
       setSelectedSourceWorkspaces(new Set(sourceWorkspaces.map(w => w.id)));
       setSelectedMemories(new Set(memories.map(m => m.id)));
     }
@@ -228,16 +242,15 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
 
   const hasNoResources =
     tools.length === 0 && knowledge.length === 0 && skills.length === 0 &&
-    sourceWorkspaces.length === 0 && memories.length === 0;
+    triggers.length === 0 && sourceWorkspaces.length === 0 && memories.length === 0;
 
   const isSubmitting = updateWorkspace.isPending || reinitContext.isPending;
 
   const handleSave = async () => {
     try {
-      // Build executor_config from model + global_event
       const executorConfig: Record<string, unknown> = { global_event: globalEvent };
-      if (modelName.trim()) {
-        executorConfig.model = { name: modelName.trim(), provider: modelProvider };
+      if (selectedChatModelId) {
+        executorConfig.chat_model_id = selectedChatModelId;
       }
 
       await updateWorkspace.mutateAsync({
@@ -255,6 +268,7 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
         tool_ids: [...selectedTools],
         knowledge_ids: [...selectedKnowledge],
         skill_ids: [...selectedSkills],
+        trigger_ids: [...selectedTriggers],
         source_workspace_ids: [...selectedSourceWorkspaces],
         memory_ids: [...selectedMemories],
       };
@@ -351,26 +365,27 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
 
               {/* Model */}
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium">
+                <Label htmlFor="ws-model" className="flex items-center gap-1.5 text-sm font-medium">
                   Model
                 </Label>
-                <div className="flex gap-2">
-                  <select
-                    value={modelProvider}
-                    onChange={(e) => setModelProvider(e.target.value)}
-                    className="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-32 shrink-0"
-                  >
-                    <option value="tongyi">tongyi</option>
-                    <option value="ollama">ollama</option>
-                  </select>
-                  <Input
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                    placeholder="e.g. qwen-plus"
-                    className="flex-1"
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">Leave blank to use the executor default.</p>
+                <select
+                  id="ws-model"
+                  value={selectedChatModelId}
+                  onChange={(e) => setSelectedChatModelId(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <option value="">— use default model —</option>
+                  {chatModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.provider} / {m.model_id}){m.is_default ? ' ★' : ''}
+                    </option>
+                  ))}
+                </select>
+                {chatModels.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No models configured. Add one in <span className="font-medium">LLM Models</span> settings.
+                  </p>
+                )}
               </div>
 
               {/* Global Event */}
@@ -437,6 +452,14 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
                     items={skills}
                     selectedIds={selectedSkills}
                     onToggle={toggle(selectedSkills, setSelectedSkills)}
+                  />
+                  {(tools.length > 0 || knowledge.length > 0 || skills.length > 0) && triggers.length > 0 && <Separator />}
+                  <ResourceSection
+                    title="Triggers"
+                    icon={<Activity size={14} className="text-amber-500" />}
+                    items={triggers}
+                    selectedIds={selectedTriggers}
+                    onToggle={toggle(selectedTriggers, setSelectedTriggers)}
                   />
                   {sourceWorkspaces.length > 0 && <Separator />}
                   <ResourceSection

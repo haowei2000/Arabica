@@ -38,9 +38,8 @@ export default function KnowledgePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [contextViewId, setContextViewId] = useState<string | null>(null);
-  const contextViewItem = contextViewId ? (knowledgeData?.items ?? []).find((k) => k.id === contextViewId) : null;
-
   const { data: knowledgeData, isLoading } = useKnowledgeList();
+  const contextViewItem = contextViewId ? (knowledgeData?.items ?? []).find((k) => k.id === contextViewId) : null;
   const createMutation = useCreateKnowledge();
   const deleteMutation = useDeleteKnowledge();
 

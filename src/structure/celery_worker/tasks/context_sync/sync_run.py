@@ -6,6 +6,7 @@ from uuid import UUID
 from structure.celery_worker.celery_app import celery_app
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.context_sync._base import (
+    _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
     _upsert_context,
@@ -62,12 +63,13 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
 
             await session.flush()
             ctx_id = str(ctx.id)
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         logger.info(f"sync_workspace: upserted Context for workspace {workspace_id}")
 
         if needs_embedding and content.strip():
-            vector, field = _generate_embedding(content)
+            vector, field = _generate_embedding(content, emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
@@ -144,12 +146,13 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
 
             await session.flush()
             ctx_id = str(ctx.id)
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         logger.info(f"sync_run: upserted Context for run {run_id} ({run.status})")
 
         if needs_embedding and content.strip():
-            vector, field = _generate_embedding(content[:2000])
+            vector, field = _generate_embedding(content[:2000], emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
@@ -228,6 +231,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
 
             await session.flush()
             ctx_id = str(ctx.id)
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         logger.info(
@@ -236,7 +240,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
 
         embed_text = content[:2000]  # cap to avoid oversized embedding inputs
         if needs_embedding and embed_text.strip():
-            vector, field = _generate_embedding(embed_text)
+            vector, field = _generate_embedding(embed_text, emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
@@ -316,12 +320,13 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
 
             await session.flush()
             ctx_id = str(ctx.id)
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         logger.info(f"sync_run_to_memory: upserted SHORT_MEMORY for run {run_id}")
 
         if needs_embedding and content.strip():
-            vector, field = _generate_embedding(content[:2000])
+            vector, field = _generate_embedding(content[:2000], emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()

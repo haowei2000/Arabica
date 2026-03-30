@@ -60,12 +60,13 @@ export default function AppWorkspacePage() {
       createWorkspaceMutation.mutateAsync({ name: 'Default' })
         .then((ws) => setCurrentWorkspace(ws.id, ws.name, ws.app_id))
         .catch(() => {});
-    } else if (!currentWorkspaceId) {
+    } else if (!currentWorkspaceId && workspaces.length > 0) {
       // Auto-select first workspace
       const first = workspaces[0];
       setCurrentWorkspace(first.id, first.name, first.app_id);
     }
-  }, [workspacesLoading, workspacesData]);
+  }, [workspacesLoading, workspacesData, createWorkspaceMutation, currentWorkspaceId, setCurrentWorkspace]);
+
 
   const handleCreateWorkspace = async (data: WorkspaceCreate) => {
     try {
@@ -190,7 +191,7 @@ export default function AppWorkspacePage() {
                 </div>
               ) : workspaces.length > 0 ? (
                 <div className="space-y-1">
-                  {workspaces.map((workspace) => {
+                  {workspaces.map((workspace: Workspace) => {
                     const dotCls = STATUS_DOT[workspace.status] ?? 'bg-muted-foreground/30';
                     const isActive = currentWorkspaceId === workspace.id;
                     return (

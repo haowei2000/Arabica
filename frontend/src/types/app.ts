@@ -15,6 +15,7 @@ export interface App {
   id: string;
   app_code: string;
   executor_id?: string;
+  executor_code?: string;
   user_id?: string;
   enabled: boolean;
   config?: Record<string, any>;

@@ -11,6 +11,7 @@ from structure.celery_worker.tasks.workspace_context_sync import (
     _update_workspace_contexts,
 )
 from structure.celery_worker.tasks.context_sync._base import (
+    _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
     _upsert_context_at_path,
@@ -55,7 +56,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
             glance = (skill.description[:80] if skill.description else None) or skill.name
             skill_name = skill.name
             skill_tags = list(skill.tags or [])
-            skill_path = f"skills/{_slugify(skill_name)}"
+            skill_path = f"/skills/{_slugify(skill_name)}"
 
             try:
                 context_cores = SkillStructurer().structure(skill)
@@ -100,6 +101,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
             )
 
             workspace_ids = await _get_user_workspace_ids(session, user_id)
+            emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
         # ── 2. Sync WorkspaceContext at skills/{name} for each workspace ─
@@ -122,7 +124,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
         # ── 3. Generate embeddings for changed entries ────────────────────
         for ctx_id, embed_text in ctx_ids_need_embed:
             if embed_text.strip():
-                vector, field = _generate_embedding(embed_text)
+                vector, field = _generate_embedding(embed_text, emb_svc)
                 async with get_session("structure") as session:
                     await _store_embedding(session, ctx_id, vector, field)
                     await session.commit()

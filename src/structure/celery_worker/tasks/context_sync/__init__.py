@@ -1,6 +1,10 @@
 """context_sync task package — re-exports all public Celery tasks."""
 
 from structure.celery_worker.tasks.context_sync.sync_knowledge import sync_knowledge_to_contexts
+from structure.celery_worker.tasks.context_sync.sync_document import (
+    sync_document_to_contexts,
+    submit_sync_document,
+)
 from structure.celery_worker.tasks.context_sync.sync_skill import sync_skill_to_contexts
 from structure.celery_worker.tasks.context_sync.sync_tool import (
     sync_tool_to_contexts,
@@ -20,6 +24,8 @@ from structure.celery_worker.tasks.context_sync.sync_run import (
 
 __all__ = [
     "sync_knowledge_to_contexts",
+    "sync_document_to_contexts",
+    "submit_sync_document",
     "sync_skill_to_contexts",
     "sync_tool_to_contexts",
     "sync_inner_tool_to_contexts",

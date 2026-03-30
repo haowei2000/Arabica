@@ -132,9 +132,9 @@ export default function HomePage() {
                   <p className="text-sm font-semibold font-mono leading-snug flex-1 min-w-0 truncate">{app.app_code}</p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {app.executor_code && (
+                  {app.executor_id && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/50 font-mono">
-                      {app.executor_code}
+                      {app.executor_id}
                     </span>
                   )}
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">

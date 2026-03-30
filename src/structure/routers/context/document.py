@@ -22,7 +22,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from structure.celery_worker.celery_app import celery_app, example_task
-from structure.celery_worker.tasks.knowledge_tasks import process_document_structured
+from structure.celery_worker.tasks.context_sync.sync_document import submit_sync_document
 from structure.core.dependencies.agents import get_context_crud, get_document_crud, get_knowledge_crud
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.storage.global_storage import get_global_s3_storage
@@ -68,24 +68,6 @@ async def test_celery():
         }
 
 
-_CODE_EXTENSIONS = {
-    "py", "js", "ts", "tsx", "jsx", "java", "go", "rb", "cpp", "c", "h", "cs",
-    "php", "swift", "rs", "kt", "scala", "sh", "bash", "lua", "r", "sql",
-    "vue", "svelte", "dart", "ex", "exs", "ml", "hs", "clj", "elm",
-}
-
-
-def detect_structure_type(filename: str, mime_type: str | None) -> str:
-    """Infer structuring strategy from filename and MIME type."""
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext == "csv" or (mime_type and "csv" in mime_type):
-        return "table"
-    if ext in _CODE_EXTENSIONS:
-        return "code"
-    if ext in {"md", "markdown"} or (mime_type and "markdown" in mime_type):
-        return "markdown"
-    return "document"
-
 
 def compute_file_hash(content: bytes) -> str:
     """Compute SHA256 hash of file content.
@@ -110,10 +92,6 @@ async def upload_document(
     knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
     file: UploadFile = File(..., description="File to upload"),
     knowledge_id: str = Form(..., description="Knowledge base ID"),
-    embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
-    embedding_model: str = Form(default="text-embedding-v3", description="Embedding model"),
-    embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
-    structure_type: str = Form(default="document", description="Structuring strategy: document | table | code"),
 ):
     """
     Upload a document to a knowledge base.
@@ -121,14 +99,11 @@ async def upload_document(
     The document will be:
     1. Uploaded to S3 storage
     2. Parsed and structured into semantic sections via Celery
-    3. Each section stored directly in the Context table with embeddings
+    3. Each section stored in the Context table and embedded using the default embedding model
 
     Args:
         file: The file to upload
         knowledge_id: ID of the knowledge base
-        embedding_provider: Provider for embeddings
-        embedding_model: ChatLLM for embeddings
-        embedding_dimension: Dimension of embeddings
         current_user: Current authenticated user
         document_crud: Document CRUD service
         knowledge_crud: Knowledge CRUD service
@@ -202,16 +177,14 @@ async def upload_document(
     # Trigger Celery task chain
     logger.info(f"Triggering document processing for document_id={document.id}")
 
-    task_id = process_document_structured(
+    task_id = submit_sync_document(
         document_id=str(document.id),
         knowledge_id=knowledge_id,
+        knowledge_name=knowledge.name,
         object_key=object_key,
         mime_type=file.content_type or "application/octet-stream",
         user_id=str(current_user.id),
-        embedding_provider=embedding_provider,
-        embedding_model=embedding_model,
-        embedding_dimension=embedding_dimension,
-        structure_type=structure_type,
+        original_name=original_name,
     )
 
     return DocumentUploadResponse(
@@ -239,19 +212,12 @@ async def upload_folder(
     knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
     files: list[UploadFile] = File(..., description="All files in the folder"),
     knowledge_id: str = Form(..., description="Knowledge base ID"),
-    embedding_provider: str = Form(default="tongyi", description="Embedding provider"),
-    embedding_model: str = Form(default="text-embedding-v3", description="Embedding model"),
-    embedding_dimension: int = Form(default=1024, description="Embedding dimension"),
 ):
     """
     Upload an entire folder to a knowledge base.
 
-    Each file's structuring strategy is auto-detected from its extension:
-    - CSV → table
-    - Source code files → code
-    - Everything else → document
-
-    Files that fail to upload are skipped; the response reports how many failed.
+    .md files are split by heading sections; all other file types are stored
+    as a single context record. Files that fail to upload are skipped.
     """
     # Validate knowledge base
     knowledge = await knowledge_crud.get_by_id(knowledge_id)
@@ -280,7 +246,6 @@ async def upload_folder(
 
             file_size = len(content)
             file_hash = compute_file_hash(content)
-            structure_type = detect_structure_type(original_name, upload_file.content_type)
             object_key = f"{knowledge_id}/{uuid4()}_{original_name}"
 
             storage = get_global_s3_storage()
@@ -305,16 +270,14 @@ async def upload_folder(
 
             await knowledge_crud.increment_document_count(knowledge_id)
 
-            task_id = process_document_structured(
+            task_id = submit_sync_document(
                 document_id=str(document.id),
                 knowledge_id=knowledge_id,
+                knowledge_name=knowledge.name,
                 object_key=object_key,
                 mime_type=upload_file.content_type or "application/octet-stream",
                 user_id=str(current_user.id),
-                embedding_provider=embedding_provider,
-                embedding_model=embedding_model,
-                embedding_dimension=embedding_dimension,
-                structure_type=structure_type,
+                original_name=original_name,
             )
 
             uploads.append(
@@ -324,7 +287,7 @@ async def upload_folder(
                 )
             )
             logger.info(
-                f"Folder upload: queued {original_name} as {structure_type}, task={task_id}"
+                f"Folder upload: queued {original_name}, task={task_id}"
             )
         except Exception as e:
             logger.error(f"Folder upload: failed to process {original_name}: {e}")
@@ -524,6 +487,10 @@ async def delete_document(
     await knowledge_crud.increment_document_count(
         str(document.knowledge_id), increment=-1
     )
+
+    # Delete all Context chunks created from this document
+    from structure.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    delete_resource_contexts.delay(document_id, "chunk", "document_id")
 
     return
 

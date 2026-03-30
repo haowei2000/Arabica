@@ -168,7 +168,7 @@ async def delete_skill(
     await crud.delete(skill_id, user_id=current_user.id)
 
     from structure.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
-    delete_resource_contexts.delay(skill_id, "SKILL", "skill_id")
+    delete_resource_contexts.delay(skill_id, "skill", "skill_id")
 
 
 @router.get(

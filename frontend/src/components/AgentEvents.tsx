@@ -7,8 +7,9 @@ import { cn } from '@/lib/utils';
 
 // ── ThinkingBlock ────────────────────────────────────────────────────────────
 
-export function ThinkingBlock({ content, defaultCollapsed = false }: { content: string; defaultCollapsed?: boolean }) {
+export function ThinkingBlock({ content, defaultCollapsed = false }: { content: string | string[]; defaultCollapsed?: boolean }) {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
+  const text = Array.isArray(content) ? content.join('') : content;
 
   return (
     <div className="rounded-xl border border-border/60 overflow-hidden">
@@ -21,7 +22,7 @@ export function ThinkingBlock({ content, defaultCollapsed = false }: { content: 
         <span className="text-muted-foreground/70">Thinking...</span>
         {!expanded && <span className="ml-auto text-[10px] opacity-50">expand</span>}
       </button>
-      {expanded && <div className="px-3 py-2 text-xs text-muted-foreground/80 whitespace-pre-wrap leading-relaxed border-t border-border/40">{content}</div>}
+      {expanded && <div className="px-3 py-2 text-xs text-muted-foreground/80 whitespace-pre-wrap leading-relaxed border-t border-border/40">{text}</div>}
     </div>
   );
 }

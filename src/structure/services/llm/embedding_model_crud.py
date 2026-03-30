@@ -95,6 +95,15 @@ class EmbeddingModelCRUD:
         items = list(result.scalars().all())
         return items, total
 
+    async def get_default(self) -> "EmbeddingModel | None":
+        """Return the enabled default embedding model, or None if not set."""
+        result = await self.db.execute(
+            select(EmbeddingModel)
+            .where(EmbeddingModel.is_default.is_(True), EmbeddingModel.enabled.is_(True))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def search(
         self,
         search_term: str,

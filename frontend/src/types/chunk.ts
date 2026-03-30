@@ -29,6 +29,8 @@ export interface Chunk {
     user_id: string;
     source_id: string | null;
     context_type: string;
+    path?: string | null;
+    glance?: string | null;
     content: string;
     summary: string | null;
     keywords: string[] | null;
