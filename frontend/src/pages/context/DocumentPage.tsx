@@ -854,6 +854,9 @@ export default function DocumentPage() {
     );
   }
 
+  const fileTree = buildFolderTree(folderPaths);
+  const selectedCount = selectedFilePaths.size;
+
   return (
     <div className="min-h-screen bg-muted/30">
       {/* Header */}
@@ -928,7 +931,7 @@ export default function DocumentPage() {
         ) : (
           <>
             {viewMode === 'documents' && (
-          <>
+          <div className="space-y-8">
             {/* Upload Area */}
             <div className="mb-8 bg-card rounded-lg border border-border overflow-hidden">
               {/* Drop zone */}
@@ -1127,8 +1130,8 @@ export default function DocumentPage() {
                 </div>
               )}
             </div>
-          </>
-        )}
+          </div>
+          )}
 
         {viewMode === 'sections' && selectedDocument && (
           <SectionsView
@@ -1143,9 +1146,10 @@ export default function DocumentPage() {
             onBack={() => { setViewMode('documents'); setSelectedDocument(null); }}
           />
         )}
-      </div>
+      </>
+    )}
 
-      {contextViewDoc && (
+    {contextViewDoc && (
         <ContextViewer
           open={!!contextViewDoc}
           onClose={() => setContextViewDoc(null)}
@@ -1156,14 +1160,10 @@ export default function DocumentPage() {
       )}
 
       {/* ── Folder upload dialog ─────────────────────────────────────────── */}
-      {(() => {
-        const fileTree = buildFolderTree(folderPaths);
-        const selectedCount = selectedFilePaths.size;
-        return (
-          <Dialog
-            open={showFolderModal}
-            onOpenChange={(open) => { if (!open) resetFolderModal(); }}
-          >
+      <Dialog
+        open={showFolderModal}
+        onOpenChange={(open) => !open && resetFolderModal()}
+      >
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Upload Folder</DialogTitle>
@@ -1240,9 +1240,8 @@ export default function DocumentPage() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
-        );
-      })()}
+      </Dialog>
+      </div>
     </div>
   );
 }
