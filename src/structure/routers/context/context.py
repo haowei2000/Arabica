@@ -510,7 +510,7 @@ async def list_chunks_by_knowledge(
     items, total = await crud.list(
         user_id=current_user.id,
         context_type=ContextType.CHUNK.value,
-        source_id=knowledge_id,
+        knowledge_id=knowledge_id,
         skip=skip,
         limit=page_size,
     )

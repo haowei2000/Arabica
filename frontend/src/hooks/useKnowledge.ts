@@ -85,3 +85,14 @@ export const useSearchKnowledge = (params: {
         enabled: !!params.q,
     });
 };
+
+/**
+ * Hybrid search inside a knowledge base
+ */
+export const useKnowledgeHybridSearch = (id: string, q: string, top_k: number = 20) => {
+    return useQuery({
+        queryKey: ['knowledge', id, 'hybrid-search', q, top_k],
+        queryFn: () => knowledgeService.hybridSearch(id, q, top_k),
+        enabled: !!id && !!q && q.length >= 1,
+    });
+};

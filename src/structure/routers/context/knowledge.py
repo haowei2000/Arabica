@@ -1,14 +1,22 @@
 """REST API endpoints for knowledge base management."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from structure.core.dependencies.agents import get_context_crud, get_knowledge_crud
+from structure.core.dependencies.agents import (
+    get_context_crud,
+    get_embedding_model_crud,
+    get_knowledge_crud,
+)
 from structure.core.dependencies.auth import get_current_user
 from structure.core.enums import ContextType
 from structure.schemas.auth.user import UserResponse
-from structure.schemas.context.context_schema import ContextListResponse
+from structure.schemas.context.context_schema import (
+    ContextListResponse,
+    ContextSearchResponse,
+    ContextWithScore,
+)
 from structure.schemas.context.knowledge.knowledge import (
     KnowledgeCreate,
     KnowledgeListResponse,
@@ -16,7 +24,10 @@ from structure.schemas.context.knowledge.knowledge import (
     KnowledgeUpdate,
 )
 from structure.services.context.context_crud import ContextCRUD
+from structure.services.context.knowledge.embeddings import get_embedding_service
 from structure.services.context.knowledge.knowledge_crud import KnowledgeCRUD
+from structure.services.llm.embedding_model_crud import EmbeddingModelCRUD
+from structure.utils.model_converters import models_to_schemas
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -59,7 +70,7 @@ async def get_knowledge_context(
     items, total = await context_crud.list(
         user_id=current_user.id,
         context_type=ContextType.KNOWLEDGE,
-        source_id=knowledge_id,
+        knowledge_id=knowledge_id,
         skip=skip,
         limit=page_size,
     )
@@ -246,3 +257,81 @@ async def search_knowledge(
     return KnowledgeListResponse(
         total=total, items=items, page=page, page_size=page_size
     )
+
+
+@router.get("/{knowledge_id}/hybrid-search", response_model=ContextSearchResponse)
+async def hybrid_search_knowledge(
+    knowledge_id: str,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
+    embedding_model_crud: Annotated[EmbeddingModelCRUD, Depends(get_embedding_model_crud)],
+    q: str = Query(..., min_length=1, description="Search term"),
+    top_k: int = Query(20, ge=1, le=100, description="Number of results"),
+):
+    """
+    Search inside a specific knowledge base using hybrid search (semantic + text).
+
+    Args:
+        knowledge_id: The knowledge base ID
+        current_user: Current authenticated user
+        context_crud: Context CRUD service
+        embedding_model_crud: Embedding model CRUD service
+        q: Search query string
+        top_k: Number of results to return
+
+    Returns:
+        List of matching context chunks with scores
+    """
+    # 1. Get default embedding model
+    model_config = await embedding_model_crud.get_default()
+    if not model_config:
+        # Fallback to check if any enabled model exists
+        models, _ = await embedding_model_crud.list(enabled=True, limit=1)
+        if models:
+            model_config = models[0]
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No enabled embedding model found",
+            )
+
+    # 2. Generate embedding for query
+    try:
+        from structure.services.context.knowledge.embeddings import EmbeddingService
+        emb_svc = EmbeddingService(
+            provider=model_config.provider,
+            model=model_config.model_id,
+            dimension=model_config.dimensions,
+            api_key=model_config.api_key,
+            base_url=model_config.base_url,
+        )
+        query_vector = emb_svc.embed_text(q)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate embedding: {str(e)}",
+        )
+
+    # 3. Perform hybrid search
+    results = await context_crud.hybrid_search(
+        query=q,
+        embedding=query_vector,
+        user_id=current_user.id,
+        dimension=model_config.dimensions,
+        context_type=ContextType.CHUNK.value,
+        knowledge_id=knowledge_id,
+        top_k=top_k,
+    )
+
+    # Extract contexts and scores
+    contexts = [ctx for ctx, _ in results]
+    scores = [score for _, score in results]
+
+    # Convert to schemas
+    items = models_to_schemas(
+        ContextWithScore,
+        contexts,
+        extra_factory=lambda ctx, idx: {"score": scores[idx]},
+    )
+
+    return ContextSearchResponse(total=len(items), items=items)

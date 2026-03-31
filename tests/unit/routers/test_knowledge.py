@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from structure.app import app
-from structure.core.dependencies.agents import get_knowledge_crud
+from structure.core.dependencies.agents import get_context_crud, get_embedding_model_crud, get_knowledge_crud
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
 from tests.unit.routers.conftest import make_user, USER_ID, KNOWLEDGE_ID
@@ -53,16 +53,38 @@ def mock_knowledge_crud():
 
 
 @pytest.fixture()
+def mock_context_crud():
+    crud = AsyncMock()
+    crud.hybrid_search = AsyncMock(return_value=[])
+    return crud
+
+
+@pytest.fixture()
+def mock_embedding_model_crud():
+    crud = AsyncMock()
+    model = MagicMock()
+    model.provider = "openai"
+    model.model_id = "text-embedding-3-small"
+    model.dimensions = 1536
+    model.api_key = "test-key"
+    model.base_url = "test-url"
+    crud.get_default = AsyncMock(return_value=model)
+    return crud
+
+
+@pytest.fixture()
 def mock_db():
     return AsyncMock()
 
 
 @pytest.fixture()
-def client(mock_knowledge_crud, mock_db, patch_bootstrap):
+def client(mock_knowledge_crud, mock_context_crud, mock_embedding_model_crud, mock_db, patch_bootstrap):
     user = make_user()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_structure_db] = lambda: mock_db
     app.dependency_overrides[get_knowledge_crud] = lambda: mock_knowledge_crud
+    app.dependency_overrides[get_context_crud] = lambda: mock_context_crud
+    app.dependency_overrides[get_embedding_model_crud] = lambda: mock_embedding_model_crud
 
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
@@ -180,4 +202,29 @@ class TestSearchKnowledge:
 
     def test_search_missing_query(self, client):
         resp = client.get(f"{BASE}/search")
+        assert resp.status_code == 422
+
+
+# ── GET /api/agent/knowledge/{id}/hybrid-search ──────────────────
+
+
+class TestHybridSearchKnowledge:
+    def test_search_success(self, client, mock_context_crud):
+        with patch("structure.services.context.knowledge.embeddings.EmbeddingService.embed_text", return_value=[0.1]*1536):
+            resp = client.get(f"{BASE}/{KNOWLEDGE_ID}/hybrid-search?q=hello")
+        
+        assert resp.status_code == 200
+        assert "total" in resp.json()
+        mock_context_crud.hybrid_search.assert_called_once()
+
+    def test_search_no_model(self, client, mock_embedding_model_crud):
+        mock_embedding_model_crud.get_default.return_value = None
+        mock_embedding_model_crud.list.return_value = ([], 0)
+        
+        resp = client.get(f"{BASE}/{KNOWLEDGE_ID}/hybrid-search?q=hello")
+        assert resp.status_code == 400
+        assert "No enabled embedding model found" in resp.json()["detail"]
+
+    def test_search_missing_q(self, client):
+        resp = client.get(f"{BASE}/{KNOWLEDGE_ID}/hybrid-search")
         assert resp.status_code == 422

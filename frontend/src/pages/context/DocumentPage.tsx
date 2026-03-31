@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, Loader2, Download, Eye, Trash2,
   FolderOpen, Folder, FileText, ChevronDown, ChevronRight,
   AlignLeft, Search, ChevronsDownUp, ChevronsUpDown, Brain,
-  FolderInput,
+  FolderInput, Sparkles, X,
 } from 'lucide-react';
-import { useKnowledge } from '@/hooks/useKnowledge';
+import { useKnowledge, useKnowledgeHybridSearch } from '@/hooks/useKnowledge';
 import { useDeleteDocument, useDocumentList, useUploadDocument } from '@/hooks/useDocuments';
 import { useChunksByDocument } from '@/hooks/useChunks';
 import { documentService } from '@/services/documentService';
@@ -473,6 +473,131 @@ function PreviewView({ document, onBack }: { document: Document; onBack: () => v
   );
 }
 
+// ─── Global Search results view ─────────────────────────────────────────────
+
+function GlobalSearchView({
+  knowledgeId,
+  query,
+  onBack,
+}: {
+  knowledgeId: string;
+  query: string;
+  onBack: () => void;
+}) {
+  const { data: searchResults, isLoading } = useKnowledgeHybridSearch(knowledgeId, query);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const items = searchResults?.items ?? [];
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" onClick={onBack}>
+          <ArrowLeft className="size-5" />
+        </Button>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Sparkles className="size-5 text-primary" />
+            Search Results
+          </h3>
+          <p className="text-sm text-muted-foreground truncate">
+            Showing results for "{query}"
+          </p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
+          <Loader2 className="size-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Searching knowledge base...</p>
+        </div>
+      ) : items.length > 0 ? (
+        <div className="space-y-3">
+          {items.map((result) => (
+            <div
+              key={result.id}
+              className="group bg-card rounded-xl border border-border overflow-hidden hover:border-primary/40 transition-colors"
+            >
+              <div
+                className="p-4 cursor-pointer"
+                onClick={() => setExpandedId(expandedId === result.id ? null : result.id)}
+              >
+                <div className="flex items-start justify-between gap-4 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <FileText className="size-3.5 text-muted-foreground" />
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider truncate">
+                        {String(result.meta?.document_name || 'Unknown Document')}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono tabular-nums">
+                        {Math.round(result.score * 100)}% Match
+                      </span>
+                    </div>
+                    <h4 className="text-sm font-semibold text-foreground line-clamp-1 group-hover:text-primary transition-colors">
+                      {result.glance || result.path?.split('/').pop() || 'Untitled Section'}
+                    </h4>
+                  </div>
+                  <Button variant="ghost" size="icon" className="size-7 shrink-0">
+                    {expandedId === result.id ? (
+                      <ChevronDown className="size-4" />
+                    ) : (
+                      <ChevronRight className="size-4" />
+                    )}
+                  </Button>
+                </div>
+
+                <p className={cn(
+                  "text-xs text-muted-foreground leading-relaxed",
+                  expandedId === result.id ? "" : "line-clamp-3"
+                )}>
+                  {result.content}
+                </p>
+
+                {result.tags && result.tags.length > 0 && (
+                  <div className="flex gap-1.5 mt-3">
+                    {result.tags.slice(0, 5).map(tag => (
+                      <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted border border-border/50 text-muted-foreground">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {expandedId === result.id && (
+                <div className="px-4 pb-4 pt-0 flex gap-2 border-t border-border/50 bg-muted/20">
+                  <div className="mt-4 flex-1">
+                     <p className="text-[10px] text-muted-foreground font-mono mb-2">
+                       Path: {result.path}
+                     </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          <p className="text-xs text-muted-foreground text-center pt-4">
+            End of search results · Found {items.length} relevant sections
+          </p>
+        </div>
+      ) : (
+        <div className="text-center py-20 bg-card rounded-xl border border-dashed border-border">
+          <div className="bg-muted/50 size-12 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Search className="size-6 text-muted-foreground/40" />
+          </div>
+          <h3 className="text-lg font-medium mb-1">No results found</h3>
+          <p className="text-muted-foreground text-sm max-w-xs mx-auto">
+            We couldn't find any sections matching your query. Try using different keywords or a more general phrase.
+          </p>
+          <Button variant="outline" size="sm" className="mt-6" onClick={onBack}>
+            Back to Documents
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 const docStatusVariant = (s: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
@@ -491,6 +616,8 @@ const IN_PROGRESS_STATUSES = new Set([
 
 export default function DocumentPage() {
   const { knowledgeId } = useParams<{ knowledgeId: string }>();
+  const [searchParams] = useSearchParams();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -500,6 +627,22 @@ export default function DocumentPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('documents');
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [contextViewDoc, setContextViewDoc] = useState<Document | null>(null);
+
+  // Global search state
+  const [globalSearchInput, setGlobalSearchInput] = useState('');
+  const [activeSearchQuery, setActiveSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Auto-focus search if ?search=true is present
+  useEffect(() => {
+    if (searchParams.get('search') === 'true') {
+      setIsSearching(true);
+      // Small timeout to ensure input is rendered if needed
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [searchParams]);
 
   // Folder-upload modal state
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -512,6 +655,22 @@ export default function DocumentPage() {
   const { data: documentsData, isLoading: documentsLoading } = useDocumentList(knowledgeId || '');
   const uploadMutation = useUploadDocument();
   const deleteMutation = useDeleteDocument(knowledgeId || '');
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (globalSearchInput.trim()) {
+      setActiveSearchQuery(globalSearchInput.trim());
+      setIsSearching(true);
+      // We don't change viewMode here, just use isSearching to switch view
+      setSelectedDocument(null);
+    }
+  };
+
+  const handleClearSearch = () => {
+    setGlobalSearchInput('');
+    setActiveSearchQuery('');
+    setIsSearching(false);
+  };
 
   const handleFileUpload = useCallback(async (files: FileList | null) => {
     if (!files || !knowledgeId) return;
@@ -715,7 +874,60 @@ export default function DocumentPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8">
-        {viewMode === 'documents' && (
+        {/* Global Search Bar */}
+        <div className="mb-10 max-w-2xl mx-auto">
+          <form onSubmit={handleSearchSubmit} className="relative group">
+            <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+              <Search className={cn(
+                "size-5 transition-colors",
+                isSearching ? "text-primary" : "text-muted-foreground/40 group-focus-within:text-primary"
+              )} />
+            </div>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={globalSearchInput}
+              onChange={(e) => setGlobalSearchInput(e.target.value)}
+              placeholder="Ask anything about this knowledge base..."
+              className={cn(
+                "w-full h-12 pl-12 pr-28 bg-card border-2 rounded-2xl text-base transition-all focus:outline-none focus:ring-4 focus:ring-primary/5 shadow-sm",
+                isSearching
+                  ? "border-primary/40 ring-4 ring-primary/5"
+                  : "border-border hover:border-border/80 focus:border-primary/40"
+              )}
+            />
+            <div className="absolute inset-y-0 right-2 flex items-center gap-1.5">
+              {globalSearchInput && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="p-1.5 text-muted-foreground/30 hover:text-muted-foreground transition-colors"
+                >
+                  <X className="size-4" />
+                </button>
+              )}
+              <Button
+                type="submit"
+                size="sm"
+                className="rounded-xl h-8 px-3 gap-1.5 font-medium"
+                disabled={!globalSearchInput.trim()}
+              >
+                <Sparkles className="size-3.5" />
+                Search
+              </Button>
+            </div>
+          </form>
+        </div>
+
+        {isSearching && activeSearchQuery && !selectedDocument ? (
+          <GlobalSearchView
+            knowledgeId={knowledgeId || ''}
+            query={activeSearchQuery}
+            onBack={handleClearSearch}
+          />
+        ) : (
+          <>
+            {viewMode === 'documents' && (
           <>
             {/* Upload Area */}
             <div className="mb-8 bg-card rounded-lg border border-border overflow-hidden">

@@ -21,4 +21,13 @@ export interface ContextListResponse {
   page_size: number;
 }
 
+export interface ContextWithScore extends ContextEntry {
+  score: number;
+}
+
+export interface ContextSearchResponse {
+  total: number;
+  items: ContextWithScore[];
+}
+
 export type EntityContextType = 'skill' | 'tool' | 'knowledge' | 'document' | 'memory';

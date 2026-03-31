@@ -2,6 +2,7 @@ import {apiClient} from './api';
 import {API_ENDPOINTS} from '@/constants/api';
 import type {Knowledge, KnowledgeCreate, KnowledgeUpdate} from '@/types/knowledge';
 import type {PaginatedResponse} from '@/types/api';
+import type {ContextSearchResponse} from '@/types/context';
 
 export const knowledgeService = {
     /**
@@ -53,5 +54,14 @@ export const knowledgeService = {
         page_size?: number;
     }): Promise<PaginatedResponse<Knowledge>> {
         return apiClient.get(API_ENDPOINTS.KNOWLEDGE.SEARCH, {params});
+    },
+
+    /**
+     * Hybrid search inside a knowledge base
+     */
+    async hybridSearch(id: string, q: string, top_k: number = 20): Promise<ContextSearchResponse> {
+        return apiClient.get(API_ENDPOINTS.KNOWLEDGE.HYBRID_SEARCH(id), {
+            params: {q, top_k},
+        });
     },
 };

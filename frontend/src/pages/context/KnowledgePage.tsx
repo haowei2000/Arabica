@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Library, FileText, Loader2, Trash2, FolderOpen, Brain } from 'lucide-react';
+import { Library, FileText, Loader2, Trash2, FolderOpen, Brain, Search } from 'lucide-react';
 import { useKnowledgeList, useCreateKnowledge, useDeleteKnowledge } from '@/hooks/useKnowledge';
 import { generateKnowledgeDocumentsRoute } from '@/constants/routes';
 import { Button } from '@/components/ui/button';
@@ -127,7 +127,11 @@ export default function KnowledgePage() {
                   <Button size="sm" variant="outline" className="flex-1 gap-1.5" onClick={() => navigate(generateKnowledgeDocumentsRoute(kb.id))}>
                     <FolderOpen className="size-3.5" />Open
                   </Button>
-                  <Button size="sm" variant="outline" className="gap-1.5" onClick={(e) => { e.stopPropagation(); setContextViewId(kb.id); }}>
+                  <Button size="sm" variant="outline" className="gap-1.5" title="Search inside"
+                    onClick={() => navigate(`${generateKnowledgeDocumentsRoute(kb.id)}?search=true`)}>
+                    <Search className="size-3.5" />
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" title="View Context" onClick={(e) => { e.stopPropagation(); setContextViewId(kb.id); }}>
                     <Brain className="size-3.5" />
                   </Button>
                   <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
@@ -177,6 +181,15 @@ export default function KnowledgePage() {
                   <FolderOpen className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors shrink-0" />
                   <button
                     type="button"
+                    title="Search"
+                    className="size-7 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted shrink-0"
+                    onClick={(e) => { e.stopPropagation(); navigate(`${generateKnowledgeDocumentsRoute(kb.id)}?search=true`); }}
+                  >
+                    <Search className="size-3.5 text-muted-foreground" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Context"
                     className="size-7 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted shrink-0"
                     onClick={(e) => { e.stopPropagation(); setContextViewId(kb.id); }}
                   >
@@ -244,6 +257,15 @@ export default function KnowledgePage() {
                       >
                         <FolderOpen className="size-3.5" />
                         Open Documents
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => navigate(`${generateKnowledgeDocumentsRoute(kb.id)}?search=true`)}
+                      >
+                        <Search className="size-3.5" />
+                        Search
                       </Button>
                       <Button
                         size="sm"

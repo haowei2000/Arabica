@@ -84,6 +84,7 @@ export const API_ENDPOINTS = {
         UPDATE: (id: string) => `/agent/knowledge/${id}/update`,
         DELETE: (id: string) => `/agent/knowledge/${id}/delete`,
         SEARCH: '/agent/knowledge/search',
+        HYBRID_SEARCH: (id: string) => `/agent/knowledge/${id}/hybrid-search`,
     },
 
     // Document 管理

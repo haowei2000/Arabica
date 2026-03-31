@@ -220,6 +220,7 @@ class ContextCRUD:
         user_id: str | UUID,
         context_type: str | None = None,
         source_id: str | UUID | None = None,
+        knowledge_id: str | UUID | None = None,
         skip: int = 0,
         limit: int = 100,
     ) -> tuple[list[Context], int]:
@@ -229,7 +230,8 @@ class ContextCRUD:
         Args:
             user_id: Filter by user ID (required)
             context_type: Filter by context type
-            source_id: Filter by source ID
+            source_id: Filter by source ID (direct column)
+            knowledge_id: Filter by knowledge ID in metadata
             skip: Number of records to skip
             limit: Maximum number of records to return
 
@@ -246,6 +248,15 @@ class ContextCRUD:
         if source_id:
             normalized_source_id = normalize_uuid_to_str(source_id)
             conditions.append(Context.source_id == normalized_source_id)
+
+        if knowledge_id:
+            normalized_knowledge_id = normalize_uuid_to_str(knowledge_id)
+            conditions.append(
+                or_(
+                    Context.source_id == normalized_knowledge_id,
+                    Context.meta.op("->>")("knowledge_id") == normalized_knowledge_id,
+                )
+            )
 
         # Count query
         count_stmt = select(func.count(Context.id)).where(and_(*conditions))
@@ -299,6 +310,7 @@ class ContextCRUD:
         user_id: str | UUID,
         context_type: str | None = None,
         source_id: str | UUID | None = None,
+        knowledge_id: str | UUID | None = None,
         search_in: list[str] | None = None,
         case_sensitive: bool = False,
         skip: int = 0,
@@ -312,6 +324,7 @@ class ContextCRUD:
             user_id: Filter by user ID (required)
             context_type: Filter by context type
             source_id: Filter by source ID
+            knowledge_id: Filter by knowledge ID in metadata
             search_in: Fields to search in (content, summary, keywords)
             case_sensitive: Whether to use case sensitive search
             skip: Number of records to skip
@@ -334,6 +347,15 @@ class ContextCRUD:
         if source_id:
             normalized_source_id = normalize_uuid_to_str(source_id)
             conditions.append(Context.source_id == normalized_source_id)
+
+        if knowledge_id:
+            normalized_knowledge_id = normalize_uuid_to_str(knowledge_id)
+            conditions.append(
+                or_(
+                    Context.source_id == normalized_knowledge_id,
+                    Context.meta.op("->>")("knowledge_id") == normalized_knowledge_id,
+                )
+            )
 
         # Build search conditions based on case sensitivity
         search_conditions = []
@@ -407,6 +429,7 @@ class ContextCRUD:
         dimension: Literal[384, 768, 1024, 1536] = 1536,
         context_type: str | None = None,
         source_id: str | UUID | None = None,
+        knowledge_id: str | UUID | None = None,
         top_k: int = 10,
         threshold: float | None = None,
     ) -> list[tuple[Context, float]]:
@@ -419,6 +442,7 @@ class ContextCRUD:
             dimension: Embedding dimension to search (384, 768, 1024, 1536)
             context_type: Filter by context type
             source_id: Filter by source ID
+            knowledge_id: Filter by knowledge ID in metadata
             top_k: Number of results to return
             threshold: Minimum similarity threshold (0-1, where 1 is identical)
 
@@ -460,6 +484,15 @@ class ContextCRUD:
             normalized_source_id = normalize_uuid_to_str(source_id)
             conditions.append(Context.source_id == normalized_source_id)
 
+        if knowledge_id:
+            normalized_knowledge_id = normalize_uuid_to_str(knowledge_id)
+            conditions.append(
+                or_(
+                    Context.source_id == normalized_knowledge_id,
+                    Context.meta.op("->>")("knowledge_id") == normalized_knowledge_id,
+                )
+            )
+
         # Calculate cosine distance (pgvector uses <=> for cosine distance)
         # Cosine distance = 1 - cosine_similarity
         # So we need to convert: similarity = 1 - distance
@@ -498,6 +531,7 @@ class ContextCRUD:
         dimension: Literal[384, 768, 1024, 1536] = 1536,
         context_type: str | None = None,
         source_id: str | UUID | None = None,
+        knowledge_id: str | UUID | None = None,
         top_k: int = 10,
         threshold: float | None = None,
     ) -> list[tuple[Context, float]]:
@@ -510,6 +544,7 @@ class ContextCRUD:
             dimension=dimension,
             context_type=context_type,
             source_id=source_id,
+            knowledge_id=knowledge_id,
             top_k=top_k,
             threshold=threshold,
         )
@@ -524,12 +559,14 @@ class ContextCRUD:
         dimension: Literal[384, 768, 1024, 1536] = 1536,
         context_type: str | None = None,
         source_id: str | UUID | None = None,
+        knowledge_id: str | UUID | None = None,
         top_k: int = 10,
-        vector_weight: float = 0.7,
-        text_weight: float = 0.3,
+        vector_weight: float = 0.3,  # Reduced default
+        text_weight: float = 0.7,    # Increased default for keyword priority
     ) -> list[tuple[Context, float]]:
         """
         Hybrid search combining vector similarity and text matching.
+        Prioritizes keyword matches (text) over semantic similarity.
 
         Args:
             query: Text search query
@@ -538,64 +575,90 @@ class ContextCRUD:
             dimension: Embedding dimension to search
             context_type: Filter by context type
             source_id: Filter by source ID
+            knowledge_id: Filter by knowledge ID in metadata
             top_k: Number of results to return
             vector_weight: Weight for vector similarity (0-1)
             text_weight: Weight for text matching (0-1)
 
         Returns:
-            List of tuples (ContextSchema, combined_score) ordered by score
+            List of tuples (Context, combined_score) ordered by score
         """
-        # Get vector search results
+        # 1. Get vector search results (semantic)
         vector_results = await self.cosine_search(
             embedding=embedding,
             user_id=user_id,
             dimension=dimension,
             context_type=context_type,
             source_id=source_id,
-            top_k=top_k * 2,  # Get more candidates for hybrid ranking
+            knowledge_id=knowledge_id,
+            top_k=top_k * 3,  # Larger candidate pool
         )
 
-        # Get text search results
+        # 2. Get text search results (keyword)
         text_results, _ = await self.grep(
             query=query,
             user_id=user_id,
             context_type=context_type,
             source_id=source_id,
-            limit=top_k * 2,
+            knowledge_id=knowledge_id,
+            limit=top_k * 3,
         )
 
-        # Build a map of context_id -> scores
-        scores: dict[str, dict[str, float]] = {}
+        # 3. Score Merge with Keyword Priority
+        scores: dict[str, dict[str, Any]] = {}
 
-        # Add vector scores
+        # Add vector scores (0.0 to 1.0)
         for context, vector_score in vector_results:
             context_id = str(context.id)
-            if context_id not in scores:
-                scores[context_id] = {"context": context, "vector": 0.0, "text": 0.0}
-            scores[context_id]["vector"] = vector_score
-            scores[context_id]["context"] = context
+            scores[context_id] = {
+                "context": context,
+                "vector": vector_score,
+                "text": 0.0,
+                "bonus": 0.0,
+            }
 
-        # Add text scores (default binary: 1.0 if found, 0.0 otherwise)
+        # Add text scores and bonuses
+        query_lower = query.lower()
         for i, context in enumerate(text_results):
             context_id = str(context.id)
-            # Text relevance score decreases by rank
-            text_score = 1.0 - (i / len(text_results)) if text_results else 0.0
+            # Text relevance score decreases by rank (1.0 to 0.1)
+            text_score = max(0.1, 1.0 - (i / len(text_results))) if text_results else 0.0
+            
             if context_id not in scores:
-                scores[context_id] = {"context": context, "vector": 0.0, "text": 0.0}
-            scores[context_id]["text"] = text_score
-            scores[context_id]["context"] = context
+                scores[context_id] = {
+                    "context": context,
+                    "vector": 0.0,
+                    "text": text_score,
+                    "bonus": 0.0,
+                }
+            else:
+                scores[context_id]["text"] = text_score
+                # Keyword + Semantic intersection bonus
+                scores[context_id]["bonus"] += 0.1
 
-        # Calculate combined scores
-        results = []
-        for context_id, score_data in scores.items():
+            # Exact phrase match bonus in content or glance
+            content_lower = context.content.lower()
+            glance_lower = (context.glance or "").lower()
+            if query_lower in glance_lower:
+                scores[context_id]["bonus"] += 0.3
+            elif query_lower in content_lower:
+                scores[context_id]["bonus"] += 0.15
+
+        # 4. Calculate combined scores
+        final_results = []
+        for context_id, data in scores.items():
+            # Formula: (Vector * W_v) + (Text * W_t) + Bonus
+            # Bonus can push a score above 1.0, ensuring top ranking for exact keyword matches
             combined_score = (
-                score_data["vector"] * vector_weight + score_data["text"] * text_weight
+                data["vector"] * vector_weight + 
+                data["text"] * text_weight + 
+                data["bonus"]
             )
-            results.append((score_data["context"], combined_score))
+            final_results.append((data["context"], combined_score))
 
-        # Sort by combined score and return top_k
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:top_k]
+        # Sort by combined score descending
+        final_results.sort(key=lambda x: x[1], reverse=True)
+        return final_results[:top_k]
 
     # ==================== Batch Operations ====================
 
