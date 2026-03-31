@@ -336,7 +336,7 @@ class ContextCRUD:
         normalized_user_id = normalize_uuid_to_str(user_id)
 
         if search_in is None:
-            search_in = ["content"]
+            search_in = ["content", "glance"]
 
         # Base conditions
         conditions = [Context.user_id == normalized_user_id]
@@ -357,16 +357,27 @@ class ContextCRUD:
                 )
             )
 
-        # Build search conditions based on case sensitivity
-        search_conditions = []
-        search_pattern = f"%{query}%"
+        # Build search conditions: phrase match OR per-token AND match (for multi-word queries)
+        def _field_ilike(field: str, pattern: str) -> Any:
+            col = Context.content if field == "content" else Context.glance
+            return col.like(pattern) if case_sensitive else col.ilike(pattern)
 
-        if case_sensitive:
-            if "content" in search_in:
-                search_conditions.append(Context.content.like(search_pattern))
-        else:
-            if "content" in search_in:
-                search_conditions.append(Context.content.ilike(search_pattern))
+        search_pattern = f"%{query}%"
+        phrase_conds = [_field_ilike(f, search_pattern) for f in search_in]
+
+        # For multi-word queries, also match docs where every significant token appears
+        tokens = [t for t in query.split() if len(t) >= 3]
+        token_conds: list[Any] = []
+        if len(tokens) > 1:
+            for token in tokens:
+                tp = f"%{token}%"
+                per_token = [_field_ilike(f, tp) for f in search_in]
+                if per_token:
+                    token_conds.append(or_(*per_token))
+
+        search_conditions = phrase_conds
+        if token_conds:
+            search_conditions = phrase_conds + [and_(*token_conds)]
 
         if search_conditions:
             conditions.append(or_(*search_conditions))
@@ -591,17 +602,17 @@ class ContextCRUD:
             context_type=context_type,
             source_id=source_id,
             knowledge_id=knowledge_id,
-            top_k=top_k * 3,  # Larger candidate pool
+            top_k=top_k * 5,  # Larger candidate pool for better recall
         )
 
-        # 2. Get text search results (keyword)
+        # 2. Get text search results (keyword + token matching, incl. glance field)
         text_results, _ = await self.grep(
             query=query,
             user_id=user_id,
             context_type=context_type,
             source_id=source_id,
             knowledge_id=knowledge_id,
-            limit=top_k * 3,
+            limit=top_k * 5,
         )
 
         # 3. Score Merge with Keyword Priority
