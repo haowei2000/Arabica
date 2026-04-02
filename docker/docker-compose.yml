@@ -73,6 +73,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/health || exit 1"]
+      start_period: 60s
     restart: unless-stopped
     logging: *default-logging
     networks:
@@ -186,7 +190,7 @@ services:
       # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-}
+      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
       REDIS__DB: ${REDIS__DB:-1}
     depends_on:
       postgres:
@@ -203,7 +207,7 @@ services:
           memory: 256M
         reservations:
           memory: 64M
-  
+
   # Frontend application (React + Vite)
   frontend:
     profiles:
@@ -226,7 +230,7 @@ services:
     environment:
       <<: *common-env
     depends_on:
-      app:
+      backend:
         condition: service_started
     healthcheck:
       <<: *healthcheck-defaults
