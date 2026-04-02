@@ -7,7 +7,7 @@ name = "structure-service"
 version = "5.5.0"
 description = "Backend service for structure platform"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 authors = [{ name = "Epichust", email = "" }]
 keywords = ["structure", "service", "api"]
 classifiers = [
