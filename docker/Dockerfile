@@ -7,7 +7,7 @@
 # ============================================================================
 # Build Arguments
 # ============================================================================
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 ARG TARGETARCH
 
 # ============================================================================
@@ -23,7 +23,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONHASHSEED=random \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_PYTHON_DOWNLOADS=never
 
 # ============================================================================
 # Stage 2: System Dependencies
@@ -120,7 +121,7 @@ COPY --from=app-builder --chown=appuser:appuser /app/README.md /app/README.md
 
 # Fix venv Python symlinks to point to system Python
 RUN set -eux; \
-    SYSPYTHON=$(command -v python3.12 || command -v python3 || echo ""); \
+    SYSPYTHON=$(command -v python3.14 || command -v python3 || echo ""); \
     if [ -n "$SYSPYTHON" ]; then \
         ln -sf "$SYSPYTHON" /app/.venv/bin/python3; \
         ln -sf "$SYSPYTHON" /app/.venv/bin/python; \

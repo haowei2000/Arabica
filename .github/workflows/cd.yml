@@ -27,6 +27,7 @@ jobs:
     outputs:
       backend_image: ${{ steps.meta-backend.outputs.tags }}
       frontend_image: ${{ steps.meta-frontend.outputs.tags }}
+      context_service_image: ${{ steps.meta-context-service.outputs.tags }}
       version: ${{ steps.meta-backend.outputs.version }}
 
     steps:
@@ -91,6 +92,29 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+      - name: Extract context-service image metadata
+        id: meta-context-service
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/context-service
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push context-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.context-service
+          push: true
+          tags: ${{ steps.meta-context-service.outputs.tags }}
+          labels: ${{ steps.meta-context-service.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
@@ -105,7 +129,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          password: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             set -e
@@ -117,16 +141,19 @@ jobs:
             # Pull latest images
             docker pull ${{ needs.build-and-push.outputs.backend_image }}
             docker pull ${{ needs.build-and-push.outputs.frontend_image }}
+            docker pull ${{ needs.build-and-push.outputs.context_service_image }}
 
             # Tag as local names used by docker-compose
             docker tag ${{ needs.build-and-push.outputs.backend_image }} structure-service:latest
             docker tag ${{ needs.build-and-push.outputs.frontend_image }} structure-frontend:latest
+            docker tag ${{ needs.build-and-push.outputs.context_service_image }} structure-context-service:latest
 
-            # Restart app services (keep infra running)
-            docker compose --profile app up -d --no-build
+            # Start infra if not running, restart backend + frontend
+            docker compose --env-file docker/.env --profile infra up -d --no-build
+            docker compose --env-file docker/.env --profile app up -d --no-build --force-recreate
 
             # Run tool initializer
-            docker compose run --rm tool-initializer || true
+            docker compose --env-file docker/.env run --rm tool-initializer || true
 
             # Clean up unused images
             docker image prune -f
@@ -136,11 +163,11 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          password: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
-            docker compose ps
+            docker compose --env-file docker/.env ps
             # Wait for app health check
             timeout 60 bash -c 'until curl -sf http://localhost:8000/health; do sleep 3; done'
             echo "Deployment successful - app is healthy"

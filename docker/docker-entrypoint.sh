@@ -3,11 +3,13 @@ set -e
 
 echo "==> Starting structure services..."
 
-terminate() {
-    echo "==> Received termination signal"
-    echo "==> Stopping services..."
+PIDS=""
 
-    kill -TERM "$API_PID" "$WORKER_PID" 2>/dev/null || true
+terminate() {
+    echo "==> Received termination signal, stopping all services..."
+    for pid in $PIDS; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
     wait
     exit 0
 }
@@ -23,109 +25,75 @@ else
     cd /app
     echo "==> Running database migrations..."
 
-# Temporarily disable exit on error for migration handling
-set +e
+    set +e
+    CURRENT_VERSION=$(alembic current 2>/dev/null | grep -v "^INFO" | grep -v "^Using" | grep -v "^Context" | grep -v "^Will assume" || true)
 
-# Get current alembic version
-CURRENT_VERSION=$(alembic current 2>/dev/null | grep -v "^INFO" | grep -v "^Using" | grep -v "^Context" | grep -v "^Will assume" || true)
-
-if [ -n "$CURRENT_VERSION" ]; then
-    # Version exists, normal upgrade
-    echo "==> Current database version: $CURRENT_VERSION"
-    echo "==> Upgrading to head..."
-
-    alembic upgrade heads 2>&1
-    if [ $? -eq 0 ]; then
-        echo "==> Database migrations completed successfully"
+    if [ -n "$CURRENT_VERSION" ]; then
+        echo "==> Current database version: $CURRENT_VERSION"
+        alembic upgrade heads 2>&1 || { echo "==> ERROR: Migration failed"; exit 1; }
     else
-        echo "==> ERROR: Database migration failed"
-        exit 1
-    fi
-else
-    # No version recorded
-    echo "==> No alembic version found in database"
-    echo "==> Attempting migration..."
-
-    # Try direct upgrade (works if database is empty)
-    # Save output to check for errors
-    alembic upgrade head > /tmp/alembic_output.log 2>&1
-    UPGRADE_EXIT_CODE=$?
-
-    if [ $UPGRADE_EXIT_CODE -eq 0 ]; then
-        echo "==> Database migrations completed successfully"
-    else
-        # Migration failed, check if it's because tables exist
-        if grep -q "DuplicateTable\|already exists" /tmp/alembic_output.log; then
-            echo "==> Tables already exist but no version recorded"
-            echo "==> Stamping database as current version..."
-
-            if alembic stamp heads; then
-                echo "==> Database stamped as head"
-                echo "==> Applying any new migrations..."
-
-                if alembic upgrade head; then
-                    echo "==> Database migrations completed successfully"
-                else
-                    echo "==> WARNING: Could not apply new migrations after stamp"
-                fi
+        echo "==> No alembic version found, attempting migration..."
+        alembic upgrade head > /tmp/alembic_output.log 2>&1
+        if [ $? -ne 0 ]; then
+            if grep -q "DuplicateTable\|already exists" /tmp/alembic_output.log; then
+                echo "==> Tables exist but no version recorded, stamping..."
+                alembic stamp heads && alembic upgrade head || { echo "==> ERROR: Stamp/upgrade failed"; exit 1; }
             else
-                echo "==> ERROR: Failed to stamp database version"
-                exit 1
+                echo "==> ERROR: Migration failed"; cat /tmp/alembic_output.log; exit 1
             fi
-        else
-            echo "==> ERROR: Database migration failed with unexpected error"
-            echo "==> Error details:"
-            cat /tmp/alembic_output.log
-            exit 1
         fi
     fi
+    set -e
+    echo "==> Database migrations completed"
 fi
-fi
-
-# Re-enable exit on error
-set -e
 
 # ----------------------
-# Start custom command or default services
+# Start custom command or default (all-in-one) mode
 # ----------------------
 if [ "$#" -gt 0 ]; then
     echo "==> Executing custom command: $@"
     exec "$@"
 fi
 
-cd /app/src
+# All-in-one mode: start all backend processes
+cd /app
 
-# uv run structure-mcp &
-# MCP_PID=$!
-
-cd /app/src
-
-strucuture-api &
+echo "==> Starting API server..."
+structure-api &
 API_PID=$!
+PIDS="$PIDS $API_PID"
 
-strucuture-worker &
+echo "==> Starting event worker..."
+structure-worker &
 WORKER_PID=$!
+PIDS="$PIDS $WORKER_PID"
 
-echo "==> All services started (API PID: $API_PID, Worker PID: $WORKER_PID)"
+if [ "${START_CELERY:-false}" = "true" ]; then
+    echo "==> Starting Celery worker..."
+    celery -A structure.celery_worker.celery_app worker --loglevel=info --concurrency=1 &
+    CELERY_PID=$!
+    PIDS="$PIDS $CELERY_PID"
+fi
 
-# ----------------------
-# POSIX-compatible wait
-# ----------------------
+if [ "${START_MCP:-false}" = "true" ]; then
+    echo "==> Starting MCP server..."
+    structure-mcp &
+    MCP_PID=$!
+    PIDS="$PIDS $MCP_PID"
+fi
+
+echo "==> All services started (API: $API_PID, Worker: $WORKER_PID)"
+
+# Monitor: exit container if any critical process dies
 while true; do
     if ! kill -0 "$API_PID" 2>/dev/null; then
-        echo "==> API exited"
-        break
+        echo "==> API exited unexpectedly"; terminate
     fi
-
-    # if ! kill -0 "$MCP_PID" 2>/dev/null; then
-    #     echo "==> MCP exited"
-    #     break
-    # fi
     if ! kill -0 "$WORKER_PID" 2>/dev/null; then
-        echo "==> Worker exited"
-        break
+        echo "==> Event worker exited unexpectedly"; terminate
     fi
-    sleep 1
+    if [ -n "$CELERY_PID" ] && ! kill -0 "$CELERY_PID" 2>/dev/null; then
+        echo "==> Celery worker exited unexpectedly"; terminate
+    fi
+    sleep 5
 done
-
-terminate

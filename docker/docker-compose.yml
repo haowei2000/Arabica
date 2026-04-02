@@ -17,8 +17,8 @@ x-common-env: &common-env
   RUSTFS__PORT: 9000
 
 services:
-  # Main application service (API)
-  app:
+  # Backend: API + event worker + celery worker + MCP (all-in-one)
+  backend:
     profiles:
       - app
       - all
@@ -31,35 +31,34 @@ services:
     image: structure-service:${VERSION:-latest}
     ports:
       - "${EXPOSE_PORT_STRUCTURE_PY:-8000}:8000"
+      - "${EXPOSE_PORT_MCP:-9090}:9000"
     volumes:
       - structure-logs:/app/logs
-      # Uncomment for development to mount source code
-      # - ./src:/app/src:ro
     env_file:
       - .env
     environment:
       <<: *common-env
-      # Service Configuration
       RELOAD: ${RELOAD:-false}
       APP_PORT: 8000
       APP_HOST: 0.0.0.0
       APP_NAME: ${APP_NAME:-Modular FastAPI App}
       DEBUG: ${DEBUG:-false}
       ENV: ${ENV:-production}
-      # Database Configuration - PostgreSQL
+      START_MCP: ${START_MCP:-true}
+      START_CELERY: ${START_CELERY:-true}
+      STRUCTURE_MCP_PORT: 9000
+      STRUCTURE_MCP_HOST: 0.0.0.0
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
       POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
-      # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
       REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
       REDIS__DB: ${REDIS__DB:-1}
       REDIS__USERNAME: ${REDIS__USERNAME:-}
-      # Authentication
       AUTH__JWT_SECRET_KEY: ${AUTH__JWT_SECRET_KEY:-your-super-secret-jwt-key-here-change-in-production}
       AUTH__JWT_ALGORITHM: ${AUTH__JWT_ALGORITHM:-HS256}
       AUTH__ACCESS_TOKEN_EXPIRE_MINUTES: ${AUTH__ACCESS_TOKEN_EXPIRE_MINUTES:-30}
@@ -85,59 +84,6 @@ services:
         reservations:
           memory: 512M
 
-  # MCP Server for Model Context Protocol
-  mcp-server:
-    profiles:
-      - mcp
-      - app
-      - all
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
-        UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: structure-service:${VERSION:-latest}
-    command: ["structure-mcp"]
-    ports:
-      - "9090:9000"
-    volumes:
-      - structure-logs:/app/logs
-    env_file:
-      - .env
-    environment:
-      <<: *common-env
-      SKIP_MIGRATIONS: "true"
-      STRUCTURE_MCP_PORT: 9000
-      STRUCTURE_MCP_HOST: 0.0.0.0
-      # Database Configuration - PostgreSQL
-      POSTGRES__HOST: postgres
-      POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
-      POSTGRES__DRIVER: postgresql+asyncpg
-      # Redis Configuration
-      REDIS__HOST: redis
-      REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
-      REDIS__DB: ${REDIS__DB:-1}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    logging: *default-logging
-    networks:
-      - structure-network
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 256M
-
   # One-shot container: imports all inner tools from the MCP server on startup
   tool-initializer:
     profiles:
@@ -149,68 +95,18 @@ services:
     command: ["python", "/init_builtin_tools.py"]
     environment:
       <<: *common-env
-      API_URL: http://app:8000
-      MCP_URL: http://mcp-server:9000
+      API_URL: http://backend:8000
+      MCP_URL: http://backend:9000
       MCP_SSE_PATH: /mcp
       ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-123456}
       WAIT_TIMEOUT: "120"
     depends_on:
-      app:
+      backend:
         condition: service_healthy
-      mcp-server:
-        condition: service_started
     restart: "no"
     networks:
       - structure-network
-
-  # Celery Worker for background tasks
-  celery-worker:
-    profiles:
-      - celery
-      - worker
-      - all
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.14}
-        UV_VERSION: ${UV_VERSION:-0.5.24}
-    image: structure-service:${VERSION:-latest}
-    command: celery -A structure.celery_worker.celery_app worker --loglevel=info --concurrency=4
-    volumes:
-      - structure-logs:/app/logs
-    env_file:
-      - .env
-    environment:
-      <<: *common-env
-      SKIP_MIGRATIONS: "true"
-      # Database Configuration - PostgreSQL
-      POSTGRES__HOST: postgres
-      POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
-      POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
-      POSTGRES__DRIVER: postgresql+asyncpg
-      # Redis Configuration
-      REDIS__HOST: redis
-      REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
-      REDIS__DB: ${REDIS__DB:-1}
-      REDIS__USERNAME: ${REDIS__USERNAME:-}
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    logging: *default-logging
-    networks:
-      - structure-network
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 256M
 
   # Celery Beat for scheduled tasks (optional)
   celery-beat:
@@ -355,6 +251,14 @@ services:
       - infra
       - all
     image: pgvector/pgvector:pg15
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=20
+      -c effective_cache_size=128MB
+      -c wal_buffers=4MB
     ports:
       - "${EXPOSE_PORT_POSTGRES:-5432}:5432"
     volumes:
@@ -375,9 +279,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
-        reservations:
           memory: 256M
+        reservations:
+          memory: 128M
 
 
   
@@ -435,9 +339,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 150M
         reservations:
-          memory: 128M
+          memory: 64M
 
   # Ollama Service (for local LLM)
   ollama:
