@@ -29,7 +29,7 @@ def _parse_uuid(value: object, field: str = "id") -> UUID:
     try:
         return UUID(str(value))
     except (ValueError, AttributeError):
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid {field}: {value}",
         )

@@ -57,7 +57,7 @@ async def create_tool_bundle(
         bundle = await crud.create(current_user.id, data)
         return _build_bundle_response(bundle)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))  # noqa: B904
 
 
 @router.get(
@@ -114,7 +114,7 @@ async def update_tool_bundle(
     try:
         bundle = await crud.update(bundle_id, current_user.id, data)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))  # noqa: B904
 
     if not bundle:
         raise HTTPException(

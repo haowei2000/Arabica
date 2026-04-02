@@ -3,13 +3,12 @@
 # ============================================================================
 """MCP 应用核心实现"""
 
+from contextlib import asynccontextmanager
 import logging
 import os
-from contextlib import asynccontextmanager
 
-import fastmcp.server.middleware
-import uvicorn
 from fastmcp import FastMCP
+import fastmcp.server.middleware
 from fastmcp.server.middleware.caching import (
     CallToolSettings,
     ListToolsSettings,
@@ -17,11 +16,11 @@ from fastmcp.server.middleware.caching import (
 )
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from key_value.aio.stores.redis import RedisStore
+import uvicorn
 
 from structure.config.factory import get_settings
 from structure.core.bootstrap import bootstrap_mcp
 from structure.extensions.logger import setup_logging
-
 from structure.mcp_router.inner_tools import register_inner_tools_to_mcp
 
 # 初始化日志
@@ -71,12 +70,12 @@ def _setup_mcp_server() -> FastMCP:
     settings = get_settings()
 
     mcp_instance = FastMCP("Structure MCP", lifespan=lifespan)
-    # mcp_instance.mount(nl2sql_mcp)
-    # mcp_instance.mount(browser_mcp)
-    
+    # mcp_instance.mount(nl2sql_mcp)  # noqa: ERA001
+    # mcp_instance.mount(browser_mcp)  # noqa: ERA001
+
     # Register all discovered inner tools
     register_inner_tools_to_mcp(mcp_instance)
-    
+
     mcp_instance.add_middleware(SimpleLoggingMiddleware())
     if settings.mcp_cache_enable:
         mcp_instance.add_middleware(_initialize_cache_middleware(settings))
@@ -90,14 +89,14 @@ def _setup_mcp_server() -> FastMCP:
 
 
 @asynccontextmanager
-async def lifespan(app: FastMCP):
+async def lifespan(app: FastMCP):  # noqa: ARG001
     """管理应用生命周期 - 使用统一的Bootstrap"""
     bootstrap = None
     try:
         logger.info("🔌 MCP starting up...")
         # ⚠️ Force inner tool discovery on for the MCP server so it can expose them
         os.environ["STRUCTURE_SKIP_INNER_TOOL_DISCOVERY"] = "false"
-        
+
         # 使用统一的初始化流程
         bootstrap = await bootstrap_mcp()
         logger.info("✅ MCP startup complete")
@@ -113,10 +112,6 @@ async def lifespan(app: FastMCP):
                 await bootstrap.cleanup()
             except Exception as e:
                 logger.error(f"⚠️  Error during cleanup: {e}", exc_info=True)
-        try:
-            await shutdown_browser_sessions()
-        except Exception as e:
-            logger.error(f"⚠️  Error during browser cleanup: {e}", exc_info=True)
         logger.info("✅ MCP shutdown complete")
 
 

@@ -3,18 +3,18 @@
 import logging
 
 from structure.celery_worker.celery_app import celery_app
+from structure.celery_worker.tasks.context_sync._base import (
+    _fetch_embedding_service,
+    _generate_embedding,
+    _store_embedding,
+    _upsert_context_at_path,
+)
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.workspace_context_sync import (
     _get_user_workspace_ids,
     _invalidate_workspace_caches,
     _sync_path_to_workspaces,
     _update_workspace_contexts,
-)
-from structure.celery_worker.tasks.context_sync._base import (
-    _fetch_embedding_service,
-    _generate_embedding,
-    _store_embedding,
-    _upsert_context_at_path,
 )
 from structure.core.enums import ContextType
 from structure.utils.context import slugify as _slugify
@@ -81,7 +81,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
                     path=path,
                     glance=core.glance or glance,
                     content=core.content,
-                    tags=["skills"] + skill_tags,
+                    tags=["skills"] + skill_tags,  # noqa: RUF005
                     meta={"skill_id": skill_id},
                 )
                 await session.flush()
@@ -110,7 +110,7 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
             path=skill_path,
             glance=glance,
             detail=overview_content,
-            tags=["skills"] + skill_tags,
+            tags=["skills"] + skill_tags,  # noqa: RUF005
             meta={"skill_id": skill_id},
             created_by=user_id,
         )

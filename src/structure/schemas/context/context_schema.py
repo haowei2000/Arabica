@@ -181,7 +181,7 @@ class ContextResponse(ResponseMixin, BaseModel):
             return result
 
         # Layer 2: Overview
-        if level in ("overview", "detail"):
+        if level in ("overview", "detail"):  # noqa: SIM102
             if self.tags:
                 result["tags"] = self.tags
 

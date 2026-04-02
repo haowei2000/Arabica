@@ -95,12 +95,12 @@ class GetRunHistoryTool(InnerTool):
             data={
                 "events": [
                     {
-                        # "id": str(event.id),
+                        # "id": str(event.id),  # noqa: ERA001
                         "event_type": str(event.event_type),
                         "sequence": event.sequence,
                         "payload": event.payload,
                         # "created_at": (
-                        #     event.created_at.isoformat() if event.created_at else None
+                        #     event.created_at.isoformat() if event.created_at else None  # noqa: ERA001
                         # ),
                     }
                     for event in events

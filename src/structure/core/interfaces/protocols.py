@@ -237,11 +237,11 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
     config: dict[str, Any]
     """Runtime configuration (passed during initialization)"""
 
-    async def process_event(self, event: Event) -> AsyncGenerator[Event, None]:
+    async def process_event(self, event: Event) -> AsyncGenerator[Event, None]:  # noqa: ARG002
         """Dispatch an incoming event to the matching _process_* handler."""
         yield  # pragma: no cover – protocol stub
 
-    async def process_events(self, events: list[Event]) -> AsyncGenerator[Event, None]:
+    async def process_events(self, events: list[Event]) -> AsyncGenerator[Event, None]:  # noqa: ARG002
         """Process a pre-fetched run event history list.
 
         The last triggering event in the list drives handler dispatch.

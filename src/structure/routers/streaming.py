@@ -202,7 +202,7 @@ async def get_run_state(
 
 @router.post("/runs/cleanup-stuck", tags=["events"])
 async def cleanup_stuck_runs(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
     state_machine: RunStateMachineDep,
     run_crud: RunCRUDDep,
 ):

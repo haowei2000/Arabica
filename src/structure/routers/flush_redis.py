@@ -58,6 +58,6 @@ async def flush_redis_cache(
             "pattern": pattern,
         }
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"Redis未初始化: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Redis未初始化: {e!s}")  # noqa: B904
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"清空缓存时发生错误: {e!s}")
+        raise HTTPException(status_code=500, detail=f"清空缓存时发生错误: {e!s}")  # noqa: B904

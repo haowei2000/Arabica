@@ -245,7 +245,7 @@ async def start_run(
             auto_commit=True,
         )
     except ValueError as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
@@ -298,7 +298,7 @@ async def cancel_run(
             auto_commit=True,
         )
     except Exception as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
@@ -391,7 +391,7 @@ async def resume_run(
             auto_commit=True,
         )
     except Exception as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
@@ -466,7 +466,7 @@ async def submit_feedback(
     try:
         run = await state_machine.resume_from_tool(run_id=run_id, auto_commit=True)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))  # noqa: B904
 
     # Publish user.feedback — the executor stream consumer will pick this up
     # and forward it to the executor's _on_user_feedback handler.

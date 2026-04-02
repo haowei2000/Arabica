@@ -142,7 +142,7 @@ async def list_events_by_user(
     event_types: str | None = Query(
         None, description="Comma-separated event types to filter"
     ),
-    workspace_id: UUID | None = Query(
+    workspace_id: UUID | None = Query(  # noqa: B008
         None, description="Narrow to a specific workspace"
     ),
 ):
@@ -172,9 +172,9 @@ async def search_events(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     event_crud: EventCRUDDep,
     workspace_crud: WorkspaceCRUDDep,
-    workspace_id: UUID | None = Query(None, description="Filter by workspace"),
-    run_id: UUID | None = Query(None, description="Filter by run"),
-    user_id: UUID | None = Query(None, description="Filter by user"),
+    workspace_id: UUID | None = Query(None, description="Filter by workspace"),  # noqa: B008
+    run_id: UUID | None = Query(None, description="Filter by run"),  # noqa: B008
+    user_id: UUID | None = Query(None, description="Filter by user"),  # noqa: B008
     event_types: str | None = Query(None, description="Comma-separated event types"),
     from_sequence: int | None = Query(
         None, ge=0, description="Minimum sequence (inclusive)"

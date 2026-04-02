@@ -15,7 +15,10 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from structure.middleware.cache_middleware import clear_cache_pattern, init_redis_client
+from structure.middleware.cache_middleware import (  # noqa: E402
+    clear_cache_pattern,
+    init_redis_client,
+)
 
 
 async def test_cache_fix():

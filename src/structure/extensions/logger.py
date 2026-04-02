@@ -1,9 +1,9 @@
 # structure/core/logger.py
 import logging
-import os
-import shutil
 from logging.handlers import TimedRotatingFileHandler
+import os
 from pathlib import Path
+import shutil
 
 
 class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
@@ -16,10 +16,10 @@ class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
     """
 
     def rotate(self, source: str, dest: str) -> None:
-        if os.path.exists(source):
+        if os.path.exists(source):  # noqa: PTH110
             shutil.copy2(source, dest)
             # Truncate in-place so existing open handles remain valid
-            open(source, "w").close()  # noqa: WPS515
+            open(source, "w").close()  # noqa: PTH123
 
 # 获取项目根目录（假设 logger.py 在 structure/core/ 下）
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent

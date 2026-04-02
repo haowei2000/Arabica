@@ -1,5 +1,7 @@
 """Tree context tool - get hierarchical tree structure."""
 
+from typing import Any
+
 from pydantic import Field
 
 from structure.core.interfaces.tool import (
@@ -98,6 +100,7 @@ class TreeContextTool(InnerTool):
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
+
         from structure.services.context.client import context_service_client
 
         try:
@@ -109,7 +112,7 @@ class TreeContextTool(InnerTool):
                 prefix=root_normalized,
                 recursive=True
             )
-            
+
             contexts = result_data.get("items", [])
 
             tree = _build_tree(contexts, root_normalized or None)

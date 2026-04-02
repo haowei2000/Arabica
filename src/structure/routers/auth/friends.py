@@ -37,7 +37,7 @@ async def send_friend_request(
     data: FriendRequestCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: FriendCRUDDep,
-    db: Annotated[AsyncSession, Depends(get_structure_db)],
+    db: Annotated[AsyncSession, Depends(get_structure_db)],  # noqa: ARG001
 ):
     """Send a friend request to another user by their user ID."""
     try:
@@ -47,7 +47,7 @@ async def send_friend_request(
             auto_commit=True,
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))  # noqa: B904
 
     if record is None:
         raise HTTPException(
@@ -125,9 +125,9 @@ async def accept_friend_request(
             auto_commit=True,
         )
     except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))  # noqa: B904
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))  # noqa: B904
 
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found")
@@ -152,9 +152,9 @@ async def decline_friend_request(
             auto_commit=True,
         )
     except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))  # noqa: B904
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))  # noqa: B904
 
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found")
@@ -179,7 +179,7 @@ async def remove_friend(
             auto_commit=True,
         )
     except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))  # noqa: B904
 
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend record not found")

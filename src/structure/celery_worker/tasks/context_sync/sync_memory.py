@@ -3,15 +3,15 @@
 import logging
 
 from structure.celery_worker.celery_app import celery_app
-from structure.celery_worker.tasks.knowledge_tasks import run_async
-from structure.celery_worker.tasks.workspace_context_sync import (
-    _invalidate_workspace_caches,
-    _update_workspace_contexts,
-)
 from structure.celery_worker.tasks.context_sync._base import (
     _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
+)
+from structure.celery_worker.tasks.knowledge_tasks import run_async
+from structure.celery_worker.tasks.workspace_context_sync import (
+    _invalidate_workspace_caches,
+    _update_workspace_contexts,
 )
 from structure.utils.context import slugify as _slugify
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
     default_retry_delay=30,
     queue="default",
 )
-def sync_memory_to_contexts(self, memory_id: str, user_id: str):
+def sync_memory_to_contexts(self, memory_id: str, user_id: str):  # noqa: ARG001
     """Embed a memory Context row and sync WorkspaceContext entries.
 
     Memories are already stored in the Context table; this task generates the
@@ -111,8 +111,9 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
         meta_key: JSON meta field used to locate workspace-scoped Context rows (e.g. "skill_id").
     """
     async def _execute():
-        from sqlalchemy import delete, select
         from uuid import UUID
+
+        from sqlalchemy import delete, select
 
         from structure.core.enums.context import ContextScope
         from structure.extensions.database import get_session

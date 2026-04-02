@@ -56,7 +56,7 @@ class DynamicToolLoader:
     """
 
     # Class-level cache shared across calls (Worker is single-threaded).
-    _cache: dict[_CacheKey, _CacheEntry] = {}
+    _cache: dict[_CacheKey, _CacheEntry] = {}  # noqa: RUF012
 
     @classmethod
     async def load_user_tools(
@@ -87,8 +87,8 @@ class DynamicToolLoader:
             return cached.tool_classes
 
         from structure.registries.core import ToolRegistry
-        from structure.services.context.tools.tool_crud import ToolCRUD
         from structure.registries.mcp_loader import build_mcp_tool_class
+        from structure.services.context.tools.tool_crud import ToolCRUD
 
         crud = ToolCRUD(db)
         mcp_records = await crud.list_user_tools(

@@ -7,8 +7,8 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-from celery.result import AsyncResult
-from fastapi import (
+from celery.result import AsyncResult  # noqa: E402
+from fastapi import (  # noqa: E402
     APIRouter,
     Depends,
     File,
@@ -18,24 +18,36 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import Response
-from pydantic import BaseModel
+from fastapi.responses import Response  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
-from structure.celery_worker.celery_app import celery_app, example_task
-from structure.celery_worker.tasks.context_sync.sync_document import submit_sync_document
-from structure.core.dependencies.agents import get_context_crud, get_document_crud, get_knowledge_crud
-from structure.core.dependencies.auth import get_current_user
-from structure.extensions.storage.global_storage import get_global_s3_storage
-from structure.schemas.auth.user import UserResponse
-from structure.schemas.context.context_schema import ContextListResponse
-from structure.schemas.context.knowledge.document import (
+from structure.celery_worker.celery_app import celery_app, example_task  # noqa: E402
+from structure.celery_worker.tasks.context_sync.sync_document import (  # noqa: E402
+    submit_sync_document,
+)
+from structure.core.dependencies.agents import (  # noqa: E402
+    get_context_crud,
+    get_document_crud,
+    get_knowledge_crud,
+)
+from structure.core.dependencies.auth import get_current_user  # noqa: E402
+from structure.extensions.storage.global_storage import (  # noqa: E402
+    get_global_s3_storage,
+)
+from structure.schemas.auth.user import UserResponse  # noqa: E402
+from structure.schemas.context.context_schema import ContextListResponse  # noqa: E402
+from structure.schemas.context.knowledge.document import (  # noqa: E402
     DocumentListResponse,
     DocumentResponse,
     DocumentUploadResponse,
 )
-from structure.services.context.context_crud import ContextCRUD
-from structure.services.context.knowledge.document_crud import DocumentCRUD
-from structure.services.context.knowledge.knowledge_crud import KnowledgeCRUD
+from structure.services.context.context_crud import ContextCRUD  # noqa: E402
+from structure.services.context.knowledge.document_crud import (  # noqa: E402
+    DocumentCRUD,
+)
+from structure.services.context.knowledge.knowledge_crud import (  # noqa: E402
+    KnowledgeCRUD,
+)
 
 
 class TaskStatusResponse(BaseModel):
@@ -90,7 +102,7 @@ async def upload_document(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
     knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
-    file: UploadFile = File(..., description="File to upload"),
+    file: UploadFile = File(..., description="File to upload"),  # noqa: B008
     knowledge_id: str = Form(..., description="Knowledge base ID"),
 ):
     """
@@ -154,7 +166,7 @@ async def upload_document(
             content_type=file.content_type or "application/octet-stream",
         )
     except Exception as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload file to storage: {e!s}",
         )
@@ -210,7 +222,7 @@ async def upload_folder(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     document_crud: Annotated[DocumentCRUD, Depends(get_document_crud)],
     knowledge_crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
-    files: list[UploadFile] = File(..., description="All files in the folder"),
+    files: list[UploadFile] = File(..., description="All files in the folder"),  # noqa: B008
     knowledge_id: str = Form(..., description="Knowledge base ID"),
 ):
     """
@@ -299,7 +311,7 @@ async def upload_folder(
 @router.get("/task/{task_id}/status", response_model=TaskStatusResponse)
 async def get_task_status(
     task_id: str,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
 ):
     """
     Get the status of a document processing task.
@@ -489,7 +501,9 @@ async def delete_document(
     )
 
     # Delete all Context chunks created from this document
-    from structure.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    from structure.celery_worker.tasks.context_sync_tasks import (
+        delete_resource_contexts,
+    )
     delete_resource_contexts.delay(document_id, "chunk", "document_id")
 
     return
@@ -543,7 +557,7 @@ async def download_document(
             },
         )
     except Exception as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to download file: {e!s}",
         )

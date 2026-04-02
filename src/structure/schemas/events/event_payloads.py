@@ -164,7 +164,7 @@ class EventResponse(BaseModel):
         """Convert UUIDs to strings."""
         if hasattr(data, "__dict__"):
             result = {}
-            for field_name in cls.model_fields.keys():
+            for field_name in cls.model_fields.keys():  # noqa: SIM118
                 value = getattr(data, field_name, None)
                 if isinstance(value, UUID):
                     result[field_name] = str(value)

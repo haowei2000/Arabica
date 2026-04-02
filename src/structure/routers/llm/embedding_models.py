@@ -97,7 +97,7 @@ async def update_embedding_model(
     if not obj.is_system and str(obj.user_id) != str(current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     updated = await crud.update(model_id, data)
-    return updated
+    return updated  # noqa: RET504
 
 
 @router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)

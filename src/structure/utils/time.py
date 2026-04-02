@@ -17,7 +17,7 @@ def to_naive_utc(dt: datetime | None) -> datetime | None:
     return dt.astimezone(UTC).replace(tzinfo=None)
 
 
-from datetime import timezone
+from datetime import timezone  # noqa: E402
 
 
 def utc_now() -> datetime:

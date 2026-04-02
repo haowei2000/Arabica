@@ -9,7 +9,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.models.context.knowledge.knowledge import Knowledge
-from structure.schemas.context.knowledge.knowledge import KnowledgeCreate, KnowledgeUpdate
+from structure.schemas.context.knowledge.knowledge import (
+    KnowledgeCreate,
+    KnowledgeUpdate,
+)
 from structure.services.context.context_syncer import ContextSyncer
 
 

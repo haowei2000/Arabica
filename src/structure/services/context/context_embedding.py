@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
     from structure.services.context.knowledge.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ DEFAULT_MODEL = "text-embedding-v3"
 DEFAULT_DIMENSION = 1024
 
 
-async def load_default_embedding_service(db: "AsyncSession") -> "EmbeddingService":
+async def load_default_embedding_service(db: AsyncSession) -> EmbeddingService:
     """Fetch the default EmbeddingModel from DB and return a configured EmbeddingService.
 
     Must be awaited inside an async context BEFORE calling embed_for_context/embed_batch_for_context
@@ -49,7 +50,7 @@ async def load_default_embedding_service(db: "AsyncSession") -> "EmbeddingServic
 
 def embed_for_context(
     text: str,
-    svc: "EmbeddingService",
+    svc: EmbeddingService,
 ) -> tuple[list[float], str]:
     """Embed a single text using a pre-built EmbeddingService; returns (vector, field_name).
 
@@ -63,7 +64,7 @@ def embed_for_context(
 
 def embed_batch_for_context(
     texts: list[str],
-    svc: "EmbeddingService",
+    svc: EmbeddingService,
 ) -> tuple[list[list[float]], str]:
     """Embed multiple texts using a pre-built EmbeddingService; returns (vectors, field_name).
 

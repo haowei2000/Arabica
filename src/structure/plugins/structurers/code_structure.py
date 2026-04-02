@@ -92,7 +92,7 @@ class CodeStructurer(BaseStructurer):
                 })
 
             current_class: str | None = None
-            for idx, match in enumerate(detected_matches):
+            for idx, match in enumerate(detected_matches):  # noqa: B007
                 snippet = text[positions[idx]:positions[idx + 1]].strip()
                 first_line = snippet.splitlines()[0]
                 is_class = bool(re.match(r"^class\s+", first_line))

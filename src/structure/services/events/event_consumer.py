@@ -12,8 +12,10 @@ from typing import Any
 from uuid import UUID
 
 import redis.asyncio as redis_async
-from redis.exceptions import ConnectionError as RedisConnectionError
-from redis.exceptions import TimeoutError as RedisTimeoutError
+from redis.exceptions import (
+    ConnectionError as RedisConnectionError,
+    TimeoutError as RedisTimeoutError,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,7 +86,7 @@ class EventConsumer:
                     continue
 
                 done = False
-                for stream, messages in result:
+                for stream, messages in result:  # noqa: B007
                     for message_id, data in messages:
                         current_id = message_id
                         event = self._parse_event_data(data)
@@ -147,7 +149,7 @@ class EventConsumer:
                     yield {"type": EVENT_TYPE_KEEPALIVE, "timestamp": datetime.now().isoformat()}
                     continue
 
-                for stream, messages in result:
+                for stream, messages in result:  # noqa: B007
                     for message_id, data in messages:
                         current_id = message_id
                         event = self._parse_event_data(data)
@@ -184,7 +186,7 @@ class EventConsumer:
 
         # Parse JSON payload
         if "payload" in decoded:
-            try:
+            try:  # noqa: SIM105
                 decoded["payload"] = json.loads(decoded["payload"])
             except json.JSONDecodeError:
                 pass
@@ -360,7 +362,7 @@ class EventReplayer:
                             "success" if event.payload.get("success") else "error"
                         )
 
-            elif event.event_type == EventType.RUN_STATE_CHANGE:
+            elif event.event_type == EventType.RUN_STATE_CHANGE:  # noqa: SIM102
                 if event.payload:
                     state["status"] = event.payload.get("new_state", state["status"])
 

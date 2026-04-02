@@ -23,9 +23,9 @@ def _build_md_tree(contexts: list[dict], root_path: str) -> str:
     return "\n".join(lines)
 
 
-from pydantic import Field
+from pydantic import Field  # noqa: E402
 
-from structure.core.interfaces.tool import (
+from structure.core.interfaces.tool import (  # noqa: E402
     InnerTool,
     ToolInputSchema,
     ToolMetadata,
@@ -62,19 +62,20 @@ class ListContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from structure.services.context.client import context_service_client
         from uuid import UUID
+
+        from structure.services.context.client import context_service_client
 
         try:
             workspace_id = UUID(input_data.workspace_id)
             recursive = input_data.mode == "descendants"
-            
+
             result_data = await context_service_client.list_contexts(
                 workspace_id=workspace_id,
                 prefix=input_data.path,
                 recursive=recursive
             )
-            
+
             contexts = result_data.get("items", [])
             contexts = contexts[: input_data.limit]
 

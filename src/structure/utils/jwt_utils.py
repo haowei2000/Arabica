@@ -38,7 +38,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     encoded_jwt = jwt.encode(
         to_encode, settings.auth.jwt_secret_key, algorithm=settings.auth.jwt_algorithm
     )
-    return encoded_jwt
+    return encoded_jwt  # noqa: RET504
 
 
 def create_refresh_token(data: dict, expires_delta: timedelta | None = None) -> str:
@@ -66,7 +66,7 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None) -> 
     encoded_jwt = jwt.encode(
         to_encode, settings.auth.jwt_secret_key, algorithm=settings.auth.jwt_algorithm
     )
-    return encoded_jwt
+    return encoded_jwt  # noqa: RET504
 
 
 def verify_token(token: str) -> dict | None:

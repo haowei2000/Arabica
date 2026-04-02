@@ -144,7 +144,7 @@ class BaseTool(ABC,ToolProtocol):
             if value == '' or value is None:
                 # Empty string or None - skip it, let Pydantic use field defaults
                 continue
-            elif isinstance(value, str):
+            if isinstance(value, str):
                 # Try to parse JSON strings for complex types (dict/list)
                 stripped = value.strip()
                 if stripped and stripped[0] in ('{', '['):
@@ -240,7 +240,7 @@ class BaseTool(ABC,ToolProtocol):
         """Get tool metadata"""
         return cls.METADATA
 
-    async def before_execute(self, input_data: ToolInputSchema) -> None:  # noqa: B027
+    async def before_execute(self, input_data: ToolInputSchema) -> None:
         """
         Pre-execution hook method (optional)
 
@@ -249,7 +249,7 @@ class BaseTool(ABC,ToolProtocol):
         """
         pass
 
-    async def after_execute(  # noqa: B027
+    async def after_execute(
         self, input_data: ToolInputSchema, output: ToolOutputSchema
     ) -> None:
         """
@@ -262,7 +262,7 @@ class BaseTool(ABC,ToolProtocol):
         pass
 
     async def on_error(
-        self, input_data: ToolInputSchema | None, error: Exception
+        self, input_data: ToolInputSchema | None, error: Exception  # noqa: ARG002
     ) -> ToolOutputSchema:
         """
         Error handling hook (optional)
@@ -318,7 +318,7 @@ class BaseTool(ABC,ToolProtocol):
         except ToolControlFlow:
             raise  # Control-flow signals (e.g. WaitingForUserInput) bypass on_error
 
-        except _asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = (time.monotonic() - start_time) * 1000
             logger.error(
                 "Tool call timed out: %s | %.1fms | timeout=%ss",

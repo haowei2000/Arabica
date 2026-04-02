@@ -36,6 +36,7 @@ class UpdateContextTool(InnerTool):
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
+
         from structure.services.context.client import context_service_client
 
         try:

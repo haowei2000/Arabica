@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, String
@@ -10,6 +11,9 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from structure.extensions.database import get_base
+
+if TYPE_CHECKING:
+    from structure.models.auth.user import User
 
 Base = get_base("structure")
 

@@ -43,7 +43,7 @@ class WorkspaceContextService:
         self._workspace_uuid = UUID(self.workspace_id)
         self.owner_id = str(owner_id) if owner_id else None
         self._owner_uuid = UUID(self.owner_id) if self.owner_id else None
-        
+
         self._contexts: list[Context] = []
         self._loaded = False
 
@@ -82,7 +82,7 @@ class WorkspaceContextService:
         result = await self.session.execute(stmt)
         self._contexts = list(result.scalars().all())
         self._loaded = True
-        
+
         logger.debug(
             "WorkspaceContextService: loaded %d contexts for workspace %s",
             len(self._contexts),
@@ -105,7 +105,7 @@ class WorkspaceContextService:
         """Get a single context by path."""
         await self._ensure_loaded()
         target = self._normalize_path(path)
-        
+
         for ctx in self._contexts:
             if ctx.path and self._normalize_path(ctx.path) == target:
                 return {"path": ctx.path, **ctx.disclose(level)}
@@ -115,7 +115,7 @@ class WorkspaceContextService:
         """Query contexts using glob patterns (e.g. 'tools/*', 'knowledge/**')."""
         await self._ensure_loaded()
         target_pat = self._normalize_path(pattern)
-        
+
         results = []
         for ctx in self._contexts:
             if not ctx.path:
@@ -128,10 +128,10 @@ class WorkspaceContextService:
     async def list(self, prefix: str | None = None, level: str = "glance") -> list[dict[str, Any]]:
         """List contexts, optionally filtered by path prefix."""
         await self._ensure_loaded()
-        
+
         results = []
         prefix_norm = self._normalize_path(prefix) if prefix else ""
-        
+
         for ctx in self._contexts:
             if not ctx.path:
                 continue
@@ -143,7 +143,7 @@ class WorkspaceContextService:
     async def tree(self, root: str | None = None, level: str = "overview") -> dict[str, Any]:
         """Return context structure as a hierarchical tree."""
         await self._ensure_loaded()
-        
+
         all_items = await self.list(root, level)
         if not all_items:
             return {}
@@ -156,11 +156,11 @@ class WorkspaceContextService:
             path = item["path"]
             node = {**item, "children": []}
             nodes_by_path[path] = node
-            
+
             # Find parent
             parts = path.strip("/").rsplit("/", 1)
             parent_path = parts[0] if len(parts) > 1 else None
-            
+
             if parent_path and parent_path in nodes_by_path:
                 nodes_by_path[parent_path]["children"].append(node)
             else:

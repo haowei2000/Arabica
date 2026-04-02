@@ -20,7 +20,7 @@ class ExecutorCRUD:
         self,
         executor_code: str,
         executor_name: str,
-        config: dict = None,  # ty:ignore[invalid-parameter-default]
+        config: dict = None,  # ty:ignore[invalid-parameter-default]  # noqa: RUF013
         enabled: bool = True,
         version: int = 1,
         auto_commit: bool = True,

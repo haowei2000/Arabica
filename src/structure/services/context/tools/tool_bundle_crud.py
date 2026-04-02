@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import logging
-from typing import Iterable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from structure.models.context.tools import Tool, ToolBundle, ToolBundleItem
-from structure.schemas.context.tools.tool_bundle import ToolBundleCreate, ToolBundleUpdate
+from structure.schemas.context.tools.tool_bundle import (
+    ToolBundleCreate,
+    ToolBundleUpdate,
+)
 
 logger = logging.getLogger(__name__)
 

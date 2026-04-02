@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import WorkspaceCRUDDep
@@ -11,7 +12,6 @@ from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.runs.artifact import ArtifactListResponse, ArtifactResponse
 from structure.services.runs.artifact_crud import ArtifactCRUD
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/artifacts", tags=["artifacts"])
 

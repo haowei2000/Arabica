@@ -80,7 +80,9 @@ class S3TextStage(Stage[FileContext]):
 
     def process(self, ctx: FileContext) -> FileContext:
         try:
-            from structure.extensions.storage.global_storage import get_global_s3_storage
+            from structure.extensions.storage.global_storage import (
+                get_global_s3_storage,
+            )
             raw = get_global_s3_storage().get_bytes(ctx.file_input.s3_key)
         except Exception as exc:
             msg = f"S3TextStage: cannot download {ctx.file_input.s3_key} — {exc}"

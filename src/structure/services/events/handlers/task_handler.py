@@ -39,7 +39,7 @@ async def handle_task_event(event: Event):
 
             case EventType.TASK_UPDATE:
                 logger.info(f"Task updated: {task_id}")
-                changes = payload.get("changes", {})
+                changes = payload.get("changes", {})  # noqa: F841
 
                 # TODO: Implement task update side effects
                 # - Notify on status changes (pending → in_progress → completed)

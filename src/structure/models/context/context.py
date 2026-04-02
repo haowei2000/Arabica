@@ -202,7 +202,7 @@ class Context(Base):  # ty:ignore[unsupported-base]
             return result
 
         # Level 2: Overview - structured summary
-        if level in ("overview", "detail"):
+        if level in ("overview", "detail"):  # noqa: SIM102
             if self.tags:
                 result["tags"] = self.tags
 

@@ -20,6 +20,7 @@ from structure.core.dependencies.workspace import (
 )
 from structure.extensions.database import get_structure_db
 from structure.models.context.workspace_context import WorkspaceContext
+from structure.schemas.auth.friend import FriendUserInfo
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.workspaces.workspace import (
     MemberRole,
@@ -35,7 +36,6 @@ from structure.schemas.workspaces.workspace_context import (
     CopyContextsResponse,
     WorkspaceContextListResponse,
 )
-from structure.schemas.auth.friend import FriendUserInfo
 from structure.services.auth.friend_crud import FriendCRUD
 from structure.services.context.process import copy_contexts_to_workspace
 
@@ -651,4 +651,4 @@ async def list_invitable_friends(
         for f in all_friends
         if str(f["id"]) not in existing_member_ids
     ]
-    return invitable
+    return invitable  # noqa: RET504

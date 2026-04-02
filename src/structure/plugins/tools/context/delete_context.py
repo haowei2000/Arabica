@@ -35,8 +35,9 @@ class DeleteContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from structure.services.context.client import context_service_client
         from uuid import UUID
+
+        from structure.services.context.client import context_service_client
 
         try:
             if not input_data.confirm:

@@ -81,9 +81,9 @@ async def _get_client(client_config: str | dict) -> Any:
             await asyncio.wait_for(client.__aenter__(), timeout=10.0)
             _client_cache[key] = client
             logger.debug("MCP client connected for '%s'", key)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("MCP client connection timed out for '%s'", key)
-            raise ConnectionError(f"MCP server connection timed out: {key}")
+            raise ConnectionError(f"MCP server connection timed out: {key}")  # noqa: B904
 
     return client
 

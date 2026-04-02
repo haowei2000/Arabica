@@ -35,7 +35,6 @@ from structure.extensions.database import get_session
 from structure.services.events.event_publisher import REDIS_EXECUTOR_LABEL
 from structure.services.events.event_worker import Worker
 from structure.services.executor.runtime import ExecutorInstanceManager
-
 from structure.services.workspaces.workspace_crud import WorkspaceCRUD
 
 logger = logging.getLogger(__name__)
@@ -90,12 +89,12 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
 
         # Single shared runtime so all workers can find executors created by any peer
         shared_runtime = ExecutorInstanceManager()
-        
+
         # Get all active workspace IDs
         async with get_session("structure") as db:
             workspace_crud = WorkspaceCRUD(db)
             workspace_ids = await workspace_crud.get_all_active_ids()
-        
+
         logger.info(f"📋 Found {len(workspace_ids)} active workspace(s)")
 
         # Create worker tasks for each workspace
@@ -216,7 +215,7 @@ def main(workers: int, name: str, verbose: bool) -> None:
         raise click.BadParameter("Number of workers should not exceed 32")
 
     # Setup signal handlers
-    def signal_handler(signum, frame):
+    def signal_handler(signum, frame):  # noqa: ARG001
         logger.info(f"Received signal {signum}, initiating shutdown...")
         sys.exit(0)
 

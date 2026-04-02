@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from structure.models.runs.artifact import Artifact
     from structure.models.runs.run import Run
     from structure.models.runs.task import Task
+    from structure.models.workspaces.workspace_member import WorkspaceMember
 
 Base = get_base("structure")
 

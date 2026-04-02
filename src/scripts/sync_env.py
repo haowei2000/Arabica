@@ -15,9 +15,9 @@ def parse_env_file_with_comments(filepath):
     """
     keys = set()
     key_value = {}
-    if not os.path.exists(filepath):
+    if not os.path.exists(filepath):  # noqa: PTH110
         return keys, key_value
-    with open(filepath, encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:  # noqa: PTH123
         for line in f:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -35,9 +35,9 @@ def parse_env_file_with_comments(filepath):
 def extract_all_key_defaults(filepath):
     """从 .env.example 提取所有 KEY -> 默认值 的映射（包括空值）"""
     defaults = {}
-    if not os.path.exists(filepath):
+    if not os.path.exists(filepath):  # noqa: PTH110
         return defaults
-    with open(filepath, encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:  # noqa: PTH123
         for line in f:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -54,7 +54,7 @@ def get_missing_keys(env_example_path, existing_keys):
     """找出缺失的键（按 .env.example 出现顺序）"""
     missing_keys = []
     seen = set()
-    with open(env_example_path, encoding="utf-8") as f:
+    with open(env_example_path, encoding="utf-8") as f:  # noqa: PTH123
         for line in f:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -106,9 +106,9 @@ def write_new_entries(env_path, new_entries):
         return
 
     # 写入 .env
-    mode = "a" if os.path.exists(env_path) else "w"
-    with open(env_path, mode, encoding="utf-8") as f:
-        if mode == "a" and os.path.getsize(env_path) > 0:
+    mode = "a" if os.path.exists(env_path) else "w"  # noqa: PTH110
+    with open(env_path, mode, encoding="utf-8") as f:  # noqa: PTH123
+        if mode == "a" and os.path.getsize(env_path) > 0:  # noqa: PTH202
             f.write("\n")  # 确保换行分隔
         f.writelines(new_entries)
 
@@ -131,7 +131,7 @@ def main():
     else:
         env_path = PROJECT_ROOT / "src" / ".env"
 
-    if not os.path.exists(env_example_path):
+    if not os.path.exists(env_example_path):  # noqa: PTH110
         print(f"❌ 错误：{env_example_path} 文件不存在！")
         return
 

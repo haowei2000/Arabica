@@ -14,14 +14,14 @@ import re
 from uuid import UUID
 
 from structure.celery_worker.celery_app import celery_app
-from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.context_sync._base import (
     _fetch_embedding_service,
     _store_embedding,
     _upsert_context_at_path,
 )
-from structure.services.context.context_embedding import embed_batch_for_context
+from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.core.enums import ContextType
+from structure.services.context.context_embedding import embed_batch_for_context
 from structure.utils.context import build_path
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,9 @@ def sync_document_to_contexts(
         doc_root = ("knowledge", knowledge_name, "documents", original_name)
 
         if _is_markdown(mime_type, original_name) and _has_headings(text_content):
-            from structure.plugins.structurers.markdown_structure import MarkdownStructurer
+            from structure.plugins.structurers.markdown_structure import (
+                MarkdownStructurer,
+            )
             sections = MarkdownStructurer().structure(text_content, mime_type)
             # Only keep heading-derived sections (title non-empty).
             # _has_headings() already guards this branch, but filter defensively.
@@ -188,7 +190,7 @@ def sync_document_to_contexts(
             texts = [txt for _, txt in to_embed]
             vectors, field = embed_batch_for_context(texts, emb_svc)
             async with get_session("structure") as session:
-                for (ctx_id, _), vector in zip(to_embed, vectors):
+                for (ctx_id, _), vector in zip(to_embed, vectors):  # noqa: B905
                     await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(
@@ -210,6 +212,7 @@ def sync_document_to_contexts(
 
         async def _mark_failed():
             from sqlalchemy import update
+
             from structure.extensions.database import get_session
             from structure.models.context.knowledge.documents import Document
 

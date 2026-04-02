@@ -16,7 +16,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # 加载环境变量 - CRITICAL: Must be before importing any structure modules!
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
 env_file = project_root / "src" / ".env"
 print(f"🔧 Loading environment from: {env_file}")
@@ -27,11 +27,14 @@ else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
     print("   Worker may fail if environment variables are not set!")
 
-from structure.celery_worker.task_worker import start_worker
+from structure.celery_worker.task_worker import start_worker  # noqa: E402
 
-from structure.extensions.database import get_session
-from structure.middleware.cache_middleware import get_redis_client, init_redis_client
-from structure.registries.core import ExecutorRegistry
+from structure.extensions.database import get_session  # noqa: E402
+from structure.middleware.cache_middleware import (  # noqa: E402
+    get_redis_client,
+    init_redis_client,
+)
+from structure.registries.core import ExecutorRegistry  # noqa: E402
 
 # 确保日志目录存在
 log_dir = project_root / "logs"

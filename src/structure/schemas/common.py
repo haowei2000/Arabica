@@ -6,7 +6,7 @@ from pydantic import BaseModel
 T = TypeVar("T")
 
 
-class SuccessResponse(BaseModel, Generic[T]):
+class SuccessResponse(BaseModel, Generic[T]):  # noqa: UP046
     """
     成功响应模型
 
@@ -37,7 +37,7 @@ class ErrorResponse(BaseModel):
 
 
 # 快捷函数
-def success(data: T, message: str = "success") -> SuccessResponse[T]:
+def success(data: T, message: str = "success") -> SuccessResponse[T]:  # noqa: UP047
     """
     创建成功响应的快捷函数
 

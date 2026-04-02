@@ -4,13 +4,13 @@ import logging
 from uuid import UUID
 
 from structure.celery_worker.celery_app import celery_app
-from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.context_sync._base import (
     _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
     _upsert_context,
 )
+from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.core.enums import ContextType
 from structure.utils.context import slugify as _slugify
 

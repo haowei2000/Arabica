@@ -10,7 +10,7 @@ class MemoryStructurer(BaseStructurer):
     name = "Memory"
     description = "Single-level memory structurer: renders a Context entry with metadata"
 
-    def structure(self, input: Context) -> list[ContextCore]:  # noqa: A002
+    def structure(self, input: Context) -> list[ContextCore]:
         ctx = input
 
         # Derive glance: use stored glance, or truncate content

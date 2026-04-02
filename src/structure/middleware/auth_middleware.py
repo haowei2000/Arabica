@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class AuthMiddleware(BaseHTTPMiddleware):
     """Middleware for authenticating requests using JWT tokens."""
 
-    def __init__(self, app, exclude_paths: list = None, exclude_prefixes: list = None):
+    def __init__(self, app, exclude_paths: list = None, exclude_prefixes: list = None):  # noqa: RUF013
         """
         Initialize the AuthMiddleware.
 
@@ -97,4 +97,4 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Continue with the request
         response = await call_next(request)
-        return response
+        return response  # noqa: RET504

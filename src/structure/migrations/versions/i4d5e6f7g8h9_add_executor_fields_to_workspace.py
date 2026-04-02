@@ -16,14 +16,14 @@ Create Date: 2026-03-02
 from collections.abc import Sequence
 from typing import Union
 
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "i4d5e6f7g8h9"
-down_revision: Union[str, Sequence[str], None] = "d1e2f3a4b5c6"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "d1e2f3a4b5c6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

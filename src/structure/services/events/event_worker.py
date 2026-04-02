@@ -21,8 +21,8 @@ DB session / EventPublisher / RunStateMachine。这样多个 run 的 LLM 调用
 
 import asyncio
 import contextlib
-import logging
 from dataclasses import dataclass
+import logging
 from uuid import UUID
 
 import redis.asyncio as redis_async
@@ -40,13 +40,6 @@ from structure.models.workspaces.workspace import Workspace
 from structure.registries.core import ExecutorRegistry
 from structure.registries.dynamic_loader import DynamicToolLoader
 from structure.registries.tool_service import RegistryToolCaller, RegistryToolProvider
-from structure.services.events.event_publisher import EventPublisher, REDIS_STREAM_EVENTS_SUFFIX
-from structure.services.events.handlers import (
-    handle_artifact_event,
-    handle_run_cancellation,
-    handle_task_event,
-    handle_tool_call,
-)
 from structure.services.events.event_codec import (
     RE_CODE_ARTIFACT,
     RE_CODE_FORWARD,
@@ -59,10 +52,20 @@ from structure.services.events.event_codec import (
     encode,
     encode_sequence,
 )
-from structure.services.triggers.trigger_processor import process_event_triggers
+from structure.services.events.event_publisher import (
+    REDIS_STREAM_EVENTS_SUFFIX,
+    EventPublisher,
+)
+from structure.services.events.handlers import (
+    handle_artifact_event,
+    handle_run_cancellation,
+    handle_task_event,
+    handle_tool_call,
+)
 from structure.services.executor.runtime import ExecutorInstanceManager
 from structure.services.runs.run_state_machine import RunStateMachine
 from structure.services.runs.stuck_run_detector import StuckRunDetector
+from structure.services.triggers.trigger_processor import process_event_triggers
 from structure.utils.workspace_context_cache import set_shared_redis_client
 
 logger = logging.getLogger(__name__)
@@ -116,6 +119,7 @@ class Worker:
         self._executor_locks: dict[UUID, asyncio.Lock] = {}
 
         self._stuck_detector_task: asyncio.Task | None = None
+        self._tasks: set[asyncio.Task] = set()
 
         # ── Startup-initialized tool services (stateless / reusable) ──
         self._tool_caller = RegistryToolCaller()
@@ -289,10 +293,12 @@ class Worker:
                 for event_id, event_data in event_queue:
                     # Each event gets its own task + DB session so that long-running
                     # LLM calls for one run don't block event processing for others.
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         self._dispatch(stream_name, event_id, event_data),
                         name=f"event-{self.consumer_name}-{event_id}",
                     )
+                    self._tasks.add(task)
+                    task.add_done_callback(self._tasks.discard)
 
             except asyncio.CancelledError:
                 if self._stuck_detector_task:
@@ -497,7 +503,9 @@ class Worker:
             # the executor hits the cache instead of opening a separate DB
             # session and doing a cold DB load on the first run.
             try:
-                from structure.utils.workspace_context_cache import get_cached_workspace_context
+                from structure.utils.workspace_context_cache import (
+                    get_cached_workspace_context,
+                )
                 await get_cached_workspace_context(ctx.db, workspace_id)
             except Exception as ctx_err:
                 logger.debug(f"Workspace context pre-warm failed (non-critical): {ctx_err}")
@@ -574,7 +582,7 @@ class Worker:
 
             # Filter events for the current run to decide on routing
             run_events = [e for e in workspace_events if str(e.run_id) == str(run_id)]
-            
+
             # Derive seq from pre-loaded events (no Redis call).
             seq = encode_sequence((str(e.event_type),) for e in run_events)
             logger.debug("handle_event: run=%s seq=%r", run_id, seq)

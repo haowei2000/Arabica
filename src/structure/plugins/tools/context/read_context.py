@@ -26,8 +26,9 @@ class ReadContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from structure.services.context.client import context_service_client
         from uuid import UUID
+
+        from structure.services.context.client import context_service_client
 
         try:
             workspace_id = UUID(input_data.workspace_id)

@@ -146,8 +146,8 @@ class CacheMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
-        exclude_paths: list = None,
-        include_paths: list = None,
+        exclude_paths: list = None,  # noqa: RUF013
+        include_paths: list = None,  # noqa: RUF013
         cache_expiry: int = 30,
     ):
         super().__init__(app)
@@ -292,7 +292,7 @@ def cache_route(expire: int = 300):
                         # Reconstruct the original object if needed
                         if "pydantic_model" in cached_data and "data" in cached_data:
                             # This is a Pydantic model that was cached
-                            model_class = cached_data["pydantic_model"]
+                            model_class = cached_data["pydantic_model"]  # noqa: F841
                             # For simplicity, we'll just return the raw data
                             # In a more sophisticated implementation, we'd reconstruct the model
                             return cached_data["data"]

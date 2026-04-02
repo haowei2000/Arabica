@@ -18,7 +18,9 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from structure.routers.auth.friends import router as friends_router
 
     # User management
-    from structure.routers.auth.users.user_examples import router as user_examples_router
+    from structure.routers.auth.users.user_examples import (
+        router as user_examples_router,
+    )
     from structure.routers.auth.users.user_management import (
         router as user_management_router,
     )
@@ -26,17 +28,17 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from structure.routers.context.document import router as document_router
     from structure.routers.context.knowledge import router as knowledge_router
     from structure.routers.context.skills import router as skills_router
+    from structure.routers.context.tools.bundles import router as tool_bundles_router
 
     # Unified tool management (inner + external tools + templates)
     from structure.routers.context.tools.tools import router as tools_router
-    from structure.routers.context.tools.bundles import router as tool_bundles_router
-    from structure.routers.llm.chat_models import router as chat_models_router
-    from structure.routers.llm.embedding_models import router as embedding_models_router
 
     # Event and run routers
     from structure.routers.events.event_crud import router as event_crud_router
     from structure.routers.executor.app import router as agents_router
     from structure.routers.flush_redis import router as flush_redis_router
+    from structure.routers.llm.chat_models import router as chat_models_router
+    from structure.routers.llm.embedding_models import router as embedding_models_router
     from structure.routers.runs.artifacts import router as artifacts_router
     from structure.routers.runs.runs import (
         router as runs_router,

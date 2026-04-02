@@ -1,7 +1,8 @@
-import httpx
 import logging
 from typing import Any, Optional
 from uuid import UUID
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 class ContextServiceClient:
     """Client for the separate Context Service."""
 
-    def __init__(self, base_url: Optional[str] = None):
+    def __init__(self, base_url: str | None = None):
         if base_url:
             self.base_url = base_url
         else:
@@ -41,7 +42,7 @@ class ContextServiceClient:
             response.raise_for_status()
             return response.json()
 
-    async def get_context(self, workspace_id: UUID, path: str) -> Optional[dict[str, Any]]:
+    async def get_context(self, workspace_id: UUID, path: str) -> dict[str, Any] | None:
         """Retrieve a context entry."""
         async with httpx.AsyncClient() as client:
             try:

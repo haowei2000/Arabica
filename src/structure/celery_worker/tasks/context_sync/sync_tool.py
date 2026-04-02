@@ -4,18 +4,18 @@ import json
 import logging
 
 from structure.celery_worker.celery_app import celery_app
+from structure.celery_worker.tasks.context_sync._base import (
+    _fetch_embedding_service,
+    _generate_embedding,
+    _store_embedding,
+    _upsert_context,
+)
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.workspace_context_sync import (
     _get_user_workspace_ids,
     _invalidate_workspace_caches,
     _sync_path_to_workspaces,
     _update_workspace_contexts,
-)
-from structure.celery_worker.tasks.context_sync._base import (
-    _fetch_embedding_service,
-    _generate_embedding,
-    _store_embedding,
-    _upsert_context,
 )
 from structure.core.enums import ContextType
 from structure.utils.context import slugify as _slugify
@@ -70,7 +70,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
                 glance=glance,
                 content=schema_str,
                 path=f"/tools/{_slugify(tool_name)}",
-                tags=["tool"] + tool_tags,
+                tags=["tool"] + tool_tags,  # noqa: RUF005
                 meta={"tool_id": tool_id, "tool_code": tool_name},
             )
 
@@ -98,7 +98,7 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             glance=glance,
             overview=tool_description,
             detail=schema_str,
-            tags=["tool"] + tool_tags,
+            tags=["tool"] + tool_tags,  # noqa: RUF005
             meta={"tool_id": tool_id, "tool_code": tool_name},
             created_by=user_id,
         )
@@ -142,8 +142,9 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
     fans out across all users and workspaces.
     """
     async def _execute():
-        from sqlalchemy import select
         from uuid import UUID
+
+        from sqlalchemy import select
 
         from structure.core.enums.workspaces import WorkspaceStatus
         from structure.extensions.database import get_session
@@ -198,7 +199,7 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
             glance=glance,
             overview=tool.description,
             detail=schema_str,
-            tags=["tool"] + tool_tags,
+            tags=["tool"] + tool_tags,  # noqa: RUF005
             meta={"tool_id": tool_id, "tool_code": tool_name},
             created_by=None,
         )
@@ -308,7 +309,7 @@ def resync_all_tools_to_contexts(self):
                         glance=glance,
                         overview=tool.description,
                         detail=schema_str,
-                        tags=["tool"] + tool_tags,
+                        tags=["tool"] + tool_tags,  # noqa: RUF005
                         meta={"tool_id": tool_id, "tool_code": tool_name},
                         created_by=None,
                     )

@@ -12,7 +12,7 @@ class ToolStructurer(BaseStructurer):
     name = "Tool"
     description = "Multi-level tool structurer: overview → schema detail"
 
-    def structure(self, input: Tool) -> list[ContextCore]:  # noqa: A002
+    def structure(self, input: Tool) -> list[ContextCore]:
         tool = input
         results: list[ContextCore] = []
 

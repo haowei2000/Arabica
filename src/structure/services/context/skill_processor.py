@@ -116,7 +116,7 @@ class SkillProcessor:
         # Add code block count
         code_count = len(parsed_data["code_blocks"])
         if code_count > 0:
-            languages = set(block["language"] for block in parsed_data["code_blocks"])
+            languages = set(block["language"] for block in parsed_data["code_blocks"])  # noqa: C401
             summary_parts.append(f"\nCode blocks: {code_count} ({', '.join(languages)})")
 
         return "\n".join(summary_parts)
@@ -124,8 +124,8 @@ class SkillProcessor:
     async def process_skill(
         self,
         skill_id: str | UUID,
-        embedding_model: str | None = None,
-        auto_commit: bool = True,
+        embedding_model: str | None = None,  # noqa: ARG002
+        auto_commit: bool = True,  # noqa: ARG002
     ) -> Skill | None:
         """
         Process a skill: parse Markdown, generate summary, and create embeddings.

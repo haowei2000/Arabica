@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import (
+    JSONB,
+    UUID as PGUUID,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from structure.core.enums.runs import ArtifactType

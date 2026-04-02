@@ -30,7 +30,7 @@ from typing import Generic, TypeVar
 T = TypeVar("T")
 
 
-class Stage(ABC, Generic[T]):
+class Stage(ABC, Generic[T]):  # noqa: UP046
     """A single processing step in a Pipeline.
 
     Implement :meth:`process` to read and write fields on *ctx*, then return
@@ -43,7 +43,7 @@ class Stage(ABC, Generic[T]):
         """Transform *ctx* and return it."""
 
 
-class Pipeline(Generic[T]):
+class Pipeline(Generic[T]):  # noqa: UP046
     """Ordered chain of :class:`Stage` instances.
 
     All stages are always executed.  A stage that encounters an error should

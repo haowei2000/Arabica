@@ -80,7 +80,7 @@ def _fix_python_literals(s: str) -> str:
     s = re.sub(r"\bTrue\b", "true", s)
     s = re.sub(r"\bFalse\b", "false", s)
     s = re.sub(r"\bNone\b", "null", s)
-    return s
+    return s  # noqa: RET504
 
 
 def _fix_control_chars_in_strings(s: str) -> str:

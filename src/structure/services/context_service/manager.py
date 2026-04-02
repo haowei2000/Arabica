@@ -1,10 +1,10 @@
+from datetime import datetime
 import json
 import logging
 import os
+from pathlib import Path
 import shutil
 import subprocess
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -44,7 +44,7 @@ class ContextManager:
         """Run the Linux 'file' command and return the output."""
         try:
             result = subprocess.run(
-                ["file"] + args + [str(file_path)],
+                ["file"] + args + [str(file_path)],  # noqa: RUF005
                 capture_output=True,
                 text=True,
                 check=True,
@@ -153,7 +153,7 @@ class ContextManager:
 
         results = []
         pattern = "**/.metadata.json" if recursive else "*/.metadata.json"
-        
+
         # If prefix is a direct context, add it too
         direct_meta = search_root / ".metadata.json"
         if direct_meta.exists():

@@ -65,7 +65,7 @@ async def register_user(
     # Create user
     user = await auth_service.create_user(user_data, default_tenant.id)
 
-    return user
+    return user  # noqa: RET504
 
 
 @router.post(
@@ -103,7 +103,7 @@ async def register_user_by_email(
     user = await auth_service.create_user_by_email(
         register_data.email, register_data.password, default_tenant.id
     )
-    return user
+    return user  # noqa: RET504
 
 
 @router.post("/login", response_model=Token)
@@ -181,8 +181,8 @@ async def get_me(current_user: Annotated[UserResponse, Depends(get_current_user)
 # @router.post("/register_tenant")
 # async def register_tenant(
 #         tenant_name: str,
-#         auth_service: AuthService = Depends(get_auth_service),
-#         current_user: UserResponse = Depends(get_current_user)
+#         auth_service: AuthService = Depends(get_auth_service),  # noqa: ERA001
+#         current_user: UserResponse = Depends(get_current_user)  # noqa: ERA001
 # ):
 #     """
 #     Register a new tenant for the current user.
@@ -195,4 +195,4 @@ async def get_me(current_user: Annotated[UserResponse, Depends(get_current_user)
 #     Returns:
 #         Created tenant information
 #     """
-#     return await auth_service.create_tenant(tenant_name, current_user.id)
+#     return await auth_service.create_tenant(tenant_name, current_user.id)  # noqa: ERA001

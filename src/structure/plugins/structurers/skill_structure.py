@@ -13,7 +13,7 @@ class SkillStructurer(BaseStructurer):
     name = "Skill"
     description = "Multi-level skill structurer: overview → per-file outline → per-section chunks"
 
-    def structure(self, input: Skill) -> list[ContextCore]:  # noqa: A002
+    def structure(self, input: Skill) -> list[ContextCore]:
         skill = input
         results: list[ContextCore] = []
 

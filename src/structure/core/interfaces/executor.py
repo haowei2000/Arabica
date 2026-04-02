@@ -124,7 +124,7 @@ class Executor(ABC, ExecutorProtocol):
     # override the events they care about.
 
     async def process_event(
-        self, event: Event
+        self, event: Event  # noqa: ARG002
     ) -> AsyncGenerator[Event, None]:  # ty:ignore[invalid-method-override]
         """Dispatch an incoming event to the appropriate handler.
 

@@ -16,7 +16,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # 加载环境变量 - CRITICAL: Must be before importing any structure modules!
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
 env_file = project_root / "src" / ".env"
 print(f"Loading environment from: {env_file}")
@@ -26,7 +26,7 @@ if env_file.exists():
 else:
     print(f"⚠️  Warning: .env file not found at {env_file}")
 
-from structure.registries.core import ExecutorRegistry
+from structure.registries.core import ExecutorRegistry  # noqa: E402
 
 # 配置日志
 logging.basicConfig(

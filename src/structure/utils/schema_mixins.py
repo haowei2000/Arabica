@@ -63,7 +63,7 @@ class UUIDConversionMixin(BaseModel):
         """
         if hasattr(data, "__dict__"):
             result = {}
-            for field_name in cls.model_fields.keys():
+            for field_name in cls.model_fields.keys():  # noqa: SIM118
                 value = getattr(data, field_name, None)
                 if isinstance(value, UUID):
                     result[field_name] = str(value)
@@ -116,7 +116,7 @@ class EnumStringMixin(BaseModel):
         """
         if hasattr(data, "__dict__"):
             result = {}
-            for field_name in cls.model_fields.keys():
+            for field_name in cls.model_fields.keys():  # noqa: SIM118
                 value = getattr(data, field_name, None)
                 if isinstance(value, Enum):
                     result[field_name] = value.value

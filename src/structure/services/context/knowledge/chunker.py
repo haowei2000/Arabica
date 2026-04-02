@@ -98,7 +98,7 @@ class TextChunker:
         Returns:
             list[str]: List of text segments.
         """
-        if separator:
+        if separator:  # noqa: SIM108
             segments = text.split(separator)
         else:
             segments = [text]

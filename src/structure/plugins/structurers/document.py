@@ -34,37 +34,37 @@ _PATTERNS: list[tuple[re.Pattern, object, object]] = [
 
     # 2. Numbered 3-level  1.2.3  or  1.2.3.
     (re.compile(r'^\d+\.\d+\.\d+\.?\s+(.{1,100})$'),
-     lambda m: 3,
+     lambda m: 3,  # noqa: ARG005
      lambda m: m.group(1).strip()),
 
     # 3. Numbered 2-level  1.2  or  1.2.
     (re.compile(r'^\d+\.\d+\.?\s+(.{1,100})$'),
-     lambda m: 2,
+     lambda m: 2,  # noqa: ARG005
      lambda m: m.group(1).strip()),
 
     # 4. Numbered 1-level  1.  (keep line short to avoid matching sentences)
     (re.compile(r'^\d+\.\s+(.{1,80})$'),
-     lambda m: 1,
+     lambda m: 1,  # noqa: ARG005
      lambda m: m.group(1).strip()),
 
     # 5. Chinese chapter/section  第X章 Title  第X节  第X篇  第X部  第X编
     (re.compile(rf'^(第[{_ZH_NUM}\d]+[章节篇部编])\s*(.{{0,80}})$'),
-     lambda m: 1,
+     lambda m: 1,  # noqa: ARG005
      lambda m: (m.group(1) + (" " + m.group(2).strip() if m.group(2).strip() else "")).strip()),
 
     # 6. Chinese ordinal  一、 Title  二、 Title
     (re.compile(rf'^([{_ZH_NUM}]+[、．.。])\s*(.{{1,80}})$'),
-     lambda m: 2,
+     lambda m: 2,  # noqa: ARG005
      lambda m: (m.group(1) + " " + m.group(2).strip()).strip()),
 
     # 7. Chinese parenthesised  （一）Title  (1)Title
     (re.compile(rf'^([（(][{_ZH_NUM}\d]+[）)])\s*(.{{1,80}})$'),
-     lambda m: 3,
+     lambda m: 3,  # noqa: ARG005
      lambda m: (m.group(1) + " " + m.group(2).strip()).strip()),
 
     # 8. Circled numbers  ① Title … ⑳ Title
     (re.compile(rf'^([{_CIRCLE_NUMS}])\s*(.{{1,80}})$'),
-     lambda m: 4,
+     lambda m: 4,  # noqa: ARG005
      lambda m: (m.group(1) + " " + m.group(2).strip()).strip()),
 ]
 
@@ -126,7 +126,7 @@ class DocumentStructurer(BaseStructurer):
     name = "document"
     description = "Multi-level document structuring (Markdown, numbered, Chinese, setext)"
 
-    def structure(self, text: str, mime_type: str) -> list[dict]:
+    def structure(self, text: str, mime_type: str) -> list[dict]:  # noqa: ARG002
         lines = text.splitlines()
         sections: list[dict] = []
 

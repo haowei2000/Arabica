@@ -36,7 +36,7 @@ class RegistryManager:
     """
 
     _instance: RegistryManager | None = None
-    _registries: dict[type[BaseRegistry], BaseRegistry] = {}
+    _registries: dict[type[BaseRegistry], BaseRegistry] = {}  # noqa: RUF012
 
     def __new__(cls):
         """Implement singleton pattern."""
@@ -164,14 +164,14 @@ class RegistryManager:
         """String representation."""
         return (
             f"RegistryManager(registries={len(self._registries)}, "
-            f"types={[cls.__name__ for cls in self._registries.keys()]})"
+            f"types={[cls.__name__ for cls in self._registries.keys()]})"  # noqa: SIM118
         )
 
 
 # ==================== Convenience Functions ====================
 
 
-def get_registry(registry_cls: type[T]) -> T:
+def get_registry(registry_cls: type[T]) -> T:  # noqa: UP047
     """
     Convenience function to get registry instance.
 

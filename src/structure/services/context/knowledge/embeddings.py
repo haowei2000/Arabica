@@ -121,7 +121,7 @@ class EmbeddingService:
         )
         # Normalize whitespace
         text = " ".join(text.split())
-        return text
+        return text  # noqa: RET504
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts.
@@ -197,9 +197,9 @@ class EmbeddingService:
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
 
-            # url = f"{base_url.rstrip('/')}/embeddings"
+            # url = f"{base_url.rstrip('/')}/embeddings"  # noqa: ERA001
             url = base_url
-            headers = {
+            headers = {  # noqa: F841
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
@@ -207,7 +207,7 @@ class EmbeddingService:
                 "model": self.model,
                 "input": batch,
                 "dimensions": self.dimension,
-                # "encoding_format": "float",
+                # "encoding_format": "float",  # noqa: ERA001
             }
 
             logger.debug(f"DashScope API request: url={url}, texts_count={len(batch)}")

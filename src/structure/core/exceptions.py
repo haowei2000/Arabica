@@ -33,7 +33,7 @@ async def validation_exception_handler(
 
 
 async def sqlalchemy_exception_handler(
-    request: Request, exc: SQLAlchemyError
+    request: Request, exc: SQLAlchemyError  # noqa: ARG001
 ) -> JSONResponse:
     """Handle SQLAlchemy database errors."""
     from structure.config.factory import get_settings
@@ -51,7 +51,7 @@ async def sqlalchemy_exception_handler(
 
 
 async def response_validation_exception_handler(
-    request: Request, exc: ResponseValidationError
+    request: Request, exc: ResponseValidationError  # noqa: ARG001
 ) -> JSONResponse:
     """Handle response validation errors."""
     from structure.config.factory import get_settings
@@ -68,7 +68,7 @@ async def response_validation_exception_handler(
     )
 
 
-async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:  # noqa: ARG001
     """Handle ValueError exceptions."""
     from structure.config.factory import get_settings
 
@@ -84,7 +84,7 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
     )
 
 
-async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:  # noqa: ARG001
     """Handle all uncaught exceptions."""
     from structure.config.factory import get_settings
 

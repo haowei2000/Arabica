@@ -67,7 +67,7 @@ async def create_user(
     # Create user
     user = await user_crud.create_user(user_data, default_tenant.id)
 
-    return user
+    return user  # noqa: RET504
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -117,7 +117,7 @@ async def list_users(
     limit: int = Query(
         100, ge=1, le=1000, description="Maximum number of records to return"
     ),
-    tenant_id: UUID | None = Query(None, description="Filter by tenant ID"),
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID"),  # noqa: B008
     is_active: bool | None = Query(None, description="Filter by active status"),
 ):
     """
@@ -144,7 +144,7 @@ async def list_users(
             detail="Only admin users can list all users",
         )
 
-    users, total = await user_crud.list_users(
+    users, total = await user_crud.list_users(  # noqa: RUF059
         skip=skip, limit=limit, tenant_id=tenant_id, is_active=is_active
     )
 
@@ -208,7 +208,7 @@ async def update_user(
         is_superuser=is_superuser,
     )
 
-    return updated_user
+    return updated_user  # noqa: RET504
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

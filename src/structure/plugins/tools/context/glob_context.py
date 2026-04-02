@@ -57,6 +57,7 @@ class GlobContextTool(InnerTool):
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
+
         from structure.services.context.client import context_service_client
 
         try:
@@ -74,7 +75,7 @@ class GlobContextTool(InnerTool):
                 prefix=sql_prefix,
                 recursive=True
             )
-            
+
             contexts = result_data.get("items", [])
 
             # Apply glob filter in Python
@@ -83,7 +84,7 @@ class GlobContextTool(InnerTool):
             # Apply tag filter
             if input_data.tags:
                 matched = [
-                    ctx for ctx in matched 
+                    ctx for ctx in matched
                     if ctx.get("tags") and all(tag in ctx.get("tags", []) for tag in input_data.tags)
                 ]
 
@@ -93,7 +94,7 @@ class GlobContextTool(InnerTool):
                 path = ctx.get("path")
                 name = ctx.get("name") or (path.rsplit("/", 1)[-1] if path else "unnamed")
                 res = {"path": path, "name": name}
-                
+
                 if ctx.get("glance"):
                     res["glance"] = ctx["glance"]
                 elif ctx.get("summary"):

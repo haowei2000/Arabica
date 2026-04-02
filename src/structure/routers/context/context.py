@@ -50,7 +50,9 @@ async def create_context(
     """
     context = await crud.create(data, user_id=current_user.id)
     if data.context_type == "user_memory":
-        from structure.celery_worker.tasks.context_sync_tasks import sync_memory_to_contexts
+        from structure.celery_worker.tasks.context_sync_tasks import (
+            sync_memory_to_contexts,
+        )
         sync_memory_to_contexts.delay(str(context.id), str(current_user.id))
     return context
 
@@ -59,7 +61,7 @@ async def create_context(
 async def get_contexts_by_ids(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: Annotated[ContextCRUD, Depends(get_context_crud)],
-    ids: list[str] = Query(..., description="List of context IDs"),
+    ids: list[str] = Query(..., description="List of context IDs"),  # noqa: B008
 ):
     """
     Get multiple contexts by IDs.
@@ -73,7 +75,7 @@ async def get_contexts_by_ids(
         List of contexts
     """
     contexts = await crud.get_by_ids(ids, user_id=current_user.id)
-    return contexts
+    return contexts  # noqa: RET504
 
 
 @router.post("/{context_id}/update", response_model=ContextResponse)
@@ -182,7 +184,7 @@ async def grep_contexts(
     q: str = Query(..., min_length=1, description="Search query string"),
     context_type: str | None = Query(None, description="Filter by context type"),
     source_id: str | None = Query(None, description="Filter by source ID"),
-    search_in: list[str] = Query(
+    search_in: list[str] = Query(  # noqa: B008
         default=["content", "summary"],
         description="Fields to search in (content, summary, keywords)",
     ),
@@ -341,7 +343,7 @@ async def vector_search(
             threshold=request.threshold,
         )
     except ValueError as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
@@ -354,7 +356,7 @@ async def vector_search(
     items = models_to_schemas(
         ContextWithScore,
         contexts,
-        extra_factory=lambda ctx, idx: {"score": scores[idx]},
+        extra_factory=lambda ctx, idx: {"score": scores[idx]},  # noqa: ARG005
     )
 
     return ContextSearchResponse(total=len(items), items=items)
@@ -365,7 +367,7 @@ async def hybrid_search(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: Annotated[ContextCRUD, Depends(get_context_crud)],
     query: str = Query(..., min_length=1, description="Text search query"),
-    embedding: list[float] = Query(..., description="Query embedding vector"),
+    embedding: list[float] = Query(..., description="Query embedding vector"),  # noqa: B008
     dimension: Literal[384, 768, 1024, 1536] = Query(
         default=1536, description="Embedding dimension"
     ),
@@ -414,7 +416,7 @@ async def hybrid_search(
             text_weight=text_weight,
         )
     except ValueError as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
@@ -427,7 +429,7 @@ async def hybrid_search(
     items = models_to_schemas(
         ContextWithScore,
         contexts,
-        extra_factory=lambda ctx, idx: {"score": scores[idx]},
+        extra_factory=lambda ctx, idx: {"score": scores[idx]},  # noqa: ARG005
     )
 
     return ContextSearchResponse(total=len(items), items=items)
@@ -458,7 +460,7 @@ async def create_contexts_batch(
         List of created contexts
     """
     contexts = await crud.create_batch(items, user_id=current_user.id)
-    return contexts
+    return contexts  # noqa: RET504
 
 
 @router.post("/batch/delete-by-source/{source_id}", status_code=status.HTTP_200_OK)

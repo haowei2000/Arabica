@@ -302,7 +302,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         return tool_class.METADATA.name
 
     def _create_instance(
-        self, key: str, tool_class: type[BaseTool], **kwargs
+        self, key: str, tool_class: type[BaseTool], **kwargs  # noqa: ARG002
     ) -> BaseTool:  # ty:ignore[invalid-method-override]
         """Create a tool instance."""
         return tool_class()
@@ -467,8 +467,12 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
         # ── Phase 4: Sync inner tool toolsets by category ─────────────
         try:
-            from structure.models.context.tools.tool_bundle import ToolBundle, ToolBundleItem
             from sqlalchemy.orm import selectinload
+
+            from structure.models.context.tools.tool_bundle import (
+                ToolBundle,
+                ToolBundleItem,
+            )
 
             inner_tools_stmt = select(ToolModel).where(
                 ToolModel.tool_type == "inner",
@@ -663,7 +667,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         inner = getattr(tool_record, "inner_tool_name", None)
         chain = getattr(tool_record, "chain", None)
 
-        if inner and not chain:
+        if inner and not chain:  # noqa: SIM102
             if inner not in registered_names:
                 return (
                     f"inner_tool_name '{inner}' is no longer registered"
@@ -690,7 +694,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
     ) -> list[str]:
         """List tool names with optional filters."""
 
-        def predicate(name: str, tool_class: type[BaseTool]) -> bool:
+        def predicate(name: str, tool_class: type[BaseTool]) -> bool:  # noqa: ARG001
             metadata = tool_class.METADATA
             if category and metadata.category != category:
                 return False
@@ -711,7 +715,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
     def get_tools_by_tag(self, tag: str) -> list[str]:
         """Query tools by tag."""
 
-        def predicate(name: str, tool_class: type[BaseTool]) -> bool:
+        def predicate(name: str, tool_class: type[BaseTool]) -> bool:  # noqa: ARG001
             return tag in tool_class.METADATA.tags
 
         filtered = self.filter(predicate)
@@ -777,7 +781,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                 if "__pycache__" in str(py_file) or py_file.name == "__init__.py":
                     continue
                 relative_path = py_file.relative_to(plugins_dir)
-                module_parts = list(relative_path.parts[:-1]) + [py_file.stem]
+                module_parts = list(relative_path.parts[:-1]) + [py_file.stem]  # noqa: RUF005
                 paths.append(f"structure.plugins.{'.'.join(module_parts)}")
         else:
             self.logger.warning("Tool plugins directory not found: %s", tools_dir)
@@ -857,13 +861,13 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         return instance._list_tools_instance(category=category, enabled_only=enabled_only)
 
     @classmethod
-    def get_tool_class(cls, tool_name: str) -> type[BaseTool] | None:  # type: ignore[misc]
+    def get_tool_class(cls, tool_name: str) -> type[BaseTool] | None:  # type: ignore[misc]  # noqa: F811
         """Get tool class by name (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
         return BaseRegistry.get(instance, tool_name)
 
     @classmethod
-    def get_tool_instance(cls, tool_name: str, **kwargs) -> BaseTool | None:  # type: ignore[misc]
+    def get_tool_instance(cls, tool_name: str, **kwargs) -> BaseTool | None:  # type: ignore[misc]  # noqa: F811
         """Get tool instance by name (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
         try:
@@ -872,7 +876,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             return None
 
     @classmethod
-    def get_tool_info(cls, tool_name: str) -> dict | None:  # type: ignore[misc]
+    def get_tool_info(cls, tool_name: str) -> dict | None:  # type: ignore[misc]  # noqa: F811
         """Get tool info by name (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
         tool_class = BaseRegistry.get(instance, tool_name)
@@ -889,7 +893,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         }
 
     @classmethod
-    def get_all_schemas(cls, format: str = "openai") -> list[dict]:  # type: ignore[misc]
+    def get_all_schemas(cls, format: str = "openai") -> list[dict]:  # type: ignore[misc]  # noqa: F811
         """Get all tool schemas (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
         schemas = []
@@ -987,7 +991,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         return executor_cls.TEMPLATE["executor_code"]
 
     def _create_instance(
-        self, key: str, executor_cls: type[Executor], **kwargs
+        self, key: str, executor_cls: type[Executor], **kwargs  # noqa: ARG002
     ) -> Executor:  # ty:ignore[invalid-method-override]
         """Create executor instance."""
         return executor_cls(**kwargs)
@@ -1144,7 +1148,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
 
             try:
                 relative_path = py_file.relative_to(plugins_dir)
-                module_parts = list(relative_path.parts[:-1]) + [py_file.stem]
+                module_parts = list(relative_path.parts[:-1]) + [py_file.stem]  # noqa: RUF005
                 module_name = f"structure.plugins.{'.'.join(module_parts)}"
 
                 module = importlib.import_module(module_name)

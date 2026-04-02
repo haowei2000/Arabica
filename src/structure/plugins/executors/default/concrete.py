@@ -553,7 +553,7 @@ class DefaultExecutor(Executor):
 
     # ── event dispatch ─────────────────────────────────────────────
 
-    async def process_event(self, event: Event) -> AsyncGenerator[Event, None]:  # type: ignore[override]
+    async def process_event(self, event: Event) -> AsyncGenerator[Event, None]:  # type: ignore[override]  # noqa: ARG002
         """Superseded by process_events; kept for ABC compatibility."""
         if False:  # pragma: no cover
             yield  # type: ignore[misc]
@@ -852,6 +852,7 @@ class DefaultExecutor(Executor):
             async with get_session("structure") as db:
                 if global_scope and self.workspace_id:
                     from uuid import UUID
+
                     from structure.core.enums import EventType as ET
                     # Only fetch conversation-relevant event types so the
                     # limit is not consumed by noise events.

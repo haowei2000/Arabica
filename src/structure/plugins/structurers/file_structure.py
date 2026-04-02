@@ -83,6 +83,6 @@ class FileStructurer(BaseStructurer):
     def __init__(self, pipeline: Pipeline[FileContext] | None = None) -> None:
         self.pipeline = pipeline or _DEFAULT_PIPELINE
 
-    def structure(self, input: FileInput) -> list[ContextCore]:  # noqa: A002
+    def structure(self, input: FileInput) -> list[ContextCore]:
         ctx = self.pipeline.run(FileContext(file_input=input))
         return ctx.chunks

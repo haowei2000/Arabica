@@ -67,7 +67,7 @@ def _parse_title_summary(raw: str) -> tuple[str, str]:
         pass
 
     # Fallback: use first line as title, rest as summary
-    lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]
+    lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]  # noqa: E741
     title = lines[0][:255] if lines else "Untitled"
     summary = " ".join(lines[1:]) if len(lines) > 1 else title
     return title, summary
@@ -149,7 +149,9 @@ def summarize_run(self, run_id: str, user_id: str) -> None:
         # ── Trigger workspace summary refresh and memory write ────────────
         summarize_workspace.delay(workspace_id, user_id)
 
-        from structure.celery_worker.tasks.context_sync.sync_run import sync_run_to_memory
+        from structure.celery_worker.tasks.context_sync.sync_run import (
+            sync_run_to_memory,
+        )
         sync_run_to_memory.delay(run_id, user_id)
 
     try:
@@ -166,7 +168,7 @@ def summarize_run(self, run_id: str, user_id: str) -> None:
     default_retry_delay=15,
     queue="default",
 )
-def summarize_workspace(self, workspace_id: str, user_id: str) -> None:
+def summarize_workspace(self, workspace_id: str, user_id: str) -> None:  # noqa: ARG001
     """Generate an updated summary for a workspace from its recent runs.
 
     Reads the last ``_WORKSPACE_RUN_WINDOW`` completed runs (those with an

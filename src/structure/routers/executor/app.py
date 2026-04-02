@@ -18,7 +18,7 @@ router = APIRouter(prefix="/apps", tags=["apps"])
 
 @router.get("/executors/list", response_model=list[ExecutorResponse])
 async def list_executors(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
     curd: Annotated[ExecutorCRUD, Depends(get_executor_crud)],
 ):
     """
@@ -75,14 +75,14 @@ async def create_app(
         updated_data = AppCreate(**data_dict)
 
         app = await app_crud.create_app(updated_data)
-        return app
+        return app  # noqa: RET504
     # Create the app without an executor, with the current user's ID
     data_dict = data.model_dump()
     data_dict["user_id"] = current_user.id  # Automatically associate with current user
     updated_data = AppCreate(**data_dict)
 
     app = await app_crud.create_app(updated_data)
-    return app
+    return app  # noqa: RET504
 
 
 @router.get("/{app_id}/get", response_model=AppResponse)
@@ -240,7 +240,7 @@ async def delete_app(
 async def query_apps(
     app_crud: Annotated[AppCRUD, Depends(get_app_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    executor_id: UUID | None = Query(None, description="Filter by executor UUID"),
+    executor_id: UUID | None = Query(None, description="Filter by executor UUID"),  # noqa: B008
     enabled: bool | None = Query(None, description="Filter by enabled status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
@@ -262,7 +262,7 @@ async def query_apps(
     skip = (page - 1) * page_size
 
     if executor_id:
-        apps, total = await app_crud.filter_apps_by_executor(
+        apps, total = await app_crud.filter_apps_by_executor(  # noqa: RUF059
             executor_id=executor_id, skip=skip, limit=page_size
         )
         # Filter apps to only show those belonging to the current user

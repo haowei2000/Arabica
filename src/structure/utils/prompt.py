@@ -15,7 +15,7 @@ from jinja2 import Environment, StrictUndefined, Template, Undefined
 class SilentUndefined(Undefined):
     """Custom undefined handler that returns empty string for missing variables."""
 
-    def _fail_with_undefined_error(self, *args, **kwargs):
+    def _fail_with_undefined_error(self, *args, **kwargs):  # noqa: ARG002
         return ""
 
     __add__ = __radd__ = __mul__ = __rmul__ = __div__ = __rdiv__ = (

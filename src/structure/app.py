@@ -38,8 +38,8 @@ app = FastAPI(
     version="1.0.0",
     debug=settings.DEBUG,
     lifespan=lifespan,
-    # docs_url="/docs" if settings.DEBUG else None,  # Disable docs in production
-    # redoc_url="/redoc" if settings.DEBUG else None,
+    # docs_url="/docs" if settings.DEBUG else None,  # Disable docs in production  # noqa: ERA001
+    # redoc_url="/redoc" if settings.DEBUG else None,  # noqa: ERA001
 )
 
 # ==================== Register Middleware ====================

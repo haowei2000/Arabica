@@ -30,7 +30,7 @@ config = context.config
 db_urls = settings.postgres.structure_sqlalchemy_bind
 if db_urls:
     # Convert async URL to sync URL for Alembic
-    async_url = list(db_urls.values())[0]
+    async_url = list(db_urls.values())[0]  # noqa: RUF015
     # Or replace with psycopg2 specifically
     db_url = async_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
 else:

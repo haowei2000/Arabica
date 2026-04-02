@@ -17,10 +17,10 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from structure.models.conversations.conversation import Conversation
-from structure.models.conversations.message import Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from structure.models.conversations.conversation import Conversation
+from structure.models.conversations.message import Message
 
 from structure.core.enums.runs import TriggerType
 from structure.models.runs.run import Run
@@ -316,7 +316,7 @@ class ConversationCompat:
     async def sync_message_to_conversation(
         self,
         workspace_id: str | UUID,
-        run_id: str | UUID,
+        run_id: str | UUID,  # noqa: ARG002
         query: str,
         answer: str,
         user_id: str | UUID,

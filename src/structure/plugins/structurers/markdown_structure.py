@@ -107,7 +107,7 @@ class MarkdownStructurer(BaseStructurer):
 
         # breadcrumb[i] holds the title of the current heading at level i+1.
         # E.g. for H3 "Install" under H2 "Setup" under H1 "Intro":
-        #   breadcrumb == ["Intro", "Setup", "Install"]
+        #   breadcrumb == ["Intro", "Setup", "Install"]  # noqa: ERA001
         breadcrumb: list[str] = []
 
         cur_level: int = 1
@@ -166,7 +166,7 @@ class MarkdownStructurer(BaseStructurer):
                 cur_level = level
                 cur_title = title
                 cur_lines = []
-                breadcrumb = breadcrumb[:level - 1] + [title]
+                breadcrumb = breadcrumb[:level - 1] + [title]  # noqa: RUF005
                 i += 2  # consume both the title line and the underline
                 continue
 
@@ -178,7 +178,7 @@ class MarkdownStructurer(BaseStructurer):
                 cur_level = level
                 cur_title = title
                 cur_lines = []
-                breadcrumb = breadcrumb[:level - 1] + [title]
+                breadcrumb = breadcrumb[:level - 1] + [title]  # noqa: RUF005
                 i += 1
                 continue
 

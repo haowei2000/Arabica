@@ -59,7 +59,7 @@ async def _sync_path_to_workspaces(
     *,
     path: str,
     glance: str,
-    overview: str | None,
+    overview: str | None,  # noqa: ARG001
     detail: str | None,
     tags: list[str],
     meta: dict,

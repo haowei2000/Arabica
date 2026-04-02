@@ -485,7 +485,7 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
     MCP service initialization configuration
     
     Needs database for tool discovery, and logging.
-    """
+    """  # noqa: W293
     return BootstrapConfig(
         init_logging=True,
         init_redis=False,

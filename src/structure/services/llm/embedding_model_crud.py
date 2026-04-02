@@ -6,7 +6,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.models.llm.embedding_model import EmbeddingModel
-from structure.schemas.llm.embedding_model import EmbeddingModelCreate, EmbeddingModelUpdate
+from structure.schemas.llm.embedding_model import (
+    EmbeddingModelCreate,
+    EmbeddingModelUpdate,
+)
 
 
 class EmbeddingModelCRUD:

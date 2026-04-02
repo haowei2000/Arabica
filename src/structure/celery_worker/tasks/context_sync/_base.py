@@ -11,6 +11,7 @@ from structure.services.context.context_embedding import (
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
     from structure.services.context.knowledge.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)

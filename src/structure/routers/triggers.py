@@ -30,7 +30,7 @@ def _workspace_uuid(workspace_id: str) -> UUID:
     try:
         return UUID(workspace_id)
     except ValueError:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid workspace_id: {workspace_id}",
         )
@@ -80,7 +80,7 @@ async def create_trigger(
 @router.get("", response_model=TriggerListResponse)
 async def list_triggers(
     workspace_id: str,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
     db: Annotated[AsyncSession, Depends(get_structure_db)],
     event_type: str | None = Query(None, description="Filter by event type"),
     enabled: bool | None = Query(None, description="Filter by enabled state"),
@@ -129,7 +129,7 @@ async def list_triggers(
 async def get_trigger(
     workspace_id: str,
     trigger_id: str,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
     db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Get a single trigger by ID.
@@ -245,7 +245,7 @@ async def test_trigger(
     workspace_id: str,
     trigger_id: str,
     data: TriggerTestRequest,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
     db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Dry-run test a trigger against a sample payload.

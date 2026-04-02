@@ -70,7 +70,7 @@ class ExecutorInstanceManager:
         
         Args:
             task_id (UUID): 任务唯一标识符
-        """
+        """  # noqa: W293
         self._instances.pop(task_id, None)
 
     def exists(self, task_id: UUID) -> bool:
@@ -81,5 +81,5 @@ class ExecutorInstanceManager:
             
         Returns:
             bool: 如果存在对应实例返回True，否则返回False
-        """
+        """  # noqa: W293
         return task_id in self._instances

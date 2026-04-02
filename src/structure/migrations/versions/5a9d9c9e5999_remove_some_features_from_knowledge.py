@@ -5,7 +5,8 @@ Revises: k6f7g8h9i0j1
 Create Date: 2026-03-25 13:32:09.330112
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -13,9 +14,9 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '5a9d9c9e5999'
-down_revision: Union[str, Sequence[str], None] = 'k6f7g8h9i0j1'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'k6f7g8h9i0j1'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

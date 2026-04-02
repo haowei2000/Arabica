@@ -377,7 +377,7 @@ class ContextCRUD:
 
         search_conditions = phrase_conds
         if token_conds:
-            search_conditions = phrase_conds + [and_(*token_conds)]
+            search_conditions = phrase_conds + [and_(*token_conds)]  # noqa: RUF005
 
         if search_conditions:
             conditions.append(or_(*search_conditions))
@@ -634,7 +634,7 @@ class ContextCRUD:
             context_id = str(context.id)
             # Text relevance score decreases by rank (1.0 to 0.1)
             text_score = max(0.1, 1.0 - (i / len(text_results))) if text_results else 0.0
-            
+
             if context_id not in scores:
                 scores[context_id] = {
                     "context": context,
@@ -657,12 +657,12 @@ class ContextCRUD:
 
         # 4. Calculate combined scores
         final_results = []
-        for context_id, data in scores.items():
-            # Formula: (Vector * W_v) + (Text * W_t) + Bonus
+        for context_id, data in scores.items():  # noqa: B007
+            # Formula: (Vector * W_v) + (Text * W_t) + Bonus  # noqa: ERA001
             # Bonus can push a score above 1.0, ensuring top ranking for exact keyword matches
             combined_score = (
-                data["vector"] * vector_weight + 
-                data["text"] * text_weight + 
+                data["vector"] * vector_weight +
+                data["text"] * text_weight +
                 data["bonus"]
             )
             final_results.append((data["context"], combined_score))

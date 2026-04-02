@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class DocumentParser:
     """Parse knowledge of various formats into plain text."""
 
-    SUPPORTED_MIME_TYPES = {
+    SUPPORTED_MIME_TYPES = {  # noqa: RUF012
         "text/plain": "txt",
         "text/markdown": "md",
         "application/pdf": "pdf",
@@ -24,7 +24,7 @@ class DocumentParser:
         "text/csv": "csv",
     }
 
-    SUPPORTED_EXTENSIONS = {
+    SUPPORTED_EXTENSIONS = {  # noqa: RUF012
         ".txt": "txt",
         ".md": "md",
         ".markdown": "md",

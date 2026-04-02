@@ -52,7 +52,9 @@ async def create_knowledge(
         Created knowledge base
     """
     knowledge = await crud.create(data, user_id=current_user.id)
-    from structure.celery_worker.tasks.context_sync_tasks import sync_knowledge_to_contexts
+    from structure.celery_worker.tasks.context_sync_tasks import (
+        sync_knowledge_to_contexts,
+    )
     sync_knowledge_to_contexts.delay(str(knowledge.id), str(current_user.id))
     return knowledge
 
@@ -146,7 +148,7 @@ async def update_knowledge(
         )
 
     knowledge = await crud.update(knowledge_id, data)
-    return knowledge
+    return knowledge  # noqa: RET504
 
 
 @router.post("/{knowledge_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
@@ -180,7 +182,9 @@ async def delete_knowledge(
 
     await crud.delete(knowledge_id)
 
-    from structure.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    from structure.celery_worker.tasks.context_sync_tasks import (
+        delete_resource_contexts,
+    )
     delete_resource_contexts.delay(knowledge_id, "knowledge", "knowledge_id")
 
 
@@ -307,9 +311,9 @@ async def hybrid_search_knowledge(
         )
         query_vector = emb_svc.embed_text(q)
     except Exception as e:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate embedding: {str(e)}",
+            detail=f"Failed to generate embedding: {e!s}",
         )
 
     # 3. Perform hybrid search
@@ -331,7 +335,7 @@ async def hybrid_search_knowledge(
     items = models_to_schemas(
         ContextWithScore,
         contexts,
-        extra_factory=lambda ctx, idx: {"score": scores[idx]},
+        extra_factory=lambda ctx, idx: {"score": scores[idx]},  # noqa: ARG005
     )
 
     return ContextSearchResponse(total=len(items), items=items)

@@ -199,7 +199,9 @@ async def delete_tool(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tool not found or you don't have permission",
         )
-    from structure.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    from structure.celery_worker.tasks.context_sync_tasks import (
+        delete_resource_contexts,
+    )
     delete_resource_contexts.delay(str(tool_id), "tool", "tool_id")
 
 
@@ -298,7 +300,7 @@ async def test_tool(
 )
 async def probe_mcp(
     body: MCPServerConfig,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
 ) -> MCPProbeResponse:
     """Connect to an MCP server and return all tools it exposes."""
     from structure.registries.mcp_loader import probe_mcp_server
@@ -326,15 +328,15 @@ async def import_from_mcp(
     db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> MCPImportResponse:
     """Probe the MCP server, then bulk-create Tool records for the requested tools."""
-    from structure.registries.mcp_loader import probe_mcp_server
     from structure.models.context.tools.tool import Tool as ToolModel
+    from structure.registries.mcp_loader import probe_mcp_server
 
     client_config = _mcp_client_config(body)
 
     try:
         raw_tools = await probe_mcp_server(client_config)
     except Exception as exc:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to connect to MCP server: {exc}",
         )
@@ -366,7 +368,10 @@ async def import_from_mcp(
 
         mcp_tool = tool_map[name]
 
-        from sqlalchemy import select as sa_select, or_
+        from sqlalchemy import (
+            or_,
+            select as sa_select,
+        )
         exists_stmt = sa_select(ToolModel.id).where(
             ToolModel.name == name,
             ToolModel.tool_type == "mcp",
@@ -411,8 +416,11 @@ async def import_from_mcp(
 
         # Dispatch context sync tasks for newly imported tools
         try:
-            from structure.celery_worker.tasks.context_sync_tasks import sync_tool_to_contexts
             from sqlalchemy import select as _sel
+
+            from structure.celery_worker.tasks.context_sync_tasks import (
+                sync_tool_to_contexts,
+            )
 
             sync_stmt = _sel(ToolModel).where(
                 ToolModel.name.in_(imported),
@@ -426,9 +434,13 @@ async def import_from_mcp(
             logger.warning("Failed to dispatch context sync tasks: %s", exc)
 
         try:
-            from structure.models.context.tools.tool_bundle import ToolBundle, ToolBundleItem
             from sqlalchemy import select as sa_select
             from sqlalchemy.orm import selectinload
+
+            from structure.models.context.tools.tool_bundle import (
+                ToolBundle,
+                ToolBundleItem,
+            )
 
             if body.transport == "sse":
                 server_id = body.url

@@ -7,7 +7,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from structure.services.workspace_context.workspace_context_service import WorkspaceContextService
+from structure.services.workspace_context.workspace_context_service import (
+    WorkspaceContextService,
+)
 
 
 async def load_workspace_contexts(
@@ -42,7 +44,7 @@ async def query_and_display(
     """
     service = await load_workspace_contexts(session, workspace_id)
     results = await service.glob(pattern)
-    
+
     print(f"\n🔍 Query: {pattern}")
     print(f"📊 Results: {len(results)} items\n")
     for item in results:

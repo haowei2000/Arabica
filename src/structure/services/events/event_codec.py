@@ -23,8 +23,8 @@ encode_sequence(rows)       iterable of (event_type,) rows → compact string
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import re
-from typing import Iterable
 
 from structure.core.enums import EventType
 

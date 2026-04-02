@@ -9,10 +9,8 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.agents import get_context_crud, get_skill_crud
-from structure.core.enums import ContextType
-from structure.services.context.context_crud import ContextCRUD
-from structure.services.context.skill_crud import SkillCRUD
 from structure.core.dependencies.auth import get_current_user
+from structure.core.enums import ContextType
 from structure.extensions.database import get_structure_db
 from structure.extensions.storage.global_storage import get_global_s3_storage
 from structure.extensions.storage.s3_storage_backend import S3StorageBackend
@@ -24,6 +22,8 @@ from structure.schemas.context.skill import (
     SkillResponse,
     SkillUpdate,
 )
+from structure.services.context.context_crud import ContextCRUD
+from structure.services.context.skill_crud import SkillCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,9 @@ async def delete_skill(
 
     await crud.delete(skill_id, user_id=current_user.id)
 
-    from structure.celery_worker.tasks.context_sync_tasks import delete_resource_contexts
+    from structure.celery_worker.tasks.context_sync_tasks import (
+        delete_resource_contexts,
+    )
     delete_resource_contexts.delay(skill_id, "skill", "skill_id")
 
 
@@ -289,7 +291,7 @@ async def get_skill_file(
         data = storage.get_bytes(s3_key)
     except Exception as e:
         logger.error(f"Failed to fetch skill file {s3_key}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch file content")
+        raise HTTPException(status_code=500, detail="Failed to fetch file content")  # noqa: B904
 
     content_type = meta.get("content_type") or "application/octet-stream"
     return Response(content=data, media_type=content_type)
@@ -304,7 +306,7 @@ async def process_skill(
     skill_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_structure_db)],
-    embedding_model: str | None = Query(None, description="Embedding model to use"),
+    embedding_model: str | None = Query(None, description="Embedding model to use"),  # noqa: ARG001
 ):
     """
     Manually trigger skill processing (parse Markdown, generate embeddings).
@@ -348,8 +350,8 @@ async def upload_skill_folder(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     crud: Annotated[SkillCRUD, Depends(get_skill_crud)],
     storage: Annotated[S3StorageBackend, Depends(get_global_s3_storage)],
-    files: list[UploadFile] = File(..., description="All files in the folder"),
-    tags: str | None = Query(None, description="Comma-separated tags"),
+    files: list[UploadFile] = File(..., description="All files in the folder"),  # noqa: B008
+    tags: str | None = Query(None, description="Comma-separated tags"),  # noqa: ARG001
 ):
     """
     Upload a skill folder.
@@ -449,7 +451,7 @@ async def upload_skill_folder(
         skill.files = files_metadata
         await crud.db.commit()
         await crud.db.refresh(skill)
-        logger.info(f"Updated skill.files with metadata")
+        logger.info("Updated skill.files with metadata")
 
     logger.info(f"Skill upload completed successfully: {skill.id}")
 

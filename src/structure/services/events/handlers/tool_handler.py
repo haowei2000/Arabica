@@ -7,9 +7,9 @@ This decouples tool execution from the executor, allowing:
 - Tool execution retries without re-running LLM
 """
 
+from collections.abc import Callable, Coroutine
 import logging
 import time
-from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import UUID
 

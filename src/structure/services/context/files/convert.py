@@ -51,7 +51,7 @@ class StructuredHTMLParser(HTMLParser):
                 )
             self.current_text = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs):  # noqa: ARG002
         self._flush_text()
 
         if tag == "table":
@@ -242,11 +242,11 @@ class ConverterService:
             from reportlab.pdfbase.ttfonts import TTFont
 
             # 注意：这里需要根据实际环境调整字体文件路径
-            # pdfmetrics.registerFont(TTFont('SourceHanSansSC', '/path/to/SourceHanSansSC.ttf'))
+            # pdfmetrics.registerFont(TTFont('SourceHanSansSC', '/path/to/SourceHanSansSC.ttf'))  # noqa: ERA001
             # 如果成功加载了思源黑体，则使用它；否则回退到原来的字体
             pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
             font_name = "STSong-Light"
-        except:
+        except:  # noqa: E722
             pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
             font_name = "STSong-Light"
 

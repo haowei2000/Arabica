@@ -40,7 +40,7 @@ celery_app.conf.update(
 
 
 @worker_process_init.connect
-def init_worker(**kwargs):
+def init_worker(**kwargs):  # noqa: ARG001
     """Worker 进程初始化时执行"""
     print("Worker process initializing...")
     try:

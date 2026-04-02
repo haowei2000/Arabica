@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
     retry_kwargs={"max_retries": 3, "countdown": 60},
     retry_backoff=True,
 )
-def send_email(self, to: str, subject: str, body: str, **kwargs) -> dict[str, Any]:
+def send_email(self, to: str, subject: str, body: str, **kwargs) -> dict[str, Any]:  # noqa: ARG001
     """
     发送邮件任务
 
@@ -49,9 +49,9 @@ def send_email(self, to: str, subject: str, body: str, **kwargs) -> dict[str, An
     logger.info(f"Task {self.request.id}: Sending email to {to}")
     try:
         # TODO: 实现实际的邮件发送逻辑
-        # from structure.services.email import EmailService
-        # email_service = EmailService()
-        # email_service.send(to=to, subject=subject, body=body, **kwargs)
+        # from structure.services.email import EmailService  # noqa: ERA001
+        # email_service = EmailService()  # noqa: ERA001
+        # email_service.send(to=to, subject=subject, body=body, **kwargs)  # noqa: ERA001
 
         logger.info(f"Task {self.request.id}: Email sent successfully to {to}")
         return {
@@ -71,7 +71,7 @@ def send_email(self, to: str, subject: str, body: str, **kwargs) -> dict[str, An
     retry_kwargs={"max_retries": 2, "countdown": 120},
 )
 def generate_report(
-    self, report_type: str, params: dict[str, Any], user_id: str | None = None
+    self, report_type: str, params: dict[str, Any], user_id: str | None = None  # noqa: ARG001
 ) -> dict[str, Any]:
     """
     生成报告任务
@@ -87,9 +87,9 @@ def generate_report(
     logger.info(f"Task {self.request.id}: Generating {report_type} report")
     try:
         # TODO: 实现实际的报告生成逻辑
-        # from structure.services.report import ReportService
-        # report_service = ReportService()
-        # result = report_service.generate(report_type, params)
+        # from structure.services.report import ReportService  # noqa: ERA001
+        # report_service = ReportService()  # noqa: ERA001
+        # result = report_service.generate(report_type, params)  # noqa: ERA001
 
         logger.info(f"Task {self.request.id}: Report generated successfully")
         return {
@@ -117,9 +117,9 @@ def cleanup_expired_data(self, days: int = 30) -> dict[str, Any]:
     logger.info(f"Task {self.request.id}: Cleaning up data older than {days} days")
     try:
         # TODO: 实现实际的清理逻辑
-        # from structure.services.cleanup import CleanupService
-        # cleanup_service = CleanupService()
-        # stats = cleanup_service.cleanup_expired(days)
+        # from structure.services.cleanup import CleanupService  # noqa: ERA001
+        # cleanup_service = CleanupService()  # noqa: ERA001
+        # stats = cleanup_service.cleanup_expired(days)  # noqa: ERA001
 
         stats = {
             "expired_tasks": 0,
@@ -139,7 +139,7 @@ def cleanup_expired_data(self, days: int = 30) -> dict[str, Any]:
 
 
 @celery_app.task(bind=True)
-def process_file(self, file_path: str, operation: str, **kwargs) -> dict[str, Any]:
+def process_file(self, file_path: str, operation: str, **kwargs) -> dict[str, Any]:  # noqa: ARG001
     """
     文件处理任务
 
@@ -168,7 +168,7 @@ def process_file(self, file_path: str, operation: str, **kwargs) -> dict[str, An
 
 
 @celery_app.task(bind=True)
-def sync_external_data(self, source: str, target: str, **kwargs) -> dict[str, Any]:
+def sync_external_data(self, source: str, target: str, **kwargs) -> dict[str, Any]:  # noqa: ARG001
     """
     外部数据同步任务
 

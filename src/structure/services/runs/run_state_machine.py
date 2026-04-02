@@ -48,7 +48,7 @@ class RunStateMachine:
     """
 
     # Valid transitions: {current_state: [allowed_target_states]}
-    VALID_TRANSITIONS = {
+    VALID_TRANSITIONS = {  # noqa: RUF012
         RunStatus.PENDING.value: [RunStatus.RUNNING.value, RunStatus.CANCELLED.value],
         RunStatus.RUNNING.value: [
             RunStatus.WAITING.value,

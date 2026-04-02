@@ -1,7 +1,7 @@
+from typing import Optional
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
-from typing import Optional
 
 from .manager import ContextManager
 from .models import ContextCreateRequest, ContextListResponse, ContextResponse
@@ -16,7 +16,7 @@ async def create_context(workspace_id: UUID, request: ContextCreateRequest):
     try:
         return manager.create_context(workspace_id, request)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
 @app.get("/workspaces/{workspace_id}/context/{path:path}", response_model=ContextResponse)
