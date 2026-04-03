@@ -1,6 +1,6 @@
 """Unit tests for /api/agent/knowledge/* endpoints."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -8,10 +8,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from structure.app import app
-from structure.core.dependencies.agents import get_context_crud, get_embedding_model_crud, get_knowledge_crud
+from structure.core.dependencies.agents import (
+    get_context_crud,
+    get_embedding_model_crud,
+    get_knowledge_crud,
+)
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
-from tests.unit.routers.conftest import make_user, USER_ID, KNOWLEDGE_ID
+from tests.unit.routers.conftest import KNOWLEDGE_ID, USER_ID, make_user
 
 BASE = "/api/agent/knowledge"
 
@@ -160,7 +164,7 @@ class TestUpdateKnowledge:
 
 class TestDeleteKnowledge:
     def test_delete_success(self, client):
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
         with patch("structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts") as mock_task:
             mock_task.delay = MagicMock()
             resp = client.post(f"{BASE}/{KNOWLEDGE_ID}/delete")
@@ -215,7 +219,7 @@ class TestHybridSearchKnowledge:
     def test_search_success(self, client, mock_context_crud):
         with patch("structure.services.context.knowledge.embeddings.EmbeddingService.embed_text", return_value=[0.1]*1536):
             resp = client.get(f"{BASE}/{KNOWLEDGE_ID}/hybrid-search?q=hello")
-        
+
         assert resp.status_code == 200
         assert "total" in resp.json()
         mock_context_crud.hybrid_search.assert_called_once()
@@ -223,7 +227,7 @@ class TestHybridSearchKnowledge:
     def test_search_no_model(self, client, mock_embedding_model_crud):
         mock_embedding_model_crud.get_default.return_value = None
         mock_embedding_model_crud.list.return_value = ([], 0)
-        
+
         resp = client.get(f"{BASE}/{KNOWLEDGE_ID}/hybrid-search?q=hello")
         assert resp.status_code == 400
         assert "No enabled embedding model found" in resp.json()["detail"]

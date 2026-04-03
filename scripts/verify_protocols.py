@@ -61,7 +61,11 @@ def verify_tool_protocol():
     print("\n3. Verifying BaseTool implements ToolProtocol...")
     try:
         from structure.core.interfaces import ToolProtocol, is_tool
-        from structure.core.interfaces.tool import BaseTool, ToolMetadata, ToolOutputSchema
+        from structure.core.interfaces.tool import (
+            BaseTool,
+            ToolMetadata,
+            ToolOutputSchema,
+        )
 
         class TestTool(BaseTool):
             METADATA: ClassVar[ToolMetadata] = ToolMetadata(

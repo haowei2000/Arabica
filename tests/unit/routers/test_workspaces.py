@@ -1,7 +1,7 @@
 """Unit tests for /api/workspaces/* endpoints."""
 
-from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -15,9 +15,9 @@ from structure.core.dependencies.workspace import (
 )
 from structure.extensions.database import get_structure_db
 from tests.unit.routers.conftest import (
-    make_user,
     USER_ID,
     WORKSPACE_ID,
+    make_user,
 )
 
 

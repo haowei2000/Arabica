@@ -1,14 +1,11 @@
 """Shared fixtures for router unit tests."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 
-from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 
 # Fixed UUIDs for deterministic tests

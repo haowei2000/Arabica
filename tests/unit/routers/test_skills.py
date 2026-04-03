@@ -1,6 +1,6 @@
 """Unit tests for /api/agent/skills/* endpoints."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -12,7 +12,7 @@ from structure.core.dependencies.agents import get_skill_crud
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
 from structure.extensions.storage.global_storage import get_global_s3_storage
-from tests.unit.routers.conftest import make_user, USER_ID, SKILL_ID
+from tests.unit.routers.conftest import SKILL_ID, USER_ID, make_user
 
 
 def make_skill(**kwargs):

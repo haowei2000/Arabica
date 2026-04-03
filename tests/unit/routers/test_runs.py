@@ -1,7 +1,7 @@
 """Unit tests for /api/workspaces/{workspace_id}/runs/* endpoints."""
 
-from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -10,18 +10,18 @@ from fastapi.testclient import TestClient
 from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
-    get_workspace_crud,
+    get_event_publisher,
     get_run_crud,
     get_run_state_machine,
-    get_event_publisher,
+    get_workspace_crud,
 )
-from structure.extensions.database import get_structure_db
 from structure.core.enums.runs import RunStatus, TriggerType
+from structure.extensions.database import get_structure_db
 from tests.unit.routers.conftest import (
-    make_user,
+    RUN_ID,
     USER_ID,
     WORKSPACE_ID,
-    RUN_ID,
+    make_user,
 )
 
 

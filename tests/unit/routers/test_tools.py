@@ -1,6 +1,6 @@
 """Unit tests for /api/tools/* endpoints."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
-from tests.unit.routers.conftest import make_user, USER_ID, TOOL_ID
+from tests.unit.routers.conftest import TOOL_ID, USER_ID, make_user
 
 BASE = "/api/tools"
 

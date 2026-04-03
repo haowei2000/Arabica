@@ -1,13 +1,14 @@
 """Unit tests for /api/auth/* endpoints."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 
 from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
-from tests.unit.routers.conftest import make_user, USER_ID, TENANT_ID
+from tests.unit.routers.conftest import TENANT_ID, make_user
 
 
 @pytest.fixture()

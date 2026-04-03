@@ -1,10 +1,9 @@
-import asyncio
-from unittest.mock import patch
 import uuid
+from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 
 # 为测试创建一个简化版的应用
@@ -112,8 +111,8 @@ class TestGetGraphEndpoint:
     ):
         """Test handling of Pydantic validation errors"""
         # Arrange
-        from structure.schemas.nl2sql.graph import GraphResponse
         from pydantic import ValidationError
+        from structure.schemas.nl2sql.graph import GraphResponse
 
         mock_get_indicator_graph.side_effect = ValidationError([], GraphResponse)
 
