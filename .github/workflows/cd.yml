@@ -18,17 +18,33 @@ env:
 
 jobs:
   build-and-push:
-    name: Build & Push Images
+    name: Build & Push ${{ matrix.name }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            dockerfile: docker/Dockerfile
+            image_suffix: backend
+            build_args: |
+              PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+              UV_VERSION=${{ env.UV_VERSION }}
+          - name: frontend
+            dockerfile: docker/Dockerfile.frontend
+            image_suffix: frontend
+            build_args: ""
+          - name: context-service
+            dockerfile: docker/Dockerfile.context-service
+            image_suffix: context-service
+            build_args: ""
+
     outputs:
-      backend_image: ${{ steps.meta-backend.outputs.tags }}
-      frontend_image: ${{ steps.meta-frontend.outputs.tags }}
-      context_service_image: ${{ steps.meta-context-service.outputs.tags }}
-      version: ${{ steps.meta-backend.outputs.version }}
+      backend_image: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,77 +59,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract backend image metadata
-        id: meta-backend
+      - name: Extract image metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image_suffix }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=short
 
-      - name: Extract frontend image metadata
-        id: meta-frontend
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-,format=short
-
-      - name: Build and push backend image
+      - name: Build and push ${{ matrix.name }} image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: true
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           platforms: linux/amd64
-          build-args: |
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            UV_VERSION=${{ env.UV_VERSION }}
-
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile.frontend
-          push: true
-          tags: ${{ steps.meta-frontend.outputs.tags }}
-          labels: ${{ steps.meta-frontend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-      - name: Extract context-service image metadata
-        id: meta-context-service
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/context-service
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-,format=short
-
-      - name: Build and push context-service image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile.context-service
-          push: true
-          tags: ${{ steps.meta-context-service.outputs.tags }}
-          labels: ${{ steps.meta-context-service.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+          build-args: ${{ matrix.build_args }}
 
   deploy:
     name: Deploy to Server
@@ -138,15 +106,18 @@ jobs:
             # Log in to GitHub Container Registry
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Pull latest images
-            docker pull ${{ needs.build-and-push.outputs.backend_image }}
-            docker pull ${{ needs.build-and-push.outputs.frontend_image }}
-            docker pull ${{ needs.build-and-push.outputs.context_service_image }}
+            # Pull latest images (sha tag is deterministic from git sha)
+            BACKEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:sha-$(echo ${{ github.sha }} | cut -c1-7)
+            FRONTEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:sha-$(echo ${{ github.sha }} | cut -c1-7)
+            CONTEXT=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/context-service:sha-$(echo ${{ github.sha }} | cut -c1-7)
+            docker pull $BACKEND
+            docker pull $FRONTEND
+            docker pull $CONTEXT
 
             # Tag as local names used by docker-compose
-            docker tag ${{ needs.build-and-push.outputs.backend_image }} structure-service:latest
-            docker tag ${{ needs.build-and-push.outputs.frontend_image }} structure-frontend:latest
-            docker tag ${{ needs.build-and-push.outputs.context_service_image }} structure-context-service:latest
+            docker tag $BACKEND structure-service:latest
+            docker tag $FRONTEND structure-frontend:latest
+            docker tag $CONTEXT structure-context-service:latest
 
             # Start infra if not running, restart backend + frontend
             docker compose --env-file docker/.env --profile infra up -d --no-build
