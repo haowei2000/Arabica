@@ -1,5 +1,7 @@
 """Shared helpers and constants for context-sync Celery tasks."""
 
+from __future__ import annotations
+
 import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -72,12 +74,12 @@ async def _upsert_context_at_path(session, *, user_id: str, context_type: str, s
     )
 
 
-async def _fetch_embedding_service(session: "AsyncSession") -> "EmbeddingService":
+async def _fetch_embedding_service(session: AsyncSession) -> EmbeddingService:
     """Load the default EmbeddingService from DB. Call once per task, outside DB session scope."""
     return await load_default_embedding_service(session)
 
 
-def _generate_embedding(text: str, svc: "EmbeddingService") -> tuple[list[float], str]:
+def _generate_embedding(text: str, svc: EmbeddingService) -> tuple[list[float], str]:
     """Embed text synchronously; returns (vector, field_name).
 
     Must be called OUTSIDE any async DB session to avoid blocking the event loop.

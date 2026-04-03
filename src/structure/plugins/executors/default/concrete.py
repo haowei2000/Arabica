@@ -34,6 +34,8 @@ Streaming event map:
     Tool execution       ->  TOOL_CALL -> TOOL_RESULT / TOOL_ERROR
 """
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 import json
 import logging

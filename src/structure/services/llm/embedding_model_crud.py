@@ -1,5 +1,7 @@
 """CRUD operations for EmbeddingModel."""
 
+from __future__ import annotations
+
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -98,7 +100,7 @@ class EmbeddingModelCRUD:
         items = list(result.scalars().all())
         return items, total
 
-    async def get_default(self) -> "EmbeddingModel | None":
+    async def get_default(self) -> EmbeddingModel | None:
         """Return the enabled default embedding model, or None if not set."""
         result = await self.db.execute(
             select(EmbeddingModel)

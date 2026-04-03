@@ -1,5 +1,7 @@
 """CRUD operations for ChatModel."""
 
+from __future__ import annotations
+
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -95,7 +97,7 @@ class ChatModelCRUD:
         items = list(result.scalars().all())
         return items, total
 
-    async def get_default(self) -> "ChatModel | None":
+    async def get_default(self) -> ChatModel | None:
         """Return the enabled default chat model, or None if not set."""
         result = await self.db.execute(
             select(ChatModel)
