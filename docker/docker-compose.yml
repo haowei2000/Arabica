@@ -226,7 +226,7 @@ services:
     environment:
       <<: *common-env
     depends_on:
-      app:
+      backend:
         condition: service_started
     healthcheck:
       <<: *healthcheck-defaults

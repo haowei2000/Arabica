@@ -1,8 +1,8 @@
 import argparse
 import os
-from pathlib import Path
 import re
 import shutil
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -122,14 +122,14 @@ def main():
     )
     args = parser.parse_args()
 
-    env_example_path = PROJECT_ROOT / "src" / ".env.example"
+    env_example_path = PROJECT_ROOT / ".env.example"
 
     # 根据参数决定目标文件路径
     if args.docker:
         env_path = PROJECT_ROOT / "docker" / ".env"
         print(f"🔧 Docker模式：将同步到 {env_path}")
     else:
-        env_path = PROJECT_ROOT / "src" / ".env"
+        env_path = PROJECT_ROOT / ".env"
 
     if not os.path.exists(env_example_path):  # noqa: PTH110
         print(f"❌ 错误：{env_example_path} 文件不存在！")
