@@ -160,7 +160,10 @@ class TestUpdateKnowledge:
 
 class TestDeleteKnowledge:
     def test_delete_success(self, client):
-        resp = client.post(f"{BASE}/{KNOWLEDGE_ID}/delete")
+        from unittest.mock import patch, MagicMock
+        with patch("structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts") as mock_task:
+            mock_task.delay = MagicMock()
+            resp = client.post(f"{BASE}/{KNOWLEDGE_ID}/delete")
         assert resp.status_code == 204
 
     def test_delete_not_found(self, client, mock_knowledge_crud):
