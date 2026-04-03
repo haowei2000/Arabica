@@ -60,9 +60,7 @@ class RegistryToolCaller(ToolCaller):
     ) -> None:
         self._extra_instances: dict[str, BaseTool] = extra_instances or {}
 
-    async def call(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute an MCP-imported tool by name."""
         if tool_name in self._extra_instances:
             return await self._extra_instances[tool_name](**arguments)

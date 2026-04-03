@@ -12,6 +12,7 @@ Output is a *flat* list of section dicts.  Each dict carries a ``level``
 (1-6) so the frontend ``buildSectionTree`` can reconstruct the tree without
 any additional processing.
 """
+
 import re
 
 from structure.core.interfaces.structurer import BaseStructurer
@@ -26,54 +27,64 @@ _CIRCLE_NUMS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 # level_resolver(m) -> int
 # title_resolver(m) -> str
 _PATTERNS: list[tuple[re.Pattern, object, object]] = [
-
     # 1. Markdown ATX  # Title … ###### Title
-    (re.compile(r'^(#{1,6})\s+(.+)'),
-     lambda m: len(m.group(1)),
-     lambda m: m.group(2).strip()),
-
+    (
+        re.compile(r"^(#{1,6})\s+(.+)"),
+        lambda m: len(m.group(1)),
+        lambda m: m.group(2).strip(),
+    ),
     # 2. Numbered 3-level  1.2.3  or  1.2.3.
-    (re.compile(r'^\d+\.\d+\.\d+\.?\s+(.{1,100})$'),
-     lambda m: 3,  # noqa: ARG005
-     lambda m: m.group(1).strip()),
-
+    (
+        re.compile(r"^\d+\.\d+\.\d+\.?\s+(.{1,100})$"),
+        lambda m: 3,  # noqa: ARG005
+        lambda m: m.group(1).strip(),
+    ),
     # 3. Numbered 2-level  1.2  or  1.2.
-    (re.compile(r'^\d+\.\d+\.?\s+(.{1,100})$'),
-     lambda m: 2,  # noqa: ARG005
-     lambda m: m.group(1).strip()),
-
+    (
+        re.compile(r"^\d+\.\d+\.?\s+(.{1,100})$"),
+        lambda m: 2,  # noqa: ARG005
+        lambda m: m.group(1).strip(),
+    ),
     # 4. Numbered 1-level  1.  (keep line short to avoid matching sentences)
-    (re.compile(r'^\d+\.\s+(.{1,80})$'),
-     lambda m: 1,  # noqa: ARG005
-     lambda m: m.group(1).strip()),
-
+    (
+        re.compile(r"^\d+\.\s+(.{1,80})$"),
+        lambda m: 1,  # noqa: ARG005
+        lambda m: m.group(1).strip(),
+    ),
     # 5. Chinese chapter/section  第X章 Title  第X节  第X篇  第X部  第X编
-    (re.compile(rf'^(第[{_ZH_NUM}\d]+[章节篇部编])\s*(.{{0,80}})$'),
-     lambda m: 1,  # noqa: ARG005
-     lambda m: (m.group(1) + (" " + m.group(2).strip() if m.group(2).strip() else "")).strip()),
-
+    (
+        re.compile(rf"^(第[{_ZH_NUM}\d]+[章节篇部编])\s*(.{{0,80}})$"),
+        lambda m: 1,  # noqa: ARG005
+        lambda m: (
+            m.group(1) + (" " + m.group(2).strip() if m.group(2).strip() else "")
+        ).strip(),
+    ),
     # 6. Chinese ordinal  一、 Title  二、 Title
-    (re.compile(rf'^([{_ZH_NUM}]+[、．.。])\s*(.{{1,80}})$'),
-     lambda m: 2,  # noqa: ARG005
-     lambda m: (m.group(1) + " " + m.group(2).strip()).strip()),
-
+    (
+        re.compile(rf"^([{_ZH_NUM}]+[、．.。])\s*(.{{1,80}})$"),
+        lambda m: 2,  # noqa: ARG005
+        lambda m: (m.group(1) + " " + m.group(2).strip()).strip(),
+    ),
     # 7. Chinese parenthesised  （一）Title  (1)Title
-    (re.compile(rf'^([（(][{_ZH_NUM}\d]+[）)])\s*(.{{1,80}})$'),
-     lambda m: 3,  # noqa: ARG005
-     lambda m: (m.group(1) + " " + m.group(2).strip()).strip()),
-
+    (
+        re.compile(rf"^([（(][{_ZH_NUM}\d]+[）)])\s*(.{{1,80}})$"),
+        lambda m: 3,  # noqa: ARG005
+        lambda m: (m.group(1) + " " + m.group(2).strip()).strip(),
+    ),
     # 8. Circled numbers  ① Title … ⑳ Title
-    (re.compile(rf'^([{_CIRCLE_NUMS}])\s*(.{{1,80}})$'),
-     lambda m: 4,  # noqa: ARG005
-     lambda m: (m.group(1) + " " + m.group(2).strip()).strip()),
+    (
+        re.compile(rf"^([{_CIRCLE_NUMS}])\s*(.{{1,80}})$"),
+        lambda m: 4,  # noqa: ARG005
+        lambda m: (m.group(1) + " " + m.group(2).strip()).strip(),
+    ),
 ]
 
 # Setext-style underlines
-_SETEXT_H1 = re.compile(r'^={3,}\s*$')
-_SETEXT_H2 = re.compile(r'^-{3,}\s*$')
+_SETEXT_H1 = re.compile(r"^={3,}\s*$")
+_SETEXT_H2 = re.compile(r"^-{3,}\s*$")
 
 # ALL-CAPS short line (English headings without markup)
-_ALL_CAPS = re.compile(r'^[A-Z][A-Z0-9 \t\-–—:,./]{2,60}$')
+_ALL_CAPS = re.compile(r"^[A-Z][A-Z0-9 \t\-–—:,./]{2,60}$")
 
 
 def _detect_heading(line: str, next_line: str | None) -> tuple[int, str] | None:
@@ -124,7 +135,9 @@ def _flush(title: str, level: int, lines: list[str], pos: int) -> dict:
 @register_structurer
 class DocumentStructurer(BaseStructurer):
     name = "document"
-    description = "Multi-level document structuring (Markdown, numbered, Chinese, setext)"
+    description = (
+        "Multi-level document structuring (Markdown, numbered, Chinese, setext)"
+    )
 
     def structure(self, text: str, mime_type: str) -> list[dict]:  # noqa: ARG002
         lines = text.splitlines()
@@ -153,10 +166,12 @@ class DocumentStructurer(BaseStructurer):
                 # is not ATX-style (no leading #).
                 is_setext = (
                     next_line is not None
-                    and bool(_SETEXT_H1.match(next_line.strip() or "a")
-                             or _SETEXT_H2.match(next_line.strip() or "a"))
+                    and bool(
+                        _SETEXT_H1.match(next_line.strip() or "a")
+                        or _SETEXT_H2.match(next_line.strip() or "a")
+                    )
                     and title == line.strip()
-                    and not re.match(r'^#{1,6}\s', line)
+                    and not re.match(r"^#{1,6}\s", line)
                 )
 
                 # Flush current accumulator
@@ -183,21 +198,25 @@ class DocumentStructurer(BaseStructurer):
                 para = para.strip()
                 if para:
                     first_line = para.splitlines()[0][:120]
-                    sections.append({
-                        "title": first_line,
-                        "level": 1,
-                        "content": para,
-                        "position": i,
-                        "structure_type": "document",
-                    })
+                    sections.append(
+                        {
+                            "title": first_line,
+                            "level": 1,
+                            "content": para,
+                            "position": i,
+                            "structure_type": "document",
+                        }
+                    )
 
         if not sections:
-            sections.append({
-                "title": "",
-                "level": 1,
-                "content": text.strip(),
-                "position": 0,
-                "structure_type": "document",
-            })
+            sections.append(
+                {
+                    "title": "",
+                    "level": 1,
+                    "content": text.strip(),
+                    "position": 0,
+                    "structure_type": "document",
+                }
+            )
 
         return sections

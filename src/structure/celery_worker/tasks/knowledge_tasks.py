@@ -32,6 +32,7 @@ def _init_worker_process(**_):
     asyncio.set_event_loop(_worker_loop)
 
     from structure.extensions.database import _ensure_registered
+
     _ensure_registered()
     _db_initialized = True
 
@@ -43,8 +44,10 @@ def _shutdown_worker_process(**_):
     global _worker_loop, _db_initialized
 
     if _worker_loop is not None:
+
         async def _cleanup():
             from structure.extensions.database import dispose_all
+
             await dispose_all()
 
         try:
@@ -69,6 +72,7 @@ def run_async(coro):
 
     if not _db_initialized:
         from structure.extensions.database import _ensure_registered
+
         _ensure_registered()
         _db_initialized = True
 

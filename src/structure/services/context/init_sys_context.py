@@ -20,7 +20,7 @@ DEFAULT_CONTEXT_PATHS: list[dict] = [
 
 
 async def ensure_default_context_paths(
-        db: AsyncSession,
+    db: AsyncSession,
 ) -> int:
     """Ensure every default context path exists for *workspace_id*.
 
@@ -32,7 +32,6 @@ async def ensure_default_context_paths(
     Returns:
         Number of new paths created.
     """
-
 
     # Look up workspace owner to satisfy Context.user_id (required)
 

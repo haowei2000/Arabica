@@ -95,7 +95,9 @@ async def get_tool_bundle(
     crud = ToolBundleCRUD(db)
     bundle = await crud.get_by_id(bundle_id, current_user.id)
     if not bundle:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bundle not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bundle not found"
+        )
     return _build_bundle_response(bundle)
 
 

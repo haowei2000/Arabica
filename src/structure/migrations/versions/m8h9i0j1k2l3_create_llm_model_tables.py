@@ -5,6 +5,7 @@ Revises: l7g8h9i0j1k2
 Create Date: 2026-03-29 00:00:00.000000
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -40,9 +41,15 @@ def upgrade() -> None:
         sa.Column("api_key_ref", sa.String(255), nullable=True),
         sa.Column("max_tokens", sa.Integer, nullable=True),
         sa.Column("context_window", sa.Integer, nullable=True),
-        sa.Column("supports_vision", sa.Boolean, nullable=False, server_default="false"),
-        sa.Column("supports_function_call", sa.Boolean, nullable=False, server_default="true"),
-        sa.Column("supports_streaming", sa.Boolean, nullable=False, server_default="true"),
+        sa.Column(
+            "supports_vision", sa.Boolean, nullable=False, server_default="false"
+        ),
+        sa.Column(
+            "supports_function_call", sa.Boolean, nullable=False, server_default="true"
+        ),
+        sa.Column(
+            "supports_streaming", sa.Boolean, nullable=False, server_default="true"
+        ),
         sa.Column("default_temperature", sa.Float, nullable=True),
         sa.Column("default_top_p", sa.Float, nullable=True),
         sa.Column("default_max_tokens", sa.Integer, nullable=True),
@@ -81,7 +88,9 @@ def upgrade() -> None:
         sa.Column("supports_batch", sa.Boolean, nullable=False, server_default="true"),
         sa.Column("batch_size", sa.Integer, nullable=False, server_default="32"),
         sa.Column("normalize", sa.Boolean, nullable=False, server_default="true"),
-        sa.Column("distance_metric", sa.String(20), nullable=False, server_default="cosine"),
+        sa.Column(
+            "distance_metric", sa.String(20), nullable=False, server_default="cosine"
+        ),
         sa.Column("price", sa.Float, nullable=True),
         sa.Column("currency", sa.String(10), nullable=False, server_default="USD"),
         sa.Column("config", JSONB, nullable=True),

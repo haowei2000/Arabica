@@ -82,7 +82,10 @@ class EventConsumer:
 
                 if not result:
                     # Timeout, yield keepalive
-                    yield {"type": EVENT_TYPE_KEEPALIVE, "timestamp": datetime.now().isoformat()}
+                    yield {
+                        "type": EVENT_TYPE_KEEPALIVE,
+                        "timestamp": datetime.now().isoformat(),
+                    }
                     continue
 
                 done = False
@@ -96,10 +99,15 @@ class EventConsumer:
                         # the loop does not keep blocking on a dead Redis stream.
                         event_type = event.get("event_type", "")
                         if event_type == EventType.RUN_STATE_CHANGE:
-                            new_state = (event.get("payload") or {}).get("new_state", "")
+                            new_state = (event.get("payload") or {}).get(
+                                "new_state", ""
+                            )
                             if new_state in _TERMINAL_RUN_STATES:
                                 done = True
-                        elif event_type in (EventType.RUN_FAILED, EventType.RUN_CANCELLED):
+                        elif event_type in (
+                            EventType.RUN_FAILED,
+                            EventType.RUN_CANCELLED,
+                        ):
                             done = True
 
                 if done:
@@ -134,7 +142,9 @@ class EventConsumer:
         Yields:
             Event data dictionaries
         """
-        stream_name = f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        stream_name = (
+            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        )
         current_id = last_id
 
         while True:
@@ -146,7 +156,10 @@ class EventConsumer:
                 )
 
                 if not result:
-                    yield {"type": EVENT_TYPE_KEEPALIVE, "timestamp": datetime.now().isoformat()}
+                    yield {
+                        "type": EVENT_TYPE_KEEPALIVE,
+                        "timestamp": datetime.now().isoformat(),
+                    }
                     continue
 
                 for stream, messages in result:  # noqa: B007
@@ -160,7 +173,9 @@ class EventConsumer:
                 break
             except (RedisTimeoutError, RedisConnectionError, TimeoutError) as e:
                 # Socket-level timeout or transient connection drop — retry silently.
-                logger.debug(f"Transient Redis error on workspace stream {stream_name}: {e}")
+                logger.debug(
+                    f"Transient Redis error on workspace stream {stream_name}: {e}"
+                )
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Error reading from stream {stream_name}: {e}")

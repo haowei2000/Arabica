@@ -66,7 +66,8 @@ def _build_tree(contexts: list[dict], root_normalized: str | None) -> dict:
         prefix = root_normalized + "/"
         child_depth = root_normalized.count("/") + 1
         orphans = [
-            node for path, node in sorted(node_map.items())
+            node
+            for path, node in sorted(node_map.items())
             if path.startswith(prefix) and path.count("/") == child_depth
         ]
         return {"path": root_normalized, "children": orphans}
@@ -105,12 +106,12 @@ class TreeContextTool(InnerTool):
 
         try:
             workspace_id = UUID(input_data.workspace_id)
-            root_normalized = ("/" + input_data.root.strip("/")) if input_data.root else ""
+            root_normalized = (
+                ("/" + input_data.root.strip("/")) if input_data.root else ""
+            )
 
             result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id,
-                prefix=root_normalized,
-                recursive=True
+                workspace_id=workspace_id, prefix=root_normalized, recursive=True
             )
 
             contexts = result_data.get("items", [])

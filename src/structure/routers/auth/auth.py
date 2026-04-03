@@ -17,7 +17,7 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 async def get_auth_service(
-    db: Annotated[AsyncSession, Depends(get_structure_db)]
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
 ) -> AuthService:
     """Dependency to get AuthService instance."""
     return AuthService(db)

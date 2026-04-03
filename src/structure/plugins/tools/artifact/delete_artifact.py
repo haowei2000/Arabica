@@ -35,7 +35,9 @@ class DeleteArtifactTool(InnerTool):
 
         try:
             async with get_session("structure") as db:
-                stmt = delete(Artifact).where(Artifact.id == UUID(input_data.artifact_id))
+                stmt = delete(Artifact).where(
+                    Artifact.id == UUID(input_data.artifact_id)
+                )
                 result = await db.execute(stmt)
                 await db.commit()
                 deleted = result.rowcount

@@ -31,8 +31,12 @@ class CreateArtifactTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
-        name: str = Field(description="Artifact name (e.g., 'analysis_report', 'solution.py')")
-        content: str | None = Field(default=None, description="Artifact content to store")
+        name: str = Field(
+            description="Artifact name (e.g., 'analysis_report', 'solution.py')"
+        )
+        content: str | None = Field(
+            default=None, description="Artifact content to store"
+        )
         artifact_type: str = Field(
             default="text",
             description="Type: text, code, file, image, document, data, other",
@@ -41,8 +45,12 @@ class CreateArtifactTool(InnerTool):
             default="text/plain",
             description="MIME type (e.g., 'text/plain', 'application/json', 'text/x-python')",
         )
-        run_id: str | None = Field(default=None, description="Run ID that produced this artifact")
-        meta: dict[str, Any] | None = Field(default=None, description="Additional metadata")
+        run_id: str | None = Field(
+            default=None, description="Run ID that produced this artifact"
+        )
+        meta: dict[str, Any] | None = Field(
+            default=None, description="Additional metadata"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID, uuid4

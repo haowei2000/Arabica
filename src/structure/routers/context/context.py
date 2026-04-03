@@ -53,6 +53,7 @@ async def create_context(
         from structure.celery_worker.tasks.context_sync_tasks import (
             sync_memory_to_contexts,
         )
+
         sync_memory_to_contexts.delay(str(context.id), str(current_user.id))
     return context
 

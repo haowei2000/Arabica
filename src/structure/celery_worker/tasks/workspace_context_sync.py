@@ -34,7 +34,9 @@ async def _invalidate_workspace_caches(ws_ids: list[str]) -> None:
             await pipe.execute()
         await r.aclose()
     except Exception as exc:
-        logger.warning("_invalidate_workspace_caches: failed to set dirty flags: %s", exc)
+        logger.warning(
+            "_invalidate_workspace_caches: failed to set dirty flags: %s", exc
+        )
 
 
 async def _get_user_workspace_ids(session, user_id: str) -> list[str]:

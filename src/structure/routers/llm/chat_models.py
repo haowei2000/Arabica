@@ -46,7 +46,9 @@ async def list_chat_models(
         skip=skip,
         limit=page_size,
     )
-    return ChatModelListResponse(total=total, items=items, page=page, page_size=page_size)
+    return ChatModelListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )
 
 
 @router.get("/search", response_model=ChatModelListResponse)
@@ -65,7 +67,9 @@ async def search_chat_models(
         skip=skip,
         limit=page_size,
     )
-    return ChatModelListResponse(total=total, items=items, page=page, page_size=page_size)
+    return ChatModelListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )
 
 
 @router.get("/{model_id}", response_model=ChatModelResponse)
@@ -77,9 +81,13 @@ async def get_chat_model(
     """Get a chat model by ID."""
     obj = await crud.get_by_id(model_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat model not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Chat model not found"
+        )
     if not obj.is_system and str(obj.user_id) != str(current_user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
     return obj
 
 
@@ -93,9 +101,13 @@ async def update_chat_model(
     """Update an existing chat model configuration."""
     obj = await crud.get_by_id(model_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat model not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Chat model not found"
+        )
     if not obj.is_system and str(obj.user_id) != str(current_user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
     updated = await crud.update(model_id, data)
     return updated  # noqa: RET504
 
@@ -109,9 +121,15 @@ async def delete_chat_model(
     """Delete a chat model configuration."""
     obj = await crud.get_by_id(model_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat model not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Chat model not found"
+        )
     if obj.is_system:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete system models")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete system models"
+        )
     if str(obj.user_id) != str(current_user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
     await crud.delete(model_id)

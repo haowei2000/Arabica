@@ -8,7 +8,9 @@ from structure.utils.context import slugify
 @register_structurer
 class MemoryStructurer(BaseStructurer):
     name = "Memory"
-    description = "Single-level memory structurer: renders a Context entry with metadata"
+    description = (
+        "Single-level memory structurer: renders a Context entry with metadata"
+    )
 
     def structure(self, input: Context) -> list[ContextCore]:
         ctx = input

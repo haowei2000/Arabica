@@ -219,9 +219,7 @@ class AppCRUD:
         """
         # Base query
         stmt = select(App).where(App.executor_id == executor_id)
-        count_stmt = select(func.count(App.id)).where(
-            App.executor_id == executor_id
-        )
+        count_stmt = select(func.count(App.id)).where(App.executor_id == executor_id)
 
         # Get total count
         count_result = await self.db_session.execute(count_stmt)

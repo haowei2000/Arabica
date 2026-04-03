@@ -42,6 +42,7 @@ def _build_user_tool_response(tool) -> UserToolResponse:
 
 # ─── MCP schemas ──────────────────────────────────────────────────────────────
 
+
 class MCPServerConfig(BaseModel):
     transport: Literal["sse", "stdio"] = "sse"
     url: str | None = None
@@ -85,6 +86,7 @@ class MCPImportResponse(BaseModel):
 
 def _mcp_client_config(req: MCPServerConfig) -> str | dict:
     from structure.registries.mcp_loader import client_config_from_tool_config
+
     cfg = {
         "mcp_transport": req.transport,
         "mcp_url": req.url,
@@ -98,6 +100,7 @@ def _mcp_client_config(req: MCPServerConfig) -> str | dict:
 # ============================================================================
 # Tool CRUD - List, Get, Delete, Toggle (MCP tools only)
 # ============================================================================
+
 
 @router.get(
     "/",
@@ -145,7 +148,9 @@ async def get_tool_context(
     crud = ToolCRUD(db)
     tool = await crud.get_tool_by_id(tool_id, current_user.id)
     if not tool:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
     context_user_id = tool.user_id or current_user.id
 
     skip = (page - 1) * page_size
@@ -172,7 +177,9 @@ async def get_tool(
     crud = ToolCRUD(db)
     tool = await crud.get_tool_by_id(tool_id, current_user.id)
     if not tool:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
     return _build_user_tool_response(tool)
 
 
@@ -202,6 +209,7 @@ async def delete_tool(
     from structure.celery_worker.tasks.context_sync_tasks import (
         delete_resource_contexts,
     )
+
     delete_resource_contexts.delay(str(tool_id), "tool", "tool_id")
 
 
@@ -241,7 +249,9 @@ async def test_tool(
     crud = ToolCRUD(db)
     tool = await crud.get_tool_by_id(tool_id, current_user.id)
     if not tool:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
 
     start_time = time.monotonic()
 
@@ -256,6 +266,7 @@ async def test_tool(
             result = await tool_instance(**test_request.parameters)
         elif tool.tool_type == "mcp":
             from structure.registries.mcp_loader import build_mcp_tool_class
+
             tool_cls = build_mcp_tool_class(tool)
             result = await tool_cls()(**test_request.parameters)
         else:
@@ -279,7 +290,9 @@ async def test_tool(
         raise
     except Exception as e:
         elapsed_ms = (time.monotonic() - start_time) * 1000
-        logger.error("Tool test failed for %s (id=%s): %s", tool.name, tool_id, e, exc_info=True)
+        logger.error(
+            "Tool test failed for %s (id=%s): %s", tool.name, tool_id, e, exc_info=True
+        )
         return UserToolTestResponse(
             success=False,
             error=str(e),
@@ -292,6 +305,7 @@ async def test_tool(
 # ============================================================================
 # MCP — Probe & Import
 # ============================================================================
+
 
 @router.post(
     "/probe-mcp",
@@ -372,6 +386,7 @@ async def import_from_mcp(
             or_,
             select as sa_select,
         )
+
         exists_stmt = sa_select(ToolModel.id).where(
             ToolModel.name == name,
             ToolModel.tool_type == "mcp",
@@ -412,6 +427,7 @@ async def import_from_mcp(
 
         # Invalidate dynamic tool cache so workers pick up new tools.
         from structure.registries.dynamic_loader import DynamicToolLoader
+
         DynamicToolLoader.invalidate_cache(user_id=current_user.id)
 
         # Dispatch context sync tasks for newly imported tools
@@ -481,7 +497,11 @@ async def import_from_mcp(
             tools = (await db.execute(tools_stmt)).scalars().all()
             for idx, tool in enumerate(tools):
                 if tool.id not in existing_item_ids:
-                    db.add(ToolBundleItem(bundle_id=bundle.id, tool_id=tool.id, position=idx))
+                    db.add(
+                        ToolBundleItem(
+                            bundle_id=bundle.id, tool_id=tool.id, position=idx
+                        )
+                    )
 
             await db.commit()
             result_bundle_id = str(bundle.id)

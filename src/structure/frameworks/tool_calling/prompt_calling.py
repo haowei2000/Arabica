@@ -41,6 +41,7 @@ _BARE_TOOL_RE = re.compile(
 
 # ── JSON repair helpers ────────────────────────────────────────────────────
 
+
 def _extract_balanced_object(s: str) -> str | None:
     """Return the first balanced ``{...}`` substring, or ``None``."""
     depth = 0
@@ -108,6 +109,7 @@ def _fix_control_chars_in_strings(s: str) -> str:
 
 def _unwrap_string_arguments(s: str) -> str:
     """If the ``arguments`` value is a JSON-encoded string, decode it to an object."""
+
     def _replacer(m: re.Match) -> str:
         inner = m.group(1)
         try:
@@ -116,6 +118,7 @@ def _unwrap_string_arguments(s: str) -> str:
             return '"arguments": ' + json.dumps(parsed, ensure_ascii=False)
         except (json.JSONDecodeError, Exception):
             return m.group(0)
+
     return re.sub(r'"arguments"\s*:\s*"((?:[^"\\]|\\.)*)"', _replacer, s)
 
 
@@ -179,9 +182,7 @@ def _repair_json(raw: str) -> dict | None:
         # combined
         _unwrap_string_arguments(
             _fix_control_chars_in_strings(
-                _fix_python_literals(
-                    _fix_trailing_commas(candidate)
-                )
+                _fix_python_literals(_fix_trailing_commas(candidate))
             )
         ),
     ]
@@ -337,7 +338,9 @@ class PromptCallingStrategy(ToolCallingStrategy):
         raw_content = choice.message.content or ""
 
         tool_calls = _parse_tool_calls_from_text(raw_content)
-        clean_content = _strip_tool_call_blocks(raw_content) if tool_calls else raw_content
+        clean_content = (
+            _strip_tool_call_blocks(raw_content) if tool_calls else raw_content
+        )
 
         usage = response.usage
         return LLMResponse(
@@ -449,7 +452,9 @@ class PromptCallingStrategy(ToolCallingStrategy):
 
         # Parse tool calls from the full output.
         tool_calls = _parse_tool_calls_from_text(full_content)
-        clean_content = _strip_tool_call_blocks(full_content) if tool_calls else full_content
+        clean_content = (
+            _strip_tool_call_blocks(full_content) if tool_calls else full_content
+        )
 
         yield LLMResponse(
             content=clean_content,

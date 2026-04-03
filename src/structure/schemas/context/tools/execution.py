@@ -19,8 +19,12 @@ class ReadContextResult(BaseModel):
     """
 
     path: str = Field("", description="Workspace context path, e.g. 'tools/my_tool'")
-    content: str | None = Field(None, description="Raw JSON string of the stored schema")
-    summary: str | None = Field(None, description="Human-readable description of the context entry")
+    content: str | None = Field(
+        None, description="Raw JSON string of the stored schema"
+    )
+    summary: str | None = Field(
+        None, description="Human-readable description of the context entry"
+    )
     glance: str | None = Field(None, description="Short one-line summary")
 
     model_config = {"extra": "allow"}

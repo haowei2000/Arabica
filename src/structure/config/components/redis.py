@@ -38,14 +38,31 @@ class RedisConfig(BaseModel):
     db: PositiveInt = Field(default=0, description="Redis database number")
 
     # Stream / queue name configuration
-    workspace_label: str = Field(default="workspace", description="Redis key prefix for workspace streams")
-    run_label: str = Field(default="run", description="Redis key prefix for run streams")
-    executor_label: str = Field(default="executor", description="Redis stream name for executor task queue")
-    stream_events_suffix: str = Field(default="events", description="Suffix for event streams")
-    consumer_group: str = Field(default="run_workers", description="Consumer group name for worker stream")
-    run_resume_approval_suffix: str = Field(default="resume_approval", description="Redis key suffix for run resume approval")
+    workspace_label: str = Field(
+        default="workspace", description="Redis key prefix for workspace streams"
+    )
+    run_label: str = Field(
+        default="run", description="Redis key prefix for run streams"
+    )
+    executor_label: str = Field(
+        default="executor", description="Redis stream name for executor task queue"
+    )
+    stream_events_suffix: str = Field(
+        default="events", description="Suffix for event streams"
+    )
+    consumer_group: str = Field(
+        default="run_workers", description="Consumer group name for worker stream"
+    )
+    run_resume_approval_suffix: str = Field(
+        default="resume_approval",
+        description="Redis key suffix for run resume approval",
+    )
 
     # SSE event type names
-    event_type_keepalive: str = Field(default="keepalive", description="SSE keepalive event type")
+    event_type_keepalive: str = Field(
+        default="keepalive", description="SSE keepalive event type"
+    )
     event_type_error: str = Field(default="error", description="SSE error event type")
-    event_type_disconnect: str = Field(default="disconnect", description="SSE disconnect event type")
+    event_type_disconnect: str = Field(
+        default="disconnect", description="SSE disconnect event type"
+    )

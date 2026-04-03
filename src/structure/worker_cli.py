@@ -19,6 +19,7 @@ Agent Worker 启动脚本
 版本: v3.0.0
 
 """
+
 import asyncio
 import logging
 import os
@@ -58,17 +59,29 @@ async def run_single_worker(
     shared_runtime: ExecutorInstanceManager,
 ) -> None:
     """Run a single worker instance."""
-    logger.info(f"🚀 Worker [{worker_index}] for workspace [{workspace_id}] starting (consumer: {consumer_name})")
+    logger.info(
+        f"🚀 Worker [{worker_index}] for workspace [{workspace_id}] starting (consumer: {consumer_name})"
+    )
 
     try:
         async with db_factory as session:
-            worker = Worker(redis_client, session, consumer_name=consumer_name, runtime=shared_runtime)
+            worker = Worker(
+                redis_client,
+                session,
+                consumer_name=consumer_name,
+                runtime=shared_runtime,
+            )
             await worker.start(workspace_id)
     except asyncio.CancelledError:
-        logger.info(f"⏹️  Worker [{worker_index}] for workspace [{workspace_id}] cancelled")
+        logger.info(
+            f"⏹️  Worker [{worker_index}] for workspace [{workspace_id}] cancelled"
+        )
         raise
     except Exception as e:
-        logger.error(f"❌ Worker [{worker_index}] for workspace [{workspace_id}] error: {e}", exc_info=True)
+        logger.error(
+            f"❌ Worker [{worker_index}] for workspace [{workspace_id}] error: {e}",
+            exc_info=True,
+        )
         raise
 
 
@@ -104,17 +117,28 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
                 db_factory = get_session("structure")
 
                 task = asyncio.create_task(
-                    run_single_worker(redis_client, db_factory, workspace_id, consumer_name, i, shared_runtime),
+                    run_single_worker(
+                        redis_client,
+                        db_factory,
+                        workspace_id,
+                        consumer_name,
+                        i,
+                        shared_runtime,
+                    ),
                     name=f"worker-{ws_idx}-{i}",
                 )
                 tasks.append(task)
 
         logger.info("=" * 60)
-        logger.info(f"🚀 Started {len(tasks)} total worker(s) across {len(workspace_ids)} workspace(s)")
+        logger.info(
+            f"🚀 Started {len(tasks)} total worker(s) across {len(workspace_ids)} workspace(s)"
+        )
         logger.info("=" * 60)
 
         if not tasks:
-            logger.info("⏳ No workspaces found, waiting for workspaces to be created...")
+            logger.info(
+                "⏳ No workspaces found, waiting for workspaces to be created..."
+            )
             await asyncio.sleep(float("inf"))
 
         # Wait for all workers (or until one fails)
@@ -163,6 +187,7 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
 
         try:
             from structure.registries.mcp_loader import close_all_clients
+
             await close_all_clients()
         except Exception as e:
             logger.debug(f"MCP client cleanup: {e}")

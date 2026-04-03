@@ -115,8 +115,15 @@ _LANGUAGE_SIGNALS: dict[str, list[tuple[re.Pattern[str], int]]] = {
 }
 
 _LANGUAGE_PRIORITY = [
-    "python", "javascript", "typescript", "java",
-    "go", "rust", "markdown", "c", "cpp",
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "go",
+    "rust",
+    "markdown",
+    "c",
+    "cpp",
 ]
 
 
@@ -188,7 +195,9 @@ def _parse_plain_text(
                     "index": len(paragraphs),
                     "text": para_text,
                     "sentences": [
-                        s.strip() for s in _SENTENCE_SPLIT_RE.split(para_text) if s.strip()
+                        s.strip()
+                        for s in _SENTENCE_SPLIT_RE.split(para_text)
+                        if s.strip()
                     ],
                 }
                 if include_line_ranges:
@@ -396,7 +405,9 @@ def _parse_python_code(
     try:
         tree = ast.parse(text)
     except SyntaxError:
-        return _parse_generic_code(text, "python", include_statistics, include_line_ranges)
+        return _parse_generic_code(
+            text, "python", include_statistics, include_line_ranges
+        )
 
     lines = text.splitlines()
     imports: list[dict[str, Any]] = []
@@ -417,8 +428,7 @@ def _parse_python_code(
 
         elif isinstance(node, ast.ImportFrom):
             names = [
-                {"name": a.name, "alias": a.asname}
-                if a.asname else {"name": a.name}
+                {"name": a.name, "alias": a.asname} if a.asname else {"name": a.name}
                 for a in node.names
             ]
             entry = {
@@ -435,7 +445,8 @@ def _parse_python_code(
             for item in ast.iter_child_nodes(node):
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     args = [
-                        a.arg for a in item.args.args
+                        a.arg
+                        for a in item.args.args
                         if a.arg != "self" and a.arg != "cls"
                     ]
                     meth: dict[str, Any] = {
@@ -589,13 +600,9 @@ _LANG_PATTERNS: dict[str, dict[str, re.Pattern[str] | None]] = {
         ),
     },
     "typescript": {
-        "import": re.compile(
-            r"^import\s+.+?from\s+['\"].+?['\"]", re.MULTILINE
-        ),
+        "import": re.compile(r"^import\s+.+?from\s+['\"].+?['\"]", re.MULTILINE),
         "class": re.compile(r"^\s*(?:export\s+)?class\s+(\w+)", re.MULTILINE),
-        "interface": re.compile(
-            r"^\s*(?:export\s+)?interface\s+(\w+)", re.MULTILINE
-        ),
+        "interface": re.compile(r"^\s*(?:export\s+)?interface\s+(\w+)", re.MULTILINE),
         "function": re.compile(
             r"^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)",
             re.MULTILINE,
@@ -604,9 +611,7 @@ _LANG_PATTERNS: dict[str, dict[str, re.Pattern[str] | None]] = {
             r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*(?:async\s+)?\([^)]*\)\s*=>",
             re.MULTILINE,
         ),
-        "type_alias": re.compile(
-            r"^\s*(?:export\s+)?type\s+(\w+)\s*=", re.MULTILINE
-        ),
+        "type_alias": re.compile(r"^\s*(?:export\s+)?type\s+(\w+)\s*=", re.MULTILINE),
         "single_comment": re.compile(r"^\s*//(.*)$", re.MULTILINE),
         "multi_comment_start": re.compile(r"/\*"),
         "multi_comment_end": re.compile(r"\*/"),
@@ -622,9 +627,7 @@ _LANG_PATTERNS: dict[str, dict[str, re.Pattern[str] | None]] = {
             r"^\s*(?:public|private|protected)?\s*(?:abstract\s+)?class\s+(\w+)",
             re.MULTILINE,
         ),
-        "interface": re.compile(
-            r"^\s*(?:public\s+)?interface\s+(\w+)", re.MULTILINE
-        ),
+        "interface": re.compile(r"^\s*(?:public\s+)?interface\s+(\w+)", re.MULTILINE),
         "function": re.compile(
             r"^\s*(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]+>)?)\s+(\w+)\s*\(([^)]*)\)",
             re.MULTILINE,
@@ -645,9 +648,7 @@ _LANG_PATTERNS: dict[str, dict[str, re.Pattern[str] | None]] = {
         "single_comment": re.compile(r"^\s*//(.*)$", re.MULTILINE),
         "multi_comment_start": re.compile(r"/\*"),
         "multi_comment_end": re.compile(r"\*/"),
-        "variable": re.compile(
-            r"^var\s+(\w+)\s+", re.MULTILINE
-        ),
+        "variable": re.compile(r"^var\s+(\w+)\s+", re.MULTILINE),
     },
     "rust": {
         "import": re.compile(r"^use\s+[\w:]+", re.MULTILINE),
@@ -730,7 +731,7 @@ def _parse_generic_code(
         for m in import_pat.finditer(text):
             entry: dict[str, Any] = {"statement": m.group(0).strip()}
             if include_line_ranges:
-                entry["line"] = text[:m.start()].count("\n") + 1
+                entry["line"] = text[: m.start()].count("\n") + 1
             imports.append(entry)
 
     for kind in ("class", "struct", "interface", "enum", "trait", "impl", "namespace"):
@@ -738,10 +739,12 @@ def _parse_generic_code(
         if not pat:
             continue
         for m in pat.finditer(text):
-            name = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            name = (
+                m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            )
             cls_entry: dict[str, Any] = {"name": name, "kind": kind}
             if include_line_ranges:
-                start_line = text[:m.start()].count("\n") + 1
+                start_line = text[: m.start()].count("\n") + 1
                 end_line = _find_block_end(lines, start_line - 1)
                 cls_entry["line_start"] = start_line
                 cls_entry["line_end"] = end_line
@@ -752,16 +755,20 @@ def _parse_generic_code(
         if not pat:
             continue
         for m in pat.finditer(text):
-            name = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            name = (
+                m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            )
             fn_entry: dict[str, Any] = {"name": name}
             if kind == "arrow_function":
                 fn_entry["arrow"] = True
             if m.lastindex and m.lastindex >= 2:
                 args_str = m.group(2).strip()
                 if args_str:
-                    fn_entry["args"] = [a.strip() for a in args_str.split(",") if a.strip()]
+                    fn_entry["args"] = [
+                        a.strip() for a in args_str.split(",") if a.strip()
+                    ]
             if include_line_ranges:
-                start_line = text[:m.start()].count("\n") + 1
+                start_line = text[: m.start()].count("\n") + 1
                 end_line = _find_block_end(lines, start_line - 1)
                 fn_entry["line_start"] = start_line
                 fn_entry["line_end"] = end_line
@@ -770,10 +777,12 @@ def _parse_generic_code(
     type_pat = patterns.get("type_alias")
     if type_pat:
         for m in type_pat.finditer(text):
-            name = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            name = (
+                m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            )
             cls_entry = {"name": name, "kind": "type_alias"}
             if include_line_ranges:
-                cls_entry["line"] = text[:m.start()].count("\n") + 1
+                cls_entry["line"] = text[: m.start()].count("\n") + 1
             classes.append(cls_entry)
 
     single_pat = patterns.get("single_comment")
@@ -781,7 +790,7 @@ def _parse_generic_code(
         for m in single_pat.finditer(text):
             entry = {"text": m.group(1).strip()}
             if include_line_ranges:
-                entry["line"] = text[:m.start()].count("\n") + 1
+                entry["line"] = text[: m.start()].count("\n") + 1
             comments.append(entry)
 
     multi_start_pat = patterns.get("multi_comment_start")
@@ -790,36 +799,42 @@ def _parse_generic_code(
         for m in multi_start_pat.finditer(text):
             end_m = multi_end_pat.search(text, m.end())
             if end_m:
-                comment_text = text[m.start():end_m.end()].strip()
+                comment_text = text[m.start() : end_m.end()].strip()
                 entry = {"text": comment_text, "multiline": True}
                 if include_line_ranges:
-                    entry["line_start"] = text[:m.start()].count("\n") + 1
-                    entry["line_end"] = text[:end_m.end()].count("\n") + 1
+                    entry["line_start"] = text[: m.start()].count("\n") + 1
+                    entry["line_end"] = text[: end_m.end()].count("\n") + 1
                 comments.append(entry)
 
     var_pat = patterns.get("variable")
     if var_pat:
         for m in var_pat.finditer(text):
-            name = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            name = (
+                m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            )
             var_entry: dict[str, Any] = {"name": name}
             if include_line_ranges:
-                var_entry["line"] = text[:m.start()].count("\n") + 1
+                var_entry["line"] = text[: m.start()].count("\n") + 1
             top_level_variables.append(var_entry)
 
     define_pat = patterns.get("define")
     if define_pat:
         for m in define_pat.finditer(text):
-            name = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            name = (
+                m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            )
             var_entry = {"name": name, "kind": "define"}
             if include_line_ranges:
-                var_entry["line"] = text[:m.start()].count("\n") + 1
+                var_entry["line"] = text[: m.start()].count("\n") + 1
             top_level_variables.append(var_entry)
 
     pkg_pat = patterns.get("package")
     if pkg_pat:
         m = pkg_pat.search(text)
         if m:
-            pkg_name = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            pkg_name = (
+                m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0).strip()
+            )
             imports.insert(0, {"statement": f"package {pkg_name}", "kind": "package"})
 
     result: dict[str, Any] = {
@@ -865,8 +880,16 @@ def _find_block_end(lines: list[str], start_idx: int) -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _CODE_LANGUAGES = {
-    "python", "javascript", "js", "typescript", "ts",
-    "java", "go", "rust", "c", "cpp",
+    "python",
+    "javascript",
+    "js",
+    "typescript",
+    "ts",
+    "java",
+    "go",
+    "rust",
+    "c",
+    "cpp",
 }
 
 

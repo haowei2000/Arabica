@@ -37,7 +37,8 @@ os.environ["RUSTFS__ACCESS_KEY"] = "test_key"
 os.environ["RUSTFS__SECRET_KEY"] = "test_secret"
 
 from collections.abc import AsyncGenerator
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
@@ -293,11 +294,10 @@ def clean_temp_files():
     yield register_temp_file
 
     # 清理
-    import os
-
     for filepath in temp_files:
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        p = Path(filepath)
+        if p.exists():
+            p.unlink()
 
 
 # ============================================================================

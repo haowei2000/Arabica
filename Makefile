@@ -159,3 +159,37 @@ stop-all: ## 停止所有本地服务
 	@-pkill -f "structure-celery" 2>/dev/null || true
 	@-pkill -f "vite" 2>/dev/null || true
 	@echo "$(GREEN)所有服务已停止$(NC)"
+
+# ============================================================================
+# 代码质量
+# ============================================================================
+
+lint: ## 检查代码风格 (ruff check)
+	uv run ruff check src/
+
+lint-fix: ## 自动修复代码风格问题 (ruff check --fix)
+	uv run ruff check --fix src/
+
+format: ## 格式化代码 (ruff format)
+	uv run ruff format src/
+
+format-check: ## 检查代码格式 (不修改文件)
+	uv run ruff format --check src/
+
+check: lint format-check ## 运行所有检查 (lint + format check)
+
+# ============================================================================
+# 测试
+# ============================================================================
+
+test: ## 运行所有单元测试
+	uv run pytest tests/unit/ -q
+
+test-coverage: ## 运行测试并生成覆盖率报告
+	uv run pytest tests/unit/ --cov=src/structure --cov-report=html --cov-report=term-missing --cov-report=xml --cov-fail-under=60 -q
+
+test-fast: ## 快速运行测试 (跳过慢速测试)
+	uv run pytest tests/unit/ -q -m "not slow"
+
+test-verbose: ## 详细输出运行测试
+	uv run pytest tests/unit/ -v

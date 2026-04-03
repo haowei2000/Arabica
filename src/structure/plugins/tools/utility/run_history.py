@@ -87,7 +87,7 @@ class GetRunHistoryTool(InnerTool):
 
         # Tail to limit (most recent N events after filtering)
         if len(events) > input_data.limit:
-            events = events[-input_data.limit:]
+            events = events[-input_data.limit :]
 
         return ToolOutputSchema(
             success=True,

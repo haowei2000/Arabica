@@ -43,6 +43,7 @@ class ToolCreate(BaseModel):
     )
     version: int = Field(default=1, ge=1, description="Tool version number")
 
+
 class ToolUpdate(BaseModel):
     """Schema for updating an existing tool.
 
@@ -63,6 +64,7 @@ class ToolUpdate(BaseModel):
     enabled: bool | None = Field(None, description="Whether the tool is enabled")
     is_public: bool | None = Field(None, description="Whether publicly available")
     version: int | None = Field(None, ge=1, description="Tool version number")
+
 
 class ToolResponse(BaseModel):
     """Schema for tool response."""
@@ -93,6 +95,7 @@ class ToolResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class ToolListResponse(BaseModel):
     """Schema for paginated list of tools."""

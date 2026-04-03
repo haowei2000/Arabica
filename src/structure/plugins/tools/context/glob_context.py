@@ -71,28 +71,34 @@ class GlobContextTool(InnerTool):
                 sql_prefix = input_data.pattern[:prefix_end].rstrip("/")
 
             result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id,
-                prefix=sql_prefix,
-                recursive=True
+                workspace_id=workspace_id, prefix=sql_prefix, recursive=True
             )
 
             contexts = result_data.get("items", [])
 
             # Apply glob filter in Python
-            matched = [ctx for ctx in contexts if ctx.get("path") and pattern_regex.match(ctx.get("path"))]
+            matched = [
+                ctx
+                for ctx in contexts
+                if ctx.get("path") and pattern_regex.match(ctx.get("path"))
+            ]
 
             # Apply tag filter
             if input_data.tags:
                 matched = [
-                    ctx for ctx in matched
-                    if ctx.get("tags") and all(tag in ctx.get("tags", []) for tag in input_data.tags)
+                    ctx
+                    for ctx in matched
+                    if ctx.get("tags")
+                    and all(tag in ctx.get("tags", []) for tag in input_data.tags)
                 ]
 
             matched = matched[: input_data.limit]
 
             def disclose_glance(ctx):
                 path = ctx.get("path")
-                name = ctx.get("name") or (path.rsplit("/", 1)[-1] if path else "unnamed")
+                name = ctx.get("name") or (
+                    path.rsplit("/", 1)[-1] if path else "unnamed"
+                )
                 res = {"path": path, "name": name}
 
                 if ctx.get("glance"):

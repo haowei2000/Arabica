@@ -15,6 +15,7 @@ from structure.models.events.event import Event
 
 logger = logging.getLogger(__name__)
 
+
 async def handle_artifact_event(event: Event):
     """Handle artifact.* events - artifact lifecycle management.
 
@@ -38,7 +39,9 @@ async def handle_artifact_event(event: Event):
             logger.warning(f"Received {event.event_type} without run_id")
             return
 
-        run_id = event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+        run_id = (
+            event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+        )
         payload = event.payload or {}
         artifact_data = payload.get("artifact", {})
         artifact_id = artifact_data.get("id") or payload.get("artifact_id")
@@ -46,7 +49,9 @@ async def handle_artifact_event(event: Event):
 
         match event.event_type:
             case EventType.ARTIFACT_CREATE:
-                logger.info(f"Artifact created: {artifact_id} (type: {artifact_type}) for run {run_id}")
+                logger.info(
+                    f"Artifact created: {artifact_id} (type: {artifact_type}) for run {run_id}"
+                )
 
                 # TODO: Implement artifact creation side effects
                 # - Store artifact content (S3, local storage, database)

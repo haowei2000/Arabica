@@ -20,7 +20,9 @@ class ContextSchema(BaseModel):
 
     type: ContextType
     enabled: bool = Field(default=True, description="Whether the context is enabled")
-    config: dict[str, Any] | None = Field(None, description="ContextSchema configuration")
+    config: dict[str, Any] | None = Field(
+        None, description="ContextSchema configuration"
+    )
 
 
 class ContextCreate(BaseModel):
@@ -41,11 +43,11 @@ class ContextCreate(BaseModel):
     )
     # Progressive disclosure layers
     glance: str | None = Field(
-        None, max_length=512, description="One-line summary for quick scanning (Layer 1)"
+        None,
+        max_length=512,
+        description="One-line summary for quick scanning (Layer 1)",
     )
-    content: str = Field(
-        ..., min_length=1, description="Full content detail (Layer 3)"
-    )
+    content: str = Field(..., min_length=1, description="Full content detail (Layer 3)")
     tags: list[str] | None = Field(
         None, description="Tags for filtering and categorization"
     )
@@ -100,7 +102,9 @@ class ContextUpdate(BaseModel):
     context_type: ContextType | None = Field(None, description="ContextSchema type")
     source_id: str | UUID | None = Field(None, description="Related source ID")
     path: ContextPath | None = Field(None, description="Virtual folder path")
-    s3_key: str | None = Field(None, description="S3 object key for storing large content")
+    s3_key: str | None = Field(
+        None, description="S3 object key for storing large content"
+    )
     # Progressive disclosure layers
     glance: str | None = Field(None, max_length=512, description="One-line summary")
     content: str | None = Field(None, min_length=1, description="Full content detail")
@@ -160,7 +164,9 @@ class ContextResponse(ResponseMixin, BaseModel):
             return self.content
         return self.content[:200] + "..."
 
-    def disclose(self, level: Literal["glance", "overview", "detail"] = "overview") -> dict[str, Any]:
+    def disclose(
+        self, level: Literal["glance", "overview", "detail"] = "overview"
+    ) -> dict[str, Any]:
         """Progressive disclosure of information.
 
         Args:
@@ -469,8 +475,10 @@ class GrepSearchRequest(BaseModel):
         default=20, ge=1, le=100, description="Maximum results to return"
     )
 
+
 class ContextCore(BaseModel):
-    """Core for a context, including glance, content, path """
+    """Core for a context, including glance, content, path"""
+
     glance: str | None = Field(None, description="A short summary of the context")
     content: str | None = Field(None, description="The content of the context")
     path: str | None = Field(None, description="The path of the context")

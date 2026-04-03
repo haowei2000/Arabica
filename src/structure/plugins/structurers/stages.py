@@ -83,6 +83,7 @@ class S3TextStage(Stage[FileContext]):
             from structure.extensions.storage.global_storage import (
                 get_global_s3_storage,
             )
+
             raw = get_global_s3_storage().get_bytes(ctx.file_input.s3_key)
         except Exception as exc:
             msg = f"S3TextStage: cannot download {ctx.file_input.s3_key} — {exc}"
@@ -164,11 +165,13 @@ class BuildChunksStage(Stage[FileContext]):
         file_slug = slugify(f"{fi.base_path}/{fi.file_name}")
 
         if not ctx.sections:
-            ctx.chunks.append(ContextCore(
-                glance=fi.file_name,
-                content=f"{fi.file_name}:\n  (content unavailable)",
-                path=file_slug,
-            ))
+            ctx.chunks.append(
+                ContextCore(
+                    glance=fi.file_name,
+                    content=f"{fi.file_name}:\n  (content unavailable)",
+                    path=file_slug,
+                )
+            )
             return ctx
 
         # Level 2: section outline
@@ -178,19 +181,23 @@ class BuildChunksStage(Stage[FileContext]):
             title = sec.get("title") or "(untitled)"
             outline_lines.append(f"{indent}- {title}")
 
-        ctx.chunks.append(ContextCore(
-            glance=fi.file_name,
-            content="\n".join(outline_lines),
-            path=file_slug,
-        ))
+        ctx.chunks.append(
+            ContextCore(
+                glance=fi.file_name,
+                content="\n".join(outline_lines),
+                path=file_slug,
+            )
+        )
 
         # Level 3: per-section content
         for sec in ctx.sections:
             sec_title = sec.get("title") or f"section-{sec['position']}"
-            ctx.chunks.append(ContextCore(
-                glance=f"{fi.file_name} / {sec_title}",
-                content=sec["content"],
-                path=slugify(f"{fi.base_path}/{fi.file_name}/{sec_title}"),
-            ))
+            ctx.chunks.append(
+                ContextCore(
+                    glance=f"{fi.file_name} / {sec_title}",
+                    content=sec["content"],
+                    path=slugify(f"{fi.base_path}/{fi.file_name}/{sec_title}"),
+                )
+            )
 
         return ctx

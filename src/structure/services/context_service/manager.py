@@ -107,7 +107,9 @@ class ContextManager:
             updated_at=meta.updated_at,
         )
 
-    def get_context(self, workspace_id: UUID, virtual_path: str) -> ContextResponse | None:
+    def get_context(
+        self, workspace_id: UUID, virtual_path: str
+    ) -> ContextResponse | None:
         """Retrieve a context entry."""
         context_dir = self._get_context_path(workspace_id, virtual_path)
         metadata_file = self._get_metadata_file(context_dir)
@@ -117,7 +119,9 @@ class ContextManager:
             return None
 
         meta_dict = json.loads(metadata_file.read_text(encoding="utf-8"))
-        content = content_file.read_text(encoding="utf-8") if content_file.exists() else None
+        content = (
+            content_file.read_text(encoding="utf-8") if content_file.exists() else None
+        )
 
         return ContextResponse(
             path=meta_dict["path"],

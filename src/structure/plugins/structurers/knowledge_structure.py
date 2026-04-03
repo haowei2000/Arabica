@@ -50,6 +50,6 @@ class KnowledgeStructurer(BaseStructurer):
             ContextCore(
                 glance=glance,
                 content="\n".join(lines),
-                path=slugify(f"/knowledge/{kb.name}/base.ctx")
-            )
+                path=slugify(f"/knowledge/{kb.name}/base.ctx"),
+            ),
         ]

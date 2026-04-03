@@ -5,7 +5,7 @@
 """
 
 from datetime import UTC
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 from unittest.mock import MagicMock
 
 
@@ -111,7 +111,7 @@ def assert_dict_contains(
                 f"List length mismatch for key '{key}': "
                 f"expected {len(expected_value)}, got {len(actual_value)}"
             )
-            for i, (exp_item, act_item) in enumerate(zip(expected_value, actual_value)):
+            for i, (exp_item, act_item) in enumerate(zip(expected_value, actual_value, strict=False)):
                 if isinstance(exp_item, dict) and isinstance(act_item, dict):
                     assert_dict_contains(act_item, exp_item, ignore_keys)
                 else:

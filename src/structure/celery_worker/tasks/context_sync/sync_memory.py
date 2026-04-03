@@ -31,6 +31,7 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):  # noqa: ARG001
     Memories are already stored in the Context table; this task generates the
     embedding and propagates changes to any WorkspaceContext references.
     """
+
     async def _execute():
         from structure.core.enums import ContextType
         from structure.extensions.database import get_session
@@ -110,6 +111,7 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
         context_type: Value stored in Context.context_type (e.g. "SKILL", "tool", "knowledge").
         meta_key: JSON meta field used to locate workspace-scoped Context rows (e.g. "skill_id").
     """
+
     async def _execute():
         from uuid import UUID
 
@@ -127,11 +129,9 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
                     Context.meta[meta_key].astext == resource_id,
                 )
             )
-            dirty_ids = list({
-                str(row[0].get("workspace_id"))
-                for row in wc_result.all()
-                if row[0]
-            })
+            dirty_ids = list(
+                {str(row[0].get("workspace_id")) for row in wc_result.all() if row[0]}
+            )
 
             # Bulk delete user-scoped Context rows matched by source_id + type
             user_del = await session.execute(

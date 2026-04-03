@@ -5,6 +5,7 @@ Revises: j5e6f7g8h9i0
 Create Date: 2026-03-22 00:01:00.000000
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -25,7 +26,9 @@ def upgrade() -> None:
     conn.execute(sa.text("ALTER TABLE run ADD COLUMN IF NOT EXISTS summary TEXT"))
     conn.execute(sa.text("COMMENT ON COLUMN run.summary IS 'LLM生成的摘要'"))
     conn.execute(sa.text("ALTER TABLE workspace ADD COLUMN IF NOT EXISTS summary TEXT"))
-    conn.execute(sa.text("COMMENT ON COLUMN workspace.summary IS 'LLM生成的工作空间摘要'"))
+    conn.execute(
+        sa.text("COMMENT ON COLUMN workspace.summary IS 'LLM生成的工作空间摘要'")
+    )
 
 
 def downgrade() -> None:

@@ -23,7 +23,7 @@ async def get_user_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]):
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: UserCreate,
-    user_crud: Annotated[UserCRUD,Depends(get_user_crud)],
+    user_crud: Annotated[UserCRUD, Depends(get_user_crud)],
     current_user: Annotated[UserResponse, Depends(get_admin_user)],
 ):
     """
@@ -73,7 +73,7 @@ async def create_user(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: UUID,
-    user_crud: Annotated[UserCRUD,Depends(get_user_crud)],
+    user_crud: Annotated[UserCRUD, Depends(get_user_crud)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
 ):
     """

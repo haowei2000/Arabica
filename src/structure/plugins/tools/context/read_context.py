@@ -9,7 +9,6 @@ from structure.core.interfaces.tool import (
 
 
 class ReadContextTool(InnerTool):
-
     METADATA = ToolMetadata(
         name="read_context",
         display_name="Read Context",
@@ -33,8 +32,7 @@ class ReadContextTool(InnerTool):
         try:
             workspace_id = UUID(input_data.workspace_id)
             ctx_data = await context_service_client.get_context(
-                workspace_id=workspace_id,
-                path=input_data.path
+                workspace_id=workspace_id, path=input_data.path
             )
 
             if ctx_data is None:

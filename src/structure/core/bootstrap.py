@@ -162,7 +162,9 @@ async def _initialize_registries(config: BootstrapConfig) -> None:
             logger.info("Auto-discovering tool modules from filesystem...")
             tool_registry.discover_and_register_tools()
         else:
-            logger.info("Skipping tool discovery from filesystem (discover_inner_tools=false)")
+            logger.info(
+                "Skipping tool discovery from filesystem (discover_inner_tools=false)"
+            )
 
         # Log current state
         tool_count = len(tool_registry.list_tools())
@@ -483,9 +485,9 @@ def get_celery_bootstrap_config() -> BootstrapConfig:
 def get_mcp_bootstrap_config() -> BootstrapConfig:
     """
     MCP service initialization configuration
-    
+
     Needs database for tool discovery, and logging.
-    """  # noqa: W293
+    """
     return BootstrapConfig(
         init_logging=True,
         init_redis=False,

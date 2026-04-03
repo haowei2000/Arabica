@@ -45,9 +45,7 @@ class GlanceContextTool(InnerTool):
             prefix = input_data.prefix or ""
 
             result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id,
-                prefix=prefix,
-                recursive=True
+                workspace_id=workspace_id, prefix=prefix, recursive=True
             )
 
             contexts = result_data.get("items", [])

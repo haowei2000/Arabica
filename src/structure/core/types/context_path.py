@@ -40,7 +40,9 @@ def _validate_context_path(value: str) -> str:
     segments = value[1:].split("/")  # strip leading '/'
     for seg in segments:
         if not seg:
-            raise ValueError("ContextPath must not contain empty segments (consecutive '//')")
+            raise ValueError(
+                "ContextPath must not contain empty segments (consecutive '//')"
+            )
         if not _SEGMENT_RE.match(seg):
             raise ValueError(
                 f"Invalid path segment '{seg}': must not contain control characters or '/'"

@@ -36,7 +36,6 @@ class PostgresConfig(BaseModel):
         description="SQLAlchemy URI scheme",
     )
 
-
     @property
     def structure_sqlalchemy_bind(self) -> dict[str, str]:
         """Return a dict usable as SQLALCHEMY_BINDS entry for the 'structure' bind."""
@@ -47,4 +46,3 @@ class PostgresConfig(BaseModel):
                 f"{self.host}:{self.port}/{self.structure_dbname}"
             )
         }
-

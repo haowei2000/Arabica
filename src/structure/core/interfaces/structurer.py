@@ -9,5 +9,5 @@ class BaseStructurer(ABC):
     description: str
 
     @abstractmethod
-    def structure(self, input:Any) -> list[ContextCore]:
+    def structure(self, input: Any) -> list[ContextCore]:
         """Return a list of section dicts with keys: title, level, content, position, structure_type, ..."""

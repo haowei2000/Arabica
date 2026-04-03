@@ -53,9 +53,7 @@ class WorkspaceTrigger(Base):
     )
 
     # Display info
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="触发器名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="触发器名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="触发器描述"
     )

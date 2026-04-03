@@ -107,6 +107,7 @@ async def download_artifact(
 
     if artifact.s3_url:
         from fastapi.responses import RedirectResponse
+
         return RedirectResponse(url=artifact.s3_url)
 
     if artifact.content is None:

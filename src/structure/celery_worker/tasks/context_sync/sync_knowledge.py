@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 )
 def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
     """Upsert Knowledge into the Context table, embed, and sync to all user workspaces."""
+
     async def _execute():
         from structure.extensions.database import get_session
         from structure.models.context.knowledge.knowledge import Knowledge
@@ -55,6 +56,7 @@ def sync_knowledge_to_contexts(self, knowledge_id: str, user_id: str):
                 )
             await session.flush()
             await session.commit()
+
     try:
         run_async(_execute())
     except Exception as e:

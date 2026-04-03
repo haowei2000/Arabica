@@ -6,9 +6,9 @@ from enum import StrEnum
 class ContextScope(StrEnum):
     """Visibility scope of a Context entry."""
 
-    USER = "user"            # visible only to the owning user
+    USER = "user"  # visible only to the owning user
     WORKSPACE = "workspace"  # visible to all members of a workspace
-    GLOBAL = "global"        # visible to all users (system-wide)
+    GLOBAL = "global"  # visible to all users (system-wide)
 
 
 class ContextType(StrEnum):
@@ -36,4 +36,3 @@ class ContextPathSuffix:
     TRIGGERS = "triggers"
     WORKSPACES = "workspaces"
     RUNS = "runs"
-

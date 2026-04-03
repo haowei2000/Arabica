@@ -5,6 +5,7 @@ Revises: e20393a8e62a, h4g5f6e7d8c9
 Create Date: 2026-03-15 17:13:49.088100
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -12,8 +13,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = 'e57d623197a6'
-down_revision: str | Sequence[str] | None = ('e20393a8e62a', 'h4g5f6e7d8c9')
+revision: str = "e57d623197a6"
+down_revision: str | Sequence[str] | None = ("e20393a8e62a", "h4g5f6e7d8c9")
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

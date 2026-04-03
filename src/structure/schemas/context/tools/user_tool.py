@@ -153,7 +153,9 @@ class UserToolExecutionResponse(BaseModel):
 class UserToolTestRequest(BaseModel):
     """Schema for testing a tool with sample parameters"""
 
-    parameters: dict[str, Any] = Field(default_factory=dict, description="Test parameters")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Test parameters"
+    )
 
 
 class UserToolTestResponse(BaseModel):

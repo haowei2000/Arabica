@@ -55,8 +55,7 @@ class DeleteContextTool(InnerTool):
             # The context service delete is naturally recursive if the path is a 'directory'
             # in our implementation (since we use shutil.rmtree).
             success = await context_service_client.delete_context(
-                workspace_id=workspace_id,
-                path=input_data.path
+                workspace_id=workspace_id, path=input_data.path
             )
 
             if not success:

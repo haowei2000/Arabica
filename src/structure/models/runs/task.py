@@ -63,7 +63,9 @@ class Task(Base):
     )
 
     # Task content
-    title: Mapped[str] = mapped_column(String(512), nullable=False, comment="Task title")
+    title: Mapped[str] = mapped_column(
+        String(512), nullable=False, comment="Task title"
+    )
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="Detailed task description"
     )

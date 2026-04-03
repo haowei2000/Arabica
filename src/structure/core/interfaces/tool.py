@@ -4,6 +4,7 @@ Base Tool Class System
 Provides a unified tool interface with automatic JSON Schema generation.
 All tools run through the same ``execute()`` / ``__call__()`` protocol.
 """
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
@@ -28,7 +29,9 @@ class ToolControlFlow(Exception):
       - ``WaitingForUserInput`` — pause execution, ask the user a question.
     """
 
+
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ToolMetadata:
@@ -43,12 +46,16 @@ class ToolMetadata:
     category: str = "general"  # Category
     enabled: bool = True  # Whether enabled
     timeout: int = 30  # Timeout in seconds
-    always_load: bool = False  # Always include this tool regardless of XML tag selection
+    always_load: bool = (
+        False  # Always include this tool regardless of XML tag selection
+    )
+
 
 class ToolInputSchema(BaseModel):
     """Base class for tool input parameters (auto-generate schema using Pydantic)"""
 
     pass
+
 
 class ToolOutputSchema(BaseModel):
     """Base class for tool output results"""
@@ -58,7 +65,8 @@ class ToolOutputSchema(BaseModel):
     data: dict[str, Any] | None = Field(default=None, description="Return data")
     error: str | None = Field(default=None, description="Error information")
 
-class BaseTool(ABC,ToolProtocol):
+
+class BaseTool(ABC, ToolProtocol):
     """
     Base Tool Class
 
@@ -141,13 +149,13 @@ class BaseTool(ABC,ToolProtocol):
 
         cleaned_input = {}
         for key, value in raw_input.items():
-            if value == '' or value is None:
+            if value == "" or value is None:
                 # Empty string or None - skip it, let Pydantic use field defaults
                 continue
             if isinstance(value, str):
                 # Try to parse JSON strings for complex types (dict/list)
                 stripped = value.strip()
-                if stripped and stripped[0] in ('{', '['):
+                if stripped and stripped[0] in ("{", "["):
                     try:
                         cleaned_input[key] = json.loads(stripped)
                     except (json.JSONDecodeError, ValueError) as e:
@@ -155,17 +163,19 @@ class BaseTool(ABC,ToolProtocol):
                         try:
                             # Attempt to fix common JSON errors
                             import re
+
                             # Add quotes to unquoted string values
                             # Pattern: :word (not already quoted, not a number/bool/null)
                             fixed = re.sub(
-                                r':(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*([,}\]])',
+                                r":(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*([,}\]])",
                                 r':"\2"\3',
-                                stripped
+                                stripped,
                             )
                             cleaned_input[key] = json.loads(fixed)
                         except (json.JSONDecodeError, ValueError):
                             # Still failed - log warning and keep as string
                             import logging
+
                             logger = logging.getLogger(__name__)
                             logger.warning(
                                 f"Failed to parse JSON for parameter '{key}': {e}\n"
@@ -262,7 +272,9 @@ class BaseTool(ABC,ToolProtocol):
         pass
 
     async def on_error(
-        self, input_data: ToolInputSchema | None, error: Exception  # noqa: ARG002
+        self,
+        input_data: ToolInputSchema | None,  # noqa: ARG002
+        error: Exception,
     ) -> ToolOutputSchema:
         """
         Error handling hook (optional)
@@ -296,6 +308,7 @@ class BaseTool(ABC,ToolProtocol):
         start_time = time.monotonic()
 
         import asyncio as _asyncio
+
         timeout_s = getattr(self.METADATA, "timeout", 60) or 60
 
         input_data = None
@@ -311,7 +324,9 @@ class BaseTool(ABC,ToolProtocol):
             result = self.format_output(output)
             logger.info(
                 "Tool call succeeded: %s | %.1fms | success=%s",
-                tool_name, elapsed_ms, result.get("success"),
+                tool_name,
+                elapsed_ms,
+                result.get("success"),
             )
             return result
 
@@ -322,7 +337,9 @@ class BaseTool(ABC,ToolProtocol):
             elapsed_ms = (time.monotonic() - start_time) * 1000
             logger.error(
                 "Tool call timed out: %s | %.1fms | timeout=%ss",
-                tool_name, elapsed_ms, timeout_s,
+                tool_name,
+                elapsed_ms,
+                timeout_s,
             )
             error_output = await self.on_error(
                 input_data,
@@ -334,7 +351,9 @@ class BaseTool(ABC,ToolProtocol):
             elapsed_ms = (time.monotonic() - start_time) * 1000
             logger.error(
                 "Tool call failed: %s | %.1fms | error: %s",
-                tool_name, elapsed_ms, e,
+                tool_name,
+                elapsed_ms,
+                e,
                 exc_info=True,
             )
             error_output = await self.on_error(input_data, e)
@@ -342,10 +361,8 @@ class BaseTool(ABC,ToolProtocol):
 
     def __repr__(self) -> str:
         """String representation"""
-        return (
-            f"<{self.__class__.__name__}("
-            f"name='{self.METADATA.name}')>"
-        )
+        return f"<{self.__class__.__name__}(name='{self.METADATA.name}')>"
+
 
 class InnerTool(BaseTool, ABC):
     """
@@ -375,5 +392,3 @@ class InnerTool(BaseTool, ABC):
     """
 
     tool_type: ClassVar[str] = "inner"
-
-

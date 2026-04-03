@@ -54,18 +54,22 @@ class ToolStructurer(BaseStructurer):
                     req_mark = "*" if param in required else ""
                     lines.append(f"        {connector}{param}{req_mark}: {param_type}")
 
-        results.append(ContextCore(
-            glance=glance,
-            content="\n".join(lines),
-            path=tool_path,
-        ))
+        results.append(
+            ContextCore(
+                glance=glance,
+                content="\n".join(lines),
+                path=tool_path,
+            )
+        )
 
         # Level 2: input schema detail (if present)
         if tool.input_schema:
-            results.append(ContextCore(
-                glance=f"{tool.name} / input schema",
-                content=json.dumps(tool.input_schema, indent=2, ensure_ascii=False),
-                path=f"{tool_path}/schema.ctx",
-            ))
+            results.append(
+                ContextCore(
+                    glance=f"{tool.name} / input schema",
+                    content=json.dumps(tool.input_schema, indent=2, ensure_ascii=False),
+                    path=f"{tool_path}/schema.ctx",
+                )
+            )
 
         return results

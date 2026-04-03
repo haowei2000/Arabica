@@ -90,7 +90,9 @@ async def create_run(
         app_row = app_result.scalar_one_or_none()
         if app_row and app_row.executor_id:
             tmpl_result = await state_machine.db.execute(
-                select(ExecutorTemplate).where(ExecutorTemplate.id == app_row.executor_id)
+                select(ExecutorTemplate).where(
+                    ExecutorTemplate.id == app_row.executor_id
+                )
             )
             tmpl = tmpl_result.scalar_one_or_none()
             if tmpl:

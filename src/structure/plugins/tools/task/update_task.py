@@ -34,7 +34,9 @@ class UpdateTaskTool(InnerTool):
             description="New status: pending, in_progress, done, failed, cancelled",
         )
         title: str | None = Field(default=None, description="New task title")
-        description: str | None = Field(default=None, description="New task description")
+        description: str | None = Field(
+            default=None, description="New task description"
+        )
         result: str | None = Field(
             default=None, description="Task result or output (set when completing)"
         )

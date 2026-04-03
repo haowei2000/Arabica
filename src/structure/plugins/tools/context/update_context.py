@@ -28,11 +28,19 @@ class UpdateContextTool(InnerTool):
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
         path: str = Field(description="Context path to update")
-        glance: str | None = Field(default=None, description="New glance text (one-line summary)")
-        overview: dict[str, Any] | str | None = Field(default=None, description="New overview content")
+        glance: str | None = Field(
+            default=None, description="New glance text (one-line summary)"
+        )
+        overview: dict[str, Any] | str | None = Field(
+            default=None, description="New overview content"
+        )
         detail: Any | None = Field(default=None, description="New detail content")
-        tags: list[str] | None = Field(default=None, description="New tags (replaces existing tags)")
-        meta: dict[str, Any] | None = Field(default=None, description="New metadata (merges with existing)")
+        tags: list[str] | None = Field(
+            default=None, description="New tags (replaces existing tags)"
+        )
+        meta: dict[str, Any] | None = Field(
+            default=None, description="New metadata (merges with existing)"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
@@ -44,7 +52,9 @@ class UpdateContextTool(InnerTool):
             normalized_path = "/" + input_data.path.lstrip("/")
 
             # Fetch existing context to perform partial update
-            ctx = await context_service_client.get_context(workspace_id, normalized_path)
+            ctx = await context_service_client.get_context(
+                workspace_id, normalized_path
+            )
 
             if ctx is None:
                 return ToolOutputSchema(
@@ -97,8 +107,7 @@ class UpdateContextTool(InnerTool):
 
             # Perform the update via create_context (upsert)
             await context_service_client.create_context(
-                workspace_id=workspace_id,
-                **update_payload
+                workspace_id=workspace_id, **update_payload
             )
 
             return ToolOutputSchema(

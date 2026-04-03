@@ -20,7 +20,9 @@ from structure.services.auth.friend_crud import FriendCRUD
 router = APIRouter(prefix="/friends", tags=["friends"])
 
 
-def _get_friend_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]) -> FriendCRUD:
+def _get_friend_crud(
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+) -> FriendCRUD:
     return FriendCRUD(db)
 
 
@@ -130,7 +132,9 @@ async def accept_friend_request(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))  # noqa: B904
 
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found"
+        )
     return record
 
 
@@ -157,7 +161,9 @@ async def decline_friend_request(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))  # noqa: B904
 
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Friend request not found"
+        )
     return record
 
 
@@ -182,4 +188,6 @@ async def remove_friend(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))  # noqa: B904
 
     if not removed:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Friend record not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Friend record not found"
+        )

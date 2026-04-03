@@ -640,10 +640,14 @@ async def list_invitable_friends(
         )
 
     friend_crud = FriendCRUD(db)
-    _, all_friends = await friend_crud.list_friends(user_id=current_user.id, page=1, page_size=1000)
+    _, all_friends = await friend_crud.list_friends(
+        user_id=current_user.id, page=1, page_size=1000
+    )
 
     # Get existing member user IDs
-    existing_members, _ = await member_crud.list_members(workspace_id=workspace_id, skip=0, limit=10000)
+    existing_members, _ = await member_crud.list_members(
+        workspace_id=workspace_id, skip=0, limit=10000
+    )
     existing_member_ids = {str(m.user_id) for m in existing_members}
 
     invitable = [

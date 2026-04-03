@@ -29,13 +29,16 @@ logger = logging.getLogger(__name__)
     default_retry_delay=30,
     queue="default",
 )
-def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | None = None):
+def sync_skill_to_contexts(
+    self, skill_id: str, user_id: str, content: str | None = None
+):
     """Upsert Skill into Context table using SkillStructurer, embed, and sync workspaces.
 
     Stores one Context row per ContextCore produced by SkillStructurer:
     - Level 1: overview entry with file-tree listing (path = skills/{name})
     - Level 2+3: per-file section chunks (path = skills/{name}/file/section)
     """
+
     async def _execute():
         from structure.extensions.database import get_session
         from structure.models.context.skill import Skill
@@ -53,7 +56,9 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
             if content is not None:
                 skill.content = content  # transient attribute — not committed
 
-            glance = (skill.description[:80] if skill.description else None) or skill.name
+            glance = (
+                skill.description[:80] if skill.description else None
+            ) or skill.name
             skill_name = skill.name
             skill_tags = list(skill.tags or [])
             skill_path = f"/skills/{_slugify(skill_name)}"
@@ -67,7 +72,10 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
                 )
                 # Minimal fallback: single overview entry
                 from structure.schemas.context.context_schema import ContextCore
-                context_cores = [ContextCore(glance=glance, content=content or "", path=skill_path)]
+
+                context_cores = [
+                    ContextCore(glance=glance, content=content or "", path=skill_path)
+                ]
 
             ctx_ids_need_embed: list[tuple[str, str]] = []  # (ctx_id, embed_text)
 
@@ -130,7 +138,9 @@ def sync_skill_to_contexts(self, skill_id: str, user_id: str, content: str | Non
                     await session.commit()
 
         if ctx_ids_need_embed:
-            logger.info(f"sync_skill: embedded {len(ctx_ids_need_embed)} chunk(s) for {skill_id}")
+            logger.info(
+                f"sync_skill: embedded {len(ctx_ids_need_embed)} chunk(s) for {skill_id}"
+            )
 
     try:
         run_async(_execute())

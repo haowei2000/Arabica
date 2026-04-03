@@ -5,6 +5,7 @@ Revises: b52725032039
 Create Date: 2026-02-28 10:00:00.000000
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -22,7 +23,8 @@ def upgrade() -> None:
     """Create artifact and task tables."""
     conn = op.get_bind()
     # --- artifact table ---
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS artifact (
             id UUID PRIMARY KEY,
             workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
@@ -38,13 +40,27 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ DEFAULT now()
         )
-    """))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_artifact_workspace ON artifact (workspace_id, created_at)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_artifact_run ON artifact (run_id, created_at)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_artifact_type ON artifact (artifact_type)"))
+                """)
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_workspace ON artifact (workspace_id, created_at)"
+        )
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_run ON artifact (run_id, created_at)"
+        )
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_type ON artifact (artifact_type)"
+        )
+    )
 
     # --- task table ---
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS task (
             id UUID PRIMARY KEY,
             workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
@@ -61,11 +77,22 @@ def upgrade() -> None:
             completed_at TIMESTAMPTZ,
             updated_at TIMESTAMPTZ DEFAULT now()
         )
-    """))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_workspace ON task (workspace_id, created_at)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_run ON task (run_id, status)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_status ON task (status, priority)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_task_parent ON task (parent_task_id)"))
+                """)
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_task_workspace ON task (workspace_id, created_at)"
+        )
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_task_run ON task (run_id, status)")
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_task_status ON task (status, priority)")
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_task_parent ON task (parent_task_id)")
+    )
 
 
 def downgrade() -> None:

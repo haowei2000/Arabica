@@ -71,7 +71,10 @@ def send_email(self, to: str, subject: str, body: str, **kwargs) -> dict[str, An
     retry_kwargs={"max_retries": 2, "countdown": 120},
 )
 def generate_report(
-    self, report_type: str, params: dict[str, Any], user_id: str | None = None  # noqa: ARG001
+    self,
+    report_type: str,
+    params: dict[str, Any],  # noqa: ARG001
+    user_id: str | None = None,  # noqa: ARG001
 ) -> dict[str, Any]:
     """
     生成报告任务

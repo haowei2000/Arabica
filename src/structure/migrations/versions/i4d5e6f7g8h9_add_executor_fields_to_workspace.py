@@ -28,12 +28,14 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text(
-        "ALTER TABLE workspace ADD COLUMN IF NOT EXISTS executor_code VARCHAR(255)"
-    ))
-    conn.execute(sa.text(
-        "ALTER TABLE workspace ADD COLUMN IF NOT EXISTS executor_config JSONB"
-    ))
+    conn.execute(
+        sa.text(
+            "ALTER TABLE workspace ADD COLUMN IF NOT EXISTS executor_code VARCHAR(255)"
+        )
+    )
+    conn.execute(
+        sa.text("ALTER TABLE workspace ADD COLUMN IF NOT EXISTS executor_config JSONB")
+    )
 
 
 def downgrade() -> None:

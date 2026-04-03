@@ -1,4 +1,3 @@
-import asyncio
 from unittest.mock import patch
 import uuid
 
@@ -82,7 +81,7 @@ class TestGetGraphEndpoint:
     def test_get_graph_invalid_uuid(self, test_client, invalid_indicator_id):
         """Test handling of invalid UUID"""
         # Act
-        response = test_client.post(
+        test_client.post(
             "/api/nl2sql/get_graph", json={"indicator_id": invalid_indicator_id}
         )
 
@@ -99,7 +98,7 @@ class TestGetGraphEndpoint:
         mock_get_indicator_graph.side_effect = Exception("Database connection failed")
 
         # Act
-        response = test_client.post(
+        test_client.post(
             "/api/nl2sql/get_graph", json={"indicator_id": valid_indicator_id}
         )
 
@@ -112,13 +111,13 @@ class TestGetGraphEndpoint:
     ):
         """Test handling of Pydantic validation errors"""
         # Arrange
-        from structure.schemas.nl2sql.graph import GraphResponse
         from pydantic import ValidationError
+        from structure.schemas.nl2sql.graph import GraphResponse
 
         mock_get_indicator_graph.side_effect = ValidationError([], GraphResponse)
 
         # Act
-        response = test_client.post(
+        test_client.post(
             "/api/nl2sql/get_graph", json={"indicator_id": valid_indicator_id}
         )
 

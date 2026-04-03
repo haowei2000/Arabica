@@ -124,7 +124,8 @@ class Executor(ABC, ExecutorProtocol):
     # override the events they care about.
 
     async def process_event(
-        self, event: Event  # noqa: ARG002
+        self,
+        event: Event,  # noqa: ARG002
     ) -> AsyncGenerator[Event, None]:  # ty:ignore[invalid-method-override]
         """Dispatch an incoming event to the appropriate handler.
 
@@ -144,9 +145,7 @@ class Executor(ABC, ExecutorProtocol):
         for emitted_event in self._event_queue:
             yield emitted_event
 
-    async def process_events(
-        self, events: list[Event]
-    ) -> AsyncGenerator[Event, None]:  # ty:ignore[invalid-method-override]
+    async def process_events(self, events: list[Event]) -> AsyncGenerator[Event, None]:  # ty:ignore[invalid-method-override]
         """Process a pre-fetched run event history list.
 
         The last triggering event drives handler dispatch.  Subclasses
@@ -393,6 +392,7 @@ class Executor(ABC, ExecutorProtocol):
             EventType.TOOL_CALL,
             {"tool_name": tool_name, "tool_id": tool_id, "arguments": arguments},
         )
+
 
 # Populate the dispatch table after the class body so all methods are defined.
 # This mapping is auto-generated from EventType enum to ensure completeness.

@@ -21,6 +21,7 @@ class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
             # Truncate in-place so existing open handles remain valid
             open(source, "w").close()  # noqa: PTH123
 
+
 # 获取项目根目录（假设 logger.py 在 structure/core/ 下）
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 LOG_DIR = BASE_DIR / "logs"

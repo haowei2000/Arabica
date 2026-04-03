@@ -1,21 +1,21 @@
 """Unit tests for /api/events/* endpoints."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
     get_event_crud,
-    get_workspace_crud,
     get_run_crud,
+    get_workspace_crud,
 )
 from structure.extensions.database import get_structure_db
-from tests.unit.routers.conftest import make_user, USER_ID, WORKSPACE_ID, RUN_ID
+from tests.unit.routers.conftest import RUN_ID, USER_ID, WORKSPACE_ID, make_user
 
 EVENT_ID = uuid4()
 BASE = "/api/events"
@@ -180,16 +180,16 @@ class TestSearchEvents:
         assert resp.status_code == 422  # UUID parse failure for 'search'
 
     def test_search_with_workspace_id_unreachable(self, client):
-        resp = client.get(f"{BASE}/search?workspace_id={str(WORKSPACE_ID)}")
+        resp = client.get(f"{BASE}/search?workspace_id={WORKSPACE_ID!s}")
         assert resp.status_code == 422
 
     def test_search_with_run_id_unreachable(self, client):
-        resp = client.get(f"{BASE}/search?run_id={str(RUN_ID)}")
+        resp = client.get(f"{BASE}/search?run_id={RUN_ID!s}")
         assert resp.status_code == 422
 
     def test_search_with_sequence_range_unreachable(self, client):
         resp = client.get(
-            f"{BASE}/search?workspace_id={str(WORKSPACE_ID)}&from_sequence=0&to_sequence=100"
+            f"{BASE}/search?workspace_id={WORKSPACE_ID!s}&from_sequence=0&to_sequence=100"
         )
         assert resp.status_code == 422
 

@@ -260,8 +260,10 @@ class TriggerProcessor:
         """
         from structure.models.runs.run import Run  # local import to avoid circular deps
 
-        stmt = select(func.count()).select_from(Run).where(
-            Run.workspace_id == self.workspace_id
+        stmt = (
+            select(func.count())
+            .select_from(Run)
+            .where(Run.workspace_id == self.workspace_id)
         )
         result = await self.db.execute(stmt)
         return result.scalar_one() == 1
@@ -353,7 +355,9 @@ class TriggerProcessor:
                         auto_commit=True,
                     )
                 except Exception as pub_err:
-                    logger.warning("Failed to publish trigger tool result event: %s", pub_err)
+                    logger.warning(
+                        "Failed to publish trigger tool result event: %s", pub_err
+                    )
 
             return result
 
@@ -378,7 +382,9 @@ class TriggerProcessor:
                         auto_commit=True,
                     )
                 except Exception as pub_err:
-                    logger.warning("Failed to publish trigger tool error event: %s", pub_err)
+                    logger.warning(
+                        "Failed to publish trigger tool error event: %s", pub_err
+                    )
 
             raise
 

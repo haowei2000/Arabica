@@ -24,7 +24,9 @@ async def handle_run_cancellation(event: Event, runtime: ExecutorInstanceManager
             logger.warning("Received run.cancelled without run_id, skipping")
             return
 
-        run_id = event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+        run_id = (
+            event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+        )
 
         logger.info(f"Processing run cancellation for {run_id}")
 

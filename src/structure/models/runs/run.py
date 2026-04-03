@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 Base = get_base("structure")
 
+
 class Run(Base):
     """Run model - represents a single execution unit within a workspace.
 

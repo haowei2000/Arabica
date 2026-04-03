@@ -34,7 +34,10 @@ class Artifact(Base):
 
     # Primary key
     id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4, comment="Artifact unique ID"
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        comment="Artifact unique ID",
     )
 
     # Workspace reference
@@ -54,27 +57,37 @@ class Artifact(Base):
     )
 
     # Name and type
-    name: Mapped[str] = mapped_column(String(512), nullable=False, comment="Artifact name")
+    name: Mapped[str] = mapped_column(
+        String(512), nullable=False, comment="Artifact name"
+    )
     artifact_type: Mapped[str] = mapped_column(
         String(50),
         default=ArtifactType.TEXT,
         comment="Artifact type: text/code/file/image/document/data/other",
     )
     content_type: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="MIME type (e.g., text/plain, application/json)"
+        String(255),
+        nullable=True,
+        comment="MIME type (e.g., text/plain, application/json)",
     )
 
     # Content — either inline text or a reference to S3 storage
-    content: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Artifact content (inline)")
+    content: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Artifact content (inline)"
+    )
     s3_key: Mapped[str | None] = mapped_column(
         String(1024), nullable=True, comment="S3 storage key for large artifact files"
     )
     s3_url: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True, comment="S3 public/presigned URL for artifact access"
+        String(2048),
+        nullable=True,
+        comment="S3 public/presigned URL for artifact access",
     )
 
     # Versioning
-    version: Mapped[int] = mapped_column(Integer, default=1, comment="Artifact version number")
+    version: Mapped[int] = mapped_column(
+        Integer, default=1, comment="Artifact version number"
+    )
 
     # Flexible metadata
     meta: Mapped[dict[str, Any] | None] = mapped_column(
@@ -105,4 +118,6 @@ class Artifact(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Artifact(id={self.id}, name='{self.name}', type='{self.artifact_type}')>"
+        return (
+            f"<Artifact(id={self.id}, name='{self.name}', type='{self.artifact_type}')>"
+        )

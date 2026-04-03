@@ -34,7 +34,8 @@ async def handle_tool_call(
     event_publisher: EventPublisher,
     state_machine: RunStateMachine,
     tool_caller: RegistryToolCaller | None = None,
-    flush_run_buffer: Callable[[str, AsyncSession], Coroutine[Any, Any, None]] | None = None,
+    flush_run_buffer: Callable[[str, AsyncSession], Coroutine[Any, Any, None]]
+    | None = None,
 ):
     """Execute a tool and publish result/error event.
 
@@ -56,7 +57,9 @@ async def handle_tool_call(
             logger.warning("Received tool.call without run_id, skipping")
             return
 
-        run_id = event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+        run_id = (
+            event.run_id if isinstance(event.run_id, UUID) else UUID(str(event.run_id))
+        )
         payload = event.payload or {}
 
         tool_name = payload.get("tool_name")
@@ -116,7 +119,11 @@ async def handle_tool_call(
 
             # Check for logical failure: tool returned {"success": false, "error": "..."}
             if isinstance(result, dict) and result.get("success") is False:
-                error_msg = result.get("error") or result.get("message") or "Tool returned success=false"
+                error_msg = (
+                    result.get("error")
+                    or result.get("message")
+                    or "Tool returned success=false"
+                )
                 await event_publisher.publish(
                     event_type=EventType.TOOL_ERROR,
                     workspace_id=str(run.workspace_id),
@@ -146,7 +153,9 @@ async def handle_tool_call(
                 auto_commit=True,
             )
 
-            logger.info(f"Tool '{tool_name}' completed successfully in {elapsed_ms}ms for run {run_id}")
+            logger.info(
+                f"Tool '{tool_name}' completed successfully in {elapsed_ms}ms for run {run_id}"
+            )
 
         except WaitingForUserInput as wui:
             # The tool needs a response from the user before it can return.
@@ -162,7 +171,9 @@ async def handle_tool_call(
                 try:
                     await flush_run_buffer(str(run_id), db)
                 except Exception as flush_err:
-                    logger.warning(f"Failed to flush run buffer for {run_id}: {flush_err}")
+                    logger.warning(
+                        f"Failed to flush run buffer for {run_id}: {flush_err}"
+                    )
 
             await state_machine.pause_for_tool(
                 run_id,

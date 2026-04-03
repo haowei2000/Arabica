@@ -33,6 +33,7 @@ _SUMMARY_MODEL = "qwen-turbo"
 
 # ─── LLM helper ───────────────────────────────────────────────────────────────
 
+
 def _call_llm(prompt: str) -> str:
     """Call the summarization LLM synchronously and return raw text."""
     from langchain_core.messages import HumanMessage
@@ -75,6 +76,7 @@ def _parse_title_summary(raw: str) -> tuple[str, str]:
 
 # ─── Tasks ────────────────────────────────────────────────────────────────────
 
+
 @celery_app.task(
     bind=True,
     name="summarize.run",
@@ -89,6 +91,7 @@ def summarize_run(self, run_id: str, user_id: str) -> None:
     corresponding Context entry (glance + summary fields) and dispatches
     ``summarize_workspace`` to keep the workspace-level summary current.
     """
+
     async def _execute() -> None:
         from structure.extensions.database import get_session
         from structure.models.runs.run import Run
@@ -152,6 +155,7 @@ def summarize_run(self, run_id: str, user_id: str) -> None:
         from structure.celery_worker.tasks.context_sync.sync_run import (
             sync_run_to_memory,
         )
+
         sync_run_to_memory.delay(run_id, user_id)
 
     try:
@@ -175,6 +179,7 @@ def summarize_workspace(self, workspace_id: str, user_id: str) -> None:  # noqa:
     LLM-generated title/summary), builds a prompt, and writes the result to
     ``Workspace.summary``.  Also refreshes the Context entry for the workspace.
     """
+
     async def _execute() -> None:
         from sqlalchemy import select
 
@@ -251,6 +256,7 @@ def summarize_workspace(self, workspace_id: str, user_id: str) -> None:  # noqa:
 
 # ─── Prompt builders ──────────────────────────────────────────────────────────
 
+
 def _build_run_prompt(
     *,
     input_msg: str,
@@ -294,7 +300,9 @@ def _build_workspace_prompt(
         run_lines.append(f"{i}. [{status}] {title}: {summary}")
 
     runs_text = "\n".join(run_lines)
-    desc_line = f"Description: {workspace_description}\n" if workspace_description else ""
+    desc_line = (
+        f"Description: {workspace_description}\n" if workspace_description else ""
+    )
 
     return f"""You are a helpful assistant that summarizes workspaces.
 

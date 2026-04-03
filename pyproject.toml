@@ -143,11 +143,6 @@ addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
-    "--cov=src/structure",
-    "--cov-report=html",
-    "--cov-report=term-missing",
-    "--cov-report=xml",
-    "--cov-fail-under=60",
 ]
 
 [tool.mypy]

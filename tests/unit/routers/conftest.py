@@ -1,14 +1,11 @@
 """Shared fixtures for router unit tests."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 
-from structure.core.dependencies.auth import get_current_user
-from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
 
 # Fixed UUIDs for deterministic tests
@@ -24,18 +21,18 @@ KNOWLEDGE_ID = UUID("00000000-0000-0000-0000-000000000007")
 def make_user(**kwargs) -> UserResponse:
     """Build a UserResponse for auth override."""
     now = datetime.now(UTC)
-    defaults = dict(
-        id=USER_ID,
-        username="testuser",
-        email="test@example.com",
-        phone=None,
-        tenant_id=TENANT_ID,
-        role="user",
-        is_active=True,
-        is_superuser=False,
-        created_at=now,
-        updated_at=now,
-    )
+    defaults = {
+        "id": USER_ID,
+        "username": "testuser",
+        "email": "test@example.com",
+        "phone": None,
+        "tenant_id": TENANT_ID,
+        "role": "user",
+        "is_active": True,
+        "is_superuser": False,
+        "created_at": now,
+        "updated_at": now,
+    }
     defaults.update(kwargs)
     return UserResponse(**defaults)
 

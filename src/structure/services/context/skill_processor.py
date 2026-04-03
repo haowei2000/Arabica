@@ -47,12 +47,15 @@ class SkillProcessor:
         }
 
         # Extract YAML frontmatter if present
-        frontmatter_match = re.match(r"^---\s*\n(.*?)\n---\s*\n", markdown_content, re.DOTALL)
+        frontmatter_match = re.match(
+            r"^---\s*\n(.*?)\n---\s*\n", markdown_content, re.DOTALL
+        )
         if frontmatter_match:
             try:
                 import yaml
+
                 result["metadata"] = yaml.safe_load(frontmatter_match.group(1)) or {}
-                markdown_content = markdown_content[frontmatter_match.end():]
+                markdown_content = markdown_content[frontmatter_match.end() :]
             except Exception as e:
                 logger.warning(f"Failed to parse YAML frontmatter: {e}")
 
@@ -117,7 +120,9 @@ class SkillProcessor:
         code_count = len(parsed_data["code_blocks"])
         if code_count > 0:
             languages = set(block["language"] for block in parsed_data["code_blocks"])  # noqa: C401
-            summary_parts.append(f"\nCode blocks: {code_count} ({', '.join(languages)})")
+            summary_parts.append(
+                f"\nCode blocks: {code_count} ({', '.join(languages)})"
+            )
 
         return "\n".join(summary_parts)
 
@@ -145,7 +150,9 @@ class SkillProcessor:
             return None
 
         # Content is stored in the Context table; nothing to process on the Skill row.
-        logger.info(f"Processed skill {skill_id} (no-op — content lives in Context table)")
+        logger.info(
+            f"Processed skill {skill_id} (no-op — content lives in Context table)"
+        )
         return skill
 
     async def batch_process(
@@ -182,5 +189,7 @@ class SkillProcessor:
                 logger.error(f"Failed to process skill {skill.id}: {e}")
 
         await self.db.commit()
-        logger.info(f"Batch processed {stats['processed']}/{total} skills for user {user_id}")
+        logger.info(
+            f"Batch processed {stats['processed']}/{total} skills for user {user_id}"
+        )
         return stats

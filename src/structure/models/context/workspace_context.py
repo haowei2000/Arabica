@@ -126,7 +126,9 @@ class WorkspaceContext(Base):  # ty:ignore[unsupported-base]
         Index("ix_ws_ctx_created_by", "created_by"),
         Index("ix_ws_ctx_expires", "expires_at"),
         Index("ix_ws_ctx_glance", "glance"),  # For quick scanning
-        Index("ix_ws_ctx_workspace_deleted", "workspace_id", "is_deleted"),  # For active contexts
+        Index(
+            "ix_ws_ctx_workspace_deleted", "workspace_id", "is_deleted"
+        ),  # For active contexts
     )
 
     def __repr__(self) -> str:
@@ -152,9 +154,13 @@ class WorkspaceContext(Base):  # ty:ignore[unsupported-base]
         if self.glance:
             result["glance"] = self.glance
         elif self.summary:
-            result["glance"] = self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
+            result["glance"] = (
+                self.summary[:100] + "..." if len(self.summary) > 100 else self.summary
+            )
         elif self.content:
-            result["glance"] = self.content[:50] + "..." if len(self.content) > 50 else self.content
+            result["glance"] = (
+                self.content[:50] + "..." if len(self.content) > 50 else self.content
+            )
         else:
             result["glance"] = f"{self.name} ({self.content_type or 'unknown'})"
 
@@ -181,8 +187,12 @@ class WorkspaceContext(Base):  # ty:ignore[unsupported-base]
             if self.s3_key:
                 result["s3_key"] = self.s3_key
             result["created_by"] = str(self.created_by) if self.created_by else None
-            result["created_at"] = self.created_at.isoformat() if self.created_at else None
-            result["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
+            result["created_at"] = (
+                self.created_at.isoformat() if self.created_at else None
+            )
+            result["updated_at"] = (
+                self.updated_at.isoformat() if self.updated_at else None
+            )
             if self.expires_at:
                 result["expires_at"] = self.expires_at.isoformat()
 

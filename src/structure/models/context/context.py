@@ -21,6 +21,7 @@ from structure.extensions.database import get_base
 
 Base = get_base("structure")
 
+
 class Context(Base):  # ty:ignore[unsupported-base]
     """Database ORM model for agent context with vector embeddings (PERSISTENCE LAYER).
 
@@ -83,7 +84,9 @@ class Context(Base):  # ty:ignore[unsupported-base]
     )
 
     # Layer 3: Detail - full content
-    content: Mapped[str] = mapped_column(Text, nullable=False, comment="完整内容（详情层）")
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="完整内容（详情层）"
+    )
 
     # Tags for filtering and categorization
     tags: Mapped[list[str] | None] = mapped_column(
@@ -140,10 +143,16 @@ class Context(Base):  # ty:ignore[unsupported-base]
     __table_args__ = (
         Index("ix_context_user_id", "user_id"),
         Index("ix_context_scope", "scope"),
-        Index("ix_context_user_scope", "user_id", "scope"),  # Composite for scope-filtered queries
+        Index(
+            "ix_context_user_scope", "user_id", "scope"
+        ),  # Composite for scope-filtered queries
         Index("ix_context_type", "context_type"),
-        Index("ix_context_path", "path"),  # For prefix queries (e.g., path LIKE 'prefix%')
-        Index("ix_context_user_path", "user_id", "path"),  # Composite for user-scoped queries
+        Index(
+            "ix_context_path", "path"
+        ),  # For prefix queries (e.g., path LIKE 'prefix%')
+        Index(
+            "ix_context_user_path", "user_id", "path"
+        ),  # Composite for user-scoped queries
         Index("ix_context_glance", "glance"),  # For quick scanning queries
         # Vector index using HNSW for fast similarity search
         Index(
@@ -177,7 +186,9 @@ class Context(Base):  # ty:ignore[unsupported-base]
     )
 
     def __repr__(self) -> str:
-        return f"<Context(id={self.id}, type='{self.context_type}', path='{self.path}')>"
+        return (
+            f"<Context(id={self.id}, type='{self.context_type}', path='{self.path}')>"
+        )
 
     # ──── ContextLayer Framework Methods ────
 
@@ -196,7 +207,9 @@ class Context(Base):  # ty:ignore[unsupported-base]
         if self.glance:
             result["glance"] = self.glance
         else:
-            result["glance"] = self.content[:50] + "..." if len(self.content) > 50 else self.content
+            result["glance"] = (
+                self.content[:50] + "..." if len(self.content) > 50 else self.content
+            )
 
         if level == "glance":
             return result

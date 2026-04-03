@@ -22,8 +22,12 @@ class Skill(Base):  # ty:ignore[unsupported-base]
 
     __tablename__ = "skill"
 
-    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, index=True
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -42,9 +46,7 @@ class Skill(Base):  # ty:ignore[unsupported-base]
         nullable=True,
     )
 
-    __table_args__ = (
-        Index("ix_skill_user_id_name", "user_id", "name"),
-    )
+    __table_args__ = (Index("ix_skill_user_id_name", "user_id", "name"),)
 
     def __repr__(self) -> str:
         return f"<Skill(id={self.id}, name='{self.name}', user_id='{self.user_id}')>"

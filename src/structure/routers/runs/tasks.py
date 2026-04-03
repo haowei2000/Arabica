@@ -31,7 +31,9 @@ async def list_tasks(
     workspace_crud: WorkspaceCRUDDep,
     task_crud: TaskCRUDDep,
     run_id: str | None = Query(None, description="Filter by run ID"),
-    task_status: str | None = Query(None, alias="status", description="Filter by status"),
+    task_status: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):

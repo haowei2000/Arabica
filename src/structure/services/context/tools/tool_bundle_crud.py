@@ -25,7 +25,9 @@ class ToolBundleCRUD:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
-    async def _ensure_tools_visible(self, user_id: UUID, tool_ids: Iterable[UUID]) -> list[UUID]:
+    async def _ensure_tools_visible(
+        self, user_id: UUID, tool_ids: Iterable[UUID]
+    ) -> list[UUID]:
         ids = [UUID(str(tid)) for tid in tool_ids]
         if not ids:
             return []
@@ -76,7 +78,9 @@ class ToolBundleCRUD:
         await self.db.flush()
 
         for idx, tool_id in enumerate(tool_ids):
-            self.db.add(ToolBundleItem(bundle_id=bundle.id, tool_id=tool_id, position=idx))
+            self.db.add(
+                ToolBundleItem(bundle_id=bundle.id, tool_id=tool_id, position=idx)
+            )
 
         if auto_commit:
             await self.db.commit()
@@ -95,8 +99,7 @@ class ToolBundleCRUD:
         )
         if user_id:
             stmt = stmt.where(
-                (ToolBundle.user_id == user_id)
-                | (ToolBundle.is_public == True)  # noqa: E712
+                (ToolBundle.user_id == user_id) | (ToolBundle.is_public == True)  # noqa: E712
             )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -110,8 +113,7 @@ class ToolBundleCRUD:
         stmt = select(ToolBundle).options(selectinload(ToolBundle.items))
         if include_public:
             stmt = stmt.where(
-                (ToolBundle.user_id == user_id)
-                | (ToolBundle.is_public == True)  # noqa: E712
+                (ToolBundle.user_id == user_id) | (ToolBundle.is_public == True)  # noqa: E712
             )
         else:
             stmt = stmt.where(ToolBundle.user_id == user_id)
@@ -120,7 +122,9 @@ class ToolBundleCRUD:
             for tag in tags:
                 stmt = stmt.where(ToolBundle.tags.contains([tag]))
 
-        stmt = stmt.order_by(ToolBundle.updated_at.desc().nulls_last(), ToolBundle.created_at.desc())
+        stmt = stmt.order_by(
+            ToolBundle.updated_at.desc().nulls_last(), ToolBundle.created_at.desc()
+        )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
@@ -145,7 +149,9 @@ class ToolBundleCRUD:
             )
             existing = (await self.db.execute(exists_stmt)).scalar_one_or_none()
             if existing:
-                raise ValueError(f"Tool bundle name '{update_data['name']}' already exists")
+                raise ValueError(
+                    f"Tool bundle name '{update_data['name']}' already exists"
+                )
             bundle.name = update_data["name"]
 
         if "description" in update_data:
@@ -156,7 +162,9 @@ class ToolBundleCRUD:
             bundle.is_public = update_data["is_public"]
 
         if "tool_ids" in update_data and update_data["tool_ids"] is not None:
-            tool_ids = await self._ensure_tools_visible(user_id, update_data["tool_ids"])
+            tool_ids = await self._ensure_tools_visible(
+                user_id, update_data["tool_ids"]
+            )
             # Replace items
             bundle.items.clear()
             await self.db.flush()
@@ -172,7 +180,9 @@ class ToolBundleCRUD:
         logger.info("Updated tool bundle %s (id=%s)", bundle.name, bundle.id)
         return bundle
 
-    async def delete(self, bundle_id: UUID, user_id: UUID, auto_commit: bool = True) -> bool:
+    async def delete(
+        self, bundle_id: UUID, user_id: UUID, auto_commit: bool = True
+    ) -> bool:
         bundle = await self.get_by_id(bundle_id, user_id)
         if not bundle or bundle.user_id != user_id:
             return False

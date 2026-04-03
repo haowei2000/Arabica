@@ -5,6 +5,7 @@ Revises: e57d623197a6
 Create Date: 2026-03-22 00:00:00.000000
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -20,9 +21,19 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text("ALTER TABLE context ADD COLUMN IF NOT EXISTS scope VARCHAR(20) DEFAULT 'user' NOT NULL"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_context_scope ON context (scope)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_context_user_scope ON context (user_id, scope)"))
+    conn.execute(
+        sa.text(
+            "ALTER TABLE context ADD COLUMN IF NOT EXISTS scope VARCHAR(20) DEFAULT 'user' NOT NULL"
+        )
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_context_scope ON context (scope)")
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_context_user_scope ON context (user_id, scope)"
+        )
+    )
 
 
 def downgrade() -> None:
