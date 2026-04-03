@@ -113,6 +113,10 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         logger.info(f"🚀 Started {len(tasks)} total worker(s) across {len(workspace_ids)} workspace(s)")
         logger.info("=" * 60)
 
+        if not tasks:
+            logger.info("⏳ No workspaces found, waiting for workspaces to be created...")
+            await asyncio.sleep(float("inf"))
+
         # Wait for all workers (or until one fails)
         done, pending = await asyncio.wait(
             tasks,
