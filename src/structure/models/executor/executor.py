@@ -23,6 +23,7 @@ class ExecutorTemplate(Base):
     Note: This is the ORM model for persisting executor templates.
     For the abstract executor interface, see structure.core.interfaces.executor.Executor
     """
+
     __tablename__ = "executor"
 
     # Primary key

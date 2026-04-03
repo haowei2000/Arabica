@@ -147,7 +147,9 @@ class ResponseMixin(UUIDConversionMixin, TimestampMixin, ORMConfigMixin):
     pass
 
 
-class ResponseWithEnumMixin(UUIDConversionMixin, TimestampMixin, EnumStringMixin, ORMConfigMixin):
+class ResponseWithEnumMixin(
+    UUIDConversionMixin, TimestampMixin, EnumStringMixin, ORMConfigMixin
+):
     """Combined mixin for response schemas with enum fields.
 
     Adds enum value extraction to the standard ResponseMixin.

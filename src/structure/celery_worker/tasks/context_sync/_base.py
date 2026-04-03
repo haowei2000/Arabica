@@ -19,11 +19,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
-async def _upsert_context(session, *, user_id: str, context_type: str, source_id: str,
-                           glance: str | None,
-                           content: str | None, tags: list[str] | None = None, path: str | None = None,
-                           meta: dict | None = None) -> tuple:
+async def _upsert_context(
+    session,
+    *,
+    user_id: str,
+    context_type: str,
+    source_id: str,
+    glance: str | None,
+    content: str | None,
+    tags: list[str] | None = None,
+    path: str | None = None,
+    meta: dict | None = None,
+) -> tuple:
     """Create or update a Context row identified by (source_id, context_type, user_id).
 
     Returns ``(ctx, needs_embedding)`` where ``needs_embedding`` is True only
@@ -47,10 +54,18 @@ async def _upsert_context(session, *, user_id: str, context_type: str, source_id
     )
 
 
-async def _upsert_context_at_path(session, *, user_id: str, context_type: str, source_id: str,
-                                   path: str, glance: str | None, content: str | None,
-                                   tags: list[str] | None = None,
-                                   meta: dict | None = None) -> tuple:
+async def _upsert_context_at_path(
+    session,
+    *,
+    user_id: str,
+    context_type: str,
+    source_id: str,
+    path: str,
+    glance: str | None,
+    content: str | None,
+    tags: list[str] | None = None,
+    meta: dict | None = None,
+) -> tuple:
     """Create or update a Context row identified by (source_id, context_type, user_id, path).
 
     Unlike ``_upsert_context``, the ``path`` is part of the unique key so multiple

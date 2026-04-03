@@ -74,9 +74,12 @@ class EmbeddingService:
 
             case "ollama":
                 from structure.config.factory import get_settings
+
                 settings = get_settings()
                 base_url = self._base_url or (
-                    settings.ollama.base_url if settings.ollama else "http://127.0.0.1:11434"
+                    settings.ollama.base_url
+                    if settings.ollama
+                    else "http://127.0.0.1:11434"
                 )
                 return OllamaEmbeddings(model=self.model, base_url=base_url)
 

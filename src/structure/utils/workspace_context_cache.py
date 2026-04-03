@@ -110,7 +110,9 @@ async def get_cached_workspace_context(
     # Use getdel so only the first reader triggers the reload (atomic clear + check).
     if not force_reload and workspace_id in _WORKSPACE_CONTEXT_CACHE:
         if await _is_workspace_dirty(workspace_id):
-            logger.debug(f"WorkspaceContext dirty flag detected, reloading: {workspace_id}")
+            logger.debug(
+                f"WorkspaceContext dirty flag detected, reloading: {workspace_id}"
+            )
             force_reload = True
         else:
             logger.debug(f"WorkspaceContext cache hit: {workspace_id}")
@@ -165,7 +167,11 @@ def get_cache_stats() -> dict:
     """
     size = len(_WORKSPACE_CONTEXT_CACHE)
     estimated_memory_mb = size * 0.125  # Each workspace ~125KB
-    usage_percent = (size / _WORKSPACE_CONTEXT_CACHE.maxsize * 100) if _WORKSPACE_CONTEXT_CACHE.maxsize > 0 else 0
+    usage_percent = (
+        (size / _WORKSPACE_CONTEXT_CACHE.maxsize * 100)
+        if _WORKSPACE_CONTEXT_CACHE.maxsize > 0
+        else 0
+    )
 
     return {
         "size": size,

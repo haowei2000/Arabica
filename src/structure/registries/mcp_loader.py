@@ -76,6 +76,7 @@ async def _get_client(client_config: str | dict) -> Any:
 
     if client is None:
         import asyncio
+
         try:
             client = Client(client_config)
             await asyncio.wait_for(client.__aenter__(), timeout=10.0)
@@ -102,6 +103,7 @@ async def close_all_clients() -> None:
 # Config helpers
 # ---------------------------------------------------------------------------
 
+
 def client_config_from_tool_config(cfg: dict[str, Any]) -> str | dict:
     """Build the FastMCP ``Client`` constructor argument from a tool config dict."""
     transport = cfg.get("mcp_transport", "sse")
@@ -118,6 +120,7 @@ def client_config_from_tool_config(cfg: dict[str, Any]) -> str | dict:
 # ---------------------------------------------------------------------------
 # Probe
 # ---------------------------------------------------------------------------
+
 
 async def probe_mcp_server(client_config: str | dict) -> list[dict[str, Any]]:
     """Connect to an MCP server and return its tool list as plain dicts.
@@ -150,9 +153,16 @@ async def probe_mcp_server(client_config: str | dict) -> list[dict[str, Any]]:
 # Dynamic class builder
 # ---------------------------------------------------------------------------
 
+
 def _json_type_to_python(json_type: str | list) -> type:
-    _MAP = {"string": str, "integer": int, "number": float,
-            "boolean": bool, "array": list, "object": dict}
+    _MAP = {
+        "string": str,
+        "integer": int,
+        "number": float,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
     if isinstance(json_type, list):
         non_null = [t for t in json_type if t != "null"]
         base = _MAP.get(non_null[0], Any) if non_null else Any

@@ -50,7 +50,9 @@ class UpdateArtifactTool(InnerTool):
 
         try:
             async with get_session("structure") as db:
-                stmt = select(Artifact).where(Artifact.id == UUID(input_data.artifact_id))
+                stmt = select(Artifact).where(
+                    Artifact.id == UUID(input_data.artifact_id)
+                )
                 result = await db.execute(stmt)
                 artifact = result.scalar_one_or_none()
 
@@ -79,7 +81,10 @@ class UpdateArtifactTool(InnerTool):
                     # Re-upload to the existing S3 key (or generate one if missing)
                     storage = get_global_s3_storage()
                     settings = get_settings()
-                    s3_key = artifact.s3_key or f"artifacts/{artifact.workspace_id}/{artifact.id}"
+                    s3_key = (
+                        artifact.s3_key
+                        or f"artifacts/{artifact.workspace_id}/{artifact.id}"
+                    )
                     await asyncio.to_thread(
                         storage.put_bytes,
                         s3_key,
@@ -88,7 +93,9 @@ class UpdateArtifactTool(InnerTool):
                     )
                     artifact.content = input_data.content
                     artifact.s3_key = s3_key
-                    artifact.s3_url = f"{settings.rustfs.endpoint}/{storage.bucket}/{s3_key}"
+                    artifact.s3_url = (
+                        f"{settings.rustfs.endpoint}/{storage.bucket}/{s3_key}"
+                    )
                     artifact.version += 1
                     updated_fields.extend(["content", "s3_key", "s3_url"])
 

@@ -1,4 +1,5 @@
 """REST API endpoints for App (Agent) management."""
+
 from typing import Annotated
 from uuid import UUID
 
@@ -278,7 +279,7 @@ async def query_apps(
 
     return AppListResponse(
         total=user_total,
-        items=models_to_schemas(AppResponse,user_apps),
+        items=models_to_schemas(AppResponse, user_apps),
         page=page,
         page_size=page_size,
     )

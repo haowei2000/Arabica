@@ -60,7 +60,9 @@ class WorkspaceMember(Base):
         PGUUID(as_uuid=True), nullable=True, comment="邀请人ID"
     )
     invitation_status: Mapped[InvitationStatus] = mapped_column(
-        String(50), default=InvitationStatus.ACCEPTED, comment="邀请状态: pending/accepted/declined"
+        String(50),
+        default=InvitationStatus.ACCEPTED,
+        comment="邀请状态: pending/accepted/declined",
     )
 
     # Timestamps

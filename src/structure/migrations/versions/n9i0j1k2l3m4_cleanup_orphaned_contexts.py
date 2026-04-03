@@ -9,6 +9,7 @@ Revises: m8h9i0j1k2l3
 Create Date: 2026-03-30 00:00:00.000000
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -73,7 +74,6 @@ def upgrade() -> None:
           AND source_id NOT IN (SELECT id FROM tool)
         """
     )
-
 
     # 6. Backfill leading '/' on tool and skill paths that were stored without it
     op.execute(

@@ -38,9 +38,9 @@ from structure.plugins.structurers import register_structurer
 
 # ── Patterns ──────────────────────────────────────────────────────────────────
 
-_ATX = re.compile(r'^(#{1,6})\s+(.+)')
-_SETEXT_H1 = re.compile(r'^={3,}\s*$')
-_SETEXT_H2 = re.compile(r'^-{3,}\s*$')
+_ATX = re.compile(r"^(#{1,6})\s+(.+)")
+_SETEXT_H1 = re.compile(r"^={3,}\s*$")
+_SETEXT_H2 = re.compile(r"^-{3,}\s*$")
 
 
 def _path_segment(title: str) -> str:
@@ -121,14 +121,16 @@ class MarkdownStructurer(BaseStructurer):
             if not cur_lines and not cur_title:
                 return
             content = "\n".join(cur_lines).strip()
-            sections.append({
-                "title": cur_title,
-                "level": cur_level,
-                "content": content,
-                "position": position,
-                "structure_type": "markdown",
-                "section_path": _build_path(breadcrumb),
-            })
+            sections.append(
+                {
+                    "title": cur_title,
+                    "level": cur_level,
+                    "content": content,
+                    "position": position,
+                    "structure_type": "markdown",
+                    "section_path": _build_path(breadcrumb),
+                }
+            )
             position += 1
 
         in_fence = False
@@ -166,7 +168,7 @@ class MarkdownStructurer(BaseStructurer):
                 cur_level = level
                 cur_title = title
                 cur_lines = []
-                breadcrumb = breadcrumb[:level - 1] + [title]  # noqa: RUF005
+                breadcrumb = breadcrumb[: level - 1] + [title]  # noqa: RUF005
                 i += 2  # consume both the title line and the underline
                 continue
 
@@ -178,7 +180,7 @@ class MarkdownStructurer(BaseStructurer):
                 cur_level = level
                 cur_title = title
                 cur_lines = []
-                breadcrumb = breadcrumb[:level - 1] + [title]  # noqa: RUF005
+                breadcrumb = breadcrumb[: level - 1] + [title]  # noqa: RUF005
                 i += 1
                 continue
 
@@ -194,24 +196,28 @@ class MarkdownStructurer(BaseStructurer):
                 para = para.strip()
                 if para:
                     first_line = para.splitlines()[0][:120]
-                    sections.append({
-                        "title": first_line,
-                        "level": 1,
-                        "content": para,
-                        "position": idx,
-                        "structure_type": "markdown",
-                        "section_path": "/" + _path_segment(first_line),
-                    })
+                    sections.append(
+                        {
+                            "title": first_line,
+                            "level": 1,
+                            "content": para,
+                            "position": idx,
+                            "structure_type": "markdown",
+                            "section_path": "/" + _path_segment(first_line),
+                        }
+                    )
 
         # ── Ultimate fallback: empty document ─────────────────────────────
         if not sections:
-            sections.append({
-                "title": "",
-                "level": 1,
-                "content": text.strip(),
-                "position": 0,
-                "structure_type": "markdown",
-                "section_path": "/",
-            })
+            sections.append(
+                {
+                    "title": "",
+                    "level": 1,
+                    "content": text.strip(),
+                    "position": 0,
+                    "structure_type": "markdown",
+                    "section_path": "/",
+                }
+            )
 
         return sections

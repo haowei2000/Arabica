@@ -21,17 +21,13 @@ class ArtifactCRUD:
         offset: int = 0,
     ) -> tuple[int, list[Artifact]]:
         """List artifacts in a workspace with optional filters."""
-        stmt = select(Artifact).where(
-            Artifact.workspace_id == str(workspace_id)
-        )
+        stmt = select(Artifact).where(Artifact.workspace_id == str(workspace_id))
         if run_id is not None:
             stmt = stmt.where(Artifact.run_id == str(run_id))
         if artifact_type is not None:
             stmt = stmt.where(Artifact.artifact_type == artifact_type)
 
-        count_stmt = select(Artifact).where(
-            Artifact.workspace_id == str(workspace_id)
-        )
+        count_stmt = select(Artifact).where(Artifact.workspace_id == str(workspace_id))
         if run_id is not None:
             count_stmt = count_stmt.where(Artifact.run_id == str(run_id))
         if artifact_type is not None:

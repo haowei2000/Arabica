@@ -102,7 +102,9 @@ class SkillCRUD:
             await self.db.flush()
             await self.db.refresh(skill)
 
-        await ContextSyncer(self.db).sync_skill(skill, content=update_data.get("content"))
+        await ContextSyncer(self.db).sync_skill(
+            skill, content=update_data.get("content")
+        )
 
         logger.info(f"Updated skill: {skill.id}")
         return skill

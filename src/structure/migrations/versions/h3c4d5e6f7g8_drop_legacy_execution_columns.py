@@ -36,11 +36,15 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.add_column(
         "tool",
-        sa.Column("celery_config", JSONB, nullable=True, comment="Celery configuration"),
+        sa.Column(
+            "celery_config", JSONB, nullable=True, comment="Celery configuration"
+        ),
     )
     op.add_column(
         "tool",
-        sa.Column("client_config", JSONB, nullable=True, comment="Client configuration"),
+        sa.Column(
+            "client_config", JSONB, nullable=True, comment="Client configuration"
+        ),
     )
     op.add_column(
         "tool",
@@ -51,7 +55,10 @@ def downgrade() -> None:
     op.add_column(
         "tool",
         sa.Column(
-            "http_config", JSONB, nullable=True, comment="HTTP configuration for http mode"
+            "http_config",
+            JSONB,
+            nullable=True,
+            comment="HTTP configuration for http mode",
         ),
     )
     op.add_column(

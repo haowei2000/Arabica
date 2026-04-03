@@ -9,6 +9,7 @@ Architecture:
         ├── ToolRegistry (Concrete) → Manages tool classes
         └── ExecutorRegistry (Concrete) → Manages executor templates
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -302,7 +303,10 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         return tool_class.METADATA.name
 
     def _create_instance(
-        self, key: str, tool_class: type[BaseTool], **kwargs  # noqa: ARG002
+        self,
+        key: str,  # noqa: ARG002
+        tool_class: type[BaseTool],
+        **kwargs,  # noqa: ARG002
     ) -> BaseTool:  # ty:ignore[invalid-method-override]
         """Create a tool instance."""
         return tool_class()
@@ -355,7 +359,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                 version_int = 1
                 if metadata.version:
                     try:
-                        version_int = int(metadata.version.split('.')[0])
+                        version_int = int(metadata.version.split(".")[0])
                     except (ValueError, AttributeError):
                         version_int = 1
 
@@ -429,9 +433,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                         broken_ref,
                     )
         except Exception as e:
-            self.logger.error(
-                f"Failed to validate external tool references: {e}"
-            )
+            self.logger.error(f"Failed to validate external tool references: {e}")
 
         await db.commit()
         self.logger.info(
@@ -510,10 +512,16 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     existing_tool_ids = {item.tool_id for item in bundle.items}
                 for idx, tool in enumerate(tools):
                     if tool.id not in existing_tool_ids:
-                        db.add(ToolBundleItem(bundle_id=bundle.id, tool_id=tool.id, position=idx))
+                        db.add(
+                            ToolBundleItem(
+                                bundle_id=bundle.id, tool_id=tool.id, position=idx
+                            )
+                        )
 
             await db.commit()
-            self.logger.info("Synced %d inner tool toolsets by category", len(category_map))
+            self.logger.info(
+                "Synced %d inner tool toolsets by category", len(category_map)
+            )
         except Exception as e:
             self.logger.error("Failed to sync inner tool toolsets: %s", e)
 
@@ -530,18 +538,25 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             from structure.utils.context import slugify as _slugify
 
             # All registered inner tools (no enabled filter — sync all)
-            synced_tools = (await db.execute(
-                select(ToolModel).where(
-                    ToolModel.tool_type == "inner",
-                    ToolModel.tool_code.in_(registered_names),
+            synced_tools = (
+                (
+                    await db.execute(
+                        select(ToolModel).where(
+                            ToolModel.tool_type == "inner",
+                            ToolModel.tool_code.in_(registered_names),
+                        )
+                    )
                 )
-            )).scalars().all()
+                .scalars()
+                .all()
+            )
 
             all_users = (await db.execute(select(User))).scalars().all()
 
             self.logger.info(
                 "Phase 5: syncing %d inner tools for %d users",
-                len(synced_tools), len(all_users),
+                len(synced_tools),
+                len(all_users),
             )
 
             if not synced_tools or not all_users:
@@ -553,25 +568,31 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                 # Load all existing (source_id, user_id) pairs in one shot
                 existing_pairs: set[tuple] = {
                     (row.source_id, row.user_id)
-                    for row in (await db.execute(
-                        select(Context.source_id, Context.user_id).where(
-                            Context.context_type == _ContextType.TOOL,
-                            Context.source_id.in_(tool_ids),
-                            Context.user_id.in_(user_ids),
+                    for row in (
+                        await db.execute(
+                            select(Context.source_id, Context.user_id).where(
+                                Context.context_type == _ContextType.TOOL,
+                                Context.source_id.in_(tool_ids),
+                                Context.user_id.in_(user_ids),
+                            )
                         )
-                    ))
+                    )
                 }
 
                 # Load existing Context objects that need updating
                 existing_ctx_map: dict[tuple, Context] = {
                     (ctx.source_id, ctx.user_id): ctx
-                    for ctx in (await db.execute(
-                        select(Context).where(
-                            Context.context_type == _ContextType.TOOL,
-                            Context.source_id.in_(tool_ids),
-                            Context.user_id.in_(user_ids),
+                    for ctx in (
+                        await db.execute(
+                            select(Context).where(
+                                Context.context_type == _ContextType.TOOL,
+                                Context.source_id.in_(tool_ids),
+                                Context.user_id.in_(user_ids),
+                            )
                         )
-                    )).scalars().all()
+                    )
+                    .scalars()
+                    .all()
                 }
 
                 ctx_created = ctx_updated = 0
@@ -591,7 +612,11 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                         ensure_ascii=False,
                     )
                     tags = ["tool"] + (tool.tags or [])
-                    meta = {"tool_id": str(tool.id), "tool_code": tool_name, "name": display_name}
+                    meta = {
+                        "tool_id": str(tool.id),
+                        "tool_code": tool_name,
+                        "name": display_name,
+                    }
 
                     tool_path = f"tools/{_slugify(tool_name)}"
                     for user in all_users:
@@ -610,23 +635,28 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                                 ctx.embedding_1536 = None
                             ctx_updated += 1
                         else:
-                            db.add(Context(
-                                id=_uuid4(),
-                                user_id=user.id,
-                                context_type=_ContextType.TOOL,
-                                source_id=tool.id,
-                                glance=glance,
-                                path=tool_path,
-                                content=content,
-                                tags=tags,
-                                meta=meta,
-                            ))
+                            db.add(
+                                Context(
+                                    id=_uuid4(),
+                                    user_id=user.id,
+                                    context_type=_ContextType.TOOL,
+                                    source_id=tool.id,
+                                    glance=glance,
+                                    path=tool_path,
+                                    content=content,
+                                    tags=tags,
+                                    meta=meta,
+                                )
+                            )
                             ctx_created += 1
 
                 await db.commit()
                 self.logger.info(
                     "Phase 5 done: created=%d updated=%d (%d tools × %d users)",
-                    ctx_created, ctx_updated, len(synced_tools), len(all_users),
+                    ctx_created,
+                    ctx_updated,
+                    len(synced_tools),
+                    len(all_users),
                 )
 
                 # ── Dispatch WorkspaceContext sync + embedding generation ──
@@ -637,6 +667,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     from structure.celery_worker.tasks.context_sync_tasks import (
                         sync_inner_tool_to_contexts,
                     )
+
                     for tool in synced_tools:
                         sync_inner_tool_to_contexts.delay(str(tool.id))
                     self.logger.info(
@@ -652,13 +683,12 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
         except Exception as e:
             self.logger.error(
                 "Phase 5 failed — inner tools not synced to context table: %s",
-                e, exc_info=True,
+                e,
+                exc_info=True,
             )
 
     @staticmethod
-    def _find_broken_reference(
-        tool_record, registered_names: set[str]
-    ) -> str | None:
+    def _find_broken_reference(tool_record, registered_names: set[str]) -> str | None:
         """Check if an external tool has broken inner-tool references.
 
         Returns a human-readable reason string if broken, else ``None``.
@@ -669,9 +699,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
         if inner and not chain:  # noqa: SIM102
             if inner not in registered_names:
-                return (
-                    f"inner_tool_name '{inner}' is no longer registered"
-                )
+                return f"inner_tool_name '{inner}' is no longer registered"
 
         # Check chain/pipeline mode
         if chain:
@@ -758,9 +786,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
     # ==================== Auto-Discovery ====================
 
-    def discover_and_register_tools(
-        self, extra_paths: list[str] | None = None
-    ) -> None:
+    def discover_and_register_tools(self, extra_paths: list[str] | None = None) -> None:
         """Auto-discover and register all InnerTool subclasses from plugins/tools/.
 
         Recursively scans all Python files under ``structure/plugins/tools/``,
@@ -794,9 +820,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             try:
                 mod = importlib.import_module(module_path)
             except Exception as e:
-                self.logger.error(
-                    "Failed to import tool module %s: %s", module_path, e
-                )
+                self.logger.error("Failed to import tool module %s: %s", module_path, e)
                 continue
 
             for _name, obj in inspect.getmembers(mod, inspect.isclass):
@@ -858,7 +882,9 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
     ) -> list[str]:
         """List tool names (backward compatibility class method)."""
         instance = cls._get_singleton_instance()
-        return instance._list_tools_instance(category=category, enabled_only=enabled_only)
+        return instance._list_tools_instance(
+            category=category, enabled_only=enabled_only
+        )
 
     @classmethod
     def get_tool_class(cls, tool_name: str) -> type[BaseTool] | None:  # type: ignore[misc]  # noqa: F811
@@ -991,7 +1017,10 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         return executor_cls.TEMPLATE["executor_code"]
 
     def _create_instance(
-        self, key: str, executor_cls: type[Executor], **kwargs  # noqa: ARG002
+        self,
+        key: str,  # noqa: ARG002
+        executor_cls: type[Executor],
+        **kwargs,
     ) -> Executor:  # ty:ignore[invalid-method-override]
         """Create executor instance."""
         return executor_cls(**kwargs)
@@ -1132,9 +1161,7 @@ class ExecutorRegistry(BaseRegistry[str, type["Executor"]]):
         executors_dir = plugins_dir / "executors"
 
         if not executors_dir.exists():
-            logger.warning(
-                f"Executor plugins directory not found: {executors_dir}"
-            )
+            logger.warning(f"Executor plugins directory not found: {executors_dir}")
             return
 
         registry = ExecutorRegistry._get_singleton_instance()

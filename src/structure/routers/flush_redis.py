@@ -23,7 +23,6 @@
     POST /flush-redis-cache?pattern=cache:user:*
 """
 
-
 from fastapi import APIRouter, HTTPException, Query
 
 from structure.middleware.cache_middleware import clear_cache_pattern

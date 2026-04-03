@@ -77,7 +77,7 @@ _CONVERSATION_EVENT_TYPES = {
     EventType.AGENT_MESSAGE,
     EventType.TOOL_RESULT,
     EventType.TOOL_ERROR,
-   EventType.USER_FEEDBACK,
+    EventType.USER_FEEDBACK,
 }
 
 
@@ -93,7 +93,9 @@ def _parse_tool_names_from_xml(text: str) -> list[str] | None:
         if names:
             return list(dict.fromkeys(names))  # preserve order, deduplicate
 
-    names = [m.group(1).strip() for m in _TOOL_XML_RE.finditer(text) if m.group(1).strip()]
+    names = [
+        m.group(1).strip() for m in _TOOL_XML_RE.finditer(text) if m.group(1).strip()
+    ]
     if names:
         return list(dict.fromkeys(names))
 
@@ -153,7 +155,7 @@ def _strip_orphaned_tool_messages(messages: list[ChatMessage]) -> list[ChatMessa
             continue
         required_ids = {tc.id for tc in msg.tool_calls}
         responded_ids: set[str] = set()
-        for later in result[i + 1:]:
+        for later in result[i + 1 :]:
             if later.role == "tool" and later.tool_call_id:
                 responded_ids.add(later.tool_call_id)
             elif later.role in ("user", "assistant"):
@@ -185,8 +187,7 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
             msg = payload.get("message", "")
             if isinstance(msg, list):
                 msg = " ".join(
-                    p.get("text", "") if isinstance(p, dict) else str(p)
-                    for p in msg
+                    p.get("text", "") if isinstance(p, dict) else str(p) for p in msg
                 )
             if msg:
                 messages.append(ChatMessage(role="user", content=str(msg)))
@@ -196,21 +197,28 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
             tc_data = payload.get("tool_calls") or []
             if tc_data:
                 import uuid as _uuid
+
                 tool_calls = []
                 # Reset ID map for this assistant turn
                 last_tc_id_map = {}
                 for tc in tc_data:
                     assigned_id = tc.get("id") or str(_uuid.uuid4())
-                    tool_calls.append(ToolCallRequest(
-                        id=assigned_id,
-                        name=tc["name"],
-                        arguments=tc.get("arguments", {}),
-                    ))
+                    tool_calls.append(
+                        ToolCallRequest(
+                            id=assigned_id,
+                            name=tc["name"],
+                            arguments=tc.get("arguments", {}),
+                        )
+                    )
                     # Map original stored id AND tool name → assigned id
                     if tc.get("id"):
                         last_tc_id_map[tc["id"]] = assigned_id
                     last_tc_id_map[tc["name"]] = assigned_id
-                messages.append(ChatMessage(role="assistant", content=content or "", tool_calls=tool_calls))
+                messages.append(
+                    ChatMessage(
+                        role="assistant", content=content or "", tool_calls=tool_calls
+                    )
+                )
             else:
                 last_tc_id_map = {}
                 if content:
@@ -219,30 +227,42 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
         elif event_type == str(EventType.TOOL_RESULT):
             raw_id = payload.get("tool_id", "")
             tool_name = payload.get("tool_name", "")
-            resolved_id = last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
+            resolved_id = (
+                last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
+            )
             result_data = payload.get("result")
             result_str = json.dumps(result_data, ensure_ascii=False, default=str)
-            messages.append(ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id))
+            messages.append(
+                ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id)
+            )
 
         elif event_type == str(EventType.TOOL_ERROR):
             raw_id = payload.get("tool_id", "")
             tool_name = payload.get("tool_name", "")
-            resolved_id = last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
+            resolved_id = (
+                last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
+            )
             error = payload.get("error_message", "Unknown error")
-            messages.append(ChatMessage(
-                role="tool",
-                content=json.dumps({"error": error}, ensure_ascii=False),
-                tool_call_id=resolved_id,
-            ))
+            messages.append(
+                ChatMessage(
+                    role="tool",
+                    content=json.dumps({"error": error}, ensure_ascii=False),
+                    tool_call_id=resolved_id,
+                )
+            )
 
         elif event_type == str(EventType.USER_FEEDBACK):
             feedback = payload.get("feedback", "")
             raw_id = payload.get("tool_id", "")
             tool_name = payload.get("tool_name", "")
-            resolved_id = last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
+            resolved_id = (
+                last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
+            )
             if tool_name and feedback:
                 # ask_for_user answer — inject as tool result
-                messages.append(ChatMessage(role="tool", content=feedback, tool_call_id=resolved_id))
+                messages.append(
+                    ChatMessage(role="tool", content=feedback, tool_call_id=resolved_id)
+                )
             elif feedback:
                 messages.append(ChatMessage(role="user", content=str(feedback)))
 
@@ -284,7 +304,7 @@ def _clean_parameters_schema(raw: dict) -> dict:
                 continue
             ref = prop_schema.get("$ref", "")
             if ref.startswith("#/$defs/"):
-                def_key = ref[len("#/$defs/"):]
+                def_key = ref[len("#/$defs/") :]
                 if def_key in defs:
                     props[prop_name] = dict(defs[def_key])
                 else:
@@ -351,7 +371,7 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
     for e in raw_events:
         try:
             data = ReadContextResult.model_validate(
-                (e.payload or {}).get('result', {}).get('data', {})
+                (e.payload or {}).get("result", {}).get("data", {})
             )
         except Exception:
             logger.warning("_extract_context_tool_schemas: failed to parse event")
@@ -375,7 +395,8 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
                 parsed = json.loads(content_raw)
             except json.JSONDecodeError:
                 logger.warning(
-                    "_extract_context_tool_schemas: failed to parse content at %r", data.path
+                    "_extract_context_tool_schemas: failed to parse content at %r",
+                    data.path,
                 )
                 continue
         elif isinstance(content_raw, dict):
@@ -383,7 +404,8 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
         else:
             logger.warning(
                 "_extract_context_tool_schemas: unexpected content type at %r: %s",
-                data.path, type(content_raw).__name__,
+                data.path,
+                type(content_raw).__name__,
             )
             continue
 
@@ -391,20 +413,26 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             continue
 
         try:
-            if parsed.get("type") == "function" and isinstance(parsed.get("function"), dict):
+            if parsed.get("type") == "function" and isinstance(
+                parsed.get("function"), dict
+            ):
                 # Format 1: already a full OpenAI function-calling schema
                 func_block = dict(parsed["function"])
                 params = func_block.get("parameters") or {}
                 if isinstance(params, dict):
                     func_block["parameters"] = _clean_parameters_schema(params)
-                tool = OpenAITool.model_validate({"type": "function", "function": func_block})
+                tool = OpenAITool.model_validate(
+                    {"type": "function", "function": func_block}
+                )
 
             elif "properties" in parsed or parsed.get("type") == "object":
                 # Format 2: Pydantic model_json_schema() or plain parameters schema
                 tool = OpenAITool(
                     function=OpenAIFunction(
                         name=parsed.get("name") or tool_name_from_path,
-                        description=description_hint or parsed.get("description") or tool_name_from_path,
+                        description=description_hint
+                        or parsed.get("description")
+                        or tool_name_from_path,
                         parameters=OpenAIFunctionParameters.model_validate(
                             _clean_parameters_schema(parsed)
                         ),
@@ -426,13 +454,15 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             else:
                 logger.warning(
                     "_extract_context_tool_schemas: unrecognised schema format at %r: keys=%s",
-                    data.path, list(parsed.keys())[:8],
+                    data.path,
+                    list(parsed.keys())[:8],
                 )
                 continue
         except Exception:
             logger.warning(
                 "_extract_context_tool_schemas: failed to build OpenAITool at %r",
-                data.path, exc_info=True,
+                data.path,
+                exc_info=True,
             )
             continue
 
@@ -441,16 +471,23 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             seen_names.add(name)
             schemas.append(tool.model_dump(exclude_none=True))
             logger.info(
-                "_extract_context_tool_schemas: added tool %r from path %r", name, data.path
+                "_extract_context_tool_schemas: added tool %r from path %r",
+                name,
+                data.path,
             )
 
     logger.info(
         "_extract_context_tool_schemas: extracted %d schema(s) from %d read_context event(s)",
         len(schemas),
         sum(
-            1 for e in raw_events
+            1
+            for e in raw_events
             if (e.payload or {}).get("tool_name") == "read_context"
-            and ((e.payload or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")
+            and ((e.payload or {}).get("result") or {})
+            .get("data", {})
+            .get("path", "")
+            .lstrip("/")
+            .startswith("tools/")
         ),
     )
     return schemas
@@ -527,7 +564,6 @@ class DefaultExecutor(Executor):
         self.tool_caller = config.get("tool_caller")
         self.tool_provider = config.get("tool_provider")
 
-
         # Cache the LLM client so it is not recreated for every LLM call
         # within the same run (saves connection overhead on multi-iteration loops).
         self._llm_client = self.strategy.build_client(self._api_key, self._base_url)
@@ -600,7 +636,9 @@ class DefaultExecutor(Executor):
 
         logger.info(
             "process_events: run=%s seq=%r last_code=%s",
-            self.run_id, seq, seq[-1],
+            self.run_id,
+            seq,
+            seq[-1],
         )
 
         self._raw_events_cache = [
@@ -648,7 +686,7 @@ class DefaultExecutor(Executor):
     # ── streaming event handlers ──────────────────────────────────
 
     def get_messages_and_tools(
-            self, raw_events: list[Event]
+        self, raw_events: list[Event]
     ) -> tuple[list[ChatMessage], list[OpenAITool]]:
         """Build last-exchange messages + tools_info from *raw_events*.
 
@@ -660,21 +698,30 @@ class DefaultExecutor(Executor):
         schema_events = []
         conv_events = []
         for e in raw_events:
-            if (e.event_type == str(EventType.TOOL_RESULT)
-                    and (e.payload or {}).get("tool_name") == "read_context"
-                    and ((e.payload or {}).get("result") or {}).get("data", {}).get("path", "").lstrip("/").startswith("tools/")):
+            if (
+                e.event_type == str(EventType.TOOL_RESULT)
+                and (e.payload or {}).get("tool_name") == "read_context"
+                and ((e.payload or {}).get("result") or {})
+                .get("data", {})
+                .get("path", "")
+                .lstrip("/")
+                .startswith("tools/")
+            ):
                 schema_events.append(e)
             else:
                 conv_events.append(e)
 
-        tools_info= _extract_context_tool_schemas(schema_events)
+        tools_info = _extract_context_tool_schemas(schema_events)
 
-        messages: list[ChatMessage] = [ChatMessage(role="system", content=self.system_prompt)]
+        messages: list[ChatMessage] = [
+            ChatMessage(role="system", content=self.system_prompt)
+        ]
         messages.extend(_events_to_messages(conv_events))
         return messages, tools_info
 
-
-    async def _on_user_message(self, events: list[Event]) -> AsyncGenerator[Event, None]:
+    async def _on_user_message(
+        self, events: list[Event]
+    ) -> AsyncGenerator[Event, None]:
         """Start a fresh agentic loop for a new user message.
 
         Full conversation is reconstructed from the event history.
@@ -714,10 +761,7 @@ class DefaultExecutor(Executor):
             # Collect event IDs already in the DB result to avoid duplicates.
             db_event_ids = {str(e.id) for e in db_events}
             # Append current-run events that are not yet in the DB.
-            current_run_events = [
-                e for e in events
-                if str(e.id) not in db_event_ids
-            ]
+            current_run_events = [e for e in events if str(e.id) not in db_event_ids]
             all_events = db_events + current_run_events
         else:
             all_events = events
@@ -731,13 +775,15 @@ class DefaultExecutor(Executor):
         messages, tools_info = self.get_messages_and_tools(raw_events)
         logger.info(
             "_on_user_message: run=%s built %d messages, starting agentic loop",
-            self.run_id, len(messages),
+            self.run_id,
+            len(messages),
         )
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
 
     async def _on_user_feedback(
-            self, events: list[Event],
+        self,
+        events: list[Event],
     ) -> AsyncGenerator[Event, None]:
         """Continue after user feedback (corrective reply or ask_for_user answer).
 
@@ -758,7 +804,8 @@ class DefaultExecutor(Executor):
             yield event
 
     async def _on_tool_result(
-            self, events: list[Event],
+        self,
+        events: list[Event],
     ) -> AsyncGenerator[Event, None]:
         """Resume the agentic loop after a tool result.
 
@@ -772,7 +819,8 @@ class DefaultExecutor(Executor):
             yield event
 
     async def _on_tool_error(
-            self, events: list[Event],
+        self,
+        events: list[Event],
     ) -> AsyncGenerator[Event, None]:
         """Resume the agentic loop after a tool error.
 
@@ -801,10 +849,13 @@ class DefaultExecutor(Executor):
 
         if self.model_provider == "ollama":
             from structure.config.factory import get_settings
+
             settings = get_settings()
             api_key = "ollama"
             base_url = base_url or (
-                settings.ollama.base_url + "/v1" if settings.ollama else "http://127.0.0.1:11434/v1"
+                settings.ollama.base_url + "/v1"
+                if settings.ollama
+                else "http://127.0.0.1:11434/v1"
             )
             return api_key, base_url
 
@@ -815,8 +866,6 @@ class DefaultExecutor(Executor):
             )
         return api_key, base_url
 
-
-
     # Fields the executor always injects automatically — hide from the LLM.
     _AUTO_INJECTED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {"workspace_id", "run_id", "user_id"}
@@ -825,7 +874,7 @@ class DefaultExecutor(Executor):
     # ── event fetch / history helpers ─────────────────────────────
 
     async def _fetch_events(
-            self, *, global_scope: bool, limit: int = 200
+        self, *, global_scope: bool, limit: int = 200
     ) -> list[Event]:
         """Fetch raw event dicts from the DB.
 
@@ -856,6 +905,7 @@ class DefaultExecutor(Executor):
                     from uuid import UUID
 
                     from structure.core.enums import EventType as ET
+
                     # Only fetch conversation-relevant event types so the
                     # limit is not consumed by noise events.
                     conv_types = [
@@ -884,6 +934,7 @@ class DefaultExecutor(Executor):
                     if not self.run_id:
                         return []
                     from uuid import UUID
+
                     stmt = (
                         select(EventModel)
                         .where(EventModel.run_id == UUID(self.run_id))
@@ -900,9 +951,9 @@ class DefaultExecutor(Executor):
     # ── agentic loop (core streaming logic) ──────────────────────
 
     async def _agentic_loop(
-            self,
-            messages: list[ChatMessage],
-            tools_info: list[OpenAITool]|None = None,
+        self,
+        messages: list[ChatMessage],
+        tools_info: list[OpenAITool] | None = None,
     ) -> AsyncGenerator[Event, None]:
         """Run the agentic loop: call LLM, process tool calls, repeat.
 
@@ -919,7 +970,9 @@ class DefaultExecutor(Executor):
         # Emit a USING_CONTEXT event on the first iteration so the frontend
         # can display which tools are loaded into the LLM request.
         if active_tools_info:
-            tool_names = [t.function.name for t in active_tools_info if hasattr(t, 'function')]
+            tool_names = [
+                t.function.name for t in active_tools_info if hasattr(t, "function")
+            ]
             if tool_names:
                 yield self._make_event(
                     EventType.USING_CONTEXT,
@@ -931,7 +984,9 @@ class DefaultExecutor(Executor):
                 )
                 logger.info(
                     "_agentic_loop: run=%s loaded %d tools: %s",
-                    self.run_id, len(tool_names), tool_names,
+                    self.run_id,
+                    len(tool_names),
+                    tool_names,
                 )
 
         for _iteration in range(self.max_iterations):
@@ -948,7 +1003,9 @@ class DefaultExecutor(Executor):
             # ── stream LLM response tokens ───────────────────────
             logger.info(
                 "_agentic_loop: run=%s iteration=%d calling LLM model=%s",
-                self.run_id, _iteration, self.model_name,
+                self.run_id,
+                _iteration,
+                self.model_name,
             )
             stream = self.strategy.call_llm_stream(
                 messages,
@@ -1018,7 +1075,9 @@ class DefaultExecutor(Executor):
                 break
 
             # Accumulate tokens from this LLM call into the per-event counter.
-            self._accumulate_tokens(llm_response.input_tokens, llm_response.output_tokens)
+            self._accumulate_tokens(
+                llm_response.input_tokens, llm_response.output_tokens
+            )
 
             ai_message = ChatMessage(
                 role="assistant",
@@ -1066,8 +1125,8 @@ class DefaultExecutor(Executor):
             )
 
     async def _emit_tool_calls(
-            self,
-            tool_calls: list[ToolCallRequest],
+        self,
+        tool_calls: list[ToolCallRequest],
     ) -> AsyncGenerator[Event, None]:
         """Emit one TOOL_CALL event per tool, register pending IDs, then pause.
 

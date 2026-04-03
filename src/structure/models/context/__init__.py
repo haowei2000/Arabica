@@ -14,5 +14,5 @@ __all__ = [
     "Preprocess",
     "Skill",
     "UserTool",
-    "WorkspaceContext"
+    "WorkspaceContext",
 ]

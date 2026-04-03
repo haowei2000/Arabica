@@ -5,6 +5,7 @@ Revises: b52725032039
 Create Date: 2026-03-11 10:30:00.000000
 
 """
+
 from collections.abc import Sequence
 
 from alembic import op
@@ -18,7 +19,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS tool_bundle (
             id UUID PRIMARY KEY,
             user_id UUID NOT NULL,
@@ -29,18 +31,33 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ
         )
-    """))
-    conn.execute(sa.text("""
+                """)
+    )
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS tool_bundle_item (
             bundle_id UUID NOT NULL REFERENCES tool_bundle(id) ON DELETE CASCADE,
             tool_id UUID NOT NULL REFERENCES tool(id) ON DELETE CASCADE,
             position INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (bundle_id, tool_id)
         )
-    """))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_tool_bundle_user_id ON tool_bundle (user_id)"))
-    conn.execute(sa.text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tool_bundle_user_name ON tool_bundle (user_id, name)"))
-    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_tool_bundle_item_bundle_id ON tool_bundle_item (bundle_id)"))
+                """)
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_tool_bundle_user_id ON tool_bundle (user_id)"
+        )
+    )
+    conn.execute(
+        sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_tool_bundle_user_name ON tool_bundle (user_id, name)"
+        )
+    )
+    conn.execute(
+        sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_tool_bundle_item_bundle_id ON tool_bundle_item (bundle_id)"
+        )
+    )
 
 
 def downgrade() -> None:

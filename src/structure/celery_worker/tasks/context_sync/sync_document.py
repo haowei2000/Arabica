@@ -79,7 +79,9 @@ def sync_document_to_contexts(
         # ── Phase 1: Download ────────────────────────────────────────────────
         async with get_session("structure") as session:
             await session.execute(
-                update(Document).where(Document.id == doc_uuid).values(status="downloading")
+                update(Document)
+                .where(Document.id == doc_uuid)
+                .values(status="downloading")
             )
             await session.commit()
 
@@ -88,7 +90,9 @@ def sync_document_to_contexts(
         # ── Phase 2: Parse text ──────────────────────────────────────────────
         async with get_session("structure") as session:
             await session.execute(
-                update(Document).where(Document.id == doc_uuid).values(status="structuring")
+                update(Document)
+                .where(Document.id == doc_uuid)
+                .values(status="structuring")
             )
             await session.commit()
 
@@ -103,7 +107,11 @@ def sync_document_to_contexts(
                     .values(status="completed", chunk_count=0)
                 )
                 await session.commit()
-            return {"document_id": document_id, "status": "completed", "section_count": 0}
+            return {
+                "document_id": document_id,
+                "status": "completed",
+                "section_count": 0,
+            }
 
         # ── Phase 3: Structure ───────────────────────────────────────────────
         # Path root: /knowledge/<name>/documents/<filename>
@@ -113,6 +121,7 @@ def sync_document_to_contexts(
             from structure.plugins.structurers.markdown_structure import (
                 MarkdownStructurer,
             )
+
             sections = MarkdownStructurer().structure(text_content, mime_type)
             # Only keep heading-derived sections (title non-empty).
             # _has_headings() already guards this branch, but filter defensively.
@@ -120,7 +129,9 @@ def sync_document_to_contexts(
                 {
                     "path": build_path(
                         *doc_root,
-                        sec.get("section_path") or sec.get("title") or str(sec["position"]),
+                        sec.get("section_path")
+                        or sec.get("title")
+                        or str(sec["position"]),
                     ),
                     "glance": sec["title"] or original_name,
                     "content": sec["content"],
@@ -166,7 +177,9 @@ def sync_document_to_contexts(
                 )
                 await session.flush()
                 if needs_embedding:
-                    embed_text = " ".join(filter(None, [core["glance"], core["content"]]))
+                    embed_text = " ".join(
+                        filter(None, [core["glance"], core["content"]])
+                    )
                     ctx_ids_need_embed.append((str(ctx.id), embed_text))
 
             emb_svc = await _fetch_embedding_service(session)
@@ -182,7 +195,9 @@ def sync_document_to_contexts(
             )
             await session.commit()
 
-        logger.info(f"sync_document: {document_id} ({original_name}) → {len(cores)} context(s)")
+        logger.info(
+            f"sync_document: {document_id} ({original_name}) → {len(cores)} context(s)"
+        )
 
         # ── Phase 5: Embed (batched — one session for all chunks) ────────────────
         to_embed = [(cid, txt) for cid, txt in ctx_ids_need_embed if txt.strip()]

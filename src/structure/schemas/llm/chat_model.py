@@ -13,20 +13,42 @@ class ChatModelCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255, description="Display name")
     description: str | None = Field(None, description="Model description")
-    provider: str = Field(..., min_length=1, max_length=50, description="Provider: openai/anthropic/dashscope/ollama/azure/custom")
-    model_id: str = Field(..., min_length=1, max_length=255, description="Model identifier, e.g. gpt-4o, qwen-turbo")
+    provider: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Provider: openai/anthropic/dashscope/ollama/azure/custom",
+    )
+    model_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Model identifier, e.g. gpt-4o, qwen-turbo",
+    )
     base_url: str | None = Field(None, max_length=500, description="API base URL")
-    api_key_ref: str | None = Field(None, max_length=255, description="API key reference name")
+    api_key_ref: str | None = Field(
+        None, max_length=255, description="API key reference name"
+    )
     max_tokens: int | None = Field(None, gt=0, description="Max output tokens")
     context_window: int | None = Field(None, gt=0, description="Context window size")
     supports_vision: bool = Field(False, description="Supports vision/image input")
-    supports_function_call: bool = Field(True, description="Supports function/tool calling")
+    supports_function_call: bool = Field(
+        True, description="Supports function/tool calling"
+    )
     supports_streaming: bool = Field(True, description="Supports streaming output")
-    default_temperature: float | None = Field(None, ge=0.0, le=2.0, description="Default temperature")
-    default_top_p: float | None = Field(None, ge=0.0, le=1.0, description="Default top_p")
+    default_temperature: float | None = Field(
+        None, ge=0.0, le=2.0, description="Default temperature"
+    )
+    default_top_p: float | None = Field(
+        None, ge=0.0, le=1.0, description="Default top_p"
+    )
     default_max_tokens: int | None = Field(None, gt=0, description="Default max tokens")
-    input_price: float | None = Field(None, ge=0, description="Input price per 1K tokens")
-    output_price: float | None = Field(None, ge=0, description="Output price per 1K tokens")
+    input_price: float | None = Field(
+        None, ge=0, description="Input price per 1K tokens"
+    )
+    output_price: float | None = Field(
+        None, ge=0, description="Output price per 1K tokens"
+    )
     currency: str = Field("USD", max_length=10, description="Currency code")
     is_default: bool = Field(False, description="Set as default model")
     enabled: bool = Field(True, description="Whether model is enabled")

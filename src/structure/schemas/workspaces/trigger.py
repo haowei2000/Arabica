@@ -15,14 +15,19 @@ class TriggerCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255, description="触发器名称")
     description: str | None = Field(None, description="触发器描述")
-    event_type: str = Field(..., min_length=1, max_length=100, description="监听的事件类型，如 user.message")
+    event_type: str = Field(
+        ..., min_length=1, max_length=100, description="监听的事件类型，如 user.message"
+    )
     condition_type: str = Field(
         "always",
         description="条件类型: always | keyword | regex | jsonpath | first_run",
     )
-    condition_value: str | None = Field(None, description="条件表达式（关键字/正则/JSONPath）")
+    condition_value: str | None = Field(
+        None, description="条件表达式（关键字/正则/JSONPath）"
+    )
     condition_field: str | None = Field(
-        "message", description="检查的 payload 字段名，默认 message，支持点记法如 data.text"
+        "message",
+        description="检查的 payload 字段名，默认 message，支持点记法如 data.text",
     )
     tool_name: str = Field(
         ...,
@@ -39,10 +44,16 @@ class TriggerCreate(BaseModel):
 class TriggerUpdate(BaseModel):
     """Schema for updating an existing workspace trigger."""
 
-    name: str | None = Field(None, min_length=1, max_length=255, description="触发器名称")
+    name: str | None = Field(
+        None, min_length=1, max_length=255, description="触发器名称"
+    )
     description: str | None = Field(None, description="触发器描述")
-    event_type: str | None = Field(None, min_length=1, max_length=100, description="监听的事件类型")
-    condition_type: str | None = Field(None, description="条件类型: always | keyword | regex | jsonpath | first_run")
+    event_type: str | None = Field(
+        None, min_length=1, max_length=100, description="监听的事件类型"
+    )
+    condition_type: str | None = Field(
+        None, description="条件类型: always | keyword | regex | jsonpath | first_run"
+    )
     condition_value: str | None = Field(None, description="条件表达式")
     condition_field: str | None = Field(None, description="检查的 payload 字段名")
     tool_name: str | None = Field(None, description="工具名称")

@@ -151,7 +151,10 @@ class FriendCRUD:
         if not record:
             return False
         current_user_id_str = str(current_user_id)
-        if str(record.user_id) != current_user_id_str and str(record.friend_id) != current_user_id_str:
+        if (
+            str(record.user_id) != current_user_id_str
+            and str(record.friend_id) != current_user_id_str
+        ):
             raise PermissionError("You are not part of this friendship")
 
         await self.db.delete(record)
@@ -207,14 +210,16 @@ class FriendCRUD:
             user_stmt = select(User).where(User.id == other_user_id)
             user = (await self.db.execute(user_stmt)).scalar_one_or_none()
             if user:
-                items.append({
-                    "id": user.id,
-                    "username": user.username,
-                    "email": user.email,
-                    "friendship_id": record.id,
-                    "status": record.status,
-                    "created_at": record.created_at,
-                })
+                items.append(
+                    {
+                        "id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "friendship_id": record.id,
+                        "status": record.status,
+                        "created_at": record.created_at,
+                    }
+                )
 
         return total, items
 
@@ -252,14 +257,16 @@ class FriendCRUD:
             user_stmt = select(User).where(User.id == str(record.user_id))
             user = (await self.db.execute(user_stmt)).scalar_one_or_none()
             if user:
-                items.append({
-                    "id": user.id,
-                    "username": user.username,
-                    "email": user.email,
-                    "friendship_id": record.id,
-                    "status": record.status,
-                    "created_at": record.created_at,
-                })
+                items.append(
+                    {
+                        "id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "friendship_id": record.id,
+                        "status": record.status,
+                        "created_at": record.created_at,
+                    }
+                )
 
         return total, items
 
@@ -277,6 +284,8 @@ class FriendCRUD:
         records = (await self.db.execute(stmt)).scalars().all()
         result = []
         for r in records:
-            other = str(r.friend_id) if str(r.user_id) == user_id_str else str(r.user_id)
+            other = (
+                str(r.friend_id) if str(r.user_id) == user_id_str else str(r.user_id)
+            )
             result.append(other)
         return result

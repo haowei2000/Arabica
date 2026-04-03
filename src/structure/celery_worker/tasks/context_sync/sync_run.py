@@ -32,6 +32,7 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
 
     Called when a workspace is created or its name/description changes.
     """
+
     async def _execute():
         from structure.extensions.database import get_session
         from structure.models.workspaces.workspace import Workspace
@@ -75,7 +76,9 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
                 await session.commit()
             logger.info(f"sync_workspace: embedded Context {ctx_id}")
         elif not needs_embedding:
-            logger.debug(f"sync_workspace: content unchanged, skipped re-embedding {ctx_id}")
+            logger.debug(
+                f"sync_workspace: content unchanged, skipped re-embedding {ctx_id}"
+            )
 
     try:
         run_async(_execute())
@@ -97,6 +100,7 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
     Only terminal runs (finished / failed / cancelled) are stored.
     Content = user input + agent output, making past conversations semantically searchable.
     """
+
     async def _execute():
         from structure.extensions.database import get_session
         from structure.models.runs.run import Run
@@ -114,7 +118,9 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
                 return
 
             input_msg = (run.input_data or {}).get("message", "")
-            output_msg = (run.output_data or {}).get("message", "") or str(run.output_data or "")
+            output_msg = (run.output_data or {}).get("message", "") or str(
+                run.output_data or ""
+            )
 
             glance = input_msg[:80] if input_msg else f"Run {run_id[:8]}"
 
@@ -125,7 +131,9 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
                 parts.append(f"Assistant: {output_msg}")
             content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
 
-            run_path = f"runs/{_slugify(run.title)}" if run.title else f"runs/{run_id[:8]}"
+            run_path = (
+                f"runs/{_slugify(run.title)}" if run.title else f"runs/{run_id[:8]}"
+            )
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
@@ -181,6 +189,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
     Each remaining event is formatted as: [seq] event_type: payload_preview
     The resulting text is embedded for semantic retrieval of past agent behaviour.
     """
+
     async def _execute():
         from sqlalchemy import select
 
@@ -246,7 +255,9 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
                 await session.commit()
             logger.info(f"sync_run_events: embedded Context {ctx_id}")
         elif not needs_embedding:
-            logger.debug(f"sync_run_events: content unchanged, skipped re-embedding {ctx_id}")
+            logger.debug(
+                f"sync_run_events: content unchanged, skipped re-embedding {ctx_id}"
+            )
 
     try:
         run_async(_execute())
@@ -269,6 +280,7 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
     contains the LLM-generated summary rather than raw input/output.
     Falls back to raw input/output if summary is not available.
     """
+
     async def _execute():
         from structure.extensions.database import get_session
         from structure.models.runs.run import Run
@@ -286,7 +298,9 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
                 return
 
             input_msg = (run.input_data or {}).get("message", "")
-            output_msg = (run.output_data or {}).get("message", "") or str(run.output_data or "")
+            output_msg = (run.output_data or {}).get("message", "") or str(
+                run.output_data or ""
+            )
 
             # Prefer LLM-generated title/summary; fall back to raw content
             glance = run.title or (input_msg[:80] if input_msg else f"Run {run_id[:8]}")
@@ -300,7 +314,11 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
                 parts.append(f"Assistant: {output_msg}")
             content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
 
-            memory_path = f"memory/{_slugify(run.title)}" if run.title else f"memory/run-{run_id[:8]}"
+            memory_path = (
+                f"memory/{_slugify(run.title)}"
+                if run.title
+                else f"memory/run-{run_id[:8]}"
+            )
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
@@ -332,7 +350,9 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
                 await session.commit()
             logger.info(f"sync_run_to_memory: embedded Context {ctx_id}")
         elif not needs_embedding:
-            logger.debug(f"sync_run_to_memory: content unchanged, skipped re-embedding {ctx_id}")
+            logger.debug(
+                f"sync_run_to_memory: content unchanged, skipped re-embedding {ctx_id}"
+            )
 
     try:
         run_async(_execute())

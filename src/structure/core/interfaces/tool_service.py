@@ -51,9 +51,7 @@ class ToolCaller(Protocol):
     """
 
     @abstractmethod
-    async def call(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute a tool and return its result.
 
         Args:

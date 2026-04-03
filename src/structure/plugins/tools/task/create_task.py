@@ -33,7 +33,9 @@ class CreateTaskTool(InnerTool):
         description: str | None = Field(
             default=None, description="Detailed task description or acceptance criteria"
         )
-        run_id: str | None = Field(default=None, description="Run ID this task belongs to")
+        run_id: str | None = Field(
+            default=None, description="Run ID this task belongs to"
+        )
         parent_task_id: str | None = Field(
             default=None, description="Parent task ID for subtasks"
         )
@@ -47,7 +49,9 @@ class CreateTaskTool(InnerTool):
             default=None,
             description="Who this task is assigned to (e.g., agent name, tool name)",
         )
-        meta: dict[str, Any] | None = Field(default=None, description="Additional metadata")
+        meta: dict[str, Any] | None = Field(
+            default=None, description="Additional metadata"
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID, uuid4
@@ -60,7 +64,9 @@ class CreateTaskTool(InnerTool):
                 id=uuid4(),
                 workspace_id=UUID(input_data.workspace_id),
                 run_id=UUID(input_data.run_id) if input_data.run_id else None,
-                parent_task_id=UUID(input_data.parent_task_id) if input_data.parent_task_id else None,
+                parent_task_id=UUID(input_data.parent_task_id)
+                if input_data.parent_task_id
+                else None,
                 title=input_data.title,
                 description=input_data.description,
                 priority=input_data.priority,

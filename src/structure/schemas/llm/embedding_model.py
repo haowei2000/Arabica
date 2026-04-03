@@ -13,16 +13,32 @@ class EmbeddingModelCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255, description="Display name")
     description: str | None = Field(None, description="Model description")
-    provider: str = Field(..., min_length=1, max_length=50, description="Provider: openai/dashscope/huggingface/ollama/custom")
-    model_id: str = Field(..., min_length=1, max_length=255, description="Model identifier, e.g. text-embedding-3-small")
+    provider: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Provider: openai/dashscope/huggingface/ollama/custom",
+    )
+    model_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Model identifier, e.g. text-embedding-3-small",
+    )
     base_url: str | None = Field(None, max_length=500, description="API base URL")
-    api_key_ref: str | None = Field(None, max_length=255, description="API key reference name")
+    api_key_ref: str | None = Field(
+        None, max_length=255, description="API key reference name"
+    )
     dimension: int = Field(..., gt=0, description="Vector dimension: 384/768/1024/1536")
     max_tokens: int | None = Field(None, gt=0, description="Max input tokens")
     supports_batch: bool = Field(True, description="Supports batch processing")
     batch_size: int = Field(32, gt=0, description="Default batch size")
     normalize: bool = Field(True, description="Normalize output vectors")
-    distance_metric: str = Field("cosine", max_length=20, description="Distance metric: cosine/euclidean/dot_product")
+    distance_metric: str = Field(
+        "cosine",
+        max_length=20,
+        description="Distance metric: cosine/euclidean/dot_product",
+    )
     price: float | None = Field(None, ge=0, description="Price per 1K tokens")
     currency: str = Field("USD", max_length=10, description="Currency code")
     is_default: bool = Field(False, description="Set as default model")

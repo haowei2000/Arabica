@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, Field
 
 from structure.core.enums import InputFormat, OutputFormat

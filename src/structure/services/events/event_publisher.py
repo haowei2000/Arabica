@@ -29,20 +29,22 @@ REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 
 # Event types that workers must consume from the executor stream.
 # Defined at module level to avoid recreating the set on every publish() call.
-_EXECUTOR_STREAM_TYPES: frozenset[str] = frozenset({
-    # External input events that the worker must receive to validate + re-publish
-    # as TO_EXECUTOR.
-    EventType.USER_MESSAGE,
-    EventType.USER_FEEDBACK,
-    EventType.TOOL_RESULT,
-    EventType.TOOL_ERROR,
-    # TOOL_CALL is dispatched directly to handle_tool_call (no TO_EXECUTOR hop).
-    EventType.TOOL_CALL,
-    # Infrastructure events handled before executor routing.
-    EventType.RUN_CANCELLED,
-    # Internal worker-routing event: carries validated events to the executor.
-    EventType.TO_EXECUTOR,
-})
+_EXECUTOR_STREAM_TYPES: frozenset[str] = frozenset(
+    {
+        # External input events that the worker must receive to validate + re-publish
+        # as TO_EXECUTOR.
+        EventType.USER_MESSAGE,
+        EventType.USER_FEEDBACK,
+        EventType.TOOL_RESULT,
+        EventType.TOOL_ERROR,
+        # TOOL_CALL is dispatched directly to handle_tool_call (no TO_EXECUTOR hop).
+        EventType.TOOL_CALL,
+        # Infrastructure events handled before executor routing.
+        EventType.RUN_CANCELLED,
+        # Internal worker-routing event: carries validated events to the executor.
+        EventType.TO_EXECUTOR,
+    }
+)
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -192,8 +194,11 @@ class EventPublisher:
 
             if run_id_str:
                 await self._update_run_sequence(
-                    run_id_str, sequence, auto_commit,
-                    input_tokens=input_tokens, output_tokens=output_tokens,
+                    run_id_str,
+                    sequence,
+                    auto_commit,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                 )
             if self.redis:
                 await self._broadcast_to_redis(event)
@@ -258,7 +263,11 @@ class EventPublisher:
         if key not in self._seq_counters:
             # Check Worker-level cursor first — avoids a stale DB read when
             # buffered events have incremented the sequence but aren't in DB yet.
-            if self._run_seq_cursor is not None and run_id and run_id in self._run_seq_cursor:
+            if (
+                self._run_seq_cursor is not None
+                and run_id
+                and run_id in self._run_seq_cursor
+            ):
                 self._seq_counters[key] = self._run_seq_cursor[run_id]
             else:
                 # Cold start: read the current maximum from the DB.
@@ -277,7 +286,11 @@ class EventPublisher:
         self._seq_counters[key] += 1
 
         # Keep the Worker cursor in sync so the next publisher picks up correctly.
-        if self._run_seq_cursor is not None and run_id and run_id in self._run_seq_cursor:
+        if (
+            self._run_seq_cursor is not None
+            and run_id
+            and run_id in self._run_seq_cursor
+        ):
             self._run_seq_cursor[run_id] = self._seq_counters[key]
 
         return self._seq_counters[key]
@@ -329,17 +342,23 @@ class EventPublisher:
         try:
             async with self.redis.pipeline(transaction=False) as pipe:
                 if event.run_id:
-                    run_stream = f"{REDIS_RUN_LABEL}:{event.run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                    run_stream = (
+                        f"{REDIS_RUN_LABEL}:{event.run_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                    )
                     pipe.xadd(run_stream, fields, maxlen=1000, approximate=True)
 
                 workspace_id = str(event.workspace_id)
                 # Primary stream for both SSE and worker consumers
-                workspace_stream = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                workspace_stream = (
+                    f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                )
                 pipe.xadd(workspace_stream, fields, maxlen=10000, approximate=True)
 
                 await pipe.execute()
 
-            logger.debug(f"Broadcast event {event.event_type} workspace={workspace_id} run={event.run_id}")
+            logger.debug(
+                f"Broadcast event {event.event_type} workspace={workspace_id} run={event.run_id}"
+            )
         except Exception as e:
             logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")
             # Don't fail the whole publication if Redis broadcast fails

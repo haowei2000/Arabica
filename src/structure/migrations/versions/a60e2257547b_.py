@@ -5,6 +5,7 @@ Revises: 8e930fc7b4e3
 Create Date: 2026-02-19 12:35:24.488125
 
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -12,8 +13,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = 'a60e2257547b'
-down_revision: str | Sequence[str] | None = '8e930fc7b4e3'
+revision: str = "a60e2257547b"
+down_revision: str | Sequence[str] | None = "8e930fc7b4e3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

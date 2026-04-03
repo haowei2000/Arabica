@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 )
 def sync_tool_to_contexts(self, tool_id: str, user_id: str):
     """Upsert Tool into Context table, embed, and sync to all user workspaces."""
+
     async def _execute():
         from structure.extensions.database import get_session
         from structure.models.context.tools.tool import Tool
@@ -45,7 +46,11 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
 
             tool_name = tool.tool_code or tool.name
             display_name = tool.display_name or tool.name
-            glance = f"{display_name} — {tool.description[:60]}" if tool.description else display_name
+            glance = (
+                f"{display_name} — {tool.description[:60]}"
+                if tool.description
+                else display_name
+            )
             tool_tags = list(tool.tags or [])
 
             # Store the full OpenAI function-calling schema so read_context results
@@ -86,7 +91,9 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             await session.flush()
             ctx_id = str(ctx.id)
             tool_description = tool.description
-            embed_text = " ".join(filter(None, [display_name, tool_description, schema_str]))
+            embed_text = " ".join(
+                filter(None, [display_name, tool_description, schema_str])
+            )
             emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
@@ -141,6 +148,7 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
     Inner tools have no owner (user_id=NULL in the tool table) so this task
     fans out across all users and workspaces.
     """
+
     async def _execute():
         from uuid import UUID
 
@@ -206,7 +214,9 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
         await _invalidate_workspace_caches(dirty_ids)
 
         # ── 2. Generate embedding and store for all per-user Context rows ─
-        embed_text = " ".join(filter(None, [display_name, tool.description, schema_str]))
+        embed_text = " ".join(
+            filter(None, [display_name, tool.description, schema_str])
+        )
         if embed_text.strip() and ctx_ids:
             vector, field = _generate_embedding(embed_text, emb_svc)
             async with get_session("structure") as session:
@@ -240,6 +250,7 @@ def resync_all_tools_to_contexts(self):
     - InnerTools (user_id=NULL): content is rebuilt and all WorkspaceContext
       rows are updated directly, without going through user workspace lookup.
     """
+
     async def _execute():
         from sqlalchemy import select
 
@@ -249,9 +260,7 @@ def resync_all_tools_to_contexts(self):
         from structure.models.workspaces.workspace import Workspace
 
         async with get_session("structure") as session:
-            result = await session.execute(
-                select(Tool).where(Tool.enabled.is_(True))
-            )
+            result = await session.execute(select(Tool).where(Tool.enabled.is_(True)))
             tools = result.scalars().all()
 
             # Fetch all active workspace IDs once (used for inner tools)
@@ -316,7 +325,9 @@ def resync_all_tools_to_contexts(self):
                     await _invalidate_workspace_caches(dirty_ids)
                     dispatched += 1
                 except Exception as exc:
-                    logger.error(f"resync_all_tools: failed for inner tool {tool_id}: {exc}")
+                    logger.error(
+                        f"resync_all_tools: failed for inner tool {tool_id}: {exc}"
+                    )
                     skipped += 1
             else:
                 skipped += 1

@@ -56,9 +56,7 @@ class RegistryManager:
             cls._instance = cls()
         return cls._instance
 
-    def register_registry(
-        self, registry_cls: type[T], instance: T | None = None
-    ) -> T:
+    def register_registry(self, registry_cls: type[T], instance: T | None = None) -> T:
         """
         Register a registry type with the manager.
 

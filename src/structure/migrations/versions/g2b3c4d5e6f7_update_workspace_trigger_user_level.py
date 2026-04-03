@@ -9,6 +9,7 @@ Changes:
 - Add user_id column for template ownership
 - Add index on user_id
 """
+
 from collections.abc import Sequence
 from typing import Union
 
@@ -16,8 +17,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = 'g2b3c4d5e6f7'
-down_revision: str | Sequence[str] | None = 'f1a2b3c4d5e6'
+revision: str = "g2b3c4d5e6f7"
+down_revision: str | Sequence[str] | None = "f1a2b3c4d5e6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -27,7 +28,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # Make workspace_id nullable if it isn't already
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         DO $$
         BEGIN
             IF EXISTS (
@@ -40,32 +42,39 @@ def upgrade() -> None:
             END IF;
         END
         $$;
-    """))
+    """)
+    )
 
     # Add user_id column if it doesn't exist
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         ALTER TABLE workspace_trigger
         ADD COLUMN IF NOT EXISTS user_id UUID;
-    """))
+                """)
+    )
 
     # Add comment on user_id
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         COMMENT ON COLUMN workspace_trigger.user_id
         IS '创建者用户ID（用于用户级模板）';
-    """))
+    """)
+    )
 
     # Add index on user_id if it doesn't exist
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE INDEX IF NOT EXISTS ix_workspace_trigger_user_id
         ON workspace_trigger (user_id);
-    """))
+                """)
+    )
 
 
 def downgrade() -> None:
     """Reverse user-level trigger changes."""
-    op.drop_index('ix_workspace_trigger_user_id', table_name='workspace_trigger')
+    op.drop_index("ix_workspace_trigger_user_id", table_name="workspace_trigger")
 
-    op.drop_column('workspace_trigger', 'user_id')
+    op.drop_column("workspace_trigger", "user_id")
 
     # Delete user-level rows (workspace_id IS NULL) before restoring NOT NULL constraint
     conn = op.get_bind()
@@ -73,9 +82,9 @@ def downgrade() -> None:
 
     # Restore workspace_id as NOT NULL
     op.alter_column(
-        'workspace_trigger',
-        'workspace_id',
+        "workspace_trigger",
+        "workspace_id",
         existing_type=sa.UUID(),
         nullable=False,
-        comment='所属工作区ID',
+        comment="所属工作区ID",
     )

@@ -79,7 +79,9 @@ class ContextSyncer:
         if tool.description:
             parts.append(f"Description: {tool.description}")
         if tool.input_schema:
-            parts.append(f"Input Schema:\n{json.dumps(tool.input_schema, ensure_ascii=False, indent=2)}")
+            parts.append(
+                f"Input Schema:\n{json.dumps(tool.input_schema, ensure_ascii=False, indent=2)}"
+            )
 
         await self._upsert(
             user_id=str(tool.user_id),
@@ -113,7 +115,9 @@ class ContextSyncer:
         If omitted, any existing content in the Context row is preserved.
         """
         path = f"/skills/{skill.name}"
-        glance = (skill.description[:80] if skill.description else None) or f"Skill: {skill.name}"
+        glance = (
+            skill.description[:80] if skill.description else None
+        ) or f"Skill: {skill.name}"
 
         parts: list[str] = [f"Skill: {skill.name}"]
         if skill.description:
@@ -195,7 +199,9 @@ class ContextSyncer:
             content="\n".join(parts),
             tags=["trigger", trigger.event_type],
             meta={
-                "workspace_id": str(trigger.workspace_id) if trigger.workspace_id else None,
+                "workspace_id": str(trigger.workspace_id)
+                if trigger.workspace_id
+                else None,
                 "event_type": trigger.event_type,
                 "tool_name": trigger.tool_name,
                 "enabled": trigger.enabled,

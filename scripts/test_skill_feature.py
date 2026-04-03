@@ -162,7 +162,7 @@ def process_data(data: dict) -> dict:
         assert total == 2
 
         # List with tag filter
-        python_skills, python_total = await crud.list(
+        _python_skills, python_total = await crud.list(
             user_id=user_id, tags=["python"]
         )
         print(f"  ✓ Filtered by 'python' tag: {python_total} found")
@@ -180,7 +180,7 @@ def process_data(data: dict) -> dict:
         assert count >= 1  # At least one skill matches
 
         # Search for JavaScript
-        js_results, js_count = await crud.search(
+        _js_results, js_count = await crud.search(
             user_id=user_id, query_text="JavaScript"
         )
         print(f"  ✓ Search results for 'JavaScript': {js_count} found")
@@ -194,7 +194,7 @@ def process_data(data: dict) -> dict:
         assert deleted is True
 
         # Verify deletion
-        skills_after, total_after = await crud.list(user_id=user_id)
+        _skills_after, total_after = await crud.list(user_id=user_id)
         print(f"  ✓ Skills after deletion: {total_after}")
         assert total_after == 1
 

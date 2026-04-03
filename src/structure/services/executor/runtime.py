@@ -67,19 +67,19 @@ class ExecutorInstanceManager:
 
     def release(self, task_id: UUID):
         """释放指定任务ID对应的执行器实例
-        
+
         Args:
             task_id (UUID): 任务唯一标识符
-        """  # noqa: W293
+        """
         self._instances.pop(task_id, None)
 
     def exists(self, task_id: UUID) -> bool:
         """检查指定任务ID是否存在对应的执行器实例
-        
+
         Args:
             task_id (UUID): 任务唯一标识符
-            
+
         Returns:
             bool: 如果存在对应实例返回True，否则返回False
-        """  # noqa: W293
+        """
         return task_id in self._instances

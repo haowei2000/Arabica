@@ -52,6 +52,7 @@ class WorkspaceContextService:
         if self._owner_uuid:
             return
         from structure.models.workspaces.workspace import Workspace
+
         ws = await self.session.get(Workspace, self._workspace_uuid)
         if ws:
             self.owner_id = str(ws.owner_id)
@@ -86,7 +87,7 @@ class WorkspaceContextService:
         logger.debug(
             "WorkspaceContextService: loaded %d contexts for workspace %s",
             len(self._contexts),
-            self.workspace_id
+            self.workspace_id,
         )
         return self._contexts
 
@@ -125,7 +126,9 @@ class WorkspaceContextService:
                 results.append({"path": ctx.path, **ctx.disclose(level)})
         return results
 
-    async def list(self, prefix: str | None = None, level: str = "glance") -> list[dict[str, Any]]:
+    async def list(
+        self, prefix: str | None = None, level: str = "glance"
+    ) -> list[dict[str, Any]]:
         """List contexts, optionally filtered by path prefix."""
         await self._ensure_loaded()
 
@@ -140,7 +143,9 @@ class WorkspaceContextService:
                 results.append({"path": ctx.path, **ctx.disclose(level)})
         return results
 
-    async def tree(self, root: str | None = None, level: str = "overview") -> dict[str, Any]:
+    async def tree(
+        self, root: str | None = None, level: str = "overview"
+    ) -> dict[str, Any]:
         """Return context structure as a hierarchical tree."""
         await self._ensure_loaded()
 

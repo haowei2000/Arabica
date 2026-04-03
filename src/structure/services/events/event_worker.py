@@ -179,7 +179,9 @@ class Worker:
         """
         self._run_event_buffers[run_id] = []
         self._run_seq_cursors[run_id] = initial_seq
-        logger.debug(f"Started event buffer for run {run_id} (initial_seq={initial_seq})")
+        logger.debug(
+            f"Started event buffer for run {run_id} (initial_seq={initial_seq})"
+        )
 
     def _pop_run_buffer(self, run_id: str) -> list[Event]:
         """Remove and return all buffered events for *run_id*; cleans up cursor."""
@@ -198,7 +200,9 @@ class Worker:
         buffered = self._pop_run_buffer(run_id)
         if buffered:
             db.add_all(buffered)
-            logger.debug(f"Flushed {len(buffered)} buffered events to DB for run {run_id}")
+            logger.debug(
+                f"Flushed {len(buffered)} buffered events to DB for run {run_id}"
+            )
 
     async def _run_triggers(self, event: Event, ctx: _Ctx) -> None:
         """Execute workspace triggers for the event and publish their tool call events.
@@ -215,20 +219,25 @@ class Worker:
         try:
             run_id_str = str(event.run_id) if event.run_id else None
             results = await process_event_triggers(
-                ctx.db, workspace_id, event,
+                ctx.db,
+                workspace_id,
+                event,
                 publisher=ctx.publisher,
                 run_id=run_id_str,
             )
             if results:
                 logger.info(
                     "Triggers fired: workspace=%s run=%s triggers=%s",
-                    workspace_id, event.run_id,
+                    workspace_id,
+                    event.run_id,
                     [r["trigger_name"] for r in results],
                 )
         except Exception as e:
             logger.error(
                 "Trigger processing failed for %s run=%s: %s",
-                event.event_type, event.run_id, e,
+                event.event_type,
+                event.run_id,
+                e,
                 exc_info=True,
             )
 
@@ -272,7 +281,9 @@ class Worker:
         """Start consuming messages from the workspace stream using consumer groups."""
         stream_name = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         await self._ensure_consumer_group(stream_name)
-        logger.info(f"Worker '{self.consumer_name}' listening on workspace stream: {stream_name}")
+        logger.info(
+            f"Worker '{self.consumer_name}' listening on workspace stream: {stream_name}"
+        )
 
         self._stuck_detector_task = asyncio.create_task(self._stuck_run_detector_loop())
 
@@ -324,10 +335,10 @@ class Worker:
             event = self._parse_redis_event(event_data)
             workspace_id = event.workspace_id or ""
             if not workspace_id:
-                 # Try to extract from stream name if not in event payload
-                 parts = stream_name.split(":")
-                 if len(parts) >= 2:
-                     workspace_id = parts[1]
+                # Try to extract from stream name if not in event payload
+                parts = stream_name.split(":")
+                if len(parts) >= 2:
+                    workspace_id = parts[1]
 
             # Load all workspace events from Redis before opening the DB session.
             workspace_events: list[Event] = []
@@ -434,7 +445,6 @@ class Worker:
 
         return await self._create_executor_for_run(event, run_id, ctx)
 
-
     async def _create_executor_for_run(
         self, event: Event, run_id: UUID, ctx: _Ctx
     ) -> ExecutorProtocol | None:
@@ -468,7 +478,9 @@ class Worker:
                         run.workspace_id,
                     )
                 except Exception as tool_err:
-                    logger.error(f"Failed to load user tools: {tool_err}", exc_info=True)
+                    logger.error(
+                        f"Failed to load user tools: {tool_err}", exc_info=True
+                    )
                     await ctx.db.rollback()
 
             workspace_id = str(run.workspace_id)
@@ -476,6 +488,7 @@ class Worker:
             # Resolve ChatModel from DB: prefer workspace-pinned model, fall back to default.
             try:
                 from structure.services.llm.chat_model_crud import ChatModelCRUD
+
                 crud = ChatModelCRUD(ctx.db)
                 chat_model_id = (app_config or {}).get("chat_model_id")
                 chat_model = (
@@ -494,7 +507,10 @@ class Worker:
                         app_config["base_url"] = chat_model.base_url
                     logger.info(
                         "_create_executor_for_run: using ChatModel '%s' (%s/%s) for run %s",
-                        chat_model.name, chat_model.provider, chat_model.model_id, run_id,
+                        chat_model.name,
+                        chat_model.provider,
+                        chat_model.model_id,
+                        run_id,
                     )
             except Exception as model_err:
                 logger.warning("Failed to load ChatModel (non-critical): %s", model_err)
@@ -506,9 +522,12 @@ class Worker:
                 from structure.utils.workspace_context_cache import (
                     get_cached_workspace_context,
                 )
+
                 await get_cached_workspace_context(ctx.db, workspace_id)
             except Exception as ctx_err:
-                logger.debug(f"Workspace context pre-warm failed (non-critical): {ctx_err}")
+                logger.debug(
+                    f"Workspace context pre-warm failed (non-critical): {ctx_err}"
+                )
 
             executor = self.prepare_executor(
                 executor_code,
@@ -532,7 +551,9 @@ class Worker:
             return executor
 
         except Exception as e:
-            logger.error(f"Failed to create executor for run {run_id}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to create executor for run {run_id}: {e}", exc_info=True
+            )
             with contextlib.suppress(Exception):
                 run_id_str = str(run_id)
                 buffered = self._pop_run_buffer(run_id_str)
@@ -541,15 +562,17 @@ class Worker:
                 await ctx.state_machine.fail(run_id, error=str(e), auto_commit=True)
             return None
 
-    async def handle_event(self, event: Event, ctx: _Ctx, workspace_events: list[Event]) -> None:
+    async def handle_event(
+        self, event: Event, ctx: _Ctx, workspace_events: list[Event]
+    ) -> None:
         """Route events using the workspace's history for dispatch decisions.
 
-          seq ends with "b" → TO_EXECUTOR        → _handle_to_executor
-          seq ends with "0" → USER_MESSAGE       → run triggers + forward
-          seq ends with "5" → TOOL_CALL          → handle_tool_call
-          seq ends with [6789a] + has user msg   → forward to executor
-          terminal in seq   → skip (run finished)
-          otherwise         → skip (stale / unrecognised)
+        seq ends with "b" → TO_EXECUTOR        → _handle_to_executor
+        seq ends with "0" → USER_MESSAGE       → run triggers + forward
+        seq ends with "5" → TOOL_CALL          → handle_tool_call
+        seq ends with [6789a] + has user msg   → forward to executor
+        terminal in seq   → skip (run finished)
+        otherwise         → skip (stale / unrecognised)
         """
         ctx.db.expire_all()
 
@@ -577,7 +600,9 @@ class Worker:
                 return
 
             # Skip trigger-sourced tool events (already executed by trigger processor).
-            if (event.payload or {}).get("_source") == "trigger" and RE_CODE_SKIP_SRC.match(code):
+            if (event.payload or {}).get(
+                "_source"
+            ) == "trigger" and RE_CODE_SKIP_SRC.match(code):
                 return
 
             # Filter events for the current run to decide on routing
@@ -589,7 +614,12 @@ class Worker:
 
             match seq:
                 case s if RE_TERMINAL.search(s):
-                    logger.debug("Skipping %s for run %s: terminal (%s)", event.event_type, run_id, s)
+                    logger.debug(
+                        "Skipping %s for run %s: terminal (%s)",
+                        event.event_type,
+                        run_id,
+                        s,
+                    )
 
                 case s if s.endswith("b"):
                     # Pass current-run events only — the executor recomputes sequence internally
@@ -602,7 +632,10 @@ class Worker:
                 case s if s.endswith("5"):
                     run_tool_caller = self._run_tool_callers.get(str(run_id))
                     await handle_tool_call(
-                        event, ctx.db, ctx.publisher, ctx.state_machine,
+                        event,
+                        ctx.db,
+                        ctx.publisher,
+                        ctx.state_machine,
                         tool_caller=run_tool_caller or self._tool_caller,
                         flush_run_buffer=self._flush_buffer_to_db,
                     )
@@ -611,10 +644,17 @@ class Worker:
                     await self._publish_to_executor_event(event, ctx)
 
                 case _:
-                    logger.debug("No handler for event=%s run=%s seq=%s", event.event_type, run_id, seq)
+                    logger.debug(
+                        "No handler for event=%s run=%s seq=%s",
+                        event.event_type,
+                        run_id,
+                        seq,
+                    )
 
         except Exception as e:
-            logger.error("handle_event error for %s: %s", event.event_type, e, exc_info=True)
+            logger.error(
+                "handle_event error for %s: %s", event.event_type, e, exc_info=True
+            )
             if event.run_id:
                 try:
                     run_id = (
@@ -645,15 +685,27 @@ class Worker:
             payload={"_original_executor_code": event.executor_code},
             auto_commit=False,
         )
-        logger.debug("Published TO_EXECUTOR for original=%s run=%s", event.event_type, event.run_id)
+        logger.debug(
+            "Published TO_EXECUTOR for original=%s run=%s",
+            event.event_type,
+            event.run_id,
+        )
 
-    async def _load_workspace_events(self, workspace_id: str, count: int = 2000) -> list[Event]:
+    async def _load_workspace_events(
+        self, workspace_id: str, count: int = 2000
+    ) -> list[Event]:
         """Load events for *workspace_id* from the Redis workspace stream."""
-        workspace_stream = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        workspace_stream = (
+            f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        )
         try:
             messages = await self.redis.xrange(workspace_stream, count=count)
         except Exception as e:
-            logger.warning("_load_workspace_events: redis error for workspace %s: %s", workspace_id, e)
+            logger.warning(
+                "_load_workspace_events: redis error for workspace %s: %s",
+                workspace_id,
+                e,
+            )
             return []
 
         return [Event.from_redis_fields(fields) for _, fields in messages]
@@ -676,11 +728,21 @@ class Worker:
 
         # Forward all events to the executor — it will filter based on global_event config.
         # We still strip TO_EXECUTOR routing events to avoid noise.
-        events = [e for e in workspace_events if str(e.event_type) != EventType.TO_EXECUTOR]
-        logger.info("_handle_to_executor: %d workspace events for run %s", len(events), run_id_uuid)
+        events = [
+            e for e in workspace_events if str(e.event_type) != EventType.TO_EXECUTOR
+        ]
+        logger.info(
+            "_handle_to_executor: %d workspace events for run %s",
+            len(events),
+            run_id_uuid,
+        )
 
-        logger.info("_handle_to_executor: forwarding to executor for run %s", run_id_uuid)
-        run_id, run_id_str, has_pending_tools = await self._forward_to_executor(envelope, events, ctx)
+        logger.info(
+            "_handle_to_executor: forwarding to executor for run %s", run_id_uuid
+        )
+        run_id, run_id_str, has_pending_tools = await self._forward_to_executor(
+            envelope, events, ctx
+        )
         if run_id is None:
             return
 
@@ -688,18 +750,24 @@ class Worker:
             # ── Token accounting (TO_EXECUTOR level) ─────────────────────────
             executor = self.runtime.get(run_id)
             total_input = getattr(executor, "_total_input_tokens", 0) if executor else 0
-            total_output = getattr(executor, "_total_output_tokens", 0) if executor else 0
+            total_output = (
+                getattr(executor, "_total_output_tokens", 0) if executor else 0
+            )
 
             # ── Flush in-memory buffer ───────────────────────────────────────
             buffered = self._pop_run_buffer(run_id_str)
             logger.info(
                 "_handle_to_executor: flushing %d buffered events for run %s",
-                len(buffered), run_id,
+                len(buffered),
+                run_id,
             )
             if buffered:
                 to_exec_event = next(
-                    (e for e in reversed(buffered)
-                     if str(e.event_type) == EventType.TO_EXECUTOR),
+                    (
+                        e
+                        for e in reversed(buffered)
+                        if str(e.event_type) == EventType.TO_EXECUTOR
+                    ),
                     None,
                 )
                 if to_exec_event is not None:
@@ -712,9 +780,12 @@ class Worker:
             if total_input or total_output:
                 logger.info(
                     "_handle_to_executor: updating run token counts in=%d out=%d run=%s",
-                    total_input, total_output, run_id,
+                    total_input,
+                    total_output,
+                    run_id,
                 )
                 from sqlalchemy import update as sa_update
+
                 await ctx.db.execute(
                     sa_update(Run)
                     .where(Run.id == run_id_str)
@@ -756,7 +827,9 @@ class Worker:
             return None, "", False
 
         run_id = (
-            envelope.run_id if isinstance(envelope.run_id, UUID) else UUID(str(envelope.run_id))
+            envelope.run_id
+            if isinstance(envelope.run_id, UUID)
+            else UUID(str(envelope.run_id))
         )
         run_id_str = str(run_id)
         workspace_id = str(envelope.workspace_id)
@@ -768,7 +841,8 @@ class Worker:
         async with self._executor_locks[run_id]:
             logger.info(
                 "_forward_to_executor: starting process_events for run %s (%d events)",
-                run_id, len(events),
+                run_id,
+                len(events),
             )
             async for output_event in executor.process_events(events):
                 if str(output_event.event_type) == EventType.RUN_COMPLETED:
@@ -778,7 +852,8 @@ class Worker:
                 await self._publish_event(output_event, run_id, workspace_id, ctx)
             logger.info(
                 "_forward_to_executor: process_events complete for run %s (done=%s)",
-                run_id, run_done,
+                run_id,
+                run_done,
             )
 
         has_pending_tools = not run_done

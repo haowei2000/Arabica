@@ -33,7 +33,8 @@ async def validation_exception_handler(
 
 
 async def sqlalchemy_exception_handler(
-    request: Request, exc: SQLAlchemyError  # noqa: ARG001
+    request: Request,  # noqa: ARG001
+    exc: SQLAlchemyError,
 ) -> JSONResponse:
     """Handle SQLAlchemy database errors."""
     from structure.config.factory import get_settings
@@ -51,7 +52,8 @@ async def sqlalchemy_exception_handler(
 
 
 async def response_validation_exception_handler(
-    request: Request, exc: ResponseValidationError  # noqa: ARG001
+    request: Request,  # noqa: ARG001
+    exc: ResponseValidationError,
 ) -> JSONResponse:
     """Handle response validation errors."""
     from structure.config.factory import get_settings
@@ -63,7 +65,9 @@ async def response_validation_exception_handler(
         content=error(
             code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             message="Server response data format error",
-            detail=exc.errors() if settings.DEBUG else "Response data format validation failed",
+            detail=exc.errors()
+            if settings.DEBUG
+            else "Response data format validation failed",
         ).model_dump(),
     )
 

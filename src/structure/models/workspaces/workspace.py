@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 Base = get_base("structure")
 
+
 class Workspace(Base):
     """Workspace model - top-level container for runs and events.
 
@@ -74,7 +75,9 @@ class Workspace(Base):
 
     # Visibility and sharing
     visibility: Mapped[WorkspaceVisibility] = mapped_column(
-        String(50), default=WorkspaceVisibility.PRIVATE, comment="可见性: private/team/public"
+        String(50),
+        default=WorkspaceVisibility.PRIVATE,
+        comment="可见性: private/team/public",
     )
     is_shared: Mapped[bool] = mapped_column(
         Boolean, default=False, comment="是否已共享"
@@ -95,7 +98,9 @@ class Workspace(Base):
 
     # Status
     status: Mapped[WorkspaceStatus] = mapped_column(
-        String(50), default=WorkspaceStatus.ACTIVE, comment="状态: active/archived/deleted"
+        String(50),
+        default=WorkspaceStatus.ACTIVE,
+        comment="状态: active/archived/deleted",
     )
 
     # Denormalized counts for performance

@@ -7,14 +7,13 @@
 import asyncio
 from collections.abc import Callable, Coroutine
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, TypeVar
+from pathlib import Path
+from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
-T = TypeVar("T")
 
-
-def async_return(value: T) -> Coroutine[Any, Any, T]:
+def async_return[T](value: T) -> Coroutine[Any, Any, T]:
     """创建一个返回指定值的异步函数
 
     Args:
@@ -70,8 +69,7 @@ def create_async_mock(**kwargs) -> AsyncMock:
         >>> result = await mock()
         >>> assert result == {"data": "test"}
     """
-    mock = AsyncMock(**kwargs)
-    return mock
+    return AsyncMock(**kwargs)
 
 
 def create_mock_session() -> AsyncMock:
@@ -317,15 +315,14 @@ def create_temp_file(content: str = "", suffix: str = ".txt") -> str:
         >>> # 使用文件...
         >>> os.remove(filepath)  # 记得清理
     """
+    import os
     import tempfile
 
     fd, path = tempfile.mkstemp(suffix=suffix)
     try:
-        with open(fd, "w", encoding="utf-8") as f:
+        with Path(path).open("w", encoding="utf-8") as f:
             f.write(content)
     except Exception:
-        import os
-
         os.close(fd)
         raise
     return path
@@ -346,14 +343,13 @@ def load_test_data(filename: str, data_dir: str = "tests/data") -> Any:
         >>> assert "name" in data
     """
     import json
-    import os
 
-    filepath = os.path.join(data_dir, filename)
+    filepath = Path(data_dir) / filename
 
-    if not os.path.exists(filepath):
+    if not filepath.exists():
         raise FileNotFoundError(f"Test data file not found: {filepath}")
 
-    with open(filepath, encoding="utf-8") as f:
+    with filepath.open(encoding="utf-8") as f:
         if filename.endswith(".json"):
             return json.load(f)
         if filename.endswith((".yaml", ".yml")):
@@ -361,8 +357,8 @@ def load_test_data(filename: str, data_dir: str = "tests/data") -> Any:
                 import yaml
 
                 return yaml.safe_load(f)
-            except ImportError:
-                raise ImportError("PyYAML is required to load YAML files")
+            except ImportError as err:
+                raise ImportError("PyYAML is required to load YAML files") from err
         else:
             return f.read()
 

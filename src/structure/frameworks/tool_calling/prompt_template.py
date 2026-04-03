@@ -60,8 +60,7 @@ def format_tool_description(tool_class: type) -> str:
 
     if properties:
         lines = [
-            _format_param(name, prop, required)
-            for name, prop in properties.items()
+            _format_param(name, prop, required) for name, prop in properties.items()
         ]
         params_block = "\n".join(lines)
     else:
@@ -118,7 +117,5 @@ def build_tools_system_prompt(tool_classes: list[type]) -> str:
     Returns:
         A string to append to (or embed in) the system prompt.
     """
-    descriptions = "\n\n".join(
-        format_tool_description(tc) for tc in tool_classes
-    )
+    descriptions = "\n\n".join(format_tool_description(tc) for tc in tool_classes)
     return _SYSTEM_INJECTION.format(tool_descriptions=descriptions)

@@ -55,6 +55,7 @@ async def create_knowledge(
     from structure.celery_worker.tasks.context_sync_tasks import (
         sync_knowledge_to_contexts,
     )
+
     sync_knowledge_to_contexts.delay(str(knowledge.id), str(current_user.id))
     return knowledge
 
@@ -83,7 +84,7 @@ async def get_knowledge_context(
 async def get_knowledge(
     knowledge_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    crud: Annotated[KnowledgeCRUD,Depends(get_knowledge_crud)],
+    crud: Annotated[KnowledgeCRUD, Depends(get_knowledge_crud)],
 ):
     """
     Get knowledge base by ID.
@@ -185,6 +186,7 @@ async def delete_knowledge(
     from structure.celery_worker.tasks.context_sync_tasks import (
         delete_resource_contexts,
     )
+
     delete_resource_contexts.delay(knowledge_id, "knowledge", "knowledge_id")
 
 
@@ -268,7 +270,9 @@ async def hybrid_search_knowledge(
     knowledge_id: str,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     context_crud: Annotated[ContextCRUD, Depends(get_context_crud)],
-    embedding_model_crud: Annotated[EmbeddingModelCRUD, Depends(get_embedding_model_crud)],
+    embedding_model_crud: Annotated[
+        EmbeddingModelCRUD, Depends(get_embedding_model_crud)
+    ],
     q: str = Query(..., min_length=1, description="Search term"),
     top_k: int = Query(20, ge=1, le=100, description="Number of results"),
 ):
@@ -302,6 +306,7 @@ async def hybrid_search_knowledge(
     # 2. Generate embedding for query
     try:
         from structure.services.context.knowledge.embeddings import EmbeddingService
+
         emb_svc = EmbeddingService(
             provider=model_config.provider,
             model=model_config.model_id,

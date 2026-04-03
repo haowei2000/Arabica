@@ -71,9 +71,7 @@ class ListContextTool(InnerTool):
             recursive = input_data.mode == "descendants"
 
             result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id,
-                prefix=input_data.path,
-                recursive=recursive
+                workspace_id=workspace_id, prefix=input_data.path, recursive=recursive
             )
 
             contexts = result_data.get("items", [])

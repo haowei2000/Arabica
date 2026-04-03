@@ -5,6 +5,7 @@ Revises: g3f4e5d6c7b8
 Create Date: 2026-03-11 14:00:00.000000
 
 """
+
 from collections.abc import Sequence
 
 from alembic import op
@@ -28,7 +29,9 @@ def upgrade() -> None:
     if "output_tokens" not in existing_columns:
         op.add_column(
             "event",
-            sa.Column("output_tokens", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column(
+                "output_tokens", sa.Integer(), nullable=False, server_default="0"
+            ),
         )
 
 

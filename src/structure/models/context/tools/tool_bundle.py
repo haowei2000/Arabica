@@ -20,7 +20,9 @@ Base = get_base("structure")
 class ToolBundle(Base):
     __tablename__ = "tool_bundle"
 
-    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
 
     bundle_type: Mapped[str] = mapped_column(
         String(20),

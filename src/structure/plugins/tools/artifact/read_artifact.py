@@ -35,7 +35,9 @@ class ReadArtifactTool(InnerTool):
 
         try:
             async with get_session("structure") as db:
-                stmt = select(Artifact).where(Artifact.id == UUID(input_data.artifact_id))
+                stmt = select(Artifact).where(
+                    Artifact.id == UUID(input_data.artifact_id)
+                )
                 result = await db.execute(stmt)
                 artifact = result.scalar_one_or_none()
 
@@ -60,8 +62,12 @@ class ReadArtifactTool(InnerTool):
                     "version": artifact.version,
                     "meta": artifact.meta,
                     "run_id": str(artifact.run_id) if artifact.run_id else None,
-                    "created_at": artifact.created_at.isoformat() if artifact.created_at else None,
-                    "updated_at": artifact.updated_at.isoformat() if artifact.updated_at else None,
+                    "created_at": artifact.created_at.isoformat()
+                    if artifact.created_at
+                    else None,
+                    "updated_at": artifact.updated_at.isoformat()
+                    if artifact.updated_at
+                    else None,
                 },
             )
 

@@ -29,7 +29,9 @@ async def handle_task_event(event: Event):
 
         match event.event_type:
             case EventType.TASK_CREATE:
-                logger.info(f"Task created: {task_id} - {task_data.get('title', 'Untitled')}")
+                logger.info(
+                    f"Task created: {task_id} - {task_data.get('title', 'Untitled')}"
+                )
 
                 # TODO: Implement task creation side effects
                 # - Send notifications to assignees
@@ -74,4 +76,3 @@ async def handle_task_event(event: Event):
 
     except Exception as e:
         logger.error(f"handle_task_event error: {e}", exc_info=True)
-

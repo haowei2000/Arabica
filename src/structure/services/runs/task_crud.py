@@ -21,17 +21,13 @@ class TaskCRUD:
         offset: int = 0,
     ) -> tuple[int, list[Task]]:
         """List tasks in a workspace with optional filters."""
-        stmt = select(Task).where(
-            Task.workspace_id == str(workspace_id)
-        )
+        stmt = select(Task).where(Task.workspace_id == str(workspace_id))
         if run_id is not None:
             stmt = stmt.where(Task.run_id == str(run_id))
         if status is not None:
             stmt = stmt.where(Task.status == status)
 
-        count_stmt = select(Task).where(
-            Task.workspace_id == str(workspace_id)
-        )
+        count_stmt = select(Task).where(Task.workspace_id == str(workspace_id))
         if run_id is not None:
             count_stmt = count_stmt.where(Task.run_id == str(run_id))
         if status is not None:

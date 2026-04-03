@@ -48,9 +48,13 @@ class StuckRunDetector:
                     auto_commit=True,
                 )
                 recovered_ids.append(str(run_id))
-                logger.warning(f"Recovered stuck run {run_id} (status: {run.status}, last updated: {run.updated_at})")
+                logger.warning(
+                    f"Recovered stuck run {run_id} (status: {run.status}, last updated: {run.updated_at})"
+                )
             except Exception as e:
-                logger.error(f"Failed to recover stuck run {run_id}: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to recover stuck run {run_id}: {e}", exc_info=True
+                )
 
         if recovered_ids:
             logger.info(f"Stuck run detector recovered {len(recovered_ids)} run(s)")

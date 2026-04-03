@@ -59,7 +59,9 @@ class ExecutorCRUD:
 
     async def get_executor_by_code(self, executor_code: str) -> ExecutorTemplate | None:
         result = await self.db_session.execute(
-            select(ExecutorTemplate).where(ExecutorTemplate.executor_code == executor_code)
+            select(ExecutorTemplate).where(
+                ExecutorTemplate.executor_code == executor_code
+            )
         )
         return result.scalars().first()
 
@@ -105,7 +107,9 @@ class ExecutorCRUD:
             True if the executor was found and marked as deleted, False otherwise
         """
         result = await self.db_session.execute(
-            select(ExecutorTemplate).where(ExecutorTemplate.executor_code == executor_code)
+            select(ExecutorTemplate).where(
+                ExecutorTemplate.executor_code == executor_code
+            )
         )
         executor = result.scalars().first()
 

@@ -80,7 +80,6 @@ async def test_celery():
         }
 
 
-
 def compute_file_hash(content: bytes) -> str:
     """Compute SHA256 hash of file content.
 
@@ -298,9 +297,7 @@ async def upload_folder(
                     task_id=task_id,
                 )
             )
-            logger.info(
-                f"Folder upload: queued {original_name}, task={task_id}"
-            )
+            logger.info(f"Folder upload: queued {original_name}, task={task_id}")
         except Exception as e:
             logger.error(f"Folder upload: failed to process {original_name}: {e}")
             failed += 1
@@ -504,6 +501,7 @@ async def delete_document(
     from structure.celery_worker.tasks.context_sync_tasks import (
         delete_resource_contexts,
     )
+
     delete_resource_contexts.delay(document_id, "chunk", "document_id")
 
     return

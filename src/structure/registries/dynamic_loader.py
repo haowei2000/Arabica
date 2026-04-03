@@ -83,7 +83,9 @@ class DynamicToolLoader:
         fingerprint = await cls._query_fingerprint(db, user_id, workspace_id)
         cached = cls._cache.get(cache_key)
         if cached is not None and cached.fingerprint == fingerprint:
-            logger.debug("Tool cache hit for user %s (count=%d)", user_id, fingerprint[0])
+            logger.debug(
+                "Tool cache hit for user %s (count=%d)", user_id, fingerprint[0]
+            )
             return cached.tool_classes
 
         from structure.registries.core import ToolRegistry
@@ -108,7 +110,8 @@ class DynamicToolLoader:
             if name in inner_names:
                 logger.warning(
                     "MCP tool '%s' (id=%s) shadows a built-in tool — skipped",
-                    name, record.id,
+                    name,
+                    record.id,
                 )
                 continue
 
@@ -117,7 +120,9 @@ class DynamicToolLoader:
                 if prev_owner == user_id:
                     continue
                 if record.user_id == user_id:
-                    tool_classes = [tc for tc in tool_classes if tc.METADATA.name != name]
+                    tool_classes = [
+                        tc for tc in tool_classes if tc.METADATA.name != name
+                    ]
                 else:
                     continue
 
@@ -129,8 +134,14 @@ class DynamicToolLoader:
             except Exception as e:
                 logger.error("Failed to load MCP tool '%s': %s", name, e, exc_info=True)
 
-        cls._cache[cache_key] = _CacheEntry(fingerprint=fingerprint, tool_classes=tool_classes)
-        logger.info("Loaded %d MCP tools for user %s (cache refreshed)", len(tool_classes), user_id)
+        cls._cache[cache_key] = _CacheEntry(
+            fingerprint=fingerprint, tool_classes=tool_classes
+        )
+        logger.info(
+            "Loaded %d MCP tools for user %s (cache refreshed)",
+            len(tool_classes),
+            user_id,
+        )
         return tool_classes
 
     @classmethod
@@ -144,7 +155,8 @@ class DynamicToolLoader:
             cls._cache.clear()
             return
         keys_to_remove = [
-            k for k in cls._cache
+            k
+            for k in cls._cache
             if k[0] == user_id and (workspace_id is None or k[1] == workspace_id)
         ]
         for k in keys_to_remove:
@@ -170,7 +182,8 @@ class DynamicToolLoader:
 
         if workspace_id is not None:
             query = query.where(
-                (ToolModel.workspace_id == workspace_id) | ToolModel.workspace_id.is_(None)
+                (ToolModel.workspace_id == workspace_id)
+                | ToolModel.workspace_id.is_(None)
             )
 
         result = await db.execute(query)

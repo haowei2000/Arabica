@@ -573,7 +573,7 @@ class ContextCRUD:
         knowledge_id: str | UUID | None = None,
         top_k: int = 10,
         vector_weight: float = 0.3,  # Reduced default
-        text_weight: float = 0.7,    # Increased default for keyword priority
+        text_weight: float = 0.7,  # Increased default for keyword priority
     ) -> list[tuple[Context, float]]:
         """
         Hybrid search combining vector similarity and text matching.
@@ -633,7 +633,9 @@ class ContextCRUD:
         for i, context in enumerate(text_results):
             context_id = str(context.id)
             # Text relevance score decreases by rank (1.0 to 0.1)
-            text_score = max(0.1, 1.0 - (i / len(text_results))) if text_results else 0.0
+            text_score = (
+                max(0.1, 1.0 - (i / len(text_results))) if text_results else 0.0
+            )
 
             if context_id not in scores:
                 scores[context_id] = {
@@ -661,9 +663,9 @@ class ContextCRUD:
             # Formula: (Vector * W_v) + (Text * W_t) + Bonus  # noqa: ERA001
             # Bonus can push a score above 1.0, ensuring top ranking for exact keyword matches
             combined_score = (
-                data["vector"] * vector_weight +
-                data["text"] * text_weight +
-                data["bonus"]
+                data["vector"] * vector_weight
+                + data["text"] * text_weight
+                + data["bonus"]
             )
             final_results.append((data["context"], combined_score))
 

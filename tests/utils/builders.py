@@ -4,8 +4,8 @@
 提供 Builder 模式的测试数据构造器，简化测试数据的创建
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any, Optional
 import uuid
 
 
@@ -497,7 +497,7 @@ class DatabaseRecordBuilder(BaseBuilder):
         self, created: bool = True, updated: bool = True
     ) -> "DatabaseRecordBuilder":
         """添加时间戳字段"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         if created:
             self._data["created_at"] = now
         if updated:

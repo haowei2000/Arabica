@@ -37,7 +37,6 @@ async def main():
             # Prepare import request
             # We'll first probe to see what's available
             from structure.registries.mcp_loader import probe_mcp_server
-            client_config = {"mcp_transport": "sse", "mcp_url": mcp_url}
 
             logger.info("Probing MCP server...")
             raw_tools = await probe_mcp_server(mcp_url) # FastMCP probe takes URL

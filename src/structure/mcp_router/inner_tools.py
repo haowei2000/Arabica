@@ -1,4 +1,3 @@
-
 import logging
 
 from fastmcp import FastMCP
@@ -7,6 +6,7 @@ from structure.core.interfaces.tool import InnerTool
 from structure.registries.core import ToolRegistry
 
 logger = logging.getLogger("mcp.inner_tools")
+
 
 def register_inner_tools_to_mcp(mcp: FastMCP):
     """
@@ -35,6 +35,7 @@ def register_inner_tools_to_mcp(mcp: FastMCP):
             logger.info(f"Registered inner tool '{name}' to MCP")
         except Exception as e:
             logger.error(f"Failed to register inner tool '{name}' to MCP: {e}")
+
 
 def _register_single_tool(mcp: FastMCP, tool_cls):
     """Register a single InnerTool class to FastMCP."""

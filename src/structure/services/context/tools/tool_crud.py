@@ -75,7 +75,6 @@ class ToolCRUD:
                 "Please choose a different name."
             )
 
-
     async def get_tool_by_id(
         self, tool_id: UUID, user_id: UUID | None = None
     ) -> Tool | None:
@@ -180,7 +179,6 @@ class ToolCRUD:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-
     async def delete_tool(
         self, tool_id: UUID, user_id: UUID, auto_commit: bool = True
     ) -> bool:
@@ -207,6 +205,7 @@ class ToolCRUD:
 
         # Invalidate dynamic tool cache so workers pick up the change.
         from structure.registries.dynamic_loader import DynamicToolLoader
+
         DynamicToolLoader.invalidate_cache(user_id=user_id)
 
         logger.info(f"Deleted user tool: {tool.name} (id={tool_id})")
@@ -259,6 +258,7 @@ class ToolCRUD:
 
         # Invalidate dynamic tool cache so workers pick up the change.
         from structure.registries.dynamic_loader import DynamicToolLoader
+
         DynamicToolLoader.invalidate_cache(user_id=user_id)
 
         logger.info(f"Set tool {tool.name} enabled={enabled}")

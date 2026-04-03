@@ -35,7 +35,9 @@ class ListTasksTool(InnerTool):
         parent_task_id: str | None = Field(
             default=None, description="Filter by parent task ID (to list subtasks)"
         )
-        limit: int = Field(default=20, description="Maximum number of results (1-100)", ge=1, le=100)
+        limit: int = Field(
+            default=20, description="Maximum number of results (1-100)", ge=1, le=100
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
@@ -71,7 +73,9 @@ class ListTasksTool(InnerTool):
                     stmt = stmt.where(Task.status == input_data.status)
 
                 if input_data.parent_task_id:
-                    stmt = stmt.where(Task.parent_task_id == UUID(input_data.parent_task_id))
+                    stmt = stmt.where(
+                        Task.parent_task_id == UUID(input_data.parent_task_id)
+                    )
 
                 result = await db.execute(stmt)
                 rows = result.all()
@@ -84,9 +88,15 @@ class ListTasksTool(InnerTool):
                     "priority": row.priority,
                     "assignee": row.assignee,
                     "run_id": str(row.run_id) if row.run_id else None,
-                    "parent_task_id": str(row.parent_task_id) if row.parent_task_id else None,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                    "parent_task_id": str(row.parent_task_id)
+                    if row.parent_task_id
+                    else None,
+                    "created_at": row.created_at.isoformat()
+                    if row.created_at
+                    else None,
+                    "completed_at": row.completed_at.isoformat()
+                    if row.completed_at
+                    else None,
                 }
                 for row in rows
             ]

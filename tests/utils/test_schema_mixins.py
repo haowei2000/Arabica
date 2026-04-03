@@ -441,7 +441,6 @@ class TestEdgeCases:
         class TestSchema(UUIDConversionMixin, ORMConfigMixin, BaseModel):
             id: str = "default"
 
-        model = MockModel()
         # Should not crash, will use default values
         schema = TestSchema.model_validate({"id": "test"})
         assert schema.id == "test"

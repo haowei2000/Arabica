@@ -44,7 +44,6 @@ def _build_skill_response(skill) -> SkillResponse:
     )
 
 
-
 @router.get(
     "/{skill_id}/context",
     response_model=ContextListResponse,
@@ -130,6 +129,7 @@ async def update_skill(
         )
 
     from structure.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id), data.content)
     return _build_skill_response(skill)
 
@@ -170,6 +170,7 @@ async def delete_skill(
     from structure.celery_worker.tasks.context_sync_tasks import (
         delete_resource_contexts,
     )
+
     delete_resource_contexts.delay(skill_id, "skill", "skill_id")
 
 
@@ -280,10 +281,15 @@ async def get_skill_file(
     """Return the raw content of a file stored in a skill."""
     skill = await crud.get_by_id(skill_id, user_id=current_user.id)
     if not skill:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Skill {skill_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Skill {skill_id} not found"
+        )
 
     if not skill.files or file_path not in skill.files:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{file_path}' not found in skill")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File '{file_path}' not found in skill",
+        )
 
     meta = skill.files[file_path]
     s3_key = meta.get("s3_key") or f"/{current_user.id}/skills/{file_path}"
@@ -336,6 +342,7 @@ async def process_skill(
         )
 
     from structure.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
     return _build_skill_response(skill)
 
@@ -381,7 +388,9 @@ async def upload_skill_folder(
     )
     if not skill_md_path:
         logger.warning(f"No SKILL.md found. Processed paths: {list(file_data.keys())}")
-        raise HTTPException(status_code=400, detail="Folder must contain a SKILL.md file")
+        raise HTTPException(
+            status_code=400, detail="Folder must contain a SKILL.md file"
+        )
 
     skill_md_content = file_data[skill_md_path].decode("utf-8")
     skill_name = Path(skill_md_path).parts[0]
@@ -440,7 +449,9 @@ async def upload_skill_folder(
                 "etag": obj_info.etag,
                 "content_type": content_type,
             }
-            logger.info(f"Successfully uploaded {path}: size={obj_info.size}, etag={obj_info.etag}")
+            logger.info(
+                f"Successfully uploaded {path}: size={obj_info.size}, etag={obj_info.etag}"
+            )
         except Exception as e:
             logger.error(f"Failed to upload file {path} to S3: {e}")
             # Continue with other files, but log the error
@@ -456,6 +467,7 @@ async def upload_skill_folder(
     logger.info(f"Skill upload completed successfully: {skill.id}")
 
     from structure.celery_worker.tasks.context_sync_tasks import sync_skill_to_contexts
+
     sync_skill_to_contexts.delay(str(skill.id), str(current_user.id))
 
     return _build_skill_response(skill)

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 Base = get_base("structure")
 
+
 class Event(Base):
     """Event model for storing all events in the system.
 
@@ -86,10 +87,18 @@ class Event(Base):
 
     # Token usage for LLM-generated events (e.g. agent.message)
     input_tokens: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0", comment="本次 LLM 调用的输入 token 数"
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="本次 LLM 调用的输入 token 数",
     )
     output_tokens: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0", comment="本次 LLM 调用的输出 token 数"
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="本次 LLM 调用的输出 token 数",
     )
 
     # Sequence number for ordering within run/workspace
@@ -143,7 +152,9 @@ class Event(Base):
         converted to their native types.
         """
         decoded: dict[str, Any] = {
-            k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+            k.decode() if isinstance(k, bytes) else k: v.decode()
+            if isinstance(v, bytes)
+            else v
             for k, v in data.items()
         }
 
@@ -156,7 +167,14 @@ class Event(Base):
                     decoded[key] = {}
 
         # Convert UUID string fields
-        for key in ("id", "workspace_id", "run_id", "app_id", "user_id", "parent_event_id"):
+        for key in (
+            "id",
+            "workspace_id",
+            "run_id",
+            "app_id",
+            "user_id",
+            "parent_event_id",
+        ):
             if decoded.get(key):
                 decoded[key] = UUID(decoded[key])
 
@@ -184,10 +202,19 @@ class Event(Base):
         """
         fields: dict[str, str | int | float] = {}
         for key in (
-            "id", "event_type", "workspace_id", "run_id", "app_id",
-            "user_id", "executor_code", "payload", "sequence",
-            "parent_event_id", "created_at",
-            "input_tokens", "output_tokens",
+            "id",
+            "event_type",
+            "workspace_id",
+            "run_id",
+            "app_id",
+            "user_id",
+            "executor_code",
+            "payload",
+            "sequence",
+            "parent_event_id",
+            "created_at",
+            "input_tokens",
+            "output_tokens",
         ):
             value = getattr(self, key, None)
             if value is None:
@@ -225,7 +252,9 @@ class Event(Base):
                 return f"User: {_trim(msg)}" if msg else "User: (empty message)"
 
             case EventType.USER_FEEDBACK:
-                feedback = p.get("feedback") or p.get("content") or p.get("rating") or ""
+                feedback = (
+                    p.get("feedback") or p.get("content") or p.get("rating") or ""
+                )
                 return f"User feedback: {_trim(feedback)}"
 
             # ── Agent ─────────────────────────────────────────────────────
@@ -235,7 +264,9 @@ class Event(Base):
 
             case EventType.AGENT_MESSAGE:
                 msg = p.get("message") or p.get("content") or ""
-                return f"Assistant: {_trim(msg)}" if msg else "Assistant: (empty message)"
+                return (
+                    f"Assistant: {_trim(msg)}" if msg else "Assistant: (empty message)"
+                )
 
             case EventType.AGENT_THINKING:
                 content = p.get("content") or p.get("thinking") or ""
@@ -256,13 +287,21 @@ class Event(Base):
             case EventType.TOOL_CALL:
                 name = p.get("tool_name") or p.get("name") or "unknown"
                 args = p.get("arguments") or p.get("args") or {}
-                args_str = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
+                args_str = (
+                    json.dumps(args, ensure_ascii=False)
+                    if isinstance(args, dict)
+                    else str(args)
+                )
                 return f"Tool call: {name}({_trim(args_str, 120)})"
 
             case EventType.TOOL_RESULT:
                 name = p.get("tool_name") or p.get("name") or "unknown"
                 result = p.get("result") or p.get("output") or p.get("content") or ""
-                result_str = json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result)
+                result_str = (
+                    json.dumps(result, ensure_ascii=False)
+                    if isinstance(result, (dict, list))
+                    else str(result)
+                )
                 return f"Tool result [{name}]: {_trim(result_str, 160)}"
 
             case EventType.TOOL_ERROR:
@@ -349,18 +388,26 @@ class Event(Base):
             # ── Artifact ──────────────────────────────────────────────────
             case EventType.ARTIFACT_CREATE:
                 name = p.get("name") or p.get("artifact_name") or ""
-                return f"Artifact created: {_trim(name)}" if name else "Artifact created"
+                return (
+                    f"Artifact created: {_trim(name)}" if name else "Artifact created"
+                )
 
             case EventType.ARTIFACT_UPDATE:
                 name = p.get("name") or p.get("artifact_name") or ""
-                return f"Artifact updated: {_trim(name)}" if name else "Artifact updated"
+                return (
+                    f"Artifact updated: {_trim(name)}" if name else "Artifact updated"
+                )
 
             case EventType.ARTIFACT_DELETE:
                 return "Artifact deleted"
 
             case EventType.ARTIFACT_VERSION:
                 version = p.get("version") or p.get("version_id") or ""
-                return f"Artifact version: {version}" if version else "Artifact version created"
+                return (
+                    f"Artifact version: {version}"
+                    if version
+                    else "Artifact version created"
+                )
 
             # ── System ────────────────────────────────────────────────────
             case EventType.SYSTEM_ERROR:

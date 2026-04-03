@@ -18,7 +18,9 @@ from structure.services.llm.chat_model_crud import ChatModelCRUD
 from structure.services.llm.embedding_model_crud import EmbeddingModelCRUD
 
 
-async def get_app_crud(db: Annotated[AsyncSession, Depends(get_structure_db)]) -> AppCRUD:
+async def get_app_crud(
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+) -> AppCRUD:
     """
     Dependency to get AppCRUD instance.
 

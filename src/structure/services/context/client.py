@@ -16,28 +16,23 @@ class ContextServiceClient:
         else:
             try:
                 from structure.config.factory import get_settings
-                self.base_url = getattr(get_settings(), "CONTEXT_SERVICE_URL", "http://context-service:8080")
+
+                self.base_url = getattr(
+                    get_settings(), "CONTEXT_SERVICE_URL", "http://context-service:8080"
+                )
             except Exception:
                 self.base_url = "http://context-service:8080"
 
     async def create_context(
-        self,
-        workspace_id: UUID,
-        path: str,
-        content: str,
-        **kwargs
+        self, workspace_id: UUID, path: str, content: str, **kwargs
     ) -> dict[str, Any]:
         """Create or update a context entry."""
-        payload = {
-            "path": path,
-            "content": content,
-            **kwargs
-        }
+        payload = {"path": path, "content": content, **kwargs}
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/workspaces/{workspace_id}/context",
                 json=payload,
-                timeout=30.0
+                timeout=30.0,
             )
             response.raise_for_status()
             return response.json()
@@ -48,7 +43,7 @@ class ContextServiceClient:
             try:
                 response = await client.get(
                     f"{self.base_url}/workspaces/{workspace_id}/context/{path}",
-                    timeout=10.0
+                    timeout=10.0,
                 )
                 if response.status_code == 404:
                     return None
@@ -63,7 +58,7 @@ class ContextServiceClient:
         async with httpx.AsyncClient() as client:
             response = await client.delete(
                 f"{self.base_url}/workspaces/{workspace_id}/context/{path}",
-                timeout=10.0
+                timeout=10.0,
             )
             return response.status_code == 200
 
@@ -76,7 +71,7 @@ class ContextServiceClient:
             response = await client.get(
                 f"{self.base_url}/workspaces/{workspace_id}/list",
                 params=params,
-                timeout=10.0
+                timeout=10.0,
             )
             response.raise_for_status()
             return response.json()

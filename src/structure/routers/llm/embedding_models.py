@@ -18,7 +18,9 @@ from structure.services.llm.embedding_model_crud import EmbeddingModelCRUD
 router = APIRouter(prefix="/llm/embedding-models", tags=["llm-models"])
 
 
-@router.post("", response_model=EmbeddingModelResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=EmbeddingModelResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_embedding_model(
     data: EmbeddingModelCreate,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
@@ -46,7 +48,9 @@ async def list_embedding_models(
         skip=skip,
         limit=page_size,
     )
-    return EmbeddingModelListResponse(total=total, items=items, page=page, page_size=page_size)
+    return EmbeddingModelListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )
 
 
 @router.get("/search", response_model=EmbeddingModelListResponse)
@@ -65,7 +69,9 @@ async def search_embedding_models(
         skip=skip,
         limit=page_size,
     )
-    return EmbeddingModelListResponse(total=total, items=items, page=page, page_size=page_size)
+    return EmbeddingModelListResponse(
+        total=total, items=items, page=page, page_size=page_size
+    )
 
 
 @router.get("/{model_id}", response_model=EmbeddingModelResponse)
@@ -77,9 +83,13 @@ async def get_embedding_model(
     """Get an embedding model by ID."""
     obj = await crud.get_by_id(model_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found"
+        )
     if not obj.is_system and str(obj.user_id) != str(current_user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
     return obj
 
 
@@ -93,9 +103,13 @@ async def update_embedding_model(
     """Update an existing embedding model configuration."""
     obj = await crud.get_by_id(model_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found"
+        )
     if not obj.is_system and str(obj.user_id) != str(current_user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
     updated = await crud.update(model_id, data)
     return updated  # noqa: RET504
 
@@ -109,9 +123,15 @@ async def delete_embedding_model(
     """Delete an embedding model configuration."""
     obj = await crud.get_by_id(model_id)
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found"
+        )
     if obj.is_system:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete system models")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete system models"
+        )
     if str(obj.user_id) != str(current_user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
     await crud.delete(model_id)

@@ -34,7 +34,9 @@ class ListArtifactsTool(InnerTool):
             default=None,
             description="Filter by type: text, code, file, image, document, data, other",
         )
-        limit: int = Field(default=20, description="Maximum number of results (1-100)", ge=1, le=100)
+        limit: int = Field(
+            default=20, description="Maximum number of results (1-100)", ge=1, le=100
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
@@ -65,7 +67,9 @@ class ListArtifactsTool(InnerTool):
                     stmt = stmt.where(Artifact.run_id == UUID(input_data.run_id))
 
                 if input_data.artifact_type:
-                    stmt = stmt.where(Artifact.artifact_type == input_data.artifact_type)
+                    stmt = stmt.where(
+                        Artifact.artifact_type == input_data.artifact_type
+                    )
 
                 result = await db.execute(stmt)
                 rows = result.all()
@@ -78,7 +82,9 @@ class ListArtifactsTool(InnerTool):
                     "content_type": row.content_type,
                     "version": row.version,
                     "run_id": str(row.run_id) if row.run_id else None,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "created_at": row.created_at.isoformat()
+                    if row.created_at
+                    else None,
                 }
                 for row in rows
             ]

@@ -354,7 +354,9 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Handle an incoming WORKSPACE_MEMBER_LEAVE event."""
         ...
 
-    async def _process_workspace_member_role_change(self, payload: dict[str, Any]) -> None:
+    async def _process_workspace_member_role_change(
+        self, payload: dict[str, Any]
+    ) -> None:
         """Handle an incoming WORKSPACE_MEMBER_ROLE_CHANGE event."""
         ...
 
@@ -394,7 +396,9 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Emit a plan step event (AGENT_PLAN_STEP)."""
         ...
 
-    def _emit_heartbeat(self, *, status: str = "alive", detail: str | None = None) -> Any:
+    def _emit_heartbeat(
+        self, *, status: str = "alive", detail: str | None = None
+    ) -> Any:
         """Emit a periodic liveness signal (AGENT_HEARTBEAT)."""
         ...
 
@@ -417,9 +421,7 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Emit a tool result event (TOOL_RESULT)."""
         ...
 
-    def _emit_tool_error(
-        self, tool_name: str, tool_id: str, error_message: str
-    ) -> Any:
+    def _emit_tool_error(self, tool_name: str, tool_id: str, error_message: str) -> Any:
         """Emit a tool error event (TOOL_ERROR)."""
         ...
 
@@ -484,7 +486,9 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
 
     # Run lifecycle events
 
-    def _emit_run_created(self, run_id: str, *, executor_code: str | None = None) -> Any:
+    def _emit_run_created(
+        self, run_id: str, *, executor_code: str | None = None
+    ) -> Any:
         """Emit a run-created event (RUN_CREATED)."""
         ...
 
@@ -538,9 +542,7 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Emit a workspace member join event (WORKSPACE_MEMBER_JOIN)."""
         ...
 
-    def _emit_workspace_member_leave(
-        self, workspace_id: str, member_id: str
-    ) -> Any:
+    def _emit_workspace_member_leave(self, workspace_id: str, member_id: str) -> Any:
         """Emit a workspace member leave event (WORKSPACE_MEMBER_LEAVE)."""
         ...
 
@@ -557,7 +559,11 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
     # System events
 
     def _emit_system_error(
-        self, error: str, *, error_type: str | None = None, details: dict[str, Any] | None = None
+        self,
+        error: str,
+        *,
+        error_type: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> Any:
         """Emit a system error event (SYSTEM_ERROR)."""
         ...

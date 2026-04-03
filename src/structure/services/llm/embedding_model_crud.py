@@ -84,7 +84,10 @@ class EmbeddingModelCRUD:
         query = select(EmbeddingModel)
         if user_id is not None:
             query = query.where(
-                or_(EmbeddingModel.user_id == user_id, EmbeddingModel.is_system.is_(True))
+                or_(
+                    EmbeddingModel.user_id == user_id,
+                    EmbeddingModel.is_system.is_(True),
+                )
             )
         if provider is not None:
             query = query.where(EmbeddingModel.provider == provider)
@@ -95,7 +98,9 @@ class EmbeddingModelCRUD:
         total_result = await self.db.execute(count_query)
         total = total_result.scalar_one()
 
-        query = query.order_by(EmbeddingModel.created_at.desc()).offset(skip).limit(limit)
+        query = (
+            query.order_by(EmbeddingModel.created_at.desc()).offset(skip).limit(limit)
+        )
         result = await self.db.execute(query)
         items = list(result.scalars().all())
         return items, total
@@ -104,7 +109,9 @@ class EmbeddingModelCRUD:
         """Return the enabled default embedding model, or None if not set."""
         result = await self.db.execute(
             select(EmbeddingModel)
-            .where(EmbeddingModel.is_default.is_(True), EmbeddingModel.enabled.is_(True))
+            .where(
+                EmbeddingModel.is_default.is_(True), EmbeddingModel.enabled.is_(True)
+            )
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -127,13 +134,18 @@ class EmbeddingModelCRUD:
         )
         if user_id is not None:
             query = query.where(
-                or_(EmbeddingModel.user_id == user_id, EmbeddingModel.is_system.is_(True))
+                or_(
+                    EmbeddingModel.user_id == user_id,
+                    EmbeddingModel.is_system.is_(True),
+                )
             )
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await self.db.execute(count_query)
         total = total_result.scalar_one()
 
-        query = query.order_by(EmbeddingModel.created_at.desc()).offset(skip).limit(limit)
+        query = (
+            query.order_by(EmbeddingModel.created_at.desc()).offset(skip).limit(limit)
+        )
         result = await self.db.execute(query)
         items = list(result.scalars().all())
         return items, total

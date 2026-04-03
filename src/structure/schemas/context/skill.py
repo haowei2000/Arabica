@@ -18,7 +18,11 @@ class SkillBase(BaseModel):
 class SkillCreate(SkillBase):
     """Schema for creating a new skill."""
 
-    content: str = Field(..., min_length=1, description="Skill content in Markdown format (stored in Context table)")
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Skill content in Markdown format (stored in Context table)",
+    )
     meta: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 
@@ -27,7 +31,11 @@ class SkillUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
-    content: str | None = Field(None, min_length=1, description="New content; if omitted, existing content is unchanged")
+    content: str | None = Field(
+        None,
+        min_length=1,
+        description="New content; if omitted, existing content is unchanged",
+    )
     tags: list[str] | None = None
     meta: dict[str, Any] | None = None
 
@@ -37,7 +45,9 @@ class SkillResponse(SkillBase):
 
     id: UUID
     user_id: UUID
-    has_embedding: bool = Field(False, description="Whether embeddings have been generated")
+    has_embedding: bool = Field(
+        False, description="Whether embeddings have been generated"
+    )
     files: dict[str, Any] | None = Field(
         None,
         description="Supplementary files metadata as {path: {s3_key, size, etag, content_type}}",

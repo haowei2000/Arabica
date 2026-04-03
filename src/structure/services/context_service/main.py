@@ -19,7 +19,9 @@ async def create_context(workspace_id: UUID, request: ContextCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))  # noqa: B904
 
 
-@app.get("/workspaces/{workspace_id}/context/{path:path}", response_model=ContextResponse)
+@app.get(
+    "/workspaces/{workspace_id}/context/{path:path}", response_model=ContextResponse
+)
 async def get_context(workspace_id: UUID, path: str):
     """Retrieve a context entry."""
     ctx = manager.get_context(workspace_id, path)
@@ -38,16 +40,10 @@ async def delete_context(workspace_id: UUID, path: str):
 
 
 @app.get("/workspaces/{workspace_id}/list", response_model=ContextListResponse)
-async def list_contexts(
-    workspace_id: UUID, prefix: str = "", recursive: bool = False
-):
+async def list_contexts(workspace_id: UUID, prefix: str = "", recursive: bool = False):
     """List context entries."""
     items = manager.list_contexts(workspace_id, prefix, recursive)
-    return ContextListResponse(
-        workspace_id=workspace_id,
-        total=len(items),
-        items=items
-    )
+    return ContextListResponse(workspace_id=workspace_id, total=len(items), items=items)
 
 
 @app.get("/health")

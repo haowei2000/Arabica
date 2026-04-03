@@ -11,7 +11,9 @@ _file_structurer = FileStructurer()
 @register_structurer
 class SkillStructurer(BaseStructurer):
     name = "Skill"
-    description = "Multi-level skill structurer: overview → per-file outline → per-section chunks"
+    description = (
+        "Multi-level skill structurer: overview → per-file outline → per-section chunks"
+    )
 
     def structure(self, input: Skill) -> list[ContextCore]:
         skill = input
@@ -35,16 +37,16 @@ class SkillStructurer(BaseStructurer):
                 size_kb = (file_info.get("size") or 0) / 1024
                 content_type = file_info.get("content_type", "")
                 lines.append(
-                    f"    {connector}{file_path}"
-                    f"  [{content_type}]"
-                    f"  ({size_kb:.1f} KB)"
+                    f"    {connector}{file_path}  [{content_type}]  ({size_kb:.1f} KB)"
                 )
 
-        results.append(ContextCore(
-            glance=glance,
-            content="\n".join(lines),
-            path=skill_path,
-        ))
+        results.append(
+            ContextCore(
+                glance=glance,
+                content="\n".join(lines),
+                path=skill_path,
+            )
+        )
 
         # Level 2 + 3: delegate each file to FileStructurer
         for file_path, file_info in files_meta.items():

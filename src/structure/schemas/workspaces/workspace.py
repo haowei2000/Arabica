@@ -20,7 +20,9 @@ class WorkspaceContextConfig(BaseModel):
     """Resources to pre-populate into workspace context on creation."""
 
     tool_ids: list[UUID] = Field(default_factory=list, description="工具 ID 列表")
-    knowledge_ids: list[UUID] = Field(default_factory=list, description="知识库 ID 列表")
+    knowledge_ids: list[UUID] = Field(
+        default_factory=list, description="知识库 ID 列表"
+    )
     skill_ids: list[UUID] = Field(default_factory=list, description="技能 ID 列表")
     source_workspace_ids: list[UUID] = Field(
         default_factory=list,
@@ -42,8 +44,12 @@ class WorkspaceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="工作空间名称")
     description: str | None = Field(None, max_length=1000, description="工作空间描述")
     app_id: str | UUID | None = Field(None, description="Default app ID (legacy)")
-    executor_code: str | None = Field(None, description="Executor code (e.g. 'SimpleAgent')")
-    executor_config: dict[str, Any] | None = Field(None, description="Executor configuration")
+    executor_code: str | None = Field(
+        None, description="Executor code (e.g. 'SimpleAgent')"
+    )
+    executor_config: dict[str, Any] | None = Field(
+        None, description="Executor configuration"
+    )
     visibility: WorkspaceVisibility = Field(
         WorkspaceVisibility.PRIVATE, description="可见性"
     )
@@ -61,8 +67,12 @@ class WorkspaceUpdate(BaseModel):
     )
     description: str | None = Field(None, max_length=1000, description="工作空间描述")
     app_id: str | UUID | None = Field(None, description="Default app ID (legacy)")
-    executor_code: str | None = Field(None, description="Executor code (e.g. 'SimpleAgent')")
-    executor_config: dict[str, Any] | None = Field(None, description="Executor configuration")
+    executor_code: str | None = Field(
+        None, description="Executor code (e.g. 'SimpleAgent')"
+    )
+    executor_config: dict[str, Any] | None = Field(
+        None, description="Executor configuration"
+    )
     visibility: WorkspaceVisibility | None = Field(None, description="可见性")
     is_shared: bool | None = Field(None, description="是否共享")
     settings: dict[str, Any] | None = Field(None, description="工作空间配置")

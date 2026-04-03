@@ -31,7 +31,9 @@ class GrepTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         text: str = Field(description="The text content to search through")
-        pattern: str = Field(description="Search pattern (regex by default, or literal if fixed_string is true)")
+        pattern: str = Field(
+            description="Search pattern (regex by default, or literal if fixed_string is true)"
+        )
         fixed_string: bool = Field(
             default=False,
             description="Treat pattern as a literal string instead of a regex",
@@ -105,7 +107,10 @@ class GrepTool(InnerTool):
             found = regex.search(line) is not None
             if found != input_data.invert_match:
                 match_indices.append(idx)
-                if input_data.max_count > 0 and len(match_indices) >= input_data.max_count:
+                if (
+                    input_data.max_count > 0
+                    and len(match_indices) >= input_data.max_count
+                ):
                     break
 
         # Count-only mode

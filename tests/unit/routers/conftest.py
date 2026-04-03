@@ -21,18 +21,18 @@ KNOWLEDGE_ID = UUID("00000000-0000-0000-0000-000000000007")
 def make_user(**kwargs) -> UserResponse:
     """Build a UserResponse for auth override."""
     now = datetime.now(UTC)
-    defaults = dict(
-        id=USER_ID,
-        username="testuser",
-        email="test@example.com",
-        phone=None,
-        tenant_id=TENANT_ID,
-        role="user",
-        is_active=True,
-        is_superuser=False,
-        created_at=now,
-        updated_at=now,
-    )
+    defaults = {
+        "id": USER_ID,
+        "username": "testuser",
+        "email": "test@example.com",
+        "phone": None,
+        "tenant_id": TENANT_ID,
+        "role": "user",
+        "is_active": True,
+        "is_superuser": False,
+        "created_at": now,
+        "updated_at": now,
+    }
     defaults.update(kwargs)
     return UserResponse(**defaults)
 

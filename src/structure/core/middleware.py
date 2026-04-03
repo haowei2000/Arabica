@@ -81,7 +81,10 @@ class LoggingMiddleware:
             duration = time.time() - start_time
             logger.error(
                 "Request failed: %s %s (%.1fms) error=%s",
-                method, path, duration * 1000, e,
+                method,
+                path,
+                duration * 1000,
+                e,
                 exc_info=True,
             )
             raise
