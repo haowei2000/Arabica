@@ -104,7 +104,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         build-essential \
         python3-dev \
         rustc \
-        cargo; \
+        cargo \
+        file; \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security BEFORE copying files

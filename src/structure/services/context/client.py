@@ -1,80 +1,60 @@
+import asyncio
 import logging
-from typing import Any, Optional
+import os
+from typing import Any
 from uuid import UUID
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
+_manager = None
+
+
+def _get_manager():
+    global _manager
+    if _manager is None:
+        from structure.services.context_service.manager import ContextManager
+
+        data_root = os.environ.get("CONTEXT_SERVICE_DATA_ROOT", "/app/data/context")
+        _manager = ContextManager(data_root=data_root)
+    return _manager
+
 
 class ContextServiceClient:
-    """Client for the separate Context Service."""
+    """In-process client for context service (file-based storage).
 
-    def __init__(self, base_url: str | None = None):
-        if base_url:
-            self.base_url = base_url
-        else:
-            try:
-                from structure.config.factory import get_settings
-
-                self.base_url = getattr(
-                    get_settings(), "CONTEXT_SERVICE_URL", "http://context-service:8080"
-                )
-            except Exception:
-                self.base_url = "http://context-service:8080"
+    Replaces the previous HTTP client that called a separate context-service
+    container. All operations now run directly in the backend process.
+    """
 
     async def create_context(
         self, workspace_id: UUID, path: str, content: str, **kwargs
     ) -> dict[str, Any]:
-        """Create or update a context entry."""
-        payload = {"path": path, "content": content, **kwargs}
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/workspaces/{workspace_id}/context",
-                json=payload,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        from structure.services.context_service.models import ContextCreateRequest
+
+        request = ContextCreateRequest(path=path, content=content, **kwargs)
+        result = await asyncio.to_thread(_get_manager().create_context, workspace_id, request)
+        return result.model_dump(mode="json")
 
     async def get_context(self, workspace_id: UUID, path: str) -> dict[str, Any] | None:
-        """Retrieve a context entry."""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.base_url}/workspaces/{workspace_id}/context/{path}",
-                    timeout=10.0,
-                )
-                if response.status_code == 404:
-                    return None
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPError as e:
-                logger.error(f"Error calling context-service: {e}")
-                return None
+        result = await asyncio.to_thread(_get_manager().get_context, workspace_id, path)
+        if result is None:
+            return None
+        return result.model_dump(mode="json")
 
     async def delete_context(self, workspace_id: UUID, path: str) -> bool:
-        """Delete a context entry."""
-        async with httpx.AsyncClient() as client:
-            response = await client.delete(
-                f"{self.base_url}/workspaces/{workspace_id}/context/{path}",
-                timeout=10.0,
-            )
-            return response.status_code == 200
+        return await asyncio.to_thread(_get_manager().delete_context, workspace_id, path)
 
     async def list_contexts(
         self, workspace_id: UUID, prefix: str = "", recursive: bool = False
     ) -> dict[str, Any]:
-        """List context entries."""
-        params = {"prefix": prefix, "recursive": recursive}
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/workspaces/{workspace_id}/list",
-                params=params,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        items = await asyncio.to_thread(
+            _get_manager().list_contexts, workspace_id, prefix, recursive
+        )
+        return {
+            "workspace_id": str(workspace_id),
+            "total": len(items),
+            "items": [item.model_dump(mode="json") for item in items],
+        }
 
 
 # Singleton instance

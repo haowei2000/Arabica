@@ -1,8 +1,10 @@
 """Application lifespan management for FastAPI."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI
 
@@ -17,17 +19,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Manage application lifespan: startup and shutdown events.
 
     使用统一的Bootstrap模块进行初始化和清理。
+
+    When EMBED_WORKER=true (default), the event worker runs as a background
+    asyncio task inside this process, sharing imports and DB/Redis connections.
     """
     logger.info("=== FastAPI Application starting up ===")
 
-    # 使用统一的初始化流程
     bootstrap = await bootstrap_api()
     app.state.redis = bootstrap.redis_client
+
+    worker_task: asyncio.Task | None = None
+    if os.environ.get("EMBED_WORKER", "true").lower() == "true":
+        from structure.worker_cli import run_workers_embedded
+
+        worker_task = asyncio.create_task(
+            run_workers_embedded(bootstrap.redis_client),
+            name="embedded-event-worker",
+        )
+        logger.info("=== Embedded event worker started ===")
+
     logger.info("=== FastAPI Application startup complete ===")
 
     yield
 
-    # 使用统一的清理流程
     logger.info("=== FastAPI Application shutting down ===")
+
+    if worker_task and not worker_task.done():
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+
     await bootstrap.cleanup()
     logger.info("=== FastAPI Application shutdown complete ===")

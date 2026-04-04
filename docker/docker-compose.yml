@@ -34,6 +34,7 @@ services:
       - "${EXPOSE_PORT_MCP:-9090}:9000"
     volumes:
       - structure-logs:/app/logs
+      - structure-context-data:/app/data/context
     env_file:
       - .env
     environment:
@@ -68,6 +69,9 @@ services:
       OLLAMA__HOST: ollama
       OLLAMA__PORT: 11434
       OLLAMA__PROTOCOL: http
+      CONTEXT_SERVICE_DATA_ROOT: /app/data/context
+      MALLOC_ARENA_MAX: "2"
+      EMBED_WORKER: ${EMBED_WORKER:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,7 +84,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 1400M
         reservations:
           memory: 512M
 
@@ -239,9 +243,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 128M
         reservations:
-          memory: 64M
+          memory: 32M
 
   # PostgreSQL Database with pgvector
   postgres:
@@ -408,11 +412,12 @@ services:
         reservations:
           memory: 64M
 
-  # Context Service for file-based metadata
+  # Context Service (standalone mode — optional)
+  # Context storage is now handled in-process by the backend.
+  # This container is kept for standalone/debugging use only.
   context-service:
     profiles:
-      - infra
-      - all
+      - context-service-standalone
     build:
       context: ..
       dockerfile: docker/Dockerfile.context-service

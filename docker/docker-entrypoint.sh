@@ -63,10 +63,14 @@ structure-api &
 API_PID=$!
 PIDS="$PIDS $API_PID"
 
-echo "==> Starting event worker..."
-structure-worker &
-WORKER_PID=$!
-PIDS="$PIDS $WORKER_PID"
+if [ "${EMBED_WORKER:-true}" != "true" ]; then
+    echo "==> Starting event worker (standalone)..."
+    structure-worker &
+    WORKER_PID=$!
+    PIDS="$PIDS $WORKER_PID"
+else
+    echo "==> Event worker runs embedded inside API (EMBED_WORKER=true)"
+fi
 
 if [ "${START_CELERY:-false}" = "true" ]; then
     echo "==> Starting Celery worker..."
@@ -82,14 +86,14 @@ if [ "${START_MCP:-false}" = "true" ]; then
     PIDS="$PIDS $MCP_PID"
 fi
 
-echo "==> All services started (API: $API_PID, Worker: $WORKER_PID)"
+echo "==> All services started (API: $API_PID${WORKER_PID:+, Worker: $WORKER_PID})"
 
 # Monitor: exit container if any critical process dies
 while true; do
     if ! kill -0 "$API_PID" 2>/dev/null; then
         echo "==> API exited unexpectedly"; terminate
     fi
-    if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+    if [ -n "$WORKER_PID" ] && ! kill -0 "$WORKER_PID" 2>/dev/null; then
         echo "==> Event worker exited unexpectedly"; terminate
     fi
     if [ -n "$CELERY_PID" ] && ! kill -0 "$CELERY_PID" 2>/dev/null; then
