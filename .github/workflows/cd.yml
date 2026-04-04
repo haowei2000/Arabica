@@ -2,7 +2,7 @@ name: CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     tags:
       - "v*.*.*"
 
@@ -36,10 +36,6 @@ jobs:
           - name: frontend
             dockerfile: docker/Dockerfile.frontend
             image_suffix: frontend
-            build_args: ""
-          - name: context-service
-            dockerfile: docker/Dockerfile.context-service
-            image_suffix: context-service
             build_args: ""
 
     outputs:
@@ -109,15 +105,12 @@ jobs:
             # Pull latest images (sha tag is deterministic from git sha)
             BACKEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:sha-$(echo ${{ github.sha }} | cut -c1-7)
             FRONTEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:sha-$(echo ${{ github.sha }} | cut -c1-7)
-            CONTEXT=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/context-service:sha-$(echo ${{ github.sha }} | cut -c1-7)
             docker pull $BACKEND
             docker pull $FRONTEND
-            docker pull $CONTEXT
 
             # Tag as local names used by docker-compose
             docker tag $BACKEND structure-service:latest
             docker tag $FRONTEND structure-frontend:latest
-            docker tag $CONTEXT structure-context-service:latest
 
             # Start infra if not running, restart backend + frontend
             docker compose --env-file docker/.env --profile infra up -d --no-build
