@@ -11,8 +11,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PYTHON_VERSION: "3.12"
-  UV_VERSION: "0.5.24"
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/structure
 
@@ -37,10 +35,6 @@ jobs:
             dockerfile: docker/Dockerfile.frontend
             image_suffix: frontend
             build_args: ""
-
-    outputs:
-      backend_image: ${{ steps.meta.outputs.tags }}
-      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -86,8 +80,6 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -99,12 +91,16 @@ jobs:
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
 
-            # Log in to GitHub Container Registry
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Pull latest config files (nginx, docker-compose, etc.)
+            git pull origin main
 
-            # Pull latest images (sha tag is deterministic from git sha)
-            BACKEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:sha-$(echo ${{ github.sha }} | cut -c1-7)
-            FRONTEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:sha-$(echo ${{ github.sha }} | cut -c1-7)
+            # Log in to GitHub Container Registry
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull latest images
+            SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            BACKEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:sha-$SHA
+            FRONTEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:sha-$SHA
             docker pull $BACKEND
             docker pull $FRONTEND
 
@@ -112,14 +108,14 @@ jobs:
             docker tag $BACKEND structure-service:latest
             docker tag $FRONTEND structure-frontend:latest
 
-            # Start infra if not running, restart backend + frontend
+            # Start infra if not running, restart app with new images
             docker compose -f docker/docker-compose.yml --env-file docker/.env --profile infra up -d --no-build
             docker compose -f docker/docker-compose.yml --env-file docker/.env --profile app up -d --no-build --force-recreate
 
             # Run tool initializer
             docker compose -f docker/docker-compose.yml --env-file docker/.env run --rm tool-initializer || true
 
-            # Clean up unused images
+            # Clean up old images
             docker image prune -f
 
       - name: Verify deployment
@@ -130,8 +126,5 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
-            cd ${{ secrets.DEPLOY_PATH }}
-            docker compose -f docker/docker-compose.yml --env-file docker/.env ps
-            # Wait for app health check
             timeout 60 bash -c 'until curl -sf http://localhost:8000/health; do sleep 3; done'
-            echo "Deployment successful - app is healthy"
+            echo "Deployment successful"
