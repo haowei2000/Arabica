@@ -32,7 +32,9 @@ class ContextServiceClient:
         from structure.services.context_service.models import ContextCreateRequest
 
         request = ContextCreateRequest(path=path, content=content, **kwargs)
-        result = await asyncio.to_thread(_get_manager().create_context, workspace_id, request)
+        result = await asyncio.to_thread(
+            _get_manager().create_context, workspace_id, request
+        )
         return result.model_dump(mode="json")
 
     async def get_context(self, workspace_id: UUID, path: str) -> dict[str, Any] | None:
@@ -42,7 +44,9 @@ class ContextServiceClient:
         return result.model_dump(mode="json")
 
     async def delete_context(self, workspace_id: UUID, path: str) -> bool:
-        return await asyncio.to_thread(_get_manager().delete_context, workspace_id, path)
+        return await asyncio.to_thread(
+            _get_manager().delete_context, workspace_id, path
+        )
 
     async def list_contexts(
         self, workspace_id: UUID, prefix: str = "", recursive: bool = False

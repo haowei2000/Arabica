@@ -197,7 +197,9 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         logger.info("=" * 60)
 
 
-async def run_workers_embedded(redis_client: Any, num_workers: int = 1, name_prefix: str = "embedded-worker") -> None:
+async def run_workers_embedded(
+    redis_client: Any, num_workers: int = 1, name_prefix: str = "embedded-worker"
+) -> None:
     """Run event workers inside an existing process (no bootstrap).
 
     Called from the API lifespan when EMBED_WORKER=true so the worker shares
