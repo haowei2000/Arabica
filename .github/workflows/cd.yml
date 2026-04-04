@@ -113,11 +113,11 @@ jobs:
             docker tag $FRONTEND structure-frontend:latest
 
             # Start infra if not running, restart backend + frontend
-            docker compose --env-file docker/.env --profile infra up -d --no-build
-            docker compose --env-file docker/.env --profile app up -d --no-build --force-recreate
+            docker compose -f docker/docker-compose.yml --env-file docker/.env --profile infra up -d --no-build
+            docker compose -f docker/docker-compose.yml --env-file docker/.env --profile app up -d --no-build --force-recreate
 
             # Run tool initializer
-            docker compose --env-file docker/.env run --rm tool-initializer || true
+            docker compose -f docker/docker-compose.yml --env-file docker/.env run --rm tool-initializer || true
 
             # Clean up unused images
             docker image prune -f
@@ -131,7 +131,7 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
-            docker compose --env-file docker/.env ps
+            docker compose -f docker/docker-compose.yml --env-file docker/.env ps
             # Wait for app health check
             timeout 60 bash -c 'until curl -sf http://localhost:8000/health; do sleep 3; done'
             echo "Deployment successful - app is healthy"
