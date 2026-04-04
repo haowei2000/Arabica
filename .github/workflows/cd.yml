@@ -91,8 +91,9 @@ jobs:
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
 
-            # Pull latest config files (nginx, docker-compose, etc.)
-            git pull origin main
+            # Sync config files to match remote (force overwrite local changes)
+            git fetch origin main
+            git reset --hard origin/main
 
             # Log in to GitHub Container Registry
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
