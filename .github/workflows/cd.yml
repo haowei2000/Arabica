@@ -110,11 +110,10 @@ jobs:
             docker tag $FRONTEND structure-frontend:latest
 
             # Start infra if not running, restart app with new images
-            docker compose -f docker/docker-compose.yml --env-file docker/.env --profile infra up -d --no-build
-            docker compose -f docker/docker-compose.yml --env-file docker/.env --profile app up -d --no-build --force-recreate
+            docker compose -f docker/docker-compose.yml --env-file docker/.env --profile infra --profile app up -d --no-build --force-recreate
 
             # Run tool initializer
-            docker compose -f docker/docker-compose.yml --env-file docker/.env run --rm tool-initializer || true
+            docker compose -f docker/docker-compose.yml --env-file docker/.env --profile infra --profile app run --rm tool-initializer || true
 
             # Clean up old images
             docker image prune -f
