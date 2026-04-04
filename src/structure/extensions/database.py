@@ -58,8 +58,8 @@ _dependency_functions: dict[str, Callable[[], AsyncGenerator[AsyncSession, None]
 # 配置常量
 # ==============================
 DEFAULT_POOL_CONFIG = {
-    "pool_size": 20,  # Increased from 10 for better concurrency
-    "max_overflow": 30,  # Increased from 20
+    "pool_size": 5,
+    "max_overflow": 10,
     "pool_timeout": 10,  # Reduced from 30s for faster failure
     "pool_recycle": 1800,  # 30 minutes instead of 1 hour
     "pool_pre_ping": False,  # Disabled to reduce latency (rely on pool_recycle)
@@ -68,15 +68,15 @@ DEFAULT_POOL_CONFIG = {
 # 数据库特定配置
 DB_SPECIFIC_CONFIG = {
     "mysql": {
-        "pool_size": 10,
-        "max_overflow": 20,
+        "pool_size": 5,
+        "max_overflow": 10,
         "connect_args": {
             "charset": "utf8mb4",
         },
     },
     "postgresql": {
-        "pool_size": 20,
-        "max_overflow": 30,
+        "pool_size": 5,
+        "max_overflow": 10,
     },
 }
 

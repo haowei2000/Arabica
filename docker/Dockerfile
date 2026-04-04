@@ -72,9 +72,9 @@ COPY src/ ./src/
 COPY alembic.ini ./
 COPY docker/docker-entrypoint.sh ./docker/docker-entrypoint.sh
 
-# Install application in editable mode
+# Install application in editable mode (--no-deps: deps already installed by uv sync above)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install -e .
+    uv pip install -e . --no-deps
 
 # Pre-install dependencies for the entrypoints
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -104,7 +104,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         build-essential \
         python3-dev \
         rustc \
-        cargo; \
+        cargo \
+        file; \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security BEFORE copying files

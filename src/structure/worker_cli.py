@@ -197,6 +197,63 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         logger.info("=" * 60)
 
 
+async def run_workers_embedded(
+    redis_client: Any, num_workers: int = 1, name_prefix: str = "embedded-worker"
+) -> None:
+    """Run event workers inside an existing process (no bootstrap).
+
+    Called from the API lifespan when EMBED_WORKER=true so the worker shares
+    the API's already-initialized redis client, DB engine pool, and imports.
+    """
+    shared_runtime = ExecutorInstanceManager()
+    tasks: list[asyncio.Task] = []
+
+    try:
+        async with get_session("structure") as db:
+            workspace_crud = WorkspaceCRUD(db)
+            workspace_ids = await workspace_crud.get_all_active_ids()
+
+        logger.info(f"[Embedded Worker] {len(workspace_ids)} active workspace(s)")
+
+        for ws_idx, workspace_id in enumerate(workspace_ids):
+            for i in range(num_workers):
+                consumer_name = generate_consumer_name(name_prefix, workspace_id, i)
+                task = asyncio.create_task(
+                    run_single_worker(
+                        redis_client,
+                        get_session("structure"),
+                        workspace_id,
+                        consumer_name,
+                        i,
+                        shared_runtime,
+                    ),
+                    name=f"embedded-worker-{ws_idx}-{i}",
+                )
+                tasks.append(task)
+
+        if not tasks:
+            logger.info("[Embedded Worker] No workspaces found, sleeping...")
+            await asyncio.sleep(float("inf"))
+            return
+
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+
+        for task in done:
+            exc = task.exception()
+            if exc:
+                for p in pending:
+                    p.cancel()
+                raise exc
+
+    except asyncio.CancelledError:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("[Embedded Worker] Stopped")
+
+
 @click.command()
 @click.option(
     "-n",
