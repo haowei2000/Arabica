@@ -63,6 +63,7 @@ jobs:
           --health-retries 5
 
     env:
+      UV_HTTP_TIMEOUT: "120"
       POSTGRES__HOST: localhost
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: postgres
