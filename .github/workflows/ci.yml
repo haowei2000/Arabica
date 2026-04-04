@@ -13,6 +13,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   UV_VERSION: "0.5.24"
+  UV_HTTP_TIMEOUT: "120"
 
 jobs:
   test:
