@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+import contextlib
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -46,10 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     if worker_task and not worker_task.done():
         worker_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await worker_task
-        except asyncio.CancelledError:
-            pass
 
     await bootstrap.cleanup()
     logger.info("=== FastAPI Application shutdown complete ===")
