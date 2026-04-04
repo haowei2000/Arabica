@@ -14,7 +14,7 @@ env:
   PYTHON_VERSION: "3.12"
   UV_VERSION: "0.5.24"
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/structure
 
 jobs:
   build-and-push:
