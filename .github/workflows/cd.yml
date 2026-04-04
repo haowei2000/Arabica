@@ -31,8 +31,8 @@ jobs:
             dockerfile: docker/Dockerfile
             image_suffix: backend
             build_args: |
-              PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-              UV_VERSION=${{ env.UV_VERSION }}
+              PYTHON_VERSION=3.12
+              UV_VERSION=0.5.24
           - name: frontend
             dockerfile: docker/Dockerfile.frontend
             image_suffix: frontend
