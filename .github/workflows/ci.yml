@@ -28,10 +28,10 @@ jobs:
           version: ${{ env.UV_VERSION }}
 
       - name: Run ruff check
-        run: uvx ruff check src/
+        run: uvx ruff@0.14.7 check src/
 
       - name: Run ruff format check
-        run: uvx ruff format --check src/
+        run: uvx ruff@0.14.7 format --check src/
 
   test:
     name: Test
