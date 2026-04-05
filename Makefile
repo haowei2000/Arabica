@@ -43,6 +43,13 @@ docker-up: ## Start all containers (infra + app + celery worker)
 docker-up-infra: ## Start infrastructure only (postgres, redis, rustfs, context-service)
 	cd docker && COMPOSE_PROFILES=infra docker compose --env-file .env up -d
 
+docker-deploy: ## Pull pre-built images and restart all containers (used by CD)
+	docker ps -aq --filter "name=structure" | xargs -r docker rm -f || true
+	docker network rm structure-network || true
+	cd docker && docker compose --env-file .env up -d --no-build
+	cd docker && docker compose --env-file .env run --rm tool-initializer || true
+	docker image prune -f
+
 dev-infra: docker-up-infra ## Start infra in docker, run migrations, and prepare for local development
 	@echo "$(BLUE)等待数据库就绪...$(NC)"
 	@sleep 3
