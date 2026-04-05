@@ -164,18 +164,7 @@ reset-admin-password: ## Sync admin password from docker/.env into the running d
 	USERNAME=$$(grep '^AUTH__ADMIN_USERNAME=' docker/.env | cut -d= -f2); \
 	USERNAME=$${USERNAME:-admin}; \
 	echo "==> Updating password for user: $$USERNAME"; \
-	docker exec structure-backend-1 python3 -c "\
-import asyncio; \
-from structure.extensions.database import get_session; \
-from structure.utils.security import hash_password; \
-from sqlalchemy import update, text; \
-from structure.models.auth.user import User; \
-async def main(): \
-    async with get_session('structure') as s: \
-        await s.execute(update(User).where(User.username == '$$USERNAME').values(password_hash=hash_password('$$PASSWORD'))); \
-        await s.commit(); \
-        print('Done'); \
-asyncio.run(main())"; \
+	printf 'import asyncio\nfrom structure.extensions.database import get_session\nfrom structure.utils.security import hash_password\nfrom sqlalchemy import update\nfrom structure.models.auth.user import User\nasync def main():\n    async with get_session("structure") as s:\n        await s.execute(update(User).where(User.username == "%s").values(password_hash=hash_password("%s")))\n        await s.commit()\n        print("Done")\nasyncio.run(main())\n' "$$USERNAME" "$$PASSWORD" | docker exec -i structure-backend-1 python3; \
 	echo "==> Password updated. No restart needed."
 
 stop-all: ## 停止所有本地服务
