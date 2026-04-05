@@ -109,19 +109,7 @@ jobs:
             docker tag $BACKEND structure-service:latest
             docker tag $FRONTEND structure-frontend:latest
 
-            # Stop all structure-* containers regardless of how they were started
-            docker ps -q --filter "name=structure" | xargs -r docker stop || true
-            docker ps -aq --filter "name=structure" | xargs -r docker rm || true
-            docker network rm structure-network || true
-
-            # Start infra and app with new images
-            docker compose -f docker/docker-compose.yml --env-file docker/.env up -d --no-build
-
-            # Run tool initializer
-            docker compose -f docker/docker-compose.yml --env-file docker/.env run --rm tool-initializer || true
-
-            # Clean up old images
-            docker image prune -f
+            make docker-deploy
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v1
