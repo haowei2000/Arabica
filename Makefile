@@ -38,16 +38,16 @@ docker-build-all: ## Build all Docker images (backend + frontend + context-servi
 	$(MAKE) docker-build-context-service
 
 docker-up: ## Start all containers (infra + app + celery worker)
-	cd docker && docker compose --env-file .env --profile celery up -d
+	cd docker && docker compose -p structure --env-file .env --profile celery up -d
 
 docker-up-infra: ## Start infrastructure only (postgres, redis, rustfs, context-service)
-	cd docker && COMPOSE_PROFILES=infra docker compose --env-file .env up -d
+	cd docker && COMPOSE_PROFILES=infra docker compose -p structure --env-file .env up -d
 
 docker-deploy: ## Pull pre-built images and restart all containers (used by CD)
-	docker ps -aq --filter "name=structure" | xargs -r docker rm -f || true
+	docker ps -aq --filter "network=structure-network" | xargs -r docker rm -f || true
 	docker network rm structure-network || true
-	cd docker && docker compose --env-file .env up -d --no-build
-	cd docker && docker compose --env-file .env run --rm tool-initializer || true
+	cd docker && docker compose -p structure --env-file .env up -d --no-build
+	cd docker && docker compose -p structure --env-file .env run --rm tool-initializer || true
 	docker image prune -f
 
 dev-infra: docker-up-infra ## Start infra in docker, run migrations, and prepare for local development
@@ -60,13 +60,13 @@ dev-local: dev-infra ## Start infra in docker and then start all other services 
 	$(MAKE) start-all
 
 docker-down: ## Stop all containers
-	cd docker && docker compose --env-file .env --profile all down
+	cd docker && docker compose -p structure --env-file .env --profile all down
 
 docker-status: ## Show container status
-	cd docker && docker compose ps
+	cd docker && docker compose -p structure --env-file .env ps
 
 docker-logs: ## Show container logs
-	cd docker && docker compose logs -f
+	cd docker && docker compose -p structure --env-file .env logs -f
 
 # ============================================================================
 # 环境配置
