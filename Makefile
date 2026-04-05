@@ -159,6 +159,25 @@ start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
 resync-tools: ## 重新同步所有工具到 Context/WorkspaceContext 表
 	cd src && uv run python -c "from structure.celery_worker.tasks.context_sync_tasks import resync_all_tools_to_contexts; resync_all_tools_to_contexts()"
 
+reset-admin-password: ## Sync admin password from docker/.env into the running database
+	@PASSWORD=$$(grep '^AUTH__ADMIN_PASSWORD=' docker/.env | cut -d= -f2); \
+	USERNAME=$$(grep '^AUTH__ADMIN_USERNAME=' docker/.env | cut -d= -f2); \
+	USERNAME=$${USERNAME:-admin}; \
+	echo "==> Updating password for user: $$USERNAME"; \
+	docker exec structure-backend-1 python3 -c "\
+import asyncio; \
+from structure.extensions.database import get_session; \
+from structure.utils.security import hash_password; \
+from sqlalchemy import update, text; \
+from structure.models.auth.user import User; \
+async def main(): \
+    async with get_session('structure') as s: \
+        await s.execute(update(User).where(User.username == '$$USERNAME').values(password_hash=hash_password('$$PASSWORD'))); \
+        await s.commit(); \
+        print('Done'); \
+asyncio.run(main())"; \
+	echo "==> Password updated. No restart needed."
+
 stop-all: ## 停止所有本地服务
 	@echo "$(YELLOW)停止所有服务...$(NC)"
 	@-pkill -f "structure-api" 2>/dev/null || true
