@@ -38,10 +38,10 @@ docker-build-all: ## Build all Docker images (backend + frontend + context-servi
 	$(MAKE) docker-build-context-service
 
 docker-up: ## Start all containers (infra + app + celery worker)
-	cd docker && docker compose --env-file .env --profile infra --profile app --profile celery up -d
+	cd docker && docker compose --env-file .env --profile celery up -d
 
 docker-up-infra: ## Start infrastructure only (postgres, redis, rustfs, context-service)
-	cd docker && docker compose --env-file .env --profile infra up -d
+	cd docker && COMPOSE_PROFILES=infra docker compose --env-file .env up -d
 
 dev-infra: docker-up-infra ## Start infra in docker, run migrations, and prepare for local development
 	@echo "$(BLUE)等待数据库就绪...$(NC)"
