@@ -17,6 +17,27 @@ terminate() {
 trap terminate TERM INT
 
 # ----------------------
+# Wait for PostgreSQL
+# ----------------------
+if [ "$SKIP_MIGRATIONS" != "true" ]; then
+    PG_HOST="${POSTGRES__HOST:-postgres}"
+    PG_PORT="${POSTGRES__PORT:-5432}"
+    PG_USER="${POSTGRES__USERNAME:-postgres}"
+    RETRIES=30
+    echo "==> Waiting for PostgreSQL at ${PG_HOST}:${PG_PORT}..."
+    until pg_isready -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" 2>/dev/null; do
+        RETRIES=$((RETRIES - 1))
+        if [ "$RETRIES" -le 0 ]; then
+            echo "==> ERROR: PostgreSQL did not become ready in time"
+            exit 1
+        fi
+        echo "==> PostgreSQL not ready, retrying... ($RETRIES left)"
+        sleep 2
+    done
+    echo "==> PostgreSQL is ready"
+fi
+
+# ----------------------
 # Migrations
 # ----------------------
 if [ "$SKIP_MIGRATIONS" = "true" ]; then
