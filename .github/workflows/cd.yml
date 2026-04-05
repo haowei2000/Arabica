@@ -109,8 +109,10 @@ jobs:
             docker tag $BACKEND structure-service:latest
             docker tag $FRONTEND structure-frontend:latest
 
-            # Stop existing containers to release ports before restarting
-            docker compose -f docker/docker-compose.yml --env-file docker/.env down --remove-orphans || true
+            # Stop all structure-* containers regardless of how they were started
+            docker ps -q --filter "name=structure" | xargs -r docker stop || true
+            docker ps -aq --filter "name=structure" | xargs -r docker rm || true
+            docker network rm structure-network || true
 
             # Start infra and app with new images
             docker compose -f docker/docker-compose.yml --env-file docker/.env up -d --no-build
