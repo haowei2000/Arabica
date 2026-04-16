@@ -12,17 +12,26 @@ import random
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-# Add src to path
-sys.path.insert(0, "src")
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from sqlalchemy import delete, update
 
 from structure.core.enums import ContextType
 from structure.extensions.database import get_session
+from structure.models.context.context import Context
 from structure.models.workspaces.workspace import Workspace
 from structure.schemas.context.context_schema import ContextCreate
 from structure.services.context.context_crud import ContextCRUD
+
+EMBEDDING_DIM = 1536
+
+
+def make_mock_embedding() -> list[float]:
+    return [random.uniform(-1, 1) for _ in range(EMBEDDING_DIM)]
 
 
 @dataclass
@@ -55,9 +64,8 @@ async def run_benchmark(
     print("Inserting dataset...")
     context_objs = []
     for doc in dataset:
-        # Generate dummy embedding if mock_embeddings is True
-        embedding = [random.uniform(-1, 1) for _ in range(1536)] if mock_embeddings else doc.get("embedding")
-        
+        embedding = make_mock_embedding() if mock_embeddings else doc.get("embedding")
+
         ctx_data = ContextCreate(
             context_type=ContextType.WORKSPACE,
             source_id=workspace_id,
@@ -67,11 +75,8 @@ async def run_benchmark(
             meta=doc.get("meta", {}),
         )
         ctx = await crud.create(ctx_data, user_id=user_id)
-        
-        # Update the DB directly with embeddings
-        if embedding:
-            from sqlalchemy import update
-            from structure.models.context.context import Context
+
+        if embedding is not None:
             stmt = update(Context).where(Context.id == ctx.id).values(embedding_1536=embedding)
             await db_session.execute(stmt)
         
@@ -99,11 +104,11 @@ async def run_benchmark(
             if method == "Grep":
                 search_results, _ = await crud.grep(query_text, user_id=user_id, limit=5)
             elif method == "Vector":
-                q_embedding = [random.uniform(-1, 1) for _ in range(1536)] if mock_embeddings else q.get("embedding")
+                q_embedding = make_mock_embedding() if mock_embeddings else q.get("embedding")
                 vector_results = await crud.cosine_search(q_embedding, user_id=user_id, top_k=5)
                 search_results = [r[0] for r in vector_results]
             elif method == "Hybrid":
-                q_embedding = [random.uniform(-1, 1) for _ in range(1536)] if mock_embeddings else q.get("embedding")
+                q_embedding = make_mock_embedding() if mock_embeddings else q.get("embedding")
                 hybrid_results = await crud.hybrid_search(query_text, q_embedding, user_id=user_id, top_k=5)
                 search_results = [r[0] for r in hybrid_results]
             
@@ -142,6 +147,7 @@ async def run_benchmark(
 
 
 async def main():
+    random.seed(42)
     user_id = str(uuid4())
     workspace_id = str(uuid4())
     
@@ -191,8 +197,6 @@ async def main():
         try:
             await run_benchmark(session, user_id, workspace_id, dataset, queries, mock_embeddings=True)
         finally:
-            from sqlalchemy import delete
-            from structure.models.context.context import Context
             await session.execute(delete(Context).where(Context.source_id == workspace_id))
             await session.delete(ws)
             await session.commit()
