@@ -325,7 +325,7 @@ make docker-down      # Stop containers
 
 ```
 src/structure/
-├── core/                      # Foundation Layer (37,925 lines)
+├── core/                      # Foundation Layer
 │   ├── bootstrap.py           # Unified initialization system
 │   ├── interfaces/            # Abstract base classes
 │   │   ├── executor.py        # Executor protocol with AgentEvent
@@ -368,7 +368,7 @@ src/structure/
 │   ├── executors/             # Executor implementations
 │   │   ├── simple/            # SimpleExecutor
 │   │   └── conflict/          # ConflictExecutor (multi-turn reasoning)
-│   └── tools/                 # Tool implementations (150+)
+│   └── tools/                 # Tool implementations
 │       ├── context_tools/     # read, search, create, update, delete
 │       ├── text_tools/        # parsing, summarization
 │       ├── execution_tools/   # command execution
@@ -471,13 +471,6 @@ docs/                          # Documentation
 └── prompt_usage.md            # Prompt system usage guide
 ```
 
-### Key Statistics
-- **Total Backend Code**: 37,925+ lines of Python
-- **Core Modules**: 8 major service packages
-- **API Endpoints**: 50+ REST endpoints across 12 routers
-- **Database Models**: 20+ SQLAlchemy models
-- **Tool Implementations**: 150+ built-in tools
-- **Plugin System**: Dynamic executor + tool discovery
 ## Testing
 
 ```bash
@@ -550,19 +543,19 @@ Example: `feat(auth): add user login endpoint`
 
 ## Key Implementation Files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/structure/app.py` | 93 | FastAPI app initialization |
-| `src/structure/core/bootstrap.py` | 477 | Unified bootstrap system |
-| `src/structure/worker_cli.py` | 215 | Worker process entry point |
-| `src/structure/services/events/event_worker.py` | 200+ | Event consumption + executor dispatch |
-| `src/structure/services/events/event_publisher.py` | 150+ | Dual-write (DB + Redis) event publishing |
-| `src/structure/services/executor/runtime.py` | 78 | Executor lifecycle management |
-| `src/structure/services/runs/run_state_machine.py` | 200+ | Run state transitions |
-| `src/structure/registries/core.py` | 250+ | Registry abstraction layer |
-| `src/structure/core/interfaces/executor.py` | 200+ | Executor protocol definition |
-| `src/structure/core/tool_calling/strategy.py` | 83+ | Tool calling strategy interface |
-| `src/structure/extensions/database.py` | 300+ | Async DB infrastructure |
+| File | Purpose |
+|------|---------|
+| `src/structure/app.py` | FastAPI app initialization |
+| `src/structure/core/bootstrap.py` | Unified bootstrap system |
+| `src/structure/worker_cli.py` | Worker process entry point |
+| `src/structure/services/events/event_worker.py` | Event consumption + executor dispatch |
+| `src/structure/services/events/event_publisher.py` | Dual-write (DB + Redis) event publishing |
+| `src/structure/services/executor/runtime.py` | Executor lifecycle management |
+| `src/structure/services/runs/run_state_machine.py` | Run state transitions |
+| `src/structure/registries/core.py` | Registry abstraction layer |
+| `src/structure/core/interfaces/executor.py` | Executor protocol definition |
+| `src/structure/core/tool_calling/strategy.py` | Tool calling strategy interface |
+| `src/structure/extensions/database.py` | Async DB infrastructure |
 
 ---
 
@@ -610,6 +603,5 @@ Example: `feat(auth): add user login endpoint`
 
 Add under a new ## Docker & Deployment section\n\nWhen fixing Docker/deployment issues, always verify the full build-and-run cycle before reporting success. Check: Dockerfile paths, volume mounts, network connectivity between containers, and that all required files are included in the build context.
 Add under ## General Rules at the top of CLAUDE.md\n\nAfter implementing a feature, run the application and verify it works end-to-end before marking complete. Pay special attention to: database migrations (check ordering and idempotency), import paths, and runtime errors that don't appear at build time.
-Add under ## Project Overview section at the top of CLAUDE.md\n\nThis project uses Python (backend) and TypeScript (frontend). Backend uses SQLite with alembic migrations, S3/MinIO for storage, WebSockets for real-time communication, and Docker Compose for deployment. When making changes, consider impacts across both backend and frontend.
 Add under ## Debugging section\n\nWhen debugging errors, diagnose the actual root cause before applying fixes. Do not guess-and-check iteratively. Read the relevant source code, trace the error path, and confirm the cause before editing.
 Add under ## Database section\n\nFor database migrations: ensure migration scripts are idempotent (handle already-existing tables/columns), verify migration ordering relative to startup code that depends on new schema, and test with a fresh database.
