@@ -1,0 +1,252 @@
+% Method: technical core.
+
+\subsection{Problem Formulation}
+\label{sec:problem}
+
+We consider an agent $\pi_\theta$ that interacts with an environment
+over discrete steps $t = 1, 2, \dots, T$. At each step the agent
+observes a state $s_t$, consults a context layer $\mathcal{C}_t$,
+produces an action $a_t$ (a natural-language response, a tool call,
+or a context operation), and updates both the environment and the
+context. A \emph{context layer} is a pair $(\mathcal{K}, \mathcal{Q})$
+where $\mathcal{K}$ is a set of keyed entries and $\mathcal{Q}$ is a
+set of query operators. In a flat history, $\mathcal{K}$ is a totally
+ordered sequence and $\mathcal{Q}$ is concatenation. In vector RAG,
+$\mathcal{K}$ is embedded and $\mathcal{Q}$ is top-$k$ similarity.
+We take $\mathcal{K}$ to be a forest of hierarchical paths and let
+$\mathcal{Q}$ include exact lookup, prefix scan, glob match, and
+semantic search, each parameterised by a disclosure level.
+
+The agent's objective is a task-defined reward $R$ under a total
+token budget $B$. Let $\tau_t$ denote the tokens consumed at step
+$t$ by the materialised context. Our design targets the Pareto
+frontier of $R$ against $\sum_t \tau_t$: an agent should be able to
+achieve comparable $R$ at substantially smaller $\sum_t \tau_t$ than
+a flat-history baseline.
+
+\subsection{Overview}
+\label{sec:overview}
+
+\textsc{Structure} has three layers. An \emph{addressing layer} maps
+every durable state to a path such as
+\texttt{/tools/web\_search/schema} or
+\texttt{/knowledge/python\_guide/chapter\_3}. A \emph{disclosure layer}
+exposes each entry at three levels via a uniform \texttt{disclose}
+method. An \emph{audit layer} emits every mutation as an immutable
+event on a log that backs both real-time streaming and deterministic
+replay. The three layers are orthogonal: an entry has a path, can be
+disclosed, and is audited regardless of which concrete store holds it.
+
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=\columnwidth]{figures/overview.pdf}
+%     \caption{Overview of the \textsc{Structure} context layer. The
+%     agent issues typed queries against the addressing layer
+%     (glob/prefix/semantic), receives entries at an explicitly chosen
+%     disclosure level, and mutates state through operations that are
+%     published to the audit log.}
+%     \label{fig:overview}
+% \end{figure}
+
+\subsection{Path-Addressable Context}
+\label{sec:component_a}
+
+Entries are stored in a relational table with a canonical \texttt{path}
+column indexed by a B-tree. The path is a POSIX-style string whose
+semantics are defined by convention rather than by the store: tools
+live under \texttt{/tools}, knowledge under \texttt{/knowledge}, and
+workspace artefacts under \texttt{/workspaces/<id>/\dots}. Three
+operators answer $\mathcal{Q}$:
+\begin{itemize}
+    \item \textbf{Exact} --- \texttt{get(path)} returns at most one
+    entry.
+    \item \textbf{Prefix} --- \texttt{list(prefix, recursive)} returns
+    the set of entries whose path begins with \texttt{prefix}; the
+    underlying query is a single indexed range scan.
+    \item \textbf{Glob} --- \texttt{glob(pattern)} supports \texttt{*}
+    and \texttt{**} wildcards. We first compute the longest non-glob
+    prefix of the pattern and issue a prefix scan, then filter in
+    application code against the compiled regex. This keeps the
+    database work linear in the size of the result set, not of the
+    workspace.
+\end{itemize}
+A parallel set of HNSW vector indices supports semantic retrieval at
+four dimensionalities (384, 768, 1024, 1536), letting callers trade
+cost and latency against embedding quality without duplicating
+storage.
+
+Each entry carries a \emph{scope} --- \textsc{user},
+\textsc{workspace}, or \textsc{global} --- that governs visibility.
+A single query returns the union across scopes through a SQL
+disjunction (Listing~\ref{lst:scope-load}):
+shared tool schemas live at \textsc{global}, team knowledge at
+\textsc{workspace}, and private notes at \textsc{user}, without the
+agent having to issue three separate queries.
+
+\begin{figure}[t]
+\small
+\begin{verbatim}
+stmt = select(Context).where(
+  or_(
+    and_(Context.source_id == workspace_id,
+         Context.scope == WORKSPACE),
+    and_(Context.user_id  == owner_id,
+         Context.scope == USER),
+    Context.scope == GLOBAL,
+  ))
+\end{verbatim}
+\caption{Multi-scope load. Three visibility levels are resolved in a
+single indexed query and presented to the agent as one list.}
+\label{lst:scope-load}
+\end{figure}
+
+\subsection{Multi-Level Disclosure}
+\label{sec:component_b}
+
+The disclosure layer converts a stored entry into one of three
+projections. We define the projection as a method on the entry
+itself, not as a separate summarisation pipeline, so the three levels
+are always consistent with the stored state:
+\begin{itemize}
+    \item \textsc{glance} --- a short summary ($\leq 50$\,B by
+    default) intended to answer \emph{``does this matter to me now?''}
+    An agent can scan hundreds of glances in a single prompt.
+    \item \textsc{overview} --- glance plus structured metadata
+    (tags, type, scope, timestamps), adequate for routing and
+    decision-making without committing to full content.
+    \item \textsc{detail} --- full content plus unstructured metadata.
+    Large payloads are stored in S3 and resolved lazily.
+\end{itemize}
+Each query in $\mathcal{Q}$ accepts the level as an argument, so the
+agent's policy is \emph{jointly} a choice of address pattern and
+disclosure depth. This is the central mechanism by which the layer
+controls $\sum_t \tau_t$: the agent reads glances until it needs to
+commit, at which point it escalates a narrow subset to \textsc{detail}.
+
+\begin{figure}[t]
+\small
+\begin{verbatim}
+def disclose(self, level="overview"):
+  out = {"path": self.path,
+         "glance": self.glance or self.content[:50]}
+  if level == "glance":
+    return out
+  if self.tags: out["tags"] = self.tags
+  if level == "overview":
+    return out
+  out["content"] = self.content
+  out["meta"]    = self.meta or {}
+  return out
+\end{verbatim}
+\caption{Disclosure as a method on the entry. The three levels are
+monotone: each extends the previous one.}
+\label{lst:disclose}
+\end{figure}
+
+\subsection{Source Evaluation via Agent Ratings}
+\label{sec:component_rating}
+
+Not all context entries are equally useful at inference time: a tool
+schema may be out of date, a retrieved document may be off-topic, and an
+agent-generated note from an earlier step may be wrong. Existing memory
+systems treat these cases implicitly --- either the entry is retrieved or
+it is not. We make the judgement explicit: after consulting an entry,
+the agent can call a \texttt{rate\_context(path, rating, comment)}
+operation with a bounded rating $r \in [-1, 1]$ (positive = helpful,
+negative = misleading, zero = neutral). Each call emits a
+\textsc{context.rated} event and updates a denormalised pair
+$(\text{rating\_sum}, \text{rating\_count})$ on the entry, from which the
+mean $\bar r$ is derived.
+
+Retrieval uses $\bar r$ in two ways. At the filter stage, a threshold
+$\tau$ can be applied (\texttt{glob} and \texttt{search} accept a
+minimum rating), discarding entries the agent or prior runs have
+consistently judged harmful. At the ranking stage, a convex combination
+$s = \alpha \cdot s_\text{sim} + (1 - \alpha) \cdot \bar r$ blends
+semantic similarity $s_\text{sim}$ with the rating mean, where
+$\alpha \in [0, 1]$ is a per-query hyperparameter defaulting to
+$\alpha = 0.7$. Because ratings are event-sourced, the per-step state is
+reproducible: replaying events up to step $t$ reconstructs the exact
+$\bar r$ the agent saw at that step. The mechanism is closest in spirit
+to the reflection tokens of Self-RAG \citep{asai2024selfrag} and the
+verbal feedback of Reflexion \citep{shinn2023reflexion}, but applied to
+the \emph{source} rather than to the agent's own output and stored in
+a structured aggregate rather than in free-form text.
+
+\subsection{Event-Level Garbage Collection}
+\label{sec:component_gc}
+
+Even with multi-level disclosure, an agent's working context grows with
+each step: every tool call, every intermediate thought, every retrieval
+result produces events. Without pruning, the prompt either exceeds the
+window or pushes high-value turns into the middle-of-context
+\citep{liu2024lostmiddle}. Blind truncation by age loses artefacts;
+summarisation hides structure.
+
+We introduce an in-loop garbage collector parameterised by an
+\emph{event time-to-live} (TTL) per event type. The collector is a pure
+function $\mathrm{gc}(\mathcal{E}, t, \Pi) \to \mathcal{E}_{\text{live}}$
+that takes a sequence of events $\mathcal{E}$, the current step $t$, and
+a policy $\Pi: \mathcal{T} \to (\text{steps}, \text{seconds}, \text{pin})$
+defined over event types $\mathcal{T}$, and returns the subset still
+visible. An event $e$ of type $\tau$ with step index $t_e$ is kept iff
+$\Pi(\tau).\text{pin}$ is true, or $t - t_e \leq \Pi(\tau).\text{steps}$
+and $(\text{now} - e.\text{created\_at}) \leq \Pi(\tau).\text{seconds}$.
+Crucially, events are \emph{not} deleted from storage; only their
+visibility to the agent is gated, so the audit log and offline replay
+remain exact.
+
+The default policy (Appendix, Table~\ref{tab:tools}) pins the opening
+user message, agent replies, and artefact mutations for the life of the
+run; gives tool calls and results a short step-TTL of roughly the width
+of a single plan--act cycle; and assigns zero-step TTLs to
+high-frequency noise events (tokens, heartbeats) so they never enter
+the prompt. Executors may override any entry of $\Pi$ per run. In the
+pathological case where all events are pinned the collector degenerates
+to the flat-history baseline; in the other extreme all but user and
+artefact events expire immediately, approximating a ReAct-style
+stateless loop \citep{yao2023react}. Everything between those endpoints
+is configuration.
+
+\subsection{Event-Sourced Audit Layer}
+\label{sec:component_c}
+
+Every creation, update, and deletion of an entry produces an event
+whose payload describes the mutation. Events are assigned a
+per-run and per-workspace sequence number and written to
+PostgreSQL; the same events are streamed to Redis for real-time
+delivery to connected clients. An agent's context trajectory is
+therefore a totally ordered sequence that can be replayed
+deterministically --- useful for debugging, for offline evaluation,
+and for benchmark reproducibility. Sequence numbers are maintained by
+an in-memory counter seeded from a single
+\texttt{SELECT MAX(sequence)} at cold start; subsequent events pay
+only an increment.
+
+\subsection{Runtime Pipeline}
+\label{sec:runtime}
+
+A typical step proceeds as follows. (1) The agent issues a
+\texttt{glance(/tools)} query and receives, for example, fifteen
+glances in roughly 3\,KB. (2) Conditioned on the glances, it issues a
+\texttt{detail(\allowbreak/tools/web\_search)} for one entry and
+receives its full schema. (3) It emits a tool call; the resulting
+output is persisted as a new context entry under
+\texttt{/workspaces/<id>/runs/<run\_id>/observations} and the event is
+broadcast. (4) A subsequent reasoning step reads only the glance of
+the observation unless the agent chooses to revisit the detail. Across
+a long trajectory, the ratio of detail reads to glance reads
+determines token cost.
+
+\subsection{Implementation Notes}
+
+We implement \textsc{Structure} as a Python service with an async
+FastAPI surface, a PostgreSQL-backed store (pgvector for embeddings),
+and a Redis Streams event bus. Eleven first-class tools expose the
+operators above to the agent: \texttt{glance}, \texttt{list},
+\texttt{tree}, \texttt{glob}, \texttt{read}, \texttt{search},
+\texttt{create}, \texttt{update}, \texttt{delete}, a hybrid
+semantic-plus-prefix \texttt{query}, and \texttt{rate} for source
+evaluation. A per-worker in-memory cache,
+invalidated through a Redis dirty flag, reduces warm path lookups
+from roughly $500$\,ms to under $10$\,ms.

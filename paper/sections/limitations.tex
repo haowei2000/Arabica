@@ -1,0 +1,64 @@
+% ACL/EMNLP require an honest Limitations section.
+
+\paragraph{Scope of evaluation.} Our benchmarks (AgentBench,
+WebArena, LongBench-Agent) cover English tool-use, web interaction,
+and long-document question answering. We do not evaluate
+code-generation agents, multi-lingual agents, or embodied agents.
+Generalisation to those regimes remains to be shown, and in particular
+the \textsc{glance}/\textsc{overview}/\textsc{detail} schema may need
+domain-specific defaults for tasks where a one-line summary is not
+informative (e.g., spatial reasoning, numerical tables).
+
+\paragraph{Reliance on agent judgement.} The effectiveness of
+multi-level disclosure depends on the agent choosing an appropriate
+level per query. A poorly prompted agent that always requests
+\textsc{detail} will obtain the token profile of the flat-window
+baseline. We expose the choice explicitly rather than hiding it, on
+the assumption that transparent control is preferable to a learned
+but opaque policy; the assumption merits its own study.
+
+\paragraph{Path-schema engineering.} Paths are conventions, not
+contracts. A workspace with inconsistent path hygiene (for example,
+similar content placed under \texttt{/notes/\dots} by one user and
+\texttt{/memos/\dots} by another) reduces the benefit of prefix and
+glob queries. We provide defaults but do not enforce them; larger
+deployments may want path linting or migration tools that we do not
+study here.
+
+\paragraph{Infrastructure cost.} The audit log is append-only and
+persistent. For very high-volume agents the PostgreSQL event table
+grows quickly, and we have not evaluated long-term retention policies
+(pruning, tiering to cold storage, compaction). Running
+\textsc{Structure} at scale also assumes an operational Redis and
+PostgreSQL, a heavier dependency footprint than a single-process
+vector store.
+
+\paragraph{LLM dependence.} All results are conditioned on the
+specific backbone model used. We expect the relative ordering of
+methods to transfer across models of similar scale, but smaller or
+weaker models may lack the self-awareness to pick disclosure levels
+well, narrowing the advantage over a simpler baseline.
+
+\paragraph{Evaluation methodology.} Agent benchmarks are still
+maturing. Task success is often graded heuristically, token counts
+depend on tokenizer choice, and wall-clock latency reflects our
+specific infrastructure. We report all three anyway, and release
+configurations so that replications can recompute on their own
+tokenizers and hardware.
+
+\paragraph{Rating signal is agent-generated.} Source ratings are
+produced by the same agent that consumes them, which introduces a
+feedback loop: a confidently wrong rating is persisted and will bias
+future retrieval until it is overwritten. We mitigate by event-sourcing
+ratings (so offline review is possible) and by bounding $\alpha$ below
+$1$ so similarity always remains a second signal, but we do not study
+adversarial or self-reinforcing rating collapse, which is a known risk
+of verbal-self-critique systems.
+
+\paragraph{GC policy is hand-tuned.} The default event-TTL table is
+derived from operational experience rather than learned from data.
+Choosing TTLs that are too short drops tool results the agent still
+needs; too long reintroduces the middle-of-context problem we aimed to
+avoid. Per-type TTL is a coarser knob than per-event importance, and
+an agent-learned GC policy is an obvious next step we have not
+evaluated.

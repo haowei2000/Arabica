@@ -584,6 +584,100 @@ Example: `feat(auth): add user login endpoint`
 
 ---
 
+## Paper (EMNLP/ACL Submission)
+
+The `paper/` directory contains a LaTeX manuscript scaffold for an EMNLP/ACL
+submission. The body sections are currently placeholders (`\todo{...}` markers)
+— only the template structure is in place.
+
+### Layout
+
+```
+paper/
+├── main.tex              # Top-level document; includes every section via \input
+├── references.bib        # BibTeX entries (placeholder)
+├── acl.sty               # ACL/EMNLP style file (loaded with [review] for anonymous submission)
+├── acl_natbib.bst        # ACL natbib bibliography style
+├── Makefile              # pdflatex + bibtex build pipeline
+├── latexmkrc             # XeLaTeX build via latexmk; outputs to build/
+├── .gitignore
+├── sections/             # One \input file per section
+│   ├── abstract.tex
+│   ├── introduction.tex
+│   ├── related_work.tex
+│   ├── method.tex        # subsections: Problem Formulation, Overview, Component A/B, Training Objective
+│   ├── experiments.tex   # subsections: Datasets, Baselines, Implementation Details, Evaluation Metrics
+│   ├── results.tex       # subsections: Main Results, Ablation Study, Analysis
+│   ├── conclusion.tex
+│   ├── limitations.tex   # REQUIRED for ACL/EMNLP; not counted toward page limit
+│   ├── ethics.tex        # Optional but recommended
+│   └── appendix.tex      # subsections: Additional Experimental Details, Qualitative Examples, Prompts
+├── figures/              # Figure assets (only .gitkeep so far)
+├── tables/               # Table assets (only .gitkeep so far)
+└── build/                # latexmk output directory (build artifacts)
+```
+
+### Document Structure (from `main.tex`)
+
+1. Abstract
+2. Introduction (`\label{sec:introduction}`)
+3. Related Work (`\label{sec:related_work}`)
+4. Method (`\label{sec:method}`)
+5. Experiments (`\label{sec:experiments}`)
+6. Results and Analysis (`\label{sec:results}`)
+7. Conclusion (`\label{sec:conclusion}`)
+8. Limitations (unnumbered, required)
+9. Ethics Statement (unnumbered, optional)
+10. Acknowledgments (empty for anonymous review)
+11. Bibliography (`\bibliography{references}` — style auto-set by `acl.sty`)
+12. Appendix (`\label{sec:appendix}`)
+
+### Build Toolchains (two are configured)
+
+| Tool     | Command          | Engine     | Output dir   | Trigger                  |
+|----------|------------------|------------|--------------|--------------------------|
+| Makefile | `make`           | `pdflatex` | `paper/`     | Default                  |
+| Makefile | `make watch`     | `latexmk`  | per latexmkrc| Continuous rebuild       |
+| latexmk  | `latexmk`        | `xelatex`  | `paper/build/` | Honors `latexmkrc`     |
+
+**Note — engine conflict:** `Makefile` runs `pdflatex` directly while
+`latexmkrc` sets `$pdf_mode = 5` (XeLaTeX) with `$out_dir = 'build'`. Mixing the
+two leaves stale `.aux`/`.bbl` files in both `paper/` and `paper/build/`. Pick
+one toolchain per work session. `make clean` only cleans the top-level artifacts,
+not `build/`.
+
+### Style Notes
+
+- `\usepackage[review]{acl}` — anonymous double-blind mode; author block is
+  replaced with "Anonymous ACL submission". Switch to `[final]` for
+  camera-ready.
+- `\todo{...}` macro (defined in `main.tex`) renders red bracketed TODO text;
+  strip before submission.
+- Do **not** add `\bibliographystyle{}` — `acl.sty` sets it automatically and a
+  duplicate causes `bibtex` to error.
+- Prefer ACL Anthology entries in `references.bib` so venue names are correct.
+
+### Auto-Compile Rule (overrides the "no unnecessary operations" rule for `paper/`)
+
+After editing any file under `paper/` — `.tex`, `.bib`, `.sty`, `.bst`, or a
+figure — automatically run a LaTeX build before reporting the work complete.
+This is the exception to the top-level "don't run format checks" rule: for
+the paper, a build **is** the correctness check.
+
+- Preferred command: `cd paper && latexmk` (honors `latexmkrc`, uses XeLaTeX,
+  outputs to `paper/build/`). This handles BibTeX passes automatically.
+- If `latexmk` is unavailable, fall back to `cd paper && make` (pdflatex +
+  bibtex + 2× pdflatex).
+- Do not mix the two in the same session — their aux files go to different
+  directories and will collide.
+- Read the log (`paper/build/main.log` or `paper/main.log`) on failure and
+  surface the offending file/line to the user. Common failures: undefined
+  `\cite` keys, missing `\label`, overfull hbox from wide `verbatim` blocks,
+  or BibTeX errors from malformed `references.bib`.
+- Do not claim the paper builds if you only edited source without compiling.
+
+---
+
 ## Additional Resources
 
 ### Documentation

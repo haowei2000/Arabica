@@ -1,0 +1,22 @@
+# 编译引擎：5 = xelatex, 4 = lualatex, 1 = pdflatex
+$pdf_mode = 5;
+
+# XeLaTeX 命令
+$xelatex = 'xelatex -interaction=nonstopmode -synctex=1 -shell-escape %O %S';
+
+# 自动处理参考文献
+$bibtex_use = 2;
+
+# 输出目录，保持项目根整洁
+$out_dir = 'build';
+$aux_dir = 'build';
+
+# 预览器用 Skim
+$pdf_previewer = 'open -a Skim';
+
+# Do NOT set $preview_continuous_mode = 1 here: that makes plain
+# `latexmk` run forever in watch mode. Use `latexmk -pvc` explicitly
+# when you want the continuous preview.
+
+# 默认主文件名（按需改）
+@default_files = ('main.tex');

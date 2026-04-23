@@ -1,0 +1,12 @@
+We argued that the context of a long-running LLM agent should be a
+\emph{structured address space rather than an opaque buffer}. Our
+system, \textsc{Structure}, places every durable state at a
+hierarchical path, exposes each entry at three explicit disclosure
+levels, and records every mutation on an append-only event log. The
+result is a context layer that the agent can itself inspect, navigate,
+and audit. \todo{State the strongest headline result in one sentence
+once experiments are run, e.g., matching flat-window accuracy at a
+fraction of the token cost.} A natural next direction is to let the
+agent \emph{learn} disclosure policies --- when to glance, when to
+detail --- by treating the address space and level labels as actions
+in a lightweight decision process.
