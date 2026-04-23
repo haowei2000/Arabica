@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -128,6 +128,24 @@ class Context(Base):  # ty:ignore[unsupported-base]
         Integer, default=0, comment="重要性评分 0-100"
     )
 
+    # Context-source evaluation.  Agents call the rate_context tool after
+    # using an entry; ratings are event-sourced (CONTEXT_RATED events) and
+    # aggregated here for fast ordering and thresholding at retrieval time.
+    rating_sum: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        server_default="0",
+        comment="累积评分（来自 CONTEXT_RATED 事件）",
+    )
+    rating_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="评分次数",
+    )
+
     # Audit fields
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), comment="创建时间"
@@ -190,6 +208,22 @@ class Context(Base):  # ty:ignore[unsupported-base]
             f"<Context(id={self.id}, type='{self.context_type}', path='{self.path}')>"
         )
 
+    @property
+    def rating_avg(self) -> float | None:
+        """Mean rating across all CONTEXT_RATED events for this context."""
+        if not self.rating_count:
+            return None
+        return self.rating_sum / self.rating_count
+
+    def record_rating(self, rating: float) -> None:
+        """Apply a single rating to the denormalised aggregate columns.
+
+        The event-log entry (CONTEXT_RATED) is the source of truth; this
+        keeps the denormalised fields in sync for cheap sorting/filtering.
+        """
+        self.rating_sum = (self.rating_sum or 0.0) + float(rating)
+        self.rating_count = (self.rating_count or 0) + 1
+
     # ──── ContextLayer Framework Methods ────
 
     def disclose(self, level: str = "overview") -> dict[str, Any]:
@@ -215,9 +249,16 @@ class Context(Base):  # ty:ignore[unsupported-base]
             return result
 
         # Level 2: Overview - structured summary
-        if level in ("overview", "detail"):  # noqa: SIM102
+        if level in ("overview", "detail"):
             if self.tags:
                 result["tags"] = self.tags
+            # Surface the aggregated rating so agents can weight source
+            # quality without a second round-trip.
+            if self.rating_count:
+                result["rating"] = {
+                    "avg": round(self.rating_avg, 3) if self.rating_avg else None,
+                    "count": self.rating_count,
+                }
 
         if level == "overview":
             return result
