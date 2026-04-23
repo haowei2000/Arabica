@@ -678,6 +678,102 @@ the paper, a build **is** the correctness check.
 
 ---
 
+## Benchmarks (Paper Experiment Harness)
+
+The harness that backs `paper/sections/experiments.tex` lives at the
+**top-level `benchmarks/` directory** — deliberately outside `src/structure/`
+because benchmarks are evaluation infrastructure, not runtime code, and they
+should not couple the platform's import graph to dataset-specific parsers.
+
+### Layout and status
+
+```
+benchmarks/
+├── core/            # BenchmarkCase, CostLedger, BenchmarkRunner, aggregate()
+├── baselines/       # EchoAgent (LLM-free, used for harness self-tests)
+├── longmemeval/     # ★ complete adapter: loader + scorer + synthetic fixture
+├── locomo/          # P0 stub (README only)
+├── helmet/          # P1 stub
+├── taubench/        # P1 stub (needs interactive variant of AgentProtocol)
+└── ruler/           # P2 stub
+```
+
+| Benchmark | Priority | Why this priority (for the paper's claims) |
+|---|---|---|
+| LongMemEval | P0 | 5 ability axes with per-axis accuracy → directly exposes what glance/overview/detail each contribute |
+| LoCoMo     | P0 | 35-session dialogues → tests persistent workspace context |
+| HELMET     | P1 | Application long-context → clean accuracy-vs-token Pareto plot |
+| τ-bench    | P1 | Tool loops + `pass^k` → maps onto the rating / GC stability story |
+| RULER      | P2 | Synthetic and cheap → best for ablating disclosure levels in isolation |
+
+**Skipped (heavy infra, orthogonal to the context-management claim):** WebArena,
+OSWorld, WorkArena, SWE-bench, AppWorld, GAIA, BFCL.
+
+### Design constraints (don't violate these without a reason)
+
+1. **Harness has zero dependency on `src/structure/`.** `benchmarks/` can be
+   cloned out and run against any agent implementing `AgentProtocol`.
+2. **`AgentProtocol` is a single async method `run(case) -> result`.** Anything
+   that needs a live multi-turn simulated user (e.g. τ-bench) gets an
+   `InteractiveAgentProtocol` in a separate module — do not overload the
+   basic protocol.
+3. **`CostLedger` fields are all additive.** The runner sums them across a
+   batch; adapters populate whichever fields they have (Structure adapter
+   reads `input_tokens`/`output_tokens` off event-sourced events).
+4. **Every benchmark adds an oracle test** that feeds the reference through
+   `EchoAgent` and asserts `overall_score == 1.0` on a bundled fixture. This
+   catches schema drift the moment it happens.
+
+### Running
+
+```bash
+# Unit tests (fast, LLM-free, runs in CI).
+uv run pytest tests/benchmarks -m unit
+
+# Oracle smoke over the LongMemEval fixture (no LLM, no network).
+uv run python -c "
+import asyncio
+from benchmarks.baselines import EchoAgent
+from benchmarks.core import BenchmarkRunner
+from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
+cases = load_longmemeval('benchmarks/longmemeval/fixtures/sample.json')
+print(asyncio.run(BenchmarkRunner('lme', EchoAgent(), longmemeval_scorer).run(cases)).to_dict())
+"
+```
+
+Tests use `@pytest.mark.unit`; match the existing marker set in `pyproject.toml`
+(`unit`, `integration`, `e2e`, `slow`, `smoke`).
+
+### Explicit TODOs (tracked here because they shape the next direction)
+
+1. **`benchmarks/adapters/structure.py`** — the adapter that drives a real
+   Structure executor and harvests tokens from the event log. **Required**
+   before any real-data benchmark run; a stub must implement `AgentProtocol`
+   and populate `CostLedger` from `Event.input_tokens` / `Event.output_tokens`.
+2. **Real dataset downloads are not committed.** Upstream JSON goes under
+   `data/` (gitignored at the repo root) and is referenced via the loader's
+   path argument. Do not check datasets into the repo.
+3. **LLM-judge scorers** should live alongside the deterministic one with the
+   same `(reference, response) -> float` signature and be gated behind an env
+   var so CI stays deterministic.
+4. **Parallel + checkpointed runner** is a follow-up; the current
+   `BenchmarkRunner` is intentionally sequential so results are comparable
+   regardless of concurrency tuning.
+
+### How a new benchmark gets added
+
+1. Create `benchmarks/<name>/` with a `README.md` and a `dataset.py` that
+   returns `list[BenchmarkCase]`.
+2. Add a `scorer.py` exposing `(reference, response) -> float`.
+3. Bundle a small `fixtures/sample.json` — enough cases to cover each
+   `ability` tag the benchmark uses.
+4. Add `tests/benchmarks/test_<name>.py` with at minimum an oracle run that
+   must score 1.0.
+5. Do **not** touch `benchmarks/core/` — if you need to, the abstractions
+   are probably wrong.
+
+---
+
 ## Additional Resources
 
 ### Documentation
