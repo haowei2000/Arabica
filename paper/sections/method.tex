@@ -208,6 +208,32 @@ artefact events expire immediately, approximating a ReAct-style
 stateless loop \citep{yao2023react}. Everything between those endpoints
 is configuration.
 
+\paragraph{Comparison with concurrent work.}
+AgentDiet \citep{xu2025agentdiet} invokes a reflection LLM call past a
+step threshold to condense earlier trajectory content, reporting
+$40$--$60\%$ input-token reduction on SWE-agent-style tasks.
+Memory-as-Action \citep{zhang2025memact} lifts memory editing into the
+agent's action space as a single \texttt{prune\_context(summary, ids)}
+tool and trains the policy end-to-end with a trajectory-segmented RL
+objective (DCPO), reaching $51\%$ context reduction on Qwen2.5-14B.
+Context-Folding \citep{sun2025contextfolding} and AgentFold
+\citep{ye2025agentfold} fold entire sub-trajectories into summary
+nodes, using RL and SFT respectively. All four operate on the
+\emph{time} axis of a single trajectory and \emph{destructively} rewrite
+it, either paying a per-step LLM call (AgentDiet, MemAct) or a
+model-specific training cost (MemAct, Context-Folding, AgentFold).
+Our collector occupies a different point in the design space: it
+operates on the \emph{address} axis of a persistent workspace via a
+\emph{declarative, zero-compute} function whose output is a visibility
+filter, not a mutation of storage. Because the event log is untouched,
+every $\mathrm{gc}$ result at step $t$ is byte-exactly reproducible
+from the configuration $\Pi$ alone, and any expired event remains
+available to a later disclosure or replay. We view the learned-policy
+methods above as candidates to be layered \emph{on top of} our
+substrate --- a trained pruner can emit \texttt{event.pin} or
+\texttt{event.expire} events into the log, combining policy quality
+with auditability.
+
 \subsection{Event-Sourced Audit Layer}
 \label{sec:component_c}
 
