@@ -325,7 +325,7 @@ make docker-down      # Stop containers
 
 ```
 src/structure/
-├── core/                      # Foundation Layer (37,925 lines)
+├── core/                      # Foundation Layer
 │   ├── bootstrap.py           # Unified initialization system
 │   ├── interfaces/            # Abstract base classes
 │   │   ├── executor.py        # Executor protocol with AgentEvent
@@ -368,7 +368,7 @@ src/structure/
 │   ├── executors/             # Executor implementations
 │   │   ├── simple/            # SimpleExecutor
 │   │   └── conflict/          # ConflictExecutor (multi-turn reasoning)
-│   └── tools/                 # Tool implementations (150+)
+│   └── tools/                 # Tool implementations
 │       ├── context_tools/     # read, search, create, update, delete
 │       ├── text_tools/        # parsing, summarization
 │       ├── execution_tools/   # command execution
@@ -471,13 +471,6 @@ docs/                          # Documentation
 └── prompt_usage.md            # Prompt system usage guide
 ```
 
-### Key Statistics
-- **Total Backend Code**: 37,925+ lines of Python
-- **Core Modules**: 8 major service packages
-- **API Endpoints**: 50+ REST endpoints across 12 routers
-- **Database Models**: 20+ SQLAlchemy models
-- **Tool Implementations**: 150+ built-in tools
-- **Plugin System**: Dynamic executor + tool discovery
 ## Testing
 
 ```bash
@@ -550,19 +543,19 @@ Example: `feat(auth): add user login endpoint`
 
 ## Key Implementation Files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/structure/app.py` | 93 | FastAPI app initialization |
-| `src/structure/core/bootstrap.py` | 477 | Unified bootstrap system |
-| `src/structure/worker_cli.py` | 215 | Worker process entry point |
-| `src/structure/services/events/event_worker.py` | 200+ | Event consumption + executor dispatch |
-| `src/structure/services/events/event_publisher.py` | 150+ | Dual-write (DB + Redis) event publishing |
-| `src/structure/services/executor/runtime.py` | 78 | Executor lifecycle management |
-| `src/structure/services/runs/run_state_machine.py` | 200+ | Run state transitions |
-| `src/structure/registries/core.py` | 250+ | Registry abstraction layer |
-| `src/structure/core/interfaces/executor.py` | 200+ | Executor protocol definition |
-| `src/structure/core/tool_calling/strategy.py` | 83+ | Tool calling strategy interface |
-| `src/structure/extensions/database.py` | 300+ | Async DB infrastructure |
+| File | Purpose |
+|------|---------|
+| `src/structure/app.py` | FastAPI app initialization |
+| `src/structure/core/bootstrap.py` | Unified bootstrap system |
+| `src/structure/worker_cli.py` | Worker process entry point |
+| `src/structure/services/events/event_worker.py` | Event consumption + executor dispatch |
+| `src/structure/services/events/event_publisher.py` | Dual-write (DB + Redis) event publishing |
+| `src/structure/services/executor/runtime.py` | Executor lifecycle management |
+| `src/structure/services/runs/run_state_machine.py` | Run state transitions |
+| `src/structure/registries/core.py` | Registry abstraction layer |
+| `src/structure/core/interfaces/executor.py` | Executor protocol definition |
+| `src/structure/core/tool_calling/strategy.py` | Tool calling strategy interface |
+| `src/structure/extensions/database.py` | Async DB infrastructure |
 
 ---
 
@@ -591,6 +584,196 @@ Example: `feat(auth): add user login endpoint`
 
 ---
 
+## Paper (EMNLP/ACL Submission)
+
+The `paper/` directory contains a LaTeX manuscript scaffold for an EMNLP/ACL
+submission. The body sections are currently placeholders (`\todo{...}` markers)
+— only the template structure is in place.
+
+### Layout
+
+```
+paper/
+├── main.tex              # Top-level document; includes every section via \input
+├── references.bib        # BibTeX entries (placeholder)
+├── acl.sty               # ACL/EMNLP style file (loaded with [review] for anonymous submission)
+├── acl_natbib.bst        # ACL natbib bibliography style
+├── Makefile              # pdflatex + bibtex build pipeline
+├── latexmkrc             # XeLaTeX build via latexmk; outputs to build/
+├── .gitignore
+├── sections/             # One \input file per section
+│   ├── abstract.tex
+│   ├── introduction.tex
+│   ├── related_work.tex
+│   ├── method.tex        # subsections: Problem Formulation, Overview, Component A/B, Training Objective
+│   ├── experiments.tex   # subsections: Datasets, Baselines, Implementation Details, Evaluation Metrics
+│   ├── results.tex       # subsections: Main Results, Ablation Study, Analysis
+│   ├── conclusion.tex
+│   ├── limitations.tex   # REQUIRED for ACL/EMNLP; not counted toward page limit
+│   ├── ethics.tex        # Optional but recommended
+│   └── appendix.tex      # subsections: Additional Experimental Details, Qualitative Examples, Prompts
+├── figures/              # Figure assets (only .gitkeep so far)
+├── tables/               # Table assets (only .gitkeep so far)
+└── build/                # latexmk output directory (build artifacts)
+```
+
+### Document Structure (from `main.tex`)
+
+1. Abstract
+2. Introduction (`\label{sec:introduction}`)
+3. Related Work (`\label{sec:related_work}`)
+4. Method (`\label{sec:method}`)
+5. Experiments (`\label{sec:experiments}`)
+6. Results and Analysis (`\label{sec:results}`)
+7. Conclusion (`\label{sec:conclusion}`)
+8. Limitations (unnumbered, required)
+9. Ethics Statement (unnumbered, optional)
+10. Acknowledgments (empty for anonymous review)
+11. Bibliography (`\bibliography{references}` — style auto-set by `acl.sty`)
+12. Appendix (`\label{sec:appendix}`)
+
+### Build Toolchains (two are configured)
+
+| Tool     | Command          | Engine     | Output dir   | Trigger                  |
+|----------|------------------|------------|--------------|--------------------------|
+| Makefile | `make`           | `pdflatex` | `paper/`     | Default                  |
+| Makefile | `make watch`     | `latexmk`  | per latexmkrc| Continuous rebuild       |
+| latexmk  | `latexmk`        | `xelatex`  | `paper/build/` | Honors `latexmkrc`     |
+
+**Note — engine conflict:** `Makefile` runs `pdflatex` directly while
+`latexmkrc` sets `$pdf_mode = 5` (XeLaTeX) with `$out_dir = 'build'`. Mixing the
+two leaves stale `.aux`/`.bbl` files in both `paper/` and `paper/build/`. Pick
+one toolchain per work session. `make clean` only cleans the top-level artifacts,
+not `build/`.
+
+### Style Notes
+
+- `\usepackage[review]{acl}` — anonymous double-blind mode; author block is
+  replaced with "Anonymous ACL submission". Switch to `[final]` for
+  camera-ready.
+- `\todo{...}` macro (defined in `main.tex`) renders red bracketed TODO text;
+  strip before submission.
+- Do **not** add `\bibliographystyle{}` — `acl.sty` sets it automatically and a
+  duplicate causes `bibtex` to error.
+- Prefer ACL Anthology entries in `references.bib` so venue names are correct.
+
+### Auto-Compile Rule (overrides the "no unnecessary operations" rule for `paper/`)
+
+After editing any file under `paper/` — `.tex`, `.bib`, `.sty`, `.bst`, or a
+figure — automatically run a LaTeX build before reporting the work complete.
+This is the exception to the top-level "don't run format checks" rule: for
+the paper, a build **is** the correctness check.
+
+- Preferred command: `cd paper && latexmk` (honors `latexmkrc`, uses XeLaTeX,
+  outputs to `paper/build/`). This handles BibTeX passes automatically.
+- If `latexmk` is unavailable, fall back to `cd paper && make` (pdflatex +
+  bibtex + 2× pdflatex).
+- Do not mix the two in the same session — their aux files go to different
+  directories and will collide.
+- Read the log (`paper/build/main.log` or `paper/main.log`) on failure and
+  surface the offending file/line to the user. Common failures: undefined
+  `\cite` keys, missing `\label`, overfull hbox from wide `verbatim` blocks,
+  or BibTeX errors from malformed `references.bib`.
+- Do not claim the paper builds if you only edited source without compiling.
+
+---
+
+## Benchmarks (Paper Experiment Harness)
+
+The harness that backs `paper/sections/experiments.tex` lives at the
+**top-level `benchmarks/` directory** — deliberately outside `src/structure/`
+because benchmarks are evaluation infrastructure, not runtime code, and they
+should not couple the platform's import graph to dataset-specific parsers.
+
+### Layout and status
+
+```
+benchmarks/
+├── core/            # BenchmarkCase, CostLedger, BenchmarkRunner, aggregate()
+├── baselines/       # EchoAgent (LLM-free, used for harness self-tests)
+├── longmemeval/     # ★ complete adapter: loader + scorer + synthetic fixture
+├── locomo/          # P0 stub (README only)
+├── helmet/          # P1 stub
+├── taubench/        # P1 stub (needs interactive variant of AgentProtocol)
+└── ruler/           # P2 stub
+```
+
+| Benchmark | Priority | Why this priority (for the paper's claims) |
+|---|---|---|
+| LongMemEval | P0 | 5 ability axes with per-axis accuracy → directly exposes what glance/overview/detail each contribute |
+| LoCoMo     | P0 | 35-session dialogues → tests persistent workspace context |
+| HELMET     | P1 | Application long-context → clean accuracy-vs-token Pareto plot |
+| τ-bench    | P1 | Tool loops + `pass^k` → maps onto the rating / GC stability story |
+| RULER      | P2 | Synthetic and cheap → best for ablating disclosure levels in isolation |
+
+**Skipped (heavy infra, orthogonal to the context-management claim):** WebArena,
+OSWorld, WorkArena, SWE-bench, AppWorld, GAIA, BFCL.
+
+### Design constraints (don't violate these without a reason)
+
+1. **Harness has zero dependency on `src/structure/`.** `benchmarks/` can be
+   cloned out and run against any agent implementing `AgentProtocol`.
+2. **`AgentProtocol` is a single async method `run(case) -> result`.** Anything
+   that needs a live multi-turn simulated user (e.g. τ-bench) gets an
+   `InteractiveAgentProtocol` in a separate module — do not overload the
+   basic protocol.
+3. **`CostLedger` fields are all additive.** The runner sums them across a
+   batch; adapters populate whichever fields they have (Structure adapter
+   reads `input_tokens`/`output_tokens` off event-sourced events).
+4. **Every benchmark adds an oracle test** that feeds the reference through
+   `EchoAgent` and asserts `overall_score == 1.0` on a bundled fixture. This
+   catches schema drift the moment it happens.
+
+### Running
+
+```bash
+# Unit tests (fast, LLM-free, runs in CI).
+uv run pytest tests/benchmarks -m unit
+
+# Oracle smoke over the LongMemEval fixture (no LLM, no network).
+uv run python -c "
+import asyncio
+from benchmarks.baselines import EchoAgent
+from benchmarks.core import BenchmarkRunner
+from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
+cases = load_longmemeval('benchmarks/longmemeval/fixtures/sample.json')
+print(asyncio.run(BenchmarkRunner('lme', EchoAgent(), longmemeval_scorer).run(cases)).to_dict())
+"
+```
+
+Tests use `@pytest.mark.unit`; match the existing marker set in `pyproject.toml`
+(`unit`, `integration`, `e2e`, `slow`, `smoke`).
+
+### Explicit TODOs (tracked here because they shape the next direction)
+
+1. **`benchmarks/adapters/structure.py`** — the adapter that drives a real
+   Structure executor and harvests tokens from the event log. **Required**
+   before any real-data benchmark run; a stub must implement `AgentProtocol`
+   and populate `CostLedger` from `Event.input_tokens` / `Event.output_tokens`.
+2. **Real dataset downloads are not committed.** Upstream JSON goes under
+   `data/` (gitignored at the repo root) and is referenced via the loader's
+   path argument. Do not check datasets into the repo.
+3. **LLM-judge scorers** should live alongside the deterministic one with the
+   same `(reference, response) -> float` signature and be gated behind an env
+   var so CI stays deterministic.
+4. **Parallel + checkpointed runner** is a follow-up; the current
+   `BenchmarkRunner` is intentionally sequential so results are comparable
+   regardless of concurrency tuning.
+
+### How a new benchmark gets added
+
+1. Create `benchmarks/<name>/` with a `README.md` and a `dataset.py` that
+   returns `list[BenchmarkCase]`.
+2. Add a `scorer.py` exposing `(reference, response) -> float`.
+3. Bundle a small `fixtures/sample.json` — enough cases to cover each
+   `ability` tag the benchmark uses.
+4. Add `tests/benchmarks/test_<name>.py` with at minimum an oracle run that
+   must score 1.0.
+5. Do **not** touch `benchmarks/core/` — if you need to, the abstractions
+   are probably wrong.
+
+---
+
 ## Additional Resources
 
 ### Documentation
@@ -610,6 +793,5 @@ Example: `feat(auth): add user login endpoint`
 
 Add under a new ## Docker & Deployment section\n\nWhen fixing Docker/deployment issues, always verify the full build-and-run cycle before reporting success. Check: Dockerfile paths, volume mounts, network connectivity between containers, and that all required files are included in the build context.
 Add under ## General Rules at the top of CLAUDE.md\n\nAfter implementing a feature, run the application and verify it works end-to-end before marking complete. Pay special attention to: database migrations (check ordering and idempotency), import paths, and runtime errors that don't appear at build time.
-Add under ## Project Overview section at the top of CLAUDE.md\n\nThis project uses Python (backend) and TypeScript (frontend). Backend uses SQLite with alembic migrations, S3/MinIO for storage, WebSockets for real-time communication, and Docker Compose for deployment. When making changes, consider impacts across both backend and frontend.
 Add under ## Debugging section\n\nWhen debugging errors, diagnose the actual root cause before applying fixes. Do not guess-and-check iteratively. Read the relevant source code, trace the error path, and confirm the cause before editing.
 Add under ## Database section\n\nFor database migrations: ensure migration scripts are idempotent (handle already-existing tables/columns), verify migration ordering relative to startup code that depends on new schema, and test with a fresh database.

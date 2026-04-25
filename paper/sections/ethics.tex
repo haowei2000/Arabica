@@ -1,0 +1,23 @@
+Our experiments use public benchmarks (AgentBench, WebArena,
+LongBench) under their original licences; no human subjects are
+involved and no new data are collected. \textsc{Structure} itself is
+released as an open-source platform under a permissive licence,
+including configuration files for the evaluation harness.
+
+The event log records every context mutation, which enables auditing
+and debugging but also makes the system a potentially rich source of
+behavioural data. Deployments should therefore treat the event stream
+as sensitive: apply retention limits proportional to operational need,
+scope access to authorised users, and document retention policies to
+end users of the agent. The three visibility scopes
+(\textsc{user}/\textsc{workspace}/\textsc{global}) are mechanisms for
+privacy control, not guarantees; misconfiguration could place
+private state under a shared scope.
+
+The system does not produce or distribute content beyond what the
+underlying language model generates; the usual safety considerations
+for LLM agents (misinformation, tool misuse, prompt injection through
+retrieved content) apply. We recommend deployments combine
+\textsc{Structure} with per-tool authorisation and content filters,
+and caution that retrieved documents are themselves a prompt-injection
+vector that a structured context layer does not mitigate.

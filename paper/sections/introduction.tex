@@ -1,0 +1,86 @@
+% Introduction: ~1 page.
+
+An LLM agent that runs for more than a handful of turns has to remember
+things. Tool outputs pile up, retrieved documents are consulted and
+re-consulted, plans are revised, and sub-agents report back. The
+dominant solution is to concatenate this history into the model's
+context window and trust the attention mechanism to find what matters.
+Even setting aside cost, this strategy fails for a measurable reason:
+language models attend poorly to information in the middle of long
+inputs \citep{liu2024lostmiddle}, and benchmarks such as LongBench
+\citep{bai2024longbench} confirm that simply enlarging the window does
+not close the gap.
+
+A second line of work treats context as \emph{external memory}.
+MemGPT \citep{packer2023memgpt} borrows the virtual-memory metaphor
+from operating systems and pages content between the window and a
+backing store. A-MEM \citep{xu2025amem} learns Zettelkasten-style
+links between notes. Generative Agents \citep{park2023generative}
+attach a memory stream with periodic reflection, and production
+systems such as Mem0 \citep{chhikara2025mem0} assemble similar ideas
+into deployable services; \citet{zhang2025memorysurvey} give a recent
+taxonomy. What these approaches share is an \emph{opaque} interface:
+the agent emits a natural-language query, a memory controller decides
+what to return, and the agent sees only the result. The address
+space is hidden. Industrial practice has begun to converge on a
+different pattern: Anthropic's recent context-engineering guidance
+\citep{anthropic2025contexteng} and Agent Skills system
+\citep{anthropic2025skills} argue for progressive disclosure and
+just-in-time loading over file-system-organised resources. This
+paper gives that pattern an academic formalisation and pairs it with
+two mechanisms that keep it useful over long runs.
+
+We argue that this opacity is the problem. An agent that is itself a
+reasoning system should be able to reason about where its state
+\emph{lives}, not only about what the state says. Concretely, an agent
+should be able to ask: \emph{``Is there a tool that does X?''} and
+receive a list of paths under \texttt{/tools}; it should be able to
+distinguish \emph{``I need a summary of this document to decide if I
+should read it''} from \emph{``I've decided; give me the full text.''}
+Flat buffers, opaque retrievers, and learned links all collapse these
+distinctions.
+
+\paragraph{Our approach.} We propose \textsc{Structure}, a context
+layer built on two primitives. First, every durable piece of state is
+addressed by a hierarchical path and can be discovered by prefix and
+glob queries --- the same operations a programmer uses on a
+filesystem. Second, every entry is \emph{disclosable} at three
+levels: a \textsc{glance} (one-line summary, $\leq 50$\,B), an
+\textsc{overview} (structured metadata and tags, $\approx 1$\,KB),
+and a \textsc{detail} (full content, optionally S3-backed). The
+disclosure method lives on the entry itself, so an agent can scan
+hundreds of glances in a single prompt and pay for full content only
+where it is warranted. Mutations are emitted as events onto an
+append-only log, giving us both real-time streaming to clients and
+exact replay for evaluation.
+
+\paragraph{Contributions.} Our main contributions are:
+\begin{itemize}
+    \item We formalise \emph{path-addressable multi-level disclosure}
+    as a context-management primitive for LLM agents and contrast it
+    with paging, retrieval, and learned-link memories
+    (\S\ref{sec:related_work}).
+    \item We introduce two mechanisms layered on top of the address
+    space: (a) \emph{source evaluation}, where the agent rates each
+    consulted entry and ratings are event-sourced into an aggregate
+    that reorders future retrieval
+    (\S\ref{sec:component_rating}); and (b) \emph{event-level
+    garbage collection}, a per-type TTL policy that prunes transient
+    events from the agent's working context on every step while
+    preserving pinned turns and the append-only audit log
+    (\S\ref{sec:component_gc}).
+    \item We implement \textsc{Structure} as an event-sourced
+    orchestration platform with a path-addressable context layer, three
+    visibility scopes (user, workspace, global), and eleven first-class
+    context tools; the system sustains sub-10\,ms retrieval over
+    hundreds of entries via in-memory caches and HNSW indices
+    (\S\ref{sec:method}).
+    \item We evaluate the system on long-horizon agent tasks against
+    flat-window, RAG, and MemGPT-style baselines, reporting accuracy,
+    token cost, and end-to-end latency, and ablate the two new
+    mechanisms to isolate their effect
+    (\S\ref{sec:experiments}, \S\ref{sec:results}).
+    \item We release the implementation, benchmark harness, and
+    configurations so that the architecture can be reused and
+    compared against future context-management designs.
+\end{itemize}

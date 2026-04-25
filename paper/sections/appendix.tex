@@ -1,0 +1,99 @@
+\subsection{Additional Experimental Details}
+
+\paragraph{Hyperparameters.} \todo{Full table of hyperparameters
+used for each baseline and for \textsc{Structure}, including
+retrieval $k$, token budgets, temperatures, and per-benchmark step
+limits.}
+
+\paragraph{Infrastructure.} \todo{Describe hardware (CPU, RAM, GPU
+if any), PostgreSQL and Redis versions, and the network topology
+used during evaluation. Report wall-clock cost per benchmark.}
+
+\paragraph{Reproducibility.} We release configuration files, seeds,
+and the event logs produced by each run. Because the audit log is
+deterministic, any reviewer can re-execute a trajectory against a
+snapshot of the context store and obtain the same prompts.
+
+\subsection{Context Tool Reference}
+
+\begin{table}[h]
+    \centering
+    \small
+    \begin{tabular}{ll}
+        \toprule
+        Tool & Purpose \\
+        \midrule
+        \texttt{glance}  & Scan one-line summaries under a prefix \\
+        \texttt{list}    & Enumerate entries under a path \\
+        \texttt{tree}    & Hierarchical view of a subtree \\
+        \texttt{glob}    & Pattern match with \texttt{*}/\texttt{**} \\
+        \texttt{read}    & Full \textsc{detail} for a single path \\
+        \texttt{search}  & Semantic top-$k$ over embeddings \\
+        \texttt{query}   & Hybrid semantic $+$ prefix \\
+        \texttt{create}  & Insert a new entry \\
+        \texttt{update}  & Modify content or metadata \\
+        \texttt{delete}  & Remove an entry \\
+        \texttt{rate}    & Rate a consulted source (\S\ref{sec:component_rating}) \\
+        \bottomrule
+    \end{tabular}
+    \caption{The eleven first-class context tools exposed to the agent.}
+    \label{tab:tools}
+\end{table}
+
+\subsection{Default Event-GC Policy}
+\label{sec:appendix_gc_policy}
+
+Table~\ref{tab:ttl} lists the default TTL policy $\Pi$ used by the
+event-level garbage collector (\S\ref{sec:component_gc}). The
+\emph{pin} flag forces an event to remain visible for the life of the
+run; otherwise the event expires when either the step budget or the
+wall-clock budget elapses (whichever comes first). Executors may
+override any row per run.
+
+\begin{table}[h]
+    \centering
+    \small
+    \begin{tabular}{lcl}
+        \toprule
+        Event type & Steps & Notes \\
+        \midrule
+        \texttt{user.message}      & \textsc{pin} & Opening turn \\
+        \texttt{agent.message}     & \textsc{pin} & Agent reply \\
+        \texttt{artifact.*}        & \textsc{pin} & Durable outputs \\
+        \texttt{task.complete}     & \textsc{pin} & Milestones \\
+        \texttt{run.created}       & \textsc{pin} & Lifecycle anchor \\
+        \texttt{run.completed/failed} & \textsc{pin} & Terminal states \\
+        \midrule
+        \texttt{tool.call}         & 3 & Short plan--act window \\
+        \texttt{tool.result}       & 3 & Matches call \\
+        \texttt{tool.error}        & 6 & Keep for recovery \\
+        \texttt{agent.thinking}    & 2 & Transient reasoning \\
+        \texttt{agent.plan.step}   & 4 & Mid-run plans \\
+        \texttt{context.using}     & 1 & Visit marker \\
+        \texttt{context.rated}     & 4 & Rating provenance \\
+        \texttt{task.*} (non-complete) & 6--10 & Workspace churn \\
+        \texttt{run.state.change}  & 8 & Transition trail \\
+        \midrule
+        \texttt{agent.token}       & 0 & Dropped from prompt \\
+        \texttt{agent.heartbeat}   & 0 & Dropped from prompt \\
+        \bottomrule
+    \end{tabular}
+    \caption{Default time-to-live policy for events in the agent's
+    working context. Events dropped from the prompt remain in the
+    persistent audit log.}
+    \label{tab:ttl}
+\end{table}
+
+\subsection{Additional Qualitative Examples}
+
+\todo{Include 2--3 annotated trajectories: one success case where the
+agent correctly escalates to \textsc{detail}, one failure case of a
+baseline exhausting its budget, and one example highlighting path
+locality across a long trajectory.}
+
+\subsection{Prompts and Templates}
+
+\todo{Include the system prompts used for each baseline, the tool
+specifications shown to the agent in \textsc{Structure}, and any
+few-shot exemplars, so that the full prompting surface is
+reproducible.}

@@ -29,6 +29,7 @@ class EventType(StrEnum):
 
     # Context events
     USING_CONTEXT = "context.using"
+    CONTEXT_RATED = "context.rated"
     # Run lifecycle events
     RUN_CREATED = "run.created"
     RUN_STATE_CHANGE = "run.state.change"

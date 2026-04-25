@@ -1,0 +1,26 @@
+# LaTeX build artifacts (top-level, produced by `make` / pdflatex)
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+*.nav
+*.snm
+*.vrb
+
+# latexmk output directory (set by latexmkrc -> build/)
+build/
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+
+# Keep the PDF out of git until you want to publish it.
+# Remove this line if you prefer to commit the compiled PDF.
+main.pdf

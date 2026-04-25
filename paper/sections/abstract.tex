@@ -1,0 +1,31 @@
+% Abstract: 150--250 words.
+Long-running LLM agents accumulate state from tool calls, retrieved
+documents, and intermediate reasoning, and the usual remedy of
+concatenating that state into the prompt collides with both context
+windows and the well-documented middle-of-context degradation.
+Existing agent memory systems either page a flat buffer in and out of
+the window (e.g., MemGPT), cluster notes via learned links (e.g.,
+A-MEM), or attach a vector store as an opaque side-channel. None
+expose a \emph{structured address space} that the agent itself can
+reason about. We present \textsc{Structure}, a context layer in which
+every piece of durable state is placed at a hierarchical path (e.g.,
+\texttt{/tools/web\_search}, \texttt{/knowledge/python\_guide}) and
+exposed at three disclosure levels --- \textsc{glance}, \textsc{overview},
+and \textsc{detail} --- as a first-class operation on the stored object
+rather than a post-hoc summarisation. Agents navigate the space through
+path, prefix, and glob queries, and escalate disclosure only for the
+subset of entries that matter to the current step. Two mechanisms keep
+the layer useful over long runs: an explicit \emph{source-evaluation}
+channel, in which the agent rates each consulted entry and ratings are
+fed back into ordering and thresholding at retrieval time; and an
+\emph{event-level garbage collector} inside the agent loop that prunes
+transient signal (tool outputs, intermediate thoughts, noisy tokens)
+from the working context on a per-type time-to-live, while preserving
+pinned events (user turns, artifacts) and the full append-only audit
+log. We instantiate \textsc{Structure}
+as an open-source orchestration platform and evaluate it on
+long-horizon agent benchmarks against flat-window, vector-RAG, and
+MemGPT-style paging baselines. \todo{Quantitative headline:
+report token reduction, success-rate gain, and latency on the target
+benchmarks.} We release code, configurations, and evaluation scripts
+to support reproduction.

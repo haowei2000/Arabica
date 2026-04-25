@@ -5,6 +5,7 @@ from structure.plugins.tools.context.delete_context import DeleteContextTool
 from structure.plugins.tools.context.glance_context import GlanceContextTool
 from structure.plugins.tools.context.glob_context import GlobContextTool
 from structure.plugins.tools.context.list_context import ListContextTool
+from structure.plugins.tools.context.rate_context import RateContextTool
 from structure.plugins.tools.context.read_context import ReadContextTool
 from structure.plugins.tools.context.search_context import SearchContextTool
 from structure.plugins.tools.context.tree_context import TreeContextTool
@@ -18,6 +19,7 @@ __all__ = [
     "GlobContextTool",
     "ListContextTool",
     # Read operations
+    "RateContextTool",
     "ReadContextTool",
     "SearchContextTool",
     "TreeContextTool",
