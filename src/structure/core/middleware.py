@@ -1,6 +1,7 @@
 """Middleware configuration for FastAPI application."""
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -94,15 +95,27 @@ def register_middleware(app: FastAPI) -> None:
     """Register all middleware to the FastAPI app."""
     settings = get_settings()
 
-    # CORS middleware - must be first
+    # CORS middleware - must be first.
+    #
+    # When STRUCTURE_HTTPS_ENABLED=true we are behind a TLS terminator
+    # (Cloudflare, nginx, etc.) and must declare an explicit origin list
+    # — `["*"]` is rejected by browsers when combined with
+    # `allow_credentials=True`.  Otherwise (local dev, no domain) keep
+    # the permissive default.
+    https_enabled = os.environ.get("STRUCTURE_HTTPS_ENABLED", "false").lower() == "true"
+    domain = os.environ.get("STRUCTURE_DOMAIN", "").strip()
+    if https_enabled and domain:
+        allow_origins = [f"https://{domain}", f"https://www.{domain}"]
+    else:
+        allow_origins = ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure based on settings in production
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    logger.info("CORS middleware registered")
+    logger.info("CORS middleware registered (origins=%s)", allow_origins)
 
     # Redis cache middleware (if enabled)
     if settings.app_cache_enable:
