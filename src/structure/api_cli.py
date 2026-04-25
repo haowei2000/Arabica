@@ -29,11 +29,16 @@ from structure.app import app
 
 def run():
     """Run the FastAPI application."""
+    # Trust X-Forwarded-* from the reverse proxy in front (Cloudflare,
+    # frontend nginx, etc.) so request.url.scheme reflects the public
+    # scheme rather than the in-cluster HTTP hop.
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=int(os.environ.get("STRUCTURE_APP_PORT", 8000)),
         reload=False,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 
