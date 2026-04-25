@@ -1,0 +1,103 @@
+% EMNLP submission — uses the ACL style files.
+% Obtain acl.sty and acl_natbib.bst from: https://github.com/acl-org/acl-style-files
+% Place them in this directory (same folder as main.tex) before building.
+%
+% Build: make            (pdflatex + bibtex + pdflatex x2)
+% Clean: make clean
+
+% \pdfoutput is a pdfTeX primitive; guard it so the file also builds
+% under XeLaTeX (which latexmkrc selects via $pdf_mode = 5).
+\ifdefined\pdfoutput\pdfoutput=1\fi
+
+\documentclass[11pt]{article}
+
+% Use [review] for anonymous submission (double-blind).
+% Switch to [final] for camera-ready after acceptance.
+\usepackage[review]{acl}
+
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{hyperref}
+
+% TODO macro for draft notes — remove before submission.
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\title{Path-Addressable Context Layers:\\Multi-Level Disclosure for Long-Running LLM Agents}
+
+% For anonymous review, the ACL style auto-replaces authors with
+% "Anonymous ACL submission". Fill these in only for the camera-ready.
+\author{
+  First Author \\
+  Affiliation / Address line 1 \\
+  \texttt{email@domain} \\
+  \And
+  Second Author \\
+  Affiliation / Address line 1 \\
+  \texttt{email@domain} \\
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\input{sections/abstract}
+\end{abstract}
+
+\section{Introduction}
+\label{sec:introduction}
+\input{sections/introduction}
+
+\section{Related Work}
+\label{sec:related_work}
+\input{sections/related_work}
+
+\section{Method}
+\label{sec:method}
+\input{sections/method}
+
+\section{Experiments}
+\label{sec:experiments}
+\input{sections/experiments}
+
+\section{Results and Analysis}
+\label{sec:results}
+\input{sections/results}
+
+\section{Conclusion}
+\label{sec:conclusion}
+\input{sections/conclusion}
+
+% The Limitations section is REQUIRED for ACL/EMNLP submissions
+% and does NOT count toward the page limit.
+\section*{Limitations}
+\input{sections/limitations}
+
+% Ethics statement is optional but recommended.
+\section*{Ethics Statement}
+\input{sections/ethics}
+
+\section*{Acknowledgments}
+% Leave empty for anonymous submission; fill in for camera-ready.
+
+% acl.sty sets the bibliography style to acl_natbib automatically;
+% do not issue \bibliographystyle here or bibtex will error on a duplicate.
+\bibliography{references}
+
+\appendix
+
+\section{Appendix}
+\label{sec:appendix}
+\input{sections/appendix}
+
+\end{document}

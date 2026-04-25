@@ -1,0 +1,133 @@
+\subsection{Research Questions}
+
+We design experiments to answer six questions.
+\textbf{RQ1.} Does path-addressable multi-level disclosure improve
+task accuracy on long-horizon agent benchmarks relative to flat
+history, vector RAG, and MemGPT-style paging?
+\textbf{RQ2.} How does the token cost per successful trajectory
+compare across methods?
+\textbf{RQ3.} Which of the five mechanisms --- path addressing,
+multi-level disclosure, source evaluation, event-level garbage
+collection, or the audit-log feedback --- contributes most to the
+gains?
+\textbf{RQ4.} How does the system scale with workspace size (number
+of entries) and concurrent agents?
+\textbf{RQ5.} Does rating-aware retrieval shift the accuracy / token
+frontier, and is the effect driven by filtering, reranking, or both?
+\textbf{RQ6.} Under the event-level GC policy, how does task accuracy
+vary with the per-type TTL budget, and where is the point of
+diminishing returns?
+
+\subsection{Datasets and Benchmarks}
+
+We evaluate across four complementary axes. For end-to-end \emph{task
+success paired with step- or token-cost}, we extend the
+AgentBench~\citep{liu2024agentbench}, WebArena~\citep{zhou2024webarena},
+and LongBench-Agent~\citep{bai2024longbench} core suite with
+GAIA~\citep{mialon2024gaia}, $\tau$-bench~\citep{yao2024taubench},
+OSWorld~\citep{xie2024osworld}, AppWorld~\citep{trivedi2024appworld},
+and WorkArena~\citep{drouin2024workarena}, covering multi-tool
+assistants, GUI control, coding agents, and enterprise workflows. For
+\emph{long-horizon code and tool reliability} we add
+SWE-bench~\citep{jimenez2024swebench} and BFCL-v4~\citep{patil2025bfcl},
+and we report the process-level progress-rate metric from
+AgentBoard~\citep{ma2024agentboard} to expose partial-credit behaviour
+that a binary success metric hides. For \emph{context and memory
+fidelity} we probe synthetic retrieval with RULER~\citep{hsieh2024ruler},
+application-shaped long context with HELMET~\citep{yen2025helmet} and
+LOFT~\citep{lee2024loft}, and multi-session conversational memory with
+LoCoMo~\citep{maharana2024locomo} and
+LongMemEval~\citep{wu2025longmemeval}. Running the full grid is not
+strictly required for the main claim; we identify a \emph{core} subset
+(Table~\ref{tab:datasets}) and treat the remainder as an extended
+battery reported in the appendix.
+
+\begin{table}[t]
+    \centering
+    \small
+    \begin{tabular}{llll}
+        \toprule
+        Benchmark & Axis & Success & Cost \\
+        \midrule
+        AgentBench \citep{liu2024agentbench}     & General agent        & task score      & steps \\
+        WebArena \citep{zhou2024webarena}        & Web GUI              & end-state       & actions \\
+        LongBench-Agent \citep{bai2024longbench} & Long context         & F1 / EM         & tokens \\
+        \midrule
+        $\tau$-bench \citep{yao2024taubench}     & Tool + user          & pass, pass$^k$  & tool calls \\
+        SWE-bench \citep{jimenez2024swebench}    & Code agent           & tests pass      & tokens \\
+        AppWorld \citep{trivedi2024appworld}     & Interactive coding   & state + tests   & API calls \\
+        OSWorld \citep{xie2024osworld}           & Multimodal desktop   & state checker   & actions \\
+        \midrule
+        LoCoMo \citep{maharana2024locomo}        & Multi-session memory & QA / summarisation & tokens \\
+        LongMemEval \citep{wu2025longmemeval}    & Long-term memory     & per-ability accuracy & tokens \\
+        RULER \citep{hsieh2024ruler}             & Effective context    & retrieval acc.  & tokens \\
+        \bottomrule
+    \end{tabular}
+    \caption{Core evaluation set. Each benchmark contributes a success
+    metric and a native cost signal; aggregation across benchmarks is
+    reported as per-benchmark deltas against each baseline rather than
+    a single headline average, to avoid washing out regime-specific
+    effects.}
+    \label{tab:datasets}
+\end{table}
+
+\todo{Fill Train/Dev/Test splits for each benchmark in an appendix
+table once the final configurations are fixed.}
+
+\subsection{Baselines}
+
+We compare \textsc{Structure} against four baselines that cover the
+space of current practice.
+\textbf{(B1) Flat window.} All tool outputs and retrieved documents
+are appended to the prompt, truncated from the oldest when the window
+is reached. This is the \texttt{ReAct} \citep{yao2023react} default
+and the behaviour most agent frameworks fall back to.
+\textbf{(B2) Vector RAG.} The same state is embedded and stored in a
+pgvector collection; at each step the top-$k$ entries by cosine
+similarity to the current question are concatenated
+\citep{lewis2020rag}.
+\textbf{(B3) MemGPT paging.} We reimplement the main/archival
+distinction of MemGPT \citep{packer2023memgpt} over the same backing
+store, giving the agent \texttt{memory\_insert} and
+\texttt{memory\_search} tools.
+\textbf{(B4) Self-RAG.} An adaptive-retrieval baseline using
+reflection tokens \citep{asai2024selfrag} to decide when to retrieve.
+All baselines use the same underlying language model and tool
+implementations; only the context layer differs.
+
+\subsection{Implementation Details}
+
+We evaluate with a frontier chat model as the agent backbone.
+\todo{Specify exact model, e.g., GPT-4.1 or Claude Sonnet, plus
+temperature, top-$p$, and context window.}
+Embeddings use the 1536-dimensional index in \textsc{Structure} and
+the same embedding model across all baselines to isolate the context
+mechanism. Each benchmark task is run with three random seeds, and
+we report mean $\pm$ standard deviation. We cap each trajectory at
+\todo{$N$} steps and a token budget of \todo{$B$} per run to prevent
+runaway loops. Experiments are executed on a single worker node with
+a dedicated PostgreSQL and Redis, mirroring a minimal production
+deployment.
+
+\subsection{Evaluation Metrics}
+
+\paragraph{Task accuracy.} Benchmark-native success rate (higher is
+better). For AgentBench we report the official composite score; for
+WebArena, end-state correctness; for LongBench-Agent, task-level F1
+or exact match as prescribed by the benchmark.
+
+\paragraph{Token cost.} Mean prompt and completion tokens per
+trajectory, reported separately because prompt tokens dominate for
+long agents (lower is better).
+
+\paragraph{Latency.} Wall-clock time per step and per trajectory,
+decomposed into context retrieval, LLM inference, and tool execution
+(lower is better).
+
+\paragraph{Context efficiency.} The ratio of detail-level reads to
+glance-level reads. Lower ratios indicate that the agent is
+successfully using cheap summaries to route attention.
+
+\paragraph{Significance.} We use paired bootstrap resampling
+($10{,}000$ resamples) for accuracy differences between our method
+and each baseline, reporting $p$-values at $\alpha = 0.05$.

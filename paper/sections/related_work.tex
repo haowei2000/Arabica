@@ -1,0 +1,121 @@
+% Related Work: organised by theme. Each subsection ends by stating
+% what this paper does differently.
+
+\paragraph{Hierarchical and self-editing agent memory.}
+A family of systems extends an agent's effective context by staging
+state outside the window. MemGPT \citep{packer2023memgpt} frames this
+as virtual memory: the model issues explicit swap-in and swap-out
+calls between a main context and a paged store. A-MEM
+\citep{xu2025amem} organises memories as a dynamic graph of linked
+notes in the style of Zettelkasten, letting the agent grow its own
+index. MemoryBank \citep{zhong2024memorybank} introduces an
+Ebbinghaus-inspired forgetting curve, and Mem0
+\citep{chhikara2025mem0} productionises a scalable long-term memory
+layer for deployed agents. RecurrentGPT \citep{zhou2023recurrentgpt}
+separates short- and long-term natural-language memory for sustained
+generation. \citet{zhang2025memorysurvey} give a recent taxonomy of
+this landscape. All of these expose memory through a retrieval or
+paging interface, with addresses chosen by a controller rather than
+by the agent. Our approach differs in that the address space is
+\emph{user-visible and path-structured}: the agent reasons over paths
+the same way a programmer reasons over directories, and chooses
+disclosure depth per entry rather than receiving a fixed slice.
+
+\paragraph{Active working-context management.}
+A concurrent 2025 cluster of work equips the agent with an explicit
+procedure for pruning or folding earlier trajectory content.
+Context-Folding \citep{sun2025contextfolding} trains a fold policy
+end-to-end with reinforcement learning (FoldGRPO); AgentFold
+\citep{ye2025agentfold} learns multi-scale folds via supervised
+fine-tuning and scales to $500$-turn web agents; ACON
+\citep{kang2025acon} optimises a natural-language compression
+guideline in a gradient-free loop; AgentDiet \citep{xu2025agentdiet}
+condenses older trajectory segments past a threshold via a reflection
+LLM call; and Memory-as-Action \citep{zhang2025memact} adds a
+\texttt{prune\_context} action to the agent's action space and trains
+it with a trajectory-segmented RL objective. These methods operate on
+the time axis of a single trajectory and destructively rewrite it;
+our event-level collector (\S\ref{sec:component_gc}) instead operates
+on the address axis of a persistent workspace and is non-destructive,
+preserving the append-only event log for replay and for later
+disclosure.
+
+\paragraph{Hierarchical retrieval over structured corpora.}
+LATTICE \citep{gupta2025lattice} imposes a semantic tree on a corpus
+via LLM-driven summarisation and lets a search LLM navigate it,
+achieving logarithmic retrieval complexity. This is the closest
+theoretical analogue to our path-addressable design, differing in
+that LATTICE's hierarchy is \emph{learned} from document summaries
+while ours is an \emph{authored} POSIX-style convention that is
+visible to the agent. Industrial practice has converged on similar
+structures: Anthropic's Agent Skills framework \citep{anthropic2025skills}
+loads file-system-organised skills into an agent on demand, and
+Anthropic's context-engineering guide \citep{anthropic2025contexteng}
+treats progressive disclosure and just-in-time retrieval as the
+default design pattern for production agents.
+
+\paragraph{Reasoning-and-acting loops and cognitive architectures.}
+Agents need context, but they also need a protocol that uses it.
+ReAct \citep{yao2023react} interleaves reasoning and action in a
+single trace; Reflexion \citep{shinn2023reflexion} adds verbal
+self-critique as an episodic memory; Tree of Thoughts
+\citep{yao2023tot} generalises the trace into a search tree; and
+Generative Agents \citep{park2023generative} combine a memory stream
+with periodic reflection. CoALA \citep{sumers2024coala} frames these
+designs as cognitive architectures with explicit working and
+long-term memory, and Voyager \citep{wang2023voyager} shows that an
+ever-growing skill library can serve as durable context for an
+embodied agent. Chain-of-thought prompting \citep{wei2022cot}
+established that the content of the prompt drives reasoning quality.
+Our context layer is complementary: it supplies a substrate that these
+loops can read, write, and audit without imposing a particular control
+policy.
+
+\paragraph{Long-context models and their limits.}
+A tempting alternative to structured memory is simply a longer
+window. \citet{liu2024lostmiddle} show that recall is worse for items
+placed in the middle of long contexts, and LongBench
+\citep{bai2024longbench} quantifies how benchmark accuracy trails the
+nominal window size. StreamingLLM \citep{xiao2024streamingllm}
+maintains attention sinks for indefinite inference but does not
+address \emph{what} to place in the kept window. These findings
+justify structured context management even when windows are large:
+knowing what to include is a distinct problem from being able to
+include it.
+
+\paragraph{Retrieval, tools, and agent frameworks.}
+Retrieval-augmented generation \citep{lewis2020rag} injects retrieved
+passages into the prompt; Self-RAG \citep{asai2024selfrag} makes the
+retrieval decision adaptive via reflection tokens; and HippoRAG
+\citep{gutierrez2024hipporag} couples retrieval with a graph of
+entities to approximate long-term memory. Toolformer
+\citep{schick2023toolformer} showed that models can learn to call
+external tools, and multi-agent frameworks such as AutoGen
+\citep{wu2023autogen} orchestrate agents that share state through
+conversational channels. In these systems, context management is
+typically an unstated concern: documents arrive, tools are listed,
+conversation history accumulates. Our work promotes context
+management itself to a first-class subsystem, with a defined address
+space, disclosure levels, and audit log.
+
+\paragraph{Positioning.} The closest prior work falls in two camps.
+On the memory-interface side, MemGPT \citep{packer2023memgpt} and
+A-MEM \citep{xu2025amem} are nearest neighbours: MemGPT gives the
+agent a main/archival split and paging calls but does not expose
+\emph{where} a memory lives; A-MEM gives a graph, but its links are
+learned and its addresses are opaque. On the context-management side,
+Context-Folding \citep{sun2025contextfolding} and Memory-as-Action
+\citep{zhang2025memact} are the most directly comparable:
+Context-Folding collapses sub-trajectories via an RL-trained fold
+policy, and MemAct learns a \texttt{prune\_context} action via
+segmented RL. Both destructively compress along the time axis and
+inherit a model-specific training cost. Our contribution is
+orthogonal along both axes: (i) a transparent path-based address
+space combined with per-entry multi-level disclosure, so that
+navigation and detail selection are explicit, inspectable decisions;
+and (ii) a declarative, zero-compute garbage collector that operates
+as a visibility filter over an append-only event log, making
+per-step context byte-exactly reproducible from configuration alone.
+These two primitives compose: a learned pruning policy from
+Context-Folding or MemAct could be expressed as events written into
+our log.

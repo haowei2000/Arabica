@@ -1,0 +1,120 @@
+\subsection{Main Results}
+
+Table~\ref{tab:main} compares \textsc{Structure} against all four
+baselines on the three benchmarks. \todo{Fill in the numbers once
+experiments are run; the table scaffold already enumerates the
+configurations we intend to report.}
+
+\begin{table}[t]
+    \centering
+    \small
+    \begin{tabular}{lccc}
+        \toprule
+        Method                 & Accuracy & Tokens & Latency (s) \\
+        \midrule
+        Flat window (B1)       & \todo{--} & \todo{--} & \todo{--} \\
+        Vector RAG (B2)        & \todo{--} & \todo{--} & \todo{--} \\
+        MemGPT paging (B3)     & \todo{--} & \todo{--} & \todo{--} \\
+        Self-RAG (B4)          & \todo{--} & \todo{--} & \todo{--} \\
+        \midrule
+        \textbf{\textsc{Structure}} & \textbf{\todo{--}} & \textbf{\todo{--}} & \textbf{\todo{--}} \\
+        \bottomrule
+    \end{tabular}
+    \caption{Main results on the test split. Accuracy is the
+    benchmark-native score; Tokens is mean prompt+completion tokens per
+    trajectory; Latency is wall-clock seconds per trajectory. Best
+    result per column in bold.}
+    \label{tab:main}
+\end{table}
+
+\todo{Write a three-to-five-sentence discussion once numbers are
+filled in. Emphasise the accuracy-vs-token Pareto frontier; a
+plausible narrative is that \textsc{Structure} reaches comparable or
+better accuracy at a fraction of the token cost of the flat-window
+and vector-RAG baselines.}
+
+\subsection{Ablation Study}
+
+We ablate the five design components of the layer --- path addressing,
+multi-level disclosure, source evaluation (rating), event-level
+garbage collection, and the audit log --- by disabling each in turn
+while keeping the rest of the system identical.
+\textbf{(A1) No paths.} Entries are stored with a flat identifier;
+\texttt{list} and \texttt{glob} degrade to full scans.
+\textbf{(A2) Single level.} Every read returns full \textsc{detail};
+\textsc{glance} and \textsc{overview} projections are disabled.
+\textbf{(A3) No rating.} The \texttt{rate\_context} tool is hidden and
+retrieval no longer blends or filters on $\bar r$; only
+semantic similarity orders results.
+\textbf{(A4) No GC.} All events are pinned; the prompt grows until
+the hard window limit forces oldest-first truncation.
+\textbf{(A5) No audit replay.} Context events are no longer persisted
+as an ordered log; the agent cannot re-read prior context deterministically.
+
+\todo{Report ablation numbers in Table~\ref{tab:ablation}. A
+reviewer will read this table to decide what actually matters.}
+
+\begin{table}[t]
+    \centering
+    \small
+    \begin{tabular}{lcc}
+        \toprule
+        Configuration      & Accuracy & Tokens \\
+        \midrule
+        Full system          & \todo{--} & \todo{--} \\
+        \midrule
+        (A1) No paths        & \todo{--} & \todo{--} \\
+        (A2) Single level    & \todo{--} & \todo{--} \\
+        (A3) No rating       & \todo{--} & \todo{--} \\
+        (A4) No GC           & \todo{--} & \todo{--} \\
+        (A5) No audit replay & \todo{--} & \todo{--} \\
+        \bottomrule
+    \end{tabular}
+    \caption{Ablation of the five design components.}
+    \label{tab:ablation}
+\end{table}
+
+\subsection{Rating and GC Sensitivity}
+
+Beyond on/off ablations, we sweep the two hyperparameters of the new
+mechanisms.
+\textbf{Rating blend $\alpha$.} We vary $\alpha \in \{0, 0.25, 0.5,
+0.7, 0.9, 1.0\}$ and measure accuracy and tokens.
+\todo{A U-shape is expected: $\alpha = 0$ discards similarity,
+$\alpha = 1$ discards ratings; the best point should sit around the
+default $\alpha = 0.7$ used by the system.}
+\textbf{GC step-TTL.} We scale all non-pinned step-TTL values in the
+default policy by a factor $\beta \in \{0.5, 1.0, 2.0, 4.0, \infty\}$
+and report accuracy vs. mean context tokens.
+\todo{We expect a knee: below the default ($\beta < 1$) the agent
+loses needed tool results; above it ($\beta > 2$) extra tokens bring
+no accuracy gain.}
+
+\subsection{Analysis}
+
+\paragraph{Glance-to-detail ratio.} We measure how often the agent
+escalates a \textsc{glance} query to a \textsc{detail} read. A low
+ratio indicates that summaries are doing their job.
+\todo{Plot the ratio over the course of a trajectory for each
+benchmark. The expected pattern is that successful runs converge to
+a low ratio after the first few steps, whereas failing runs keep
+re-reading full content.}
+
+\paragraph{Path locality.} We inspect the path prefixes accessed per
+step and count how often a step reuses a prefix from the previous
+step. High locality suggests that path addressing gives the agent a
+stable working set.
+\todo{Report mean prefix-locality across benchmarks.}
+
+\paragraph{Scalability with workspace size.}
+We vary the number of entries in the workspace from $10^2$ to $10^5$
+and measure retrieval latency for prefix, glob, and semantic queries.
+\todo{Include a log-log plot; we expect prefix and glob to remain
+sub-linear thanks to B-tree indexing while flat-window and vector-RAG
+baselines degrade more sharply on prompt assembly time.}
+
+\paragraph{Qualitative example.} \todo{Include a side-by-side trace:
+one run using the flat-window baseline exhausts its budget on the
+same document five times; the same task under \textsc{Structure}
+reads the document's \textsc{glance} four times and its
+\textsc{detail} once, succeeding within budget.}

@@ -10,8 +10,8 @@ Path conventions
 /skills/{skill_name}                       — one entry per skill
 /knowledge/{knowledge_name}                — one entry per knowledge base
 /triggers/{trigger_name}                   — one entry per workspace trigger
-/workspaces/{workspace_name}               — one entry per workspace
-/workspaces/{workspace_name}/runs/{run_id[:8]}  — one entry per run (optional)
+/workspaces/{workspace_id}                 — one entry per workspace (paper §3.3)
+/workspaces/{workspace_id}/runs/{run_id[:8]}  — one entry per run (optional)
 
 Key root paths (schema / directory nodes)
 -----------------------------------------
@@ -217,8 +217,8 @@ class ContextSyncer:
     # ──────────────────────────────────────────────────────────────
 
     async def sync_workspace(self, workspace: Any) -> None:
-        """Upsert a context entry for a Workspace at /workspaces/{name}."""
-        path = f"/workspaces/{workspace.name}"
+        """Upsert a context entry for a Workspace at /workspaces/{id} (paper §3.3)."""
+        path = f"/workspaces/{workspace.id}"
         glance = f"Workspace: {workspace.name}"
         if workspace.description:
             glance += f" — {workspace.description[:60]}"
@@ -248,17 +248,17 @@ class ContextSyncer:
 
     async def remove_workspace(self, workspace: Any) -> None:
         """Delete the context entry for a Workspace."""
-        await self._delete(str(workspace.owner_id), f"/workspaces/{workspace.name}")
+        await self._delete(str(workspace.owner_id), f"/workspaces/{workspace.id}")
 
     # ──────────────────────────────────────────────────────────────
     # Run (lightweight — only glance / status, no heavy content)
     # ──────────────────────────────────────────────────────────────
 
     async def sync_run(self, run: Any) -> None:
-        """Upsert a context entry for a Run at /workspaces/{workspace_name}/runs/{run_id[:8]}."""
+        """Upsert a context entry for a Run at /workspaces/{workspace_id}/runs/{run_id[:8]} (paper §3.3)."""
         workspace_name = await self._workspace_name(run.workspace_id)
         short_id = str(run.id)[:8]
-        path = f"/workspaces/{workspace_name}/runs/{short_id}"
+        path = f"/workspaces/{run.workspace_id}/runs/{short_id}"
 
         title = getattr(run, "title", None)
         run_summary = getattr(run, "summary", None)
@@ -291,11 +291,10 @@ class ContextSyncer:
 
     async def remove_run(self, run: Any) -> None:
         """Delete the context entry for a Run."""
-        workspace_name = await self._workspace_name(run.workspace_id)
         short_id = str(run.id)[:8]
         await self._delete(
             str(run.user_id),
-            f"/workspaces/{workspace_name}/runs/{short_id}",
+            f"/workspaces/{run.workspace_id}/runs/{short_id}",
         )
 
     # ──────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -128,6 +128,24 @@ class Context(Base):  # ty:ignore[unsupported-base]
         Integer, default=0, comment="重要性评分 0-100"
     )
 
+    # Context-source evaluation.  Agents call the rate_context tool after
+    # using an entry; ratings are event-sourced (CONTEXT_RATED events) and
+    # aggregated here for fast ordering and thresholding at retrieval time.
+    rating_sum: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        server_default="0",
+        comment="累积评分（来自 CONTEXT_RATED 事件）",
+    )
+    rating_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="评分次数",
+    )
+
     # Audit fields
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), comment="创建时间"
@@ -190,47 +208,56 @@ class Context(Base):  # ty:ignore[unsupported-base]
             f"<Context(id={self.id}, type='{self.context_type}', path='{self.path}')>"
         )
 
+    @property
+    def rating_avg(self) -> float | None:
+        """Mean rating across all CONTEXT_RATED events for this context."""
+        if not self.rating_count:
+            return None
+        return self.rating_sum / self.rating_count
+
+    def record_rating(self, rating: float) -> None:
+        """Apply a single rating to the denormalised aggregate columns.
+
+        The event-log entry (CONTEXT_RATED) is the source of truth; this
+        keeps the denormalised fields in sync for cheap sorting/filtering.
+        """
+        self.rating_sum = (self.rating_sum or 0.0) + float(rating)
+        self.rating_count = (self.rating_count or 0) + 1
+
     # ──── ContextLayer Framework Methods ────
 
     def disclose(self, level: str = "overview") -> dict[str, Any]:
-        """Progressive disclosure aligned with ContextLayer framework.
+        """Progressive disclosure (paper §3.4, Listing 2).
 
-        Args:
-            level: Disclosure level - "glance", "overview", or "detail"
-
-        Returns:
-            Dictionary with appropriate level of information
+        Levels are monotone: overview extends glance, detail extends overview.
+        Ratings are a retrieval-time signal (§3.5) and are deliberately not
+        surfaced here; callers that need them should read ``rating_avg``.
         """
-        result: dict[str, Any] = {"path": self.path}
-
-        # Level 1: Glance - quick scan
-        if self.glance:
-            result["glance"] = self.glance
-        else:
-            result["glance"] = (
-                self.content[:50] + "..." if len(self.content) > 50 else self.content
-            )
-
+        result: dict[str, Any] = {
+            "path": self.path,
+            "glance": self.glance or (self.content[:50] if self.content else ""),
+        }
         if level == "glance":
             return result
 
-        # Level 2: Overview - structured summary
-        if level in ("overview", "detail"):  # noqa: SIM102
-            if self.tags:
-                result["tags"] = self.tags
-
+        # Overview: glance + structured metadata (tags, type, scope, timestamps).
+        if self.tags:
+            result["tags"] = self.tags
+        result["context_type"] = self.context_type
+        result["scope"] = self.scope
+        if self.created_at:
+            result["created_at"] = self.created_at.isoformat()
+        if self.updated_at:
+            result["updated_at"] = self.updated_at.isoformat()
         if level == "overview":
             return result
 
-        # Level 3: Detail - full content
-        if level == "detail":
-            result["content"] = self.content
-            result["meta"] = self.meta or {}
-            result["context_type"] = self.context_type
-            result["importance"] = self.importance
-            if self.s3_key:
-                result["s3_key"] = self.s3_key
-
+        # Detail: full content + unstructured metadata.  S3-backed payloads
+        # are referenced lazily via ``s3_key``.
+        result["content"] = self.content
+        result["meta"] = self.meta or {}
+        if self.s3_key:
+            result["s3_key"] = self.s3_key
         return result
 
     def get_path_depth(self) -> int:
