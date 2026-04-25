@@ -1,0 +1,9 @@
+Path-Addressable Context Layers — Deep Review · 2026-04-25
+
+Verdict: Major Revision (and, if a deadline is near, withhold submission until experiments are run).
+Editor screen: Desk-reject in current form (visible TODO macros in abstract; empty results tables).
+
+The paper has a clean conceptual core (path-addressed, multi-level-disclosed, event-audited context), a serious related-work section that distinguishes the contribution from the 2025 trajectory-compression cluster, and an honest Limitations section. It is, however, pre-experiment: 28 \todo markers remain, both Tables 2 and 3 are entirely \todo{--} cells, and three reproducibility knobs (backbone model, step cap, token budget) are unfilled. There is also a self-contradiction between the Limitations scope (3 benchmarks) and the Experiments scope (13+).
+
+Issue counts: 6 major / 7 moderate / 5 minor.
+Top-3 priority: (1) run the experiments and fill Tables 2–3; (2) reconcile Limitations with Experiments; (3) pin the backbone model and budgets.

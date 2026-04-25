@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Novelty claim should be grounded against the closest prior work",
+    "quote": "",
+    "explanation": "The paper positions itself against prior work, but the current wording should make the closest comparator and the real novelty delta explicit instead of relying on broad superiority language.",
+    "comment_type": "claim_accuracy",
+    "severity": "moderate",
+    "confidence": "low",
+    "source_kind": "llm",
+    "source_section": "related_work",
+    "related_sections": [
+      "related_work",
+      "results"
+    ],
+    "root_cause_key": "novelty-claim-should-be-grounded-against-the-closest-prior-work",
+    "review_lane": "committee_literature",
+    "gate_blocker": false,
+    "quote_verified": false
+  }
+]
