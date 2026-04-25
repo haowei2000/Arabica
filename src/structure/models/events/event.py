@@ -326,7 +326,11 @@ class Event(Base):
                 path = p.get("path") or p.get("context_path") or ""
                 rating = p.get("rating")
                 comment = p.get("comment") or ""
-                head = f"Context rated: {path}={rating}" if path else f"Context rated: {rating}"
+                head = (
+                    f"Context rated: {path}={rating}"
+                    if path
+                    else f"Context rated: {rating}"
+                )
                 return f"{head} ({_trim(comment, 80)})" if comment else head
 
             # ── Run lifecycle ─────────────────────────────────────────────
