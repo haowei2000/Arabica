@@ -1,0 +1,62 @@
+[
+  {
+    "section_key": "abstract",
+    "title": "Abstract",
+    "start_line": 53,
+    "end_line": 56,
+    "line_base": 1,
+    "word_count": 3,
+    "char_count": 57,
+    "file_name": "abstract.md"
+  },
+  {
+    "section_key": "introduction",
+    "title": "Introduction",
+    "start_line": 57,
+    "end_line": 60,
+    "line_base": 1,
+    "word_count": 3,
+    "char_count": 77,
+    "file_name": "introduction.md"
+  },
+  {
+    "section_key": "related",
+    "title": "Related",
+    "start_line": 61,
+    "end_line": 64,
+    "line_base": 1,
+    "word_count": 4,
+    "char_count": 77,
+    "file_name": "related.md"
+  },
+  {
+    "section_key": "method",
+    "title": "Method",
+    "start_line": 65,
+    "end_line": 72,
+    "line_base": 1,
+    "word_count": 6,
+    "char_count": 135,
+    "file_name": "method.md"
+  },
+  {
+    "section_key": "discussion",
+    "title": "Discussion",
+    "start_line": 73,
+    "end_line": 76,
+    "line_base": 1,
+    "word_count": 5,
+    "char_count": 75,
+    "file_name": "discussion.md"
+  },
+  {
+    "section_key": "conclusion",
+    "title": "Conclusion",
+    "start_line": 77,
+    "end_line": 104,
+    "line_base": 1,
+    "word_count": 72,
+    "char_count": 691,
+    "file_name": "conclusion.md"
+  }
+]
