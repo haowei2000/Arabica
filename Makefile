@@ -38,16 +38,16 @@ docker-build-all: ## Build all Docker images (backend + frontend + context-servi
 	$(MAKE) docker-build-context-service
 
 docker-up: ## Start all containers (infra + app + celery worker)
-	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --profile celery up -d
+	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env --profile celery up -d
 
 docker-up-infra: ## Start infrastructure only (postgres, redis, rustfs, context-service)
-	COMPOSE_PROFILES=infra docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env up -d
+	COMPOSE_PROFILES=infra docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env up -d
 
 docker-deploy: ## Pull pre-built images and restart all containers (used by CD)
 	docker ps -aq --filter "network=structure-network" | xargs -r docker rm -f || true
 	docker network rm structure-network || true
-	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env up -d --no-build
-	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env run --rm tool-initializer || true
+	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env up -d --no-build
+	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env run --rm tool-initializer || true
 	docker image prune -f
 
 dev-infra: docker-up-infra ## Start infra in docker, run migrations, and prepare for local development
@@ -60,13 +60,13 @@ dev-local: dev-infra ## Start infra in docker and then start all other services 
 	$(MAKE) start-all
 
 docker-down: ## Stop all containers
-	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --profile all down
+	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env --profile all down
 
 docker-status: ## Show container status
-	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env ps
+	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env ps
 
 docker-logs: ## Show container logs
-	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env logs -f
+	docker compose -p structure -f docker/docker-compose.yml --env-file $(CURDIR)/.env --env-file $(CURDIR)/performance.env logs -f
 
 # ============================================================================
 # 环境配置
