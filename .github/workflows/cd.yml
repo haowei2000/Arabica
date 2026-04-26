@@ -113,8 +113,8 @@ jobs:
             # being installed on the deploy host).
             docker ps -aq --filter "network=structure-network" | xargs -r docker rm -f || true
             docker network rm structure-network || true
-            docker compose -p structure -f docker/docker-compose.yml --env-file "$(pwd)/.env" up -d --no-build
-            docker compose -p structure -f docker/docker-compose.yml --env-file "$(pwd)/.env" run --rm tool-initializer || true
+            docker compose -p structure -f docker/docker-compose.yml --env-file "$(pwd)/.env" --env-file "$(pwd)/performance.env" up -d --no-build
+            docker compose -p structure -f docker/docker-compose.yml --env-file "$(pwd)/.env" --env-file "$(pwd)/performance.env" run --rm tool-initializer || true
             docker image prune -f
 
       - name: Verify deployment
