@@ -86,9 +86,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1400M
+          memory: ${BACKEND_MEMORY_LIMIT:-1400M}
         reservations:
-          memory: 512M
+          memory: ${BACKEND_MEMORY_RESERVATION:-512M}
 
   # One-shot container: imports all inner tools from the MCP server on startup
   tool-initializer:
@@ -158,9 +158,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${CELERY_BEAT_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 64M
+          memory: ${CELERY_BEAT_MEMORY_RESERVATION:-64M}
 
   # Flower - Celery monitoring (optional)
   flower:
@@ -206,10 +206,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${FLOWER_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 64M
-  
+          memory: ${FLOWER_MEMORY_RESERVATION:-64M}
+
   # Frontend application (React + Vite)
   frontend:
     profiles:
@@ -247,9 +247,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: ${FRONTEND_MEMORY_LIMIT:-128M}
         reservations:
-          memory: 32M
+          memory: ${FRONTEND_MEMORY_RESERVATION:-32M}
 
   # PostgreSQL Database with pgvector
   postgres:
@@ -261,12 +261,12 @@ services:
     image: pgvector/pgvector:pg15
     command: >
       postgres
-      -c shared_buffers=64MB
-      -c work_mem=4MB
-      -c maintenance_work_mem=32MB
-      -c max_connections=20
-      -c effective_cache_size=128MB
-      -c wal_buffers=4MB
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-64MB}
+      -c work_mem=${POSTGRES_WORK_MEM:-4MB}
+      -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-32MB}
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-20}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-128MB}
+      -c wal_buffers=${POSTGRES_WAL_BUFFERS:-4MB}
     ports:
       - "${EXPOSE_PORT_POSTGRES:-5432}:5432"
     volumes:
@@ -287,9 +287,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${POSTGRES_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 128M
+          memory: ${POSTGRES_MEMORY_RESERVATION:-128M}
 
 
   
@@ -329,6 +329,8 @@ services:
     command:
       - redis-server
       - /usr/local/etc/redis/redis.conf
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-100mb}
     ports:
       - "${EXPOSE_PORT_REDIS:-6379}:6379"
     volumes:
@@ -347,9 +349,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 150M
+          memory: ${REDIS_MEMORY_LIMIT:-150M}
         reservations:
-          memory: 64M
+          memory: ${REDIS_MEMORY_RESERVATION:-64M}
 
   # Ollama Service (for local LLM)
   ollama:
@@ -412,9 +414,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${REDIS_COMMANDER_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 64M
+          memory: ${REDIS_COMMANDER_MEMORY_RESERVATION:-64M}
 
   # Context Service (standalone mode — optional)
   # Context storage is now handled in-process by the backend.
