@@ -38,7 +38,7 @@ services:
       - structure-logs:/app/logs
       - structure-context-data:/app/data/context
     env_file:
-      - .env
+      - ../.env
     environment:
       <<: *common-env
       RELOAD: ${RELOAD:-false}
@@ -130,7 +130,7 @@ services:
     volumes:
       - structure-logs:/app/logs
     env_file:
-      - .env
+      - ../.env
     environment:
       <<: *common-env
       SKIP_MIGRATIONS: "true"
@@ -178,7 +178,7 @@ services:
     ports:
       - "${FLOWER_PORT:-5555}:5555"
     env_file:
-      - .env
+      - ../.env
     environment:
       <<: *common-env
       SKIP_MIGRATIONS: "true"
@@ -217,7 +217,7 @@ services:
       - app
       - all
     env_file:
-      - .env
+      - ../.env
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
@@ -305,7 +305,7 @@ services:
       - "${RUSTFS_EXPOSE_CONSOLE:-9001}:9001"
     
     env_file:
-      - .env
+      - ../.env
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS__ACCESS_KEY:-rustfsadmin}
       RUSTFS_SECRET_KEY: ${RUSTFS__SECRET_KEY:-rustfsadmin}
@@ -325,7 +325,7 @@ services:
       - all
     image: redis:7-alpine
     env_file:
-      - .env
+      - ../.env
     command:
       - redis-server
       - /usr/local/etc/redis/redis.conf
