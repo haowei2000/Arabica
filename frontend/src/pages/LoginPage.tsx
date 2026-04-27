@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Bot, Eye, EyeOff } from 'lucide-react';
+import { Moon, Sun, Eye, EyeOff } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -62,9 +62,9 @@ export default function LoginPage() {
           {/* Logo and title */}
           <div className="flex flex-col items-center mb-8">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/30 mb-4">
-              <Bot className="size-7 text-white" />
+              <img src="/icon.png" alt="Structure" className="size-9 object-contain" />
             </div>
-            <h1 className="text-2xl font-bold text-foreground">AI Agent Platform</h1>
+            <h1 className="text-2xl font-bold text-foreground">Structure</h1>
             <p className="text-sm text-muted-foreground mt-1">Sign in to your account</p>
           </div>
 
