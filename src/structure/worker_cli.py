@@ -50,6 +50,33 @@ def generate_consumer_name(prefix: str, workspace_id: str, index: int) -> str:
     return f"{prefix}-{ws_prefix}-{hostname}-{os.getpid()}-{index}-{short_uuid}"
 
 
+_WORKSPACE_POLL_INTERVAL_SECONDS = 30
+
+
+async def _wait_for_workspaces(label: str = "Worker") -> list[str]:
+    """Poll the DB until at least one active workspace exists, then return its IDs.
+
+    Replaces the previous ``await asyncio.sleep(float("inf"))`` pattern: that
+    blocked the event loop indefinitely on a fresh deploy with no workspaces
+    yet, and SIGTERM could not interrupt cleanly. Polling in finite chunks
+    keeps the loop responsive to signals and lets the worker pick up the first
+    workspace as soon as it is created.
+    """
+    while True:
+        async with get_session("structure") as db:
+            workspace_ids = await WorkspaceCRUD(db).get_all_active_ids()
+        if workspace_ids:
+            logger.info(f"📋 [{label}] Found {len(workspace_ids)} active workspace(s)")
+            return list(workspace_ids)
+
+        logger.info(
+            "⏳ [%s] No active workspaces yet, retrying in %ds...",
+            label,
+            _WORKSPACE_POLL_INTERVAL_SECONDS,
+        )
+        await asyncio.sleep(_WORKSPACE_POLL_INTERVAL_SECONDS)
+
+
 async def run_single_worker(
     redis_client: Any,
     db_factory: Any,
@@ -103,12 +130,12 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         # Single shared runtime so all workers can find executors created by any peer
         shared_runtime = ExecutorInstanceManager()
 
-        # Get all active workspace IDs
-        async with get_session("structure") as db:
-            workspace_crud = WorkspaceCRUD(db)
-            workspace_ids = await workspace_crud.get_all_active_ids()
-
-        logger.info(f"📋 Found {len(workspace_ids)} active workspace(s)")
+        # Get all active workspace IDs.  On a fresh deployment this list may be
+        # empty — we poll until at least one workspace appears so the worker
+        # starts as soon as it has work to do, instead of blocking on
+        # ``sleep(float("inf"))`` (which made the event loop appear hung and
+        # ate SIGTERM on container shutdown).
+        workspace_ids = await _wait_for_workspaces()
 
         # Create worker tasks for each workspace
         for ws_idx, workspace_id in enumerate(workspace_ids):
@@ -134,12 +161,6 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
             f"🚀 Started {len(tasks)} total worker(s) across {len(workspace_ids)} workspace(s)"
         )
         logger.info("=" * 60)
-
-        if not tasks:
-            logger.info(
-                "⏳ No workspaces found, waiting for workspaces to be created..."
-            )
-            await asyncio.sleep(float("inf"))
 
         # Wait for all workers (or until one fails)
         done, pending = await asyncio.wait(
@@ -209,10 +230,9 @@ async def run_workers_embedded(
     tasks: list[asyncio.Task] = []
 
     try:
-        async with get_session("structure") as db:
-            workspace_crud = WorkspaceCRUD(db)
-            workspace_ids = await workspace_crud.get_all_active_ids()
-
+        # Same fresh-deploy concern as run_workers: poll instead of sleeping
+        # forever so the API lifespan can shut down cleanly on signal.
+        workspace_ids = await _wait_for_workspaces(label="Embedded Worker")
         logger.info(f"[Embedded Worker] {len(workspace_ids)} active workspace(s)")
 
         for ws_idx, workspace_id in enumerate(workspace_ids):
@@ -230,11 +250,6 @@ async def run_workers_embedded(
                     name=f"embedded-worker-{ws_idx}-{i}",
                 )
                 tasks.append(task)
-
-        if not tasks:
-            logger.info("[Embedded Worker] No workspaces found, sleeping...")
-            await asyncio.sleep(float("inf"))
-            return
 
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
 

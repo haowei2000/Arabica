@@ -639,10 +639,11 @@ export default function WorkspaceConsole() {
     }
   };
 
-  const { sendMessage, stopStreaming, approveToolCall, respondToQuery } = useStreamingChat(
+  const { sendMessage, stopStreaming, approveToolCall, respondToQuery, streamError, retryLastMessage } = useStreamingChat(
     currentWorkspaceId || '',
     currentWorkspaceAppId
   );
+  const clearStreamError = useChatStore((s) => s.setStreamError);
 
   // ── Tool mention (@) ──────────────────────────────────────────────────────
   const { data: toolListData } = useToolList({ enabled_only: true });
@@ -902,6 +903,44 @@ export default function WorkspaceConsole() {
                       </span>
                     )}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {streamError && (
+              <div
+                role="alert"
+                className="flex items-start gap-3 rounded-xl border border-red-500/40 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-300 animate-fade-in"
+              >
+                <AlertCircle className="size-4 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold">{streamError.category.replace(/_/g, ' ')}</p>
+                  <p className="text-red-700/80 dark:text-red-200/80 break-words">{streamError.message}</p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {streamError.retryable && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        clearStreamError(null);
+                        retryLastMessage();
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => clearStreamError(null)}
+                  >
+                    Dismiss
+                  </Button>
                 </div>
               </div>
             )}
