@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SkillBase(BaseModel):
@@ -43,6 +43,8 @@ class SkillUpdate(BaseModel):
 class SkillResponse(SkillBase):
     """Schema for skill response (metadata only)."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     user_id: UUID
     has_embedding: bool = Field(
@@ -54,9 +56,6 @@ class SkillResponse(SkillBase):
     )
     created_at: datetime
     updated_at: datetime | None
-
-    class Config:
-        from_attributes = True
 
 
 class SkillListResponse(BaseModel):

@@ -8,7 +8,7 @@ from langchain_openai import OpenAIEmbeddings
 
 logger = logging.getLogger(__name__)
 
-EmbeddingProvider = Literal["tongyi", "openai", "ollama"]
+EmbeddingProvider = Literal["tongyi", "dashscope", "openai", "ollama", "custom"]
 
 # Common embedding models and their dimensions
 EMBEDDING_MODELS = {
@@ -59,7 +59,7 @@ class EmbeddingService:
     def _create_client(self) -> OpenAIEmbeddings | OllamaEmbeddings:
         """Create embedding client based on provider."""
         match self.provider:
-            case "tongyi" | "openai":
+            case "tongyi" | "dashscope" | "openai" | "custom":
                 if not self._api_key or not self._base_url:
                     raise ValueError(
                         "No embedding model configured. Please add a default embedding model "
@@ -97,7 +97,7 @@ class EmbeddingService:
         """
         text = self._sanitize_text(text)
         # Tongyi/DashScope rejects tokenized input from LangChain — use direct path.
-        if self.provider == "tongyi":
+        if self.provider in ("tongyi", "dashscope"):
             return self._embed_tongyi_direct([text])[0]
         return self._client.embed_query(text)
 
@@ -167,7 +167,7 @@ class EmbeddingService:
 
         try:
             # For Tongyi/DashScope, use direct API call to avoid langchain issues
-            if self.provider == "tongyi":
+            if self.provider in ("tongyi", "dashscope"):
                 embeddings = self._embed_tongyi_direct(valid_texts)
             else:
                 embeddings = self._client.embed_documents(valid_texts)

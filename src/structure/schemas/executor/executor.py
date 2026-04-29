@@ -2,11 +2,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExecutorResponse(BaseModel):
     """Schema for executor response."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID = Field(..., description="Executor UUID")
     executor_code: str = Field(..., description="Unique executor code")
@@ -16,6 +18,3 @@ class ExecutorResponse(BaseModel):
     version: int = Field(..., description="Executor version")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime | None = Field(None, description="Last update timestamp")
-
-    class Config:
-        from_attributes = True

@@ -17,7 +17,6 @@ from structure.config.factory import get_settings
 from structure.models.events.event import Event
 from structure.models.runs.run import Run
 from structure.schemas.events.event_payloads import EventType
-from structure.services.events.event_codec import RE_CODE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +349,7 @@ class EventPublisher:
                 workspace_id = str(event.workspace_id)
                 # Primary stream for both SSE and worker consumers
                 workspace_stream = (
-                    f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+                    f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
                 )
                 pipe.xadd(workspace_stream, fields, maxlen=10000, approximate=True)
 

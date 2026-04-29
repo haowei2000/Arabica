@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from structure.core.enums.tools import AllowedToolType
 
@@ -69,6 +69,8 @@ class ToolUpdate(BaseModel):
 class ToolResponse(BaseModel):
     """Schema for tool response."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID = Field(..., description="Tool UUID")
     name: str = Field(..., description="Tool display name")
     tool_code: str = Field(..., description="Unique tool code")
@@ -92,9 +94,6 @@ class ToolResponse(BaseModel):
     version: int = Field(..., description="Tool version")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime | None = Field(None, description="Last update timestamp")
-
-    class Config:
-        from_attributes = True
 
 
 class ToolListResponse(BaseModel):

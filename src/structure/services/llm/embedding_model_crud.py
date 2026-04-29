@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.models.llm.embedding_model import EmbeddingModel
@@ -27,7 +27,10 @@ class EmbeddingModelCRUD:
         auto_commit: bool = True,
     ) -> EmbeddingModel:
         """Create a new embedding model configuration."""
-        obj = EmbeddingModel(**data.model_dump(), user_id=str(user_id))
+        create_data = data.model_dump()
+        if create_data.get("is_default") is True:
+            await self._clear_default_models()
+        obj = EmbeddingModel(**create_data, user_id=str(user_id))
         self.db.add(obj)
         if auto_commit:
             await self.db.commit()
@@ -52,6 +55,8 @@ class EmbeddingModelCRUD:
         if not obj:
             return None
         update_data = data.model_dump(exclude_unset=True)
+        if update_data.get("is_default") is True:
+            await self._clear_default_models(exclude_id=model_id)
         for field, value in update_data.items():
             setattr(obj, field, value)
         if auto_commit:
@@ -115,6 +120,12 @@ class EmbeddingModelCRUD:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def _clear_default_models(self, exclude_id: str | UUID | None = None) -> None:
+        stmt = update(EmbeddingModel).where(EmbeddingModel.is_default.is_(True))
+        if exclude_id is not None:
+            stmt = stmt.where(EmbeddingModel.id != exclude_id)
+        await self.db.execute(stmt.values(is_default=False))
 
     async def search(
         self,

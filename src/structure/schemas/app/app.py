@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from structure.schemas.context.context_schema import ContextSchema
 from structure.schemas.llm.chat_llm import ChatLLM
@@ -43,6 +43,8 @@ class AppUpdate(BaseModel):
 class AppResponse(BaseModel):
     """Schema for app response."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID = Field(..., description="App UUID")
     app_code: str = Field(..., description="Unique app code")
     executor_id: UUID | None = Field(None, description="Executor ID")
@@ -52,9 +54,6 @@ class AppResponse(BaseModel):
     version: int = Field(..., description="App version")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime | None = Field(None, description="Last update timestamp")
-
-    class Config:
-        from_attributes = True
 
 
 class AppListResponse(BaseModel):

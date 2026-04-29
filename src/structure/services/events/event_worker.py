@@ -74,6 +74,7 @@ _redis_cfg = get_settings().redis
 REDIS_CONSUMER_GROUP = _redis_cfg.consumer_group
 REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
+REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
 
 # Event type codec (encode/decode + routing patterns) lives in event_codec.py.
@@ -279,7 +280,9 @@ class Worker:
 
     async def start(self, workspace_id: str):
         """Start consuming messages from the workspace stream using consumer groups."""
-        stream_name = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        stream_name = (
+            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        )
         await self._ensure_consumer_group(stream_name)
         logger.info(
             f"Worker '{self.consumer_name}' listening on workspace stream: {stream_name}"
@@ -748,7 +751,7 @@ class Worker:
     ) -> list[Event]:
         """Load events for *workspace_id* from the Redis workspace stream."""
         workspace_stream = (
-            f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         )
         try:
             messages = await self.redis.xrange(workspace_stream, count=count)

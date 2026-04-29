@@ -15,6 +15,7 @@ from structure.core.dependencies.workspace import (
     get_run_state_machine,
     get_workspace_crud,
 )
+from structure.core.enums.events import EventType
 from structure.core.enums.runs import RunStatus, TriggerType
 from structure.extensions.database import get_structure_db
 from tests.unit.routers.conftest import (
@@ -86,7 +87,9 @@ def mock_state_machine():
     sm.redis = None
     sm.start = AsyncMock(return_value=make_run(status=RunStatus.RUNNING.value))
     sm.cancel = AsyncMock(return_value=make_run(status=RunStatus.CANCELLED.value))
-    sm.resume_from_tool = AsyncMock(return_value=make_run(status=RunStatus.RUNNING.value))
+    sm.resume_from_tool = AsyncMock(
+        return_value=make_run(status=RunStatus.RUNNING.value)
+    )
     return sm
 
 
@@ -108,7 +111,14 @@ def mock_db():
 
 
 @pytest.fixture()
-def client(mock_workspace_crud, mock_run_crud, mock_state_machine, mock_event_publisher, mock_db, patch_bootstrap):
+def client(
+    mock_workspace_crud,
+    mock_run_crud,
+    mock_state_machine,
+    mock_event_publisher,
+    mock_db,
+    patch_bootstrap,
+):
     user = make_user()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_structure_db] = lambda: mock_db
@@ -217,7 +227,9 @@ class TestCancelRun:
         assert resp.status_code == 404
 
     def test_cancel_invalid_state(self, client, mock_state_machine):
-        mock_state_machine.cancel.side_effect = Exception("Cannot cancel a finished run")
+        mock_state_machine.cancel.side_effect = Exception(
+            "Cannot cancel a finished run"
+        )
         resp = client.post(f"{WS_RUNS}/{RUN_ID}/cancel")
         assert resp.status_code == 400
 
@@ -227,7 +239,9 @@ class TestCancelRun:
 
 class TestResumeRun:
     def test_resume_success(self, client, mock_run_crud):
-        run = make_run(status=RunStatus.WAITING.value, waiting_for={"executor_code": "SimpleAgent"})
+        run = make_run(
+            status=RunStatus.WAITING.value, waiting_for={"executor_code": "SimpleAgent"}
+        )
         mock_run_crud.get_by_id.return_value = run
 
         resp = client.post(
@@ -235,6 +249,41 @@ class TestResumeRun:
             json={"approval": True},
         )
         assert resp.status_code == 200
+
+    def test_resume_retriggers_worker_with_tool_result_event(
+        self, client, mock_run_crud, mock_state_machine, mock_event_publisher
+    ):
+        run = make_run(
+            status=RunStatus.WAITING.value,
+            waiting_for={"tool_name": "confirm_action", "tool_id": "tool-1"},
+        )
+        mock_run_crud.get_by_id.return_value = run
+        mock_state_machine.redis = AsyncMock()
+
+        call_order = []
+
+        async def resume_from_tool(**kwargs):
+            call_order.append(("resume", kwargs))
+            return make_run(status=RunStatus.RUNNING.value)
+
+        async def publish(**kwargs):
+            call_order.append(("publish", kwargs))
+
+        mock_state_machine.resume_from_tool.side_effect = resume_from_tool
+        mock_event_publisher.publish.side_effect = publish
+
+        resp = client.post(
+            f"{WS_RUNS}/{RUN_ID}/resume",
+            json={"approval": True, "tool_result": {"ok": True}},
+        )
+
+        assert resp.status_code == 200
+        assert call_order[0][0] == "resume"
+        assert call_order[1][0] == "publish"
+        assert call_order[1][1]["event_type"] == EventType.TOOL_RESULT
+        assert call_order[1][1]["auto_commit"] is True
+        mock_state_machine.redis.set.assert_awaited_once()
+        mock_state_machine.redis.xadd.assert_not_called()
 
     def test_resume_not_waiting(self, client, mock_run_crud):
         run = make_run(status=RunStatus.RUNNING.value)

@@ -25,15 +25,14 @@ import logging
 import os
 import signal
 import sys
-from typing import Any
 import uuid
+from typing import Any
 
 import click
 
 # 配置会在 structure.config.factory 模块导入时自动加载
 from structure.core.bootstrap import bootstrap_worker
 from structure.extensions.database import get_session
-from structure.services.events.event_publisher import REDIS_EXECUTOR_LABEL
 from structure.services.events.event_worker import Worker
 from structure.services.executor.runtime import ExecutorInstanceManager
 from structure.services.workspaces.workspace_crud import WorkspaceCRUD

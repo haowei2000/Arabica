@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Cpu, Plus, Trash2, Pencil, Loader2, Search, CheckCircle2,
   XCircle, Star, Eye, Zap, Layers, Settings2, Globe, MessageSquare
@@ -224,17 +224,77 @@ const EMPTY_EMBED: EmbeddingModelCreate = {
   distance_metric: 'cosine', enabled: true, is_default: false,
 };
 
+const EMBEDDING_PRESETS = [
+  {
+    id: 'tongyi-v3',
+    label: 'DashScope text-embedding-v3',
+    values: {
+      name: 'DashScope text-embedding-v3',
+      provider: 'tongyi',
+      model_id: 'text-embedding-v3',
+      dimension: 1024,
+      base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      max_tokens: 8192,
+      currency: 'CNY',
+    },
+  },
+  {
+    id: 'openai-small',
+    label: 'OpenAI text-embedding-3-small',
+    values: {
+      name: 'OpenAI text-embedding-3-small',
+      provider: 'openai',
+      model_id: 'text-embedding-3-small',
+      dimension: 1536,
+      base_url: 'https://api.openai.com/v1',
+      max_tokens: 8192,
+      currency: 'USD',
+    },
+  },
+  {
+    id: 'ollama-nomic',
+    label: 'Ollama nomic-embed-text',
+    values: {
+      name: 'Ollama nomic-embed-text',
+      provider: 'ollama',
+      model_id: 'nomic-embed-text',
+      dimension: 768,
+      base_url: 'http://127.0.0.1:11434',
+      max_tokens: 8192,
+      currency: 'USD',
+    },
+  },
+] satisfies {
+  id: string;
+  label: string;
+  values: Partial<EmbeddingModelCreate> &
+    Pick<EmbeddingModelCreate, 'name' | 'provider' | 'model_id' | 'dimension'>;
+}[];
+
+const DEFAULT_EMBEDDING_VALUES = EMBEDDING_PRESETS[0].values;
+
+function createEmbeddingForm(
+  defaults?: Partial<EmbeddingModelCreate>
+): EmbeddingModelCreate {
+  return {
+    ...EMPTY_EMBED,
+    ...DEFAULT_EMBEDDING_VALUES,
+    ...defaults,
+  };
+}
+
 function EmbeddingModelDialog({
-  open, onClose, initial,
+  open, onClose, initial, defaults,
 }: {
   open: boolean;
   onClose: () => void;
   initial?: EmbeddingModel | null;
+  defaults?: Partial<EmbeddingModelCreate>;
 }) {
   const isEdit = !!initial;
-  const [form, setForm] = useState<EmbeddingModelCreate>(() =>
-    initial
-      ? {
+  const buildInitialForm = (): EmbeddingModelCreate => {
+    if (initial) {
+      return {
           name: initial.name, provider: initial.provider, model_id: initial.model_id,
           description: initial.description ?? null, base_url: initial.base_url ?? null,
           api_key_ref: initial.api_key_ref ?? null,
@@ -243,16 +303,43 @@ function EmbeddingModelDialog({
           normalize: initial.normalize, distance_metric: initial.distance_metric,
           price: initial.price ?? null, currency: initial.currency,
           is_default: initial.is_default, enabled: initial.enabled,
-        }
-      : { ...EMPTY_EMBED }
-  );
+      };
+    }
+
+    return createEmbeddingForm(defaults);
+  };
+
+  const [form, setForm] = useState<EmbeddingModelCreate>(buildInitialForm);
 
   const createMutation = useCreateEmbeddingModel();
   const updateMutation = useUpdateEmbeddingModel();
   const isPending = createMutation.isPending || updateMutation.isPending;
 
+  const selectedPresetId = useMemo(() => {
+    const preset = EMBEDDING_PRESETS.find((item) =>
+      item.values.provider === form.provider &&
+      item.values.model_id === form.model_id &&
+      item.values.dimension === form.dimension
+    );
+    return preset?.id ?? 'custom';
+  }, [form.dimension, form.model_id, form.provider]);
+
   const set = (key: keyof EmbeddingModelCreate, value: unknown) =>
     setForm(prev => ({ ...prev, [key]: value }));
+
+  const applyPreset = (presetId: string) => {
+    if (presetId === 'custom') return;
+    const preset = EMBEDDING_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setForm((prev) => ({
+      ...prev,
+      ...preset.values,
+      api_key_ref: prev.api_key_ref,
+      description: prev.description,
+      enabled: prev.enabled,
+      is_default: prev.is_default,
+    }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -277,12 +364,28 @@ function EmbeddingModelDialog({
         <form id="embed-model-form" onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1 col-span-2">
+              <Label>Preset</Label>
+              <Select value={selectedPresetId} onValueChange={applyPreset}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EMBEDDING_PRESETS.map((preset) => (
+                    <SelectItem key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 col-span-2">
               <Label>Name *</Label>
               <Input value={form.name} onChange={e => set('name', e.target.value)} required placeholder="e.g. text-embedding-3-small" />
             </div>
             <div className="space-y-1">
               <Label>Provider *</Label>
-              <Input value={form.provider} onChange={e => set('provider', e.target.value)} required placeholder="openai / dashscope" />
+              <Input value={form.provider} onChange={e => set('provider', e.target.value)} required placeholder="tongyi / openai / ollama" />
             </div>
             <div className="space-y-1">
               <Label>Model ID *</Label>
@@ -360,6 +463,7 @@ function EmbeddingModelDialog({
 // ─── Default Model Quick Config ───────────────────────────────────────────────
 
 function GlobalDefaultConfig() {
+  const [showEmbeddingDialog, setShowEmbeddingDialog] = useState(false);
   const { data: chatData, isLoading: chatLoading } = useChatModels({ enabled: true });
   const { data: embedData, isLoading: embedLoading } = useEmbeddingModels({ enabled: true });
   
@@ -372,6 +476,15 @@ function GlobalDefaultConfig() {
   const defaultChat = chatModels.find(m => m.is_default && !m.supports_vision);
   const defaultVision = chatModels.find(m => m.is_default && m.supports_vision);
   const defaultEmbed = embedModels.find(m => m.is_default);
+
+  const defaultEmbeddingDefaults = useMemo<Partial<EmbeddingModelCreate>>(
+    () => ({
+      ...DEFAULT_EMBEDDING_VALUES,
+      is_default: true,
+      enabled: true,
+    }),
+    []
+  );
 
   const handleSetDefaultChat = async (id: string) => {
     const model = chatModels.find(m => m.id === id);
@@ -394,67 +507,100 @@ function GlobalDefaultConfig() {
   if (chatLoading || embedLoading) return null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl border border-primary/20 bg-primary/5 mb-6">
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="size-4 text-primary" />
-          <Label className="text-sm font-bold">Default Chat Model</Label>
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl border border-primary/20 bg-primary/5 mb-6">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="size-4 text-primary" />
+            <Label className="text-sm font-bold">Default Chat Model</Label>
+          </div>
+          <Select value={defaultChat?.id} onValueChange={handleSetDefaultChat}>
+            <SelectTrigger className="h-9 bg-background">
+              <SelectValue placeholder="Select default chat" />
+            </SelectTrigger>
+            <SelectContent>
+              {chatModels.filter(m => !m.supports_vision).map(m => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name} ({m.provider})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[10px] text-muted-foreground">Global fallback for text-only conversations.</p>
         </div>
-        <Select value={defaultChat?.id} onValueChange={handleSetDefaultChat}>
-          <SelectTrigger className="h-9 bg-background">
-            <SelectValue placeholder="Select default chat" />
-          </SelectTrigger>
-          <SelectContent>
-            {chatModels.filter(m => !m.supports_vision).map(m => (
-              <SelectItem key={m.id} value={m.id}>
-                {m.name} ({m.provider})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-[10px] text-muted-foreground">Global fallback for text-only conversations.</p>
-      </div>
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Eye className="size-4 text-primary" />
-          <Label className="text-sm font-bold">Default Multi-modal</Label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Eye className="size-4 text-primary" />
+            <Label className="text-sm font-bold">Default Multi-modal</Label>
+          </div>
+          <Select value={defaultVision?.id} onValueChange={handleSetDefaultChat}>
+            <SelectTrigger className="h-9 bg-background">
+              <SelectValue placeholder="Select default vision" />
+            </SelectTrigger>
+            <SelectContent>
+              {chatModels.filter(m => m.supports_vision).map(m => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name} ({m.provider})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[10px] text-muted-foreground">Used when images or files are provided.</p>
         </div>
-        <Select value={defaultVision?.id} onValueChange={handleSetDefaultChat}>
-          <SelectTrigger className="h-9 bg-background">
-            <SelectValue placeholder="Select default vision" />
-          </SelectTrigger>
-          <SelectContent>
-            {chatModels.filter(m => m.supports_vision).map(m => (
-              <SelectItem key={m.id} value={m.id}>
-                {m.name} ({m.provider})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-[10px] text-muted-foreground">Used when images or files are provided.</p>
-      </div>
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Globe className="size-4 text-primary" />
-          <Label className="text-sm font-bold">Default Embedding</Label>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Globe className="size-4 text-primary" />
+              <Label className="text-sm font-bold">Default Embedding</Label>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 gap-1 text-xs bg-background"
+              onClick={() => setShowEmbeddingDialog(true)}
+            >
+              <Plus className="size-3" />
+              Configure
+            </Button>
+          </div>
+          {embedModels.length > 0 ? (
+            <Select value={defaultEmbed?.id} onValueChange={handleSetDefaultEmbed}>
+              <SelectTrigger className="h-9 bg-background">
+                <SelectValue placeholder="Select default embedding" />
+              </SelectTrigger>
+              <SelectContent>
+                {embedModels.map(m => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name} ({m.provider})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 w-full justify-start bg-background text-muted-foreground"
+              onClick={() => setShowEmbeddingDialog(true)}
+            >
+              <Plus className="size-3.5 mr-1" />
+              Add default embedding
+            </Button>
+          )}
+          <p className="text-[10px] text-muted-foreground">Global fallback for knowledge base indexing.</p>
         </div>
-        <Select value={defaultEmbed?.id} onValueChange={handleSetDefaultEmbed}>
-          <SelectTrigger className="h-9 bg-background">
-            <SelectValue placeholder="Select default embedding" />
-          </SelectTrigger>
-          <SelectContent>
-            {embedModels.map(m => (
-              <SelectItem key={m.id} value={m.id}>
-                {m.name} ({m.provider})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-[10px] text-muted-foreground">Global fallback for knowledge base indexing.</p>
       </div>
-    </div>
+      {showEmbeddingDialog && (
+        <EmbeddingModelDialog
+          open={showEmbeddingDialog}
+          onClose={() => setShowEmbeddingDialog(false)}
+          defaults={defaultEmbeddingDefaults}
+        />
+      )}
+    </>
   );
 }
 
@@ -469,7 +615,7 @@ function ChatModelsTab() {
   const deleteMutation = useDeleteChatModel();
   const updateMutation = useUpdateChatModel();
 
-  const chatModels = data?.items ?? [];
+  const chatModels = useMemo(() => data?.items ?? [], [data?.items]);
   const filtered = useMemo(() => chatModels.filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase()) ||
     m.model_id.toLowerCase().includes(search.toLowerCase()) ||
@@ -612,7 +758,11 @@ function EmbeddingModelsTab() {
   const deleteMutation = useDeleteEmbeddingModel();
   const updateMutation = useUpdateEmbeddingModel();
 
-  const embedModels = data?.items ?? [];
+  const embedModels = useMemo(() => data?.items ?? [], [data?.items]);
+  const createDefaults = useMemo<Partial<EmbeddingModelCreate>>(
+    () => ({ is_default: embedModels.length === 0 }),
+    [embedModels.length]
+  );
   const filtered = useMemo(() => embedModels.filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase()) ||
     m.model_id.toLowerCase().includes(search.toLowerCase()) ||
@@ -629,8 +779,9 @@ function EmbeddingModelsTab() {
   };
 
   const handleToggleDefault = async (m: EmbeddingModel) => {
+    if (m.is_default) return;
     try {
-      await updateMutation.mutateAsync({ id: m.id, data: { is_default: !m.is_default } });
+      await updateMutation.mutateAsync({ id: m.id, data: { is_default: true, enabled: true } });
     } catch (err) {
       alert(`Update failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
@@ -735,7 +886,14 @@ function EmbeddingModelsTab() {
         </div>
       )}
 
-      <EmbeddingModelDialog open={showDialog} onClose={closeDialog} initial={editTarget} />
+      {showDialog && (
+        <EmbeddingModelDialog
+          open={showDialog}
+          onClose={closeDialog}
+          initial={editTarget}
+          defaults={createDefaults}
+        />
+      )}
     </div>
   );
 }
