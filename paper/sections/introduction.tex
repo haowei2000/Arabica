@@ -18,10 +18,17 @@ backing store. A-MEM \citep{xu2025amem} learns Zettelkasten-style
 links between notes. Generative Agents \citep{park2023generative}
 attach a memory stream with periodic reflection, and production
 systems such as Mem0 \citep{chhikara2025mem0} assemble similar ideas
-into deployable services. What these approaches share is an
-\emph{opaque} interface: the agent emits a natural-language query, a
-memory controller decides what to return, and the agent sees only the
-result. The address space is hidden.
+into deployable services; \citet{zhang2025memorysurvey} give a recent
+taxonomy. What these approaches share is an \emph{opaque} interface:
+the agent emits a natural-language query, a memory controller decides
+what to return, and the agent sees only the result. The address
+space is hidden. Industrial practice has begun to converge on a
+different pattern: Anthropic's recent context-engineering guidance
+\citep{anthropic2025contexteng} and Agent Skills system
+\citep{anthropic2025skills} argue for progressive disclosure and
+just-in-time loading over file-system-organised resources. This
+paper gives that pattern an academic formalisation and pairs it with
+two mechanisms that keep it useful over long runs.
 
 We argue that this opacity is the problem. An agent that is itself a
 reasoning system should be able to reason about where its state

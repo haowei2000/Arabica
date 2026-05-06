@@ -15,6 +15,8 @@ x-common-env: &common-env
   TZ: ${TZ:-Asia/Shanghai}
   RUSTFS__HOST: rustfs
   RUSTFS__PORT: 9000
+  STRUCTURE_HTTPS_ENABLED: ${STRUCTURE_HTTPS_ENABLED:-false}
+  STRUCTURE_DOMAIN: ${STRUCTURE_DOMAIN:-}
 
 services:
   # Backend: API + event worker + celery worker + MCP (all-in-one)
@@ -36,7 +38,7 @@ services:
       - structure-logs:/app/logs
       - structure-context-data:/app/data/context
     env_file:
-      - .env
+      - ../.env
     environment:
       <<: *common-env
       RELOAD: ${RELOAD:-false}
@@ -84,9 +86,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1400M
+          memory: ${BACKEND_MEMORY_LIMIT:-1400M}
         reservations:
-          memory: 512M
+          memory: ${BACKEND_MEMORY_RESERVATION:-512M}
 
   # One-shot container: imports all inner tools from the MCP server on startup
   tool-initializer:
@@ -128,7 +130,7 @@ services:
     volumes:
       - structure-logs:/app/logs
     env_file:
-      - .env
+      - ../.env
     environment:
       <<: *common-env
       SKIP_MIGRATIONS: "true"
@@ -156,9 +158,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${CELERY_BEAT_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 64M
+          memory: ${CELERY_BEAT_MEMORY_RESERVATION:-64M}
 
   # Flower - Celery monitoring (optional)
   flower:
@@ -176,7 +178,7 @@ services:
     ports:
       - "${FLOWER_PORT:-5555}:5555"
     env_file:
-      - .env
+      - ../.env
     environment:
       <<: *common-env
       SKIP_MIGRATIONS: "true"
@@ -204,10 +206,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${FLOWER_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 64M
-  
+          memory: ${FLOWER_MEMORY_RESERVATION:-64M}
+
   # Frontend application (React + Vite)
   frontend:
     profiles:
@@ -215,13 +217,15 @@ services:
       - app
       - all
     env_file:
-      - .env
+      - ../.env
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
         VITE_APP_TITLE: ${VITE_APP_TITLE:-Structure}
+        STRUCTURE_HTTPS_ENABLED: ${STRUCTURE_HTTPS_ENABLED:-false}
+        STRUCTURE_DOMAIN: ${STRUCTURE_DOMAIN:-}
     image: structure-frontend:${VERSION:-latest}
     ports:
       - "${FRONTEND_EXPOSE_PORT:-80}:80"
@@ -243,9 +247,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: ${FRONTEND_MEMORY_LIMIT:-128M}
         reservations:
-          memory: 32M
+          memory: ${FRONTEND_MEMORY_RESERVATION:-32M}
 
   # PostgreSQL Database with pgvector
   postgres:
@@ -257,12 +261,12 @@ services:
     image: pgvector/pgvector:pg15
     command: >
       postgres
-      -c shared_buffers=64MB
-      -c work_mem=4MB
-      -c maintenance_work_mem=32MB
-      -c max_connections=20
-      -c effective_cache_size=128MB
-      -c wal_buffers=4MB
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-64MB}
+      -c work_mem=${POSTGRES_WORK_MEM:-4MB}
+      -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-32MB}
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-20}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-128MB}
+      -c wal_buffers=${POSTGRES_WAL_BUFFERS:-4MB}
     ports:
       - "${EXPOSE_PORT_POSTGRES:-5432}:5432"
     volumes:
@@ -283,9 +287,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${POSTGRES_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 128M
+          memory: ${POSTGRES_MEMORY_RESERVATION:-128M}
 
 
   
@@ -301,7 +305,7 @@ services:
       - "${RUSTFS_EXPOSE_CONSOLE:-9001}:9001"
     
     env_file:
-      - .env
+      - ../.env
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS__ACCESS_KEY:-rustfsadmin}
       RUSTFS_SECRET_KEY: ${RUSTFS__SECRET_KEY:-rustfsadmin}
@@ -321,10 +325,12 @@ services:
       - all
     image: redis:7-alpine
     env_file:
-      - .env
+      - ../.env
     command:
       - redis-server
       - /usr/local/etc/redis/redis.conf
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-100mb}
     ports:
       - "${EXPOSE_PORT_REDIS:-6379}:6379"
     volumes:
@@ -343,9 +349,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 150M
+          memory: ${REDIS_MEMORY_LIMIT:-150M}
         reservations:
-          memory: 64M
+          memory: ${REDIS_MEMORY_RESERVATION:-64M}
 
   # Ollama Service (for local LLM)
   ollama:
@@ -408,9 +414,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${REDIS_COMMANDER_MEMORY_LIMIT:-256M}
         reservations:
-          memory: 64M
+          memory: ${REDIS_COMMANDER_MEMORY_RESERVATION:-64M}
 
   # Context Service (standalone mode — optional)
   # Context storage is now handled in-process by the backend.

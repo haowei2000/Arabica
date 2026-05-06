@@ -227,51 +227,37 @@ class Context(Base):  # ty:ignore[unsupported-base]
     # ──── ContextLayer Framework Methods ────
 
     def disclose(self, level: str = "overview") -> dict[str, Any]:
-        """Progressive disclosure aligned with ContextLayer framework.
+        """Progressive disclosure (paper §3.4, Listing 2).
 
-        Args:
-            level: Disclosure level - "glance", "overview", or "detail"
-
-        Returns:
-            Dictionary with appropriate level of information
+        Levels are monotone: overview extends glance, detail extends overview.
+        Ratings are a retrieval-time signal (§3.5) and are deliberately not
+        surfaced here; callers that need them should read ``rating_avg``.
         """
-        result: dict[str, Any] = {"path": self.path}
-
-        # Level 1: Glance - quick scan
-        if self.glance:
-            result["glance"] = self.glance
-        else:
-            result["glance"] = (
-                self.content[:50] + "..." if len(self.content) > 50 else self.content
-            )
-
+        result: dict[str, Any] = {
+            "path": self.path,
+            "glance": self.glance or (self.content[:50] if self.content else ""),
+        }
         if level == "glance":
             return result
 
-        # Level 2: Overview - structured summary
-        if level in ("overview", "detail"):
-            if self.tags:
-                result["tags"] = self.tags
-            # Surface the aggregated rating so agents can weight source
-            # quality without a second round-trip.
-            if self.rating_count:
-                result["rating"] = {
-                    "avg": round(self.rating_avg, 3) if self.rating_avg else None,
-                    "count": self.rating_count,
-                }
-
+        # Overview: glance + structured metadata (tags, type, scope, timestamps).
+        if self.tags:
+            result["tags"] = self.tags
+        result["context_type"] = self.context_type
+        result["scope"] = self.scope
+        if self.created_at:
+            result["created_at"] = self.created_at.isoformat()
+        if self.updated_at:
+            result["updated_at"] = self.updated_at.isoformat()
         if level == "overview":
             return result
 
-        # Level 3: Detail - full content
-        if level == "detail":
-            result["content"] = self.content
-            result["meta"] = self.meta or {}
-            result["context_type"] = self.context_type
-            result["importance"] = self.importance
-            if self.s3_key:
-                result["s3_key"] = self.s3_key
-
+        # Detail: full content + unstructured metadata.  S3-backed payloads
+        # are referenced lazily via ``s3_key``.
+        result["content"] = self.content
+        result["meta"] = self.meta or {}
+        if self.s3_key:
+            result["s3_key"] = self.s3_key
         return result
 
     def get_path_depth(self) -> int:

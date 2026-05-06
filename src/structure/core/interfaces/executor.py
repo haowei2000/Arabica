@@ -242,6 +242,10 @@ class Executor(ABC, ExecutorProtocol):
         """Handle an incoming PUT_OUTCOME event."""
         ...
 
+    async def _process_context_rated(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming CONTEXT_RATED event."""
+        ...
+
     # -- Run lifecycle event handlers --
 
     async def _process_run_created(self, payload: dict[str, Any]) -> None:

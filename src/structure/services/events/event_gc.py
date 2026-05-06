@@ -154,7 +154,9 @@ class EventGarbageCollector:
         live: list[_EventLike] = []
         expired: list[_EventLike] = []
         for e in events:
-            (live if self.is_live(e, current_step=current_step, now=now) else expired).append(e)
+            (
+                live if self.is_live(e, current_step=current_step, now=now) else expired
+            ).append(e)
         return live, expired
 
 

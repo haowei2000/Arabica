@@ -85,7 +85,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             set -e
@@ -109,14 +109,20 @@ jobs:
             docker tag $BACKEND structure-service:latest
             docker tag $FRONTEND structure-frontend:latest
 
-            make docker-deploy
+            # Inline of `make docker-deploy` (avoids depending on `make`
+            # being installed on the deploy host).
+            docker ps -aq --filter "network=structure-network" | xargs -r docker rm -f || true
+            docker network rm structure-network || true
+            docker compose -p structure -f docker/docker-compose.yml --env-file "$(pwd)/.env" --env-file "$(pwd)/performance.env" up -d --no-build
+            docker compose -p structure -f docker/docker-compose.yml --env-file "$(pwd)/.env" --env-file "$(pwd)/performance.env" run --rm tool-initializer || true
+            docker image prune -f
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             timeout 60 bash -c 'until curl -sf http://localhost:8000/health; do sleep 3; done'

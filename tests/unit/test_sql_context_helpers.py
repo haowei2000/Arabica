@@ -108,7 +108,7 @@ def test_disclosure_levels_hide_and_reveal_expected_fields():
 
     assert glance == {"path": "/tools/read_context", "glance": "Read context"}
     assert "content" not in overview
-    assert overview["rating"] == {"avg": 0.75, "count": 2}
+    assert "rating" not in overview
     assert detail["content"] == "Full tool schema and implementation notes"
     assert detail["context_type"] == ContextType.WORKSPACE
 
