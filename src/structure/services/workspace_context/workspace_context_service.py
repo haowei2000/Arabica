@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.enums.context import ContextScope
 from structure.models.context.context import Context
+from structure.utils.context import context_path_variants, normalize_context_path
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ class WorkspaceContextService:
             await self.load()
 
     def _normalize_path(self, path: str) -> str:
-        return path.strip("/")
+        return (normalize_context_path(path) or "/").strip("/")
 
     # ──────────────────────────────────────────────────────────────
     # Query API
@@ -105,10 +106,10 @@ class WorkspaceContextService:
     async def get(self, path: str, level: str = "overview") -> dict[str, Any] | None:
         """Get a single context by path."""
         await self._ensure_loaded()
-        target = self._normalize_path(path)
+        targets = {variant.strip("/") for variant in context_path_variants(path)}
 
         for ctx in self._contexts:
-            if ctx.path and self._normalize_path(ctx.path) == target:
+            if ctx.path and self._normalize_path(ctx.path) in targets:
                 return {"path": ctx.path, **ctx.disclose(level)}
         return None
 

@@ -26,7 +26,7 @@ from structure.core.interfaces.pipeline import Stage
 from structure.core.interfaces.structurer import BaseStructurer
 from structure.plugins.structurers.file_context import FileContext
 from structure.schemas.context.context_schema import ContextCore
-from structure.utils.context import slugify
+from structure.utils.context import build_path
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ class BuildChunksStage(Stage[FileContext]):
 
     def process(self, ctx: FileContext) -> FileContext:
         fi = ctx.file_input
-        file_slug = slugify(f"{fi.base_path}/{fi.file_name}")
+        file_slug = build_path(fi.base_path, fi.file_name)
 
         if not ctx.sections:
             ctx.chunks.append(
@@ -196,7 +196,7 @@ class BuildChunksStage(Stage[FileContext]):
                 ContextCore(
                     glance=f"{fi.file_name} / {sec_title}",
                     content=sec["content"],
-                    path=slugify(f"{fi.base_path}/{fi.file_name}/{sec_title}"),
+                    path=build_path(fi.base_path, fi.file_name, sec_title),
                 )
             )
 

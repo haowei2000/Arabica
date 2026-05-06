@@ -368,6 +368,7 @@ class Worker:
         user_tool_classes: list | None = None,
         workspace_id: str = "",
         run_id: str = "",
+        user_id: str = "",
     ) -> ExecutorProtocol:
         """Build an Executor with startup-initialized tool services."""
         executor_cls = ExecutorRegistry._get_singleton_instance().get(executor_code)
@@ -392,6 +393,7 @@ class Worker:
 
         config["workspace_id"] = workspace_id
         config["run_id"] = run_id
+        config["user_id"] = user_id
 
         # Always create a per-run caller — only MCP-imported tools are available.
         # Inner tools must be imported from the structure-mcp server first.
@@ -535,6 +537,7 @@ class Worker:
                 user_tool_classes or None,
                 workspace_id=workspace_id,
                 run_id=str(run_id),
+                user_id=str(run.user_id) if run.user_id else "",
             )
 
             self.runtime.attach(run_id, executor)

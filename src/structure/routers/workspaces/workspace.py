@@ -589,29 +589,39 @@ async def reinit_workspace_context(
             detail=f"Workspace {workspace_id} not found or access denied",
         )
 
-    # Soft-delete all existing context entries
+    from structure.celery_worker.tasks.workspace_context_sync import (
+        _invalidate_workspace_caches,
+        _lock_workspace_contexts,
+    )
+
+    workspace_uuid = UUID(workspace_id)
+    await _lock_workspace_contexts(db, [workspace_uuid])
+
+    # Soft-delete and repopulate in one transaction so reinit cannot interleave
+    # with background workspace-context sync for the same workspace.
     await db.execute(
         sql_update(WorkspaceContext)
         .where(
             and_(
-                WorkspaceContext.workspace_id == UUID(workspace_id),
+                WorkspaceContext.workspace_id == workspace_uuid,
                 WorkspaceContext.is_deleted == False,  # noqa: E712
             )
         )
         .values(is_deleted=True)
     )
-    await db.commit()
 
     # Re-populate WorkspaceContext table (for the workspace context UI)
     from structure.services.context.process import copy_contexts_to_workspace_by_filter
 
     ws_contexts = await copy_contexts_to_workspace_by_filter(
         db=db,
-        workspace_id=UUID(workspace_id),
+        workspace_id=workspace_uuid,
         user_id=UUID(str(current_user.id)),
         created_by=UUID(str(current_user.id)),
-        auto_commit=True,
+        auto_commit=False,
     )
+    await db.commit()
+    await _invalidate_workspace_caches([workspace_id])
 
     return {"success": True, "count": len(ws_contexts)}
 

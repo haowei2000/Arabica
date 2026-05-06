@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.models.context.context import Context
 from structure.models.context.workspace_context import WorkspaceContext
+from structure.utils.context import normalize_context_path
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ async def copy_contexts_to_workspace(
             target_path = f"{path_prefix.rstrip('/')}/{target_path.lstrip('/')}"
         elif path_prefix:
             target_path = path_prefix
+        target_path = normalize_context_path(target_path)
 
         # Preserve source metadata that doesn't map 1:1
         source_meta: dict = {

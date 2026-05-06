@@ -1,6 +1,6 @@
 """Search context tool."""
 
-import re
+from typing import Literal
 
 from pydantic import Field
 
@@ -10,44 +10,46 @@ from structure.core.interfaces.tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
+from structure.extensions.database import get_session
+from structure.plugins.tools.context._sql_context import (
+    normalize_level,
+    publish_context_using,
+    search_contexts,
+)
 
 
 class SearchContextTool(InnerTool):
-    """Search context content using regular expressions"""
+    """Search scoped SQL-backed context content using regular expressions."""
 
     METADATA = ToolMetadata(
         name="search_context",
         display_name="Search Context",
-        description="Search through context content using regex patterns (grep-like)",
+        description="Search scoped context paths, glances, and content using regex",
         category="context",
         tags=["search", "regex", "context", "grep"],
         timeout=30,
     )
 
     class InputSchema(ToolInputSchema):
+        workspace_id: str = Field(description="Workspace ID")
+        run_id: str | None = Field(default=None, description="Run ID")
+        user_id: str | None = Field(default=None, description="User ID")
         pattern: str = Field(description="Regular expression pattern to search for")
-        context_id: str | None = Field(
-            default=None, description="Optional specific context ID to search in"
-        )
-        user_id: str | None = Field(
-            default=None, description="Optional user ID to scope the search"
+        level: Literal["glance", "overview", "detail"] = Field(
+            default="overview",
+            description="Disclosure level to return for matched contexts",
         )
         context_type: str | None = Field(
             default=None,
             description="Optional context type filter (conversation, tool, knowledge)",
         )
-        max_results: int = Field(
-            default=10,
-            ge=1,
-            le=100,
-            description="Maximum number of matching contexts to return",
+        min_rating: float | None = Field(
+            default=None,
+            ge=-1.0,
+            le=1.0,
+            description="Optional minimum average context rating",
         )
-        context_chars: int = Field(
-            default=100,
-            ge=0,
-            le=500,
-            description="Number of characters to show before/after match",
-        )
+        max_results: int = Field(default=10, ge=1, le=100, description="Max results")
         ignore_case: bool = Field(
             default=True, description="Whether to ignore case in pattern matching"
         )
@@ -56,114 +58,65 @@ class SearchContextTool(InnerTool):
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
-        from sqlalchemy import select
-
-        from structure.extensions.database import get_session
-        from structure.models.context.context import Context
-
-        flags = 0
-        if input_data.ignore_case:
-            flags |= re.IGNORECASE
-        if input_data.multiline:
-            flags |= re.MULTILINE | re.DOTALL
+        from re import error as RegexError
+        from uuid import UUID
 
         try:
-            regex = re.compile(input_data.pattern, flags)
-        except re.error as e:
-            return ToolOutputSchema(
-                success=False,
-                message=f"Invalid regex pattern: {e}",
-                error=str(e),
-                data={
-                    "pattern": input_data.pattern,
-                    "matches": [],
-                    "total_matches": 0,
-                },
-            )
+            workspace_id = UUID(input_data.workspace_id)
+            level = normalize_level(input_data.level)
 
-        async with get_session("structure") as db:
-            query = select(Context)
-
-            if input_data.context_id:
-                query = query.where(Context.id == input_data.context_id)
-            if input_data.user_id:
-                query = query.where(Context.user_id == input_data.user_id)
-            if input_data.context_type:
-                query = query.where(Context.context_type == input_data.context_type)
-
-            query = query.order_by(Context.created_at.desc())
-
-            result = await db.execute(query)
-            contexts = result.scalars().all()
-
-            matches = []
-            total_match_count = 0
-
-            for ctx in contexts:
-                if not ctx.content:
-                    continue
-
-                context_matches = []
-                for match in regex.finditer(ctx.content):
-                    start, end = match.span()
-                    matched_text = match.group(0)
-
-                    context_start = max(0, start - input_data.context_chars)
-                    context_end = min(len(ctx.content), end + input_data.context_chars)
-
-                    before = ctx.content[context_start:start]
-                    after = ctx.content[end:context_end]
-
-                    if context_start > 0:
-                        before = "..." + before
-                    if context_end < len(ctx.content):
-                        after = after + "..."
-
-                    context_matches.append(
-                        {
-                            "matched_text": matched_text,
-                            "before_context": before,
-                            "after_context": after,
-                            "char_position": start,
-                            "match_length": len(matched_text),
-                            "line_number": ctx.content[:start].count("\n") + 1,
-                        }
-                    )
-
-                if context_matches:
-                    total_match_count += len(context_matches)
-
-                    matches.append(
-                        {
-                            "context_id": str(ctx.id),
-                            "context_type": ctx.context_type,
-                            "user_id": str(ctx.user_id),
-                            "source_id": str(ctx.source_id) if ctx.source_id else None,
-                            "created_at": ctx.created_at.isoformat()
-                            if ctx.created_at
-                            else None,
-                            "importance": ctx.importance,
-                            "match_count": len(context_matches),
-                            "matches": context_matches,
-                        }
-                    )
-
-                    if len(matches) >= input_data.max_results:
-                        break
+            async with get_session("structure") as session:
+                contexts = await search_contexts(
+                    session,
+                    workspace_id,
+                    pattern=input_data.pattern,
+                    level=level,
+                    user_id=input_data.user_id,
+                    limit=input_data.max_results,
+                    context_type=input_data.context_type,
+                    ignore_case=input_data.ignore_case,
+                    multiline=input_data.multiline,
+                    min_rating=input_data.min_rating,
+                )
+                paths = [ctx.get("path", "") for ctx in contexts if ctx.get("path")]
+                await publish_context_using(
+                    session,
+                    workspace_id,
+                    operation="search",
+                    paths=paths,
+                    level=level,
+                    run_id=input_data.run_id,
+                    user_id=input_data.user_id,
+                    meta={"pattern": input_data.pattern},
+                )
+                await session.commit()
 
             return ToolOutputSchema(
                 success=True,
-                message=f"Found {total_match_count} matches in {len(matches)} contexts",
+                message=f"Found {len(contexts)} matching contexts",
                 data={
-                    "matches": matches,
-                    "total_contexts_matched": len(matches),
-                    "total_pattern_matches": total_match_count,
-                    "contexts_searched": len(contexts),
+                    "matches": contexts,
+                    "total_contexts_matched": len(contexts),
                     "pattern": input_data.pattern,
                     "options": {
                         "ignore_case": input_data.ignore_case,
                         "multiline": input_data.multiline,
-                        "context_chars": input_data.context_chars,
+                        "level": level,
                     },
                 },
+            )
+
+        except RegexError as e:
+            return ToolOutputSchema(
+                success=False,
+                message=f"Invalid regex pattern: {e}",
+                error=str(e),
+                data={"pattern": input_data.pattern, "matches": []},
+            )
+        except Exception as e:
+            return ToolOutputSchema(
+                success=False,
+                message=f"Search failed: {e!s}",
+                error=str(e),
+                data={"pattern": input_data.pattern},
             )

@@ -526,8 +526,8 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             self.logger.error("Failed to sync inner tool toolsets: %s", e)
 
         # ── Phase 5: Upsert inner tools into context table for all users ─
-        # For every registered inner tool × every user: create or update a
-        # Context row (context_type="tool", source_id=tool.id, user_id=user.id).
+        # For every registered inner tool × every user: create or update tool
+        # context files (readme.md + schema.md) under /tools/{name}/.
         try:
             import json as _json
             from uuid import uuid4 as _uuid4
@@ -535,7 +535,10 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             from structure.core.enums import ContextType as _ContextType
             from structure.models.auth.user import User
             from structure.models.context.context import Context
-            from structure.utils.context import slugify as _slugify
+            from structure.utils.context import (
+                build_context_path,
+                context_path_variants,
+            )
 
             # All registered inner tools (no enabled filter — sync all)
             synced_tools = (
@@ -565,23 +568,9 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                 tool_ids = [t.id for t in synced_tools]
                 user_ids = [u.id for u in all_users]
 
-                # Load all existing (source_id, user_id) pairs in one shot
-                existing_pairs: set[tuple] = {
-                    (row.source_id, row.user_id)
-                    for row in (
-                        await db.execute(
-                            select(Context.source_id, Context.user_id).where(
-                                Context.context_type == _ContextType.TOOL,
-                                Context.source_id.in_(tool_ids),
-                                Context.user_id.in_(user_ids),
-                            )
-                        )
-                    )
-                }
-
                 # Load existing Context objects that need updating
                 existing_ctx_map: dict[tuple, Context] = {
-                    (ctx.source_id, ctx.user_id): ctx
+                    (ctx.source_id, ctx.user_id, ctx.path): ctx
                     for ctx in (
                         await db.execute(
                             select(Context).where(
@@ -600,7 +589,7 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                     tool_name = tool.tool_code or tool.name
                     display_name = tool.display_name or tool.name
                     glance = f"{display_name} — {(tool.description or '')[:60]}"
-                    content = _json.dumps(
+                    schema = _json.dumps(
                         {
                             "type": "function",
                             "function": {
@@ -610,45 +599,89 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
                             },
                         },
                         ensure_ascii=False,
+                        indent=2,
                     )
-                    tags = ["tool"] + (tool.tags or [])
+                    readme_content = "\n".join(
+                        [
+                            f"# {display_name}",
+                            "",
+                            f"- Tool code: `{tool_name}`",
+                            "",
+                            tool.description or "",
+                        ]
+                    ).strip()
+                    schema_content = f"# Tool Schema\n\n```json\n{schema}\n```"
+                    tool_root = build_context_path("tools", tool_name)
+                    readme_path = build_context_path(tool_root, "readme.md")
+                    schema_path = build_context_path(tool_root, "schema.md")
+                    entries = [
+                        (
+                            readme_path,
+                            glance,
+                            readme_content,
+                            ["tool", "readme"] + (tool.tags or []),
+                            "readme",
+                        ),
+                        (
+                            schema_path,
+                            f"{display_name} schema",
+                            schema_content,
+                            ["tool", "schema"] + (tool.tags or []),
+                            "schema",
+                        ),
+                    ]
+                    legacy_schema_paths = [
+                        *context_path_variants(schema_path),
+                        tool_root,
+                        *context_path_variants(tool_root),
+                    ]
+                    path_variants_by_path = {
+                        readme_path: context_path_variants(readme_path),
+                        schema_path: legacy_schema_paths,
+                    }
                     meta = {
                         "tool_id": str(tool.id),
                         "tool_code": tool_name,
                         "name": display_name,
                     }
 
-                    tool_path = f"tools/{_slugify(tool_name)}"
                     for user in all_users:
-                        key = (tool.id, user.id)
-                        if key in existing_pairs:
-                            ctx = existing_ctx_map.get(key)
+                        for path, entry_glance, content, tags, tool_file in entries:
+                            ctx = None
+                            for variant in path_variants_by_path[path]:
+                                ctx = existing_ctx_map.get((tool.id, user.id, variant))
+                                if ctx:
+                                    break
                             if ctx:
-                                ctx.glance = glance
+                                ctx.glance = entry_glance
                                 ctx.content = content
-                                ctx.path = tool_path
+                                ctx.path = path
                                 ctx.tags = tags
-                                ctx.meta = {**(ctx.meta or {}), **meta}
+                                ctx.meta = {
+                                    **(ctx.meta or {}),
+                                    **meta,
+                                    "tool_file": tool_file,
+                                }
                                 ctx.embedding_384 = None
                                 ctx.embedding_768 = None
                                 ctx.embedding_1024 = None
                                 ctx.embedding_1536 = None
-                            ctx_updated += 1
-                        else:
-                            db.add(
-                                Context(
-                                    id=_uuid4(),
-                                    user_id=user.id,
-                                    context_type=_ContextType.TOOL,
-                                    source_id=tool.id,
-                                    glance=glance,
-                                    path=tool_path,
-                                    content=content,
-                                    tags=tags,
-                                    meta=meta,
+                                ctx_updated += 1
+                            else:
+                                db.add(
+                                    Context(
+                                        id=_uuid4(),
+                                        user_id=user.id,
+                                        context_type=_ContextType.TOOL,
+                                        source_id=tool.id,
+                                        glance=entry_glance,
+                                        path=path,
+                                        content=content,
+                                        tags=tags,
+                                        meta={**meta, "tool_file": tool_file},
+                                    )
                                 )
-                            )
-                            ctx_created += 1
+                                ctx_created += 1
 
                 await db.commit()
                 self.logger.info(

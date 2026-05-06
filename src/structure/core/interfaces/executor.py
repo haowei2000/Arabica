@@ -222,6 +222,22 @@ class Executor(ABC, ExecutorProtocol):
         """Handle an incoming USING_CONTEXT event."""
         ...
 
+    async def _process_context_rated(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming CONTEXT_RATED event."""
+        ...
+
+    async def _process_context_created(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming CONTEXT_CREATED event."""
+        ...
+
+    async def _process_context_updated(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming CONTEXT_UPDATED event."""
+        ...
+
+    async def _process_context_deleted(self, payload: dict[str, Any]) -> None:
+        """Handle an incoming CONTEXT_DELETED event."""
+        ...
+
     async def _process_context_put_outcome(self, payload: dict[str, Any]) -> None:
         """Handle an incoming PUT_OUTCOME event."""
         ...

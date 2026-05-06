@@ -1,6 +1,6 @@
-"""Glob context tool - query contexts using glob patterns."""
+"""Glob context tool - query SQL-backed contexts using path wildcards."""
 
-import re
+from typing import Literal
 
 from pydantic import Field
 
@@ -10,25 +10,16 @@ from structure.core.interfaces.tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
-
-
-def _glob_to_regex(pattern: str) -> re.Pattern:
-    """Convert glob pattern to regex. * = single path segment, ** = any depth."""
-    normalized = "/" + pattern.lstrip("/")
-    parts = re.split(r"(\*\*|\*)", normalized)
-    regex_parts = []
-    for part in parts:
-        if part == "**":
-            regex_parts.append(".*")
-        elif part == "*":
-            regex_parts.append("[^/]*")
-        else:
-            regex_parts.append(re.escape(part))
-    return re.compile("^" + "".join(regex_parts) + "$")
+from structure.extensions.database import get_session
+from structure.plugins.tools.context._sql_context import (
+    glob_contexts,
+    normalize_level,
+    publish_context_using,
+)
 
 
 class GlobContextTool(InnerTool):
-    """Query contexts using glob patterns (* for single level, ** for any depth)."""
+    """Query contexts using glob patterns (* for one level, ** for any depth)."""
 
     METADATA = ToolMetadata(
         name="glob_context",
@@ -41,89 +32,66 @@ class GlobContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
+        run_id: str | None = Field(default=None, description="Run ID")
+        user_id: str | None = Field(default=None, description="User ID")
         pattern: str = Field(
             description="Glob pattern (e.g., 'tools/*', 'tools/**', 'knowledge/*/docs')"
         )
-        limit: int = Field(
-            default=50,
-            ge=1,
-            le=200,
-            description="Maximum number of results to return",
+        level: Literal["glance", "overview", "detail"] = Field(
+            default="glance",
+            description="Disclosure level to return",
         )
+        min_rating: float | None = Field(
+            default=None,
+            ge=-1.0,
+            le=1.0,
+            description="Optional minimum average context rating",
+        )
+        limit: int = Field(default=50, ge=1, le=200, description="Maximum results")
         tags: list[str] | None = Field(
             default=None,
-            description="Optional tag filters (only return contexts with ALL these tags)",
+            description="Optional tag filters (contexts must have all tags)",
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
-        from structure.services.context.client import context_service_client
-
         try:
             workspace_id = UUID(input_data.workspace_id)
-            pattern_regex = _glob_to_regex(input_data.pattern)
+            level = normalize_level(input_data.level)
 
-            # SQL prefix hint: narrow down rows before Python-level glob matching
-            prefix_end = input_data.pattern.find("*")
-            sql_prefix = ""
-            if prefix_end > 0:
-                sql_prefix = input_data.pattern[:prefix_end].rstrip("/")
-
-            result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id, prefix=sql_prefix, recursive=True
-            )
-
-            contexts = result_data.get("items", [])
-
-            # Apply glob filter in Python
-            matched = [
-                ctx
-                for ctx in contexts
-                if ctx.get("path") and pattern_regex.match(ctx.get("path"))
-            ]
-
-            # Apply tag filter
-            if input_data.tags:
-                matched = [
-                    ctx
-                    for ctx in matched
-                    if ctx.get("tags")
-                    and all(tag in ctx.get("tags", []) for tag in input_data.tags)
-                ]
-
-            matched = matched[: input_data.limit]
-
-            def disclose_glance(ctx):
-                path = ctx.get("path")
-                name = ctx.get("name") or (
-                    path.rsplit("/", 1)[-1] if path else "unnamed"
+            async with get_session("structure") as session:
+                contexts = await glob_contexts(
+                    session,
+                    workspace_id,
+                    pattern=input_data.pattern,
+                    level=level,
+                    user_id=input_data.user_id,
+                    limit=input_data.limit,
+                    tags=input_data.tags,
+                    min_rating=input_data.min_rating,
                 )
-                res = {"path": path, "name": name}
-
-                if ctx.get("glance"):
-                    res["glance"] = ctx["glance"]
-                elif ctx.get("summary"):
-                    summ = ctx["summary"]
-                    res["glance"] = summ[:100] + "..." if len(summ) > 100 else summ
-                elif ctx.get("content"):
-                    cont = ctx["content"]
-                    res["glance"] = cont[:50] + "..." if len(cont) > 50 else cont
-                else:
-                    res["glance"] = f"{name} ({ctx.get('content_type') or 'unknown'})"
-                return res
-
-            items = [disclose_glance(ctx) for ctx in matched]
-            paths = [(ctx.get("path") or "").lstrip("/") for ctx in matched]
+                paths = [ctx.get("path", "") for ctx in contexts if ctx.get("path")]
+                await publish_context_using(
+                    session,
+                    workspace_id,
+                    operation="glob",
+                    paths=paths,
+                    level=level,
+                    run_id=input_data.run_id,
+                    user_id=input_data.user_id,
+                    meta={"pattern": input_data.pattern},
+                )
+                await session.commit()
 
             return ToolOutputSchema(
                 success=True,
-                message=f"Found {len(items)} contexts matching pattern: {input_data.pattern}",
+                message=f"Found {len(contexts)} contexts matching: {input_data.pattern}",
                 data={
                     "pattern": input_data.pattern,
-                    "count": len(items),
-                    "paths": paths,
-                    "contexts": items,
+                    "count": len(contexts),
+                    "paths": [p.lstrip("/") for p in paths],
+                    "contexts": contexts,
                     "tags_filter": input_data.tags,
                 },
             )

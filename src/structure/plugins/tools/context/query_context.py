@@ -1,6 +1,4 @@
-"""List context tool - list direct children or descendants."""
-
-from __future__ import annotations
+"""Hybrid query context tool."""
 
 from typing import Literal
 
@@ -14,59 +12,51 @@ from structure.core.interfaces.tool import (
 )
 from structure.extensions.database import get_session
 from structure.plugins.tools.context._sql_context import (
-    list_contexts,
     normalize_level,
     normalize_path,
     publish_context_using,
+    query_contexts,
 )
 
 
-def _build_md_tree(contexts: list[dict], root_path: str) -> str:
-    lines: list[str] = []
-    root_depth = root_path.rstrip("/").count("/")
-    for ctx in contexts:
-        path = (ctx.get("path") or "").rstrip("/")
-        depth = path.count("/") - root_depth - 1
-        indent = "  " * max(0, depth)
-        name = path.rsplit("/", 1)[-1] if path else ""
-        lines.append(f"{indent}- {name}")
-    return "\n".join(lines)
-
-
-class ListContextTool(InnerTool):
-    """List contexts under a path."""
+class QueryContextTool(InnerTool):
+    """Hybrid prefix/text/rating query over scoped SQL-backed context."""
 
     METADATA = ToolMetadata(
-        name="list_context",
-        display_name="List Context",
-        description="List contexts under a path: children or all descendants",
+        name="query_context",
+        display_name="Query Context",
+        description="Hybrid query over context using optional path prefix and rating-aware ranking",
         category="context",
-        tags=["context", "list", "children", "ls"],
-        timeout=15,
+        tags=["context", "query", "hybrid", "rating"],
+        timeout=30,
     )
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
         run_id: str | None = Field(default=None, description="Run ID")
         user_id: str | None = Field(default=None, description="User ID")
-        path: str = Field(
-            description="Parent path to list from (e.g., 'tools', 'knowledge')"
-        )
-        mode: Literal["children", "descendants"] = Field(
-            default="children",
-            description="children: direct children only, descendants: all nested items",
+        query: str = Field(description="Natural-language or keyword query")
+        prefix: str | None = Field(
+            default=None,
+            description="Optional context path prefix to restrict the query",
         )
         level: Literal["glance", "overview", "detail"] = Field(
-            default="glance",
+            default="overview",
             description="Disclosure level to return",
         )
+        top_k: int = Field(default=10, ge=1, le=50, description="Number of results")
         min_rating: float | None = Field(
             default=None,
             ge=-1.0,
             le=1.0,
             description="Optional minimum average context rating",
         )
-        limit: int = Field(default=100, ge=1, le=500, description="Maximum results")
+        alpha: float = Field(
+            default=0.7,
+            ge=0.0,
+            le=1.0,
+            description="Weight for lexical relevance vs rating quality",
+        )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
@@ -74,41 +64,40 @@ class ListContextTool(InnerTool):
         try:
             workspace_id = UUID(input_data.workspace_id)
             level = normalize_level(input_data.level)
-            prefix = normalize_path(input_data.path)
-            recursive = input_data.mode == "descendants"
+            prefix = normalize_path(input_data.prefix) if input_data.prefix else None
 
             async with get_session("structure") as session:
-                contexts = await list_contexts(
+                contexts = await query_contexts(
                     session,
                     workspace_id,
+                    query=input_data.query,
                     prefix=prefix,
                     level=level,
                     user_id=input_data.user_id,
-                    recursive=recursive,
-                    limit=input_data.limit,
+                    top_k=input_data.top_k,
                     min_rating=input_data.min_rating,
+                    alpha=input_data.alpha,
                 )
                 paths = [ctx.get("path", "") for ctx in contexts if ctx.get("path")]
                 await publish_context_using(
                     session,
                     workspace_id,
-                    operation="list",
+                    operation="query",
                     paths=paths,
                     level=level,
                     run_id=input_data.run_id,
                     user_id=input_data.user_id,
-                    meta={"prefix": prefix, "mode": input_data.mode},
+                    meta={"query": input_data.query, "prefix": prefix},
                 )
                 await session.commit()
 
-            tree = _build_md_tree(contexts, prefix)
             return ToolOutputSchema(
                 success=True,
-                message=f"Found {len(contexts)} {input_data.mode} under: {prefix}",
+                message=f"Found {len(contexts)} contexts for query",
                 data={
+                    "query": input_data.query,
                     "prefix": prefix,
                     "count": len(contexts),
-                    "tree": tree,
                     "contexts": contexts,
                 },
             )
@@ -116,7 +105,7 @@ class ListContextTool(InnerTool):
         except Exception as e:
             return ToolOutputSchema(
                 success=False,
-                message=f"List failed: {e!s}",
+                message=f"Context query failed: {e!s}",
                 error=str(e),
-                data={"path": input_data.path, "mode": input_data.mode},
+                data={"query": input_data.query, "prefix": input_data.prefix},
             )

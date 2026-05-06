@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structure.core.enums.context import ContextType
 from structure.models.context.context import Context
 from structure.services.context.context_crud import ContextCRUD
+from structure.utils.context import build_context_path
 
 logger = logging.getLogger(__name__)
 
@@ -70,31 +71,61 @@ class ContextSyncer:
         if not tool.user_id:
             return  # inner tools have no owner — skip
 
-        path = f"/tools/{tool.name}"
+        tool_code = tool.tool_code or tool.name
+        tool_root = build_context_path("tools", tool_code)
+        readme_path = build_context_path(tool_root, "readme.md")
+        schema_path = build_context_path(tool_root, "schema.md")
         glance = tool.display_name or tool.name
         if tool.description:
             glance += f" — {tool.description[:60]}"
 
-        parts: list[str] = [f"Tool: {tool.name}"]
+        parts: list[str] = [f"# {tool.display_name or tool.name}", ""]
+        parts.append(f"- Tool code: `{tool_code}`")
         if tool.description:
-            parts.append(f"Description: {tool.description}")
-        if tool.input_schema:
-            parts.append(
-                f"Input Schema:\n{json.dumps(tool.input_schema, ensure_ascii=False, indent=2)}"
-            )
-
+            parts.extend(["", tool.description])
         await self._upsert(
             user_id=str(tool.user_id),
-            path=path,
+            path=readme_path,
             source_id=str(tool.id),
             context_type=ContextType.TOOL,
             glance=glance,
             content="\n".join(parts),
-            tags=(tool.tags or []) + ["tool"],
+            tags=(tool.tags or []) + ["tool", "readme"],
             meta={
                 "tool_code": tool.tool_code,
                 "tool_type": tool.tool_type,
                 "enabled": tool.enabled,
+                "tool_file": "readme",
+            },
+        )
+
+        schema_parts: list[str] = ["# Tool Schema"]
+        if tool.input_schema:
+            schema = {
+                "type": "function",
+                "function": {
+                    "name": tool_code,
+                    "description": tool.description or tool.display_name or tool.name,
+                    "parameters": tool.input_schema,
+                },
+            }
+            schema_parts.append(
+                f"\n```json\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n```"
+            )
+
+        await self._upsert(
+            user_id=str(tool.user_id),
+            path=schema_path,
+            source_id=str(tool.id),
+            context_type=ContextType.TOOL,
+            glance=f"{tool.display_name or tool.name} schema",
+            content="\n".join(schema_parts),
+            tags=(tool.tags or []) + ["tool", "schema"],
+            meta={
+                "tool_code": tool.tool_code,
+                "tool_type": tool.tool_type,
+                "enabled": tool.enabled,
+                "tool_file": "schema",
             },
         )
 
@@ -102,7 +133,13 @@ class ContextSyncer:
         """Delete the context entry for a Tool."""
         if not tool.user_id:
             return
-        await self._delete(str(tool.user_id), f"/tools/{tool.name}")
+        tool_root = build_context_path("tools", tool.tool_code or tool.name)
+        await self._delete(
+            str(tool.user_id), build_context_path(tool_root, "readme.md")
+        )
+        await self._delete(
+            str(tool.user_id), build_context_path(tool_root, "schema.md")
+        )
 
     # ──────────────────────────────────────────────────────────────
     # Skill
@@ -114,7 +151,7 @@ class ContextSyncer:
         ``content`` is the Markdown body (no longer stored on the Skill row).
         If omitted, any existing content in the Context row is preserved.
         """
-        path = f"/skills/{skill.name}"
+        path = build_context_path("skills", skill.name)
         glance = (
             skill.description[:80] if skill.description else None
         ) or f"Skill: {skill.name}"
@@ -138,7 +175,7 @@ class ContextSyncer:
 
     async def remove_skill(self, skill: Any) -> None:
         """Delete the context entry for a Skill."""
-        await self._delete(str(skill.user_id), f"/skills/{skill.name}")
+        await self._delete(str(skill.user_id), build_context_path("skills", skill.name))
 
     # ──────────────────────────────────────────────────────────────
     # Knowledge
@@ -146,7 +183,7 @@ class ContextSyncer:
 
     async def sync_knowledge(self, knowledge: Any) -> None:
         """Upsert a context entry for a Knowledge base at /knowledge/{name}."""
-        path = f"/knowledge/{knowledge.name}"
+        path = build_context_path("knowledge", knowledge.name)
         glance = f"Knowledge: {knowledge.name}"
         if knowledge.description:
             glance += f" — {knowledge.description[:60]}"
@@ -170,7 +207,9 @@ class ContextSyncer:
 
     async def remove_knowledge(self, knowledge: Any) -> None:
         """Delete the context entry for a Knowledge base."""
-        await self._delete(str(knowledge.user_id), f"/knowledge/{knowledge.name}")
+        await self._delete(
+            str(knowledge.user_id), build_context_path("knowledge", knowledge.name)
+        )
 
     # ──────────────────────────────────────────────────────────────
     # Trigger
@@ -178,7 +217,7 @@ class ContextSyncer:
 
     async def sync_trigger(self, trigger: Any, user_id: str | UUID) -> None:
         """Upsert a context entry for a WorkspaceTrigger at /triggers/{name}."""
-        path = f"/triggers/{trigger.name}"
+        path = build_context_path("triggers", trigger.name)
         glance = f"Trigger: {trigger.name}"
         if trigger.description:
             glance += f" — {trigger.description[:50]}"
@@ -210,7 +249,7 @@ class ContextSyncer:
 
     async def remove_trigger(self, trigger: Any, user_id: str | UUID) -> None:
         """Delete the context entry for a WorkspaceTrigger."""
-        await self._delete(str(user_id), f"/triggers/{trigger.name}")
+        await self._delete(str(user_id), build_context_path("triggers", trigger.name))
 
     # ──────────────────────────────────────────────────────────────
     # Workspace
@@ -218,7 +257,7 @@ class ContextSyncer:
 
     async def sync_workspace(self, workspace: Any) -> None:
         """Upsert a context entry for a Workspace at /workspaces/{name}."""
-        path = f"/workspaces/{workspace.name}"
+        path = build_context_path("workspaces", workspace.name)
         glance = f"Workspace: {workspace.name}"
         if workspace.description:
             glance += f" — {workspace.description[:60]}"
@@ -248,7 +287,9 @@ class ContextSyncer:
 
     async def remove_workspace(self, workspace: Any) -> None:
         """Delete the context entry for a Workspace."""
-        await self._delete(str(workspace.owner_id), f"/workspaces/{workspace.name}")
+        await self._delete(
+            str(workspace.owner_id), build_context_path("workspaces", workspace.name)
+        )
 
     # ──────────────────────────────────────────────────────────────
     # Run (lightweight — only glance / status, no heavy content)
@@ -258,7 +299,7 @@ class ContextSyncer:
         """Upsert a context entry for a Run at /workspaces/{workspace_name}/runs/{run_id[:8]}."""
         workspace_name = await self._workspace_name(run.workspace_id)
         short_id = str(run.id)[:8]
-        path = f"/workspaces/{workspace_name}/runs/{short_id}"
+        path = build_context_path("workspaces", workspace_name, "runs", f"run-{short_id}")
 
         title = getattr(run, "title", None)
         run_summary = getattr(run, "summary", None)
@@ -295,7 +336,7 @@ class ContextSyncer:
         short_id = str(run.id)[:8]
         await self._delete(
             str(run.user_id),
-            f"/workspaces/{workspace_name}/runs/{short_id}",
+            build_context_path("workspaces", workspace_name, "runs", f"run-{short_id}"),
         )
 
     # ──────────────────────────────────────────────────────────────

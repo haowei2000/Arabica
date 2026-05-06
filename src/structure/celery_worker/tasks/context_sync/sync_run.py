@@ -12,7 +12,7 @@ from structure.celery_worker.tasks.context_sync._base import (
 )
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.core.enums import ContextType
-from structure.utils.context import slugify as _slugify
+from structure.utils.context import build_context_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def sync_workspace_to_contexts(self, workspace_id: str, user_id: str):
                 source_id=workspace_id,
                 glance=ws.name,
                 content=content,
-                path=f"workspaces/{_slugify(ws.name)}",
+                path=build_context_path("workspaces", ws.name),
                 tags=["workspace", str(ws.status)],
                 meta={
                     "workspace_id": workspace_id,
@@ -131,9 +131,7 @@ def sync_run_to_contexts(self, run_id: str, user_id: str):
                 parts.append(f"Assistant: {output_msg}")
             content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
 
-            run_path = (
-                f"runs/{_slugify(run.title)}" if run.title else f"runs/{run_id[:8]}"
-            )
+            run_path = build_context_path("runs", run.title or f"run-{run_id[:8]}")
             ctx, needs_embedding = await _upsert_context(
                 session,
                 user_id=user_id,
@@ -229,7 +227,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
                 source_id=run_id,
                 glance=glance,
                 content=content,
-                path=f"runs/{run_id[:8]}/events",
+                path=build_context_path("runs", f"run-{run_id[:8]}", "events"),
                 tags=["events", "run"],
                 meta={
                     "run_id": run_id,
@@ -314,10 +312,8 @@ def sync_run_to_memory(self, run_id: str, user_id: str):
                 parts.append(f"Assistant: {output_msg}")
             content = "\n\n".join(parts) or f"Run {run_id} ({run.status})"
 
-            memory_path = (
-                f"memory/{_slugify(run.title)}"
-                if run.title
-                else f"memory/run-{run_id[:8]}"
+            memory_path = build_context_path(
+                "memory", run.title or f"run-{run_id[:8]}"
             )
             ctx, needs_embedding = await _upsert_context(
                 session,

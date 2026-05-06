@@ -8,19 +8,63 @@ from structure.celery_worker.tasks.context_sync._base import (
     _fetch_embedding_service,
     _generate_embedding,
     _store_embedding,
-    _upsert_context,
+    _upsert_context_at_path,
 )
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.workspace_context_sync import (
     _get_user_workspace_ids,
     _invalidate_workspace_caches,
     _sync_path_to_workspaces,
-    _update_workspace_contexts,
 )
 from structure.core.enums import ContextType
-from structure.utils.context import slugify as _slugify
+from structure.utils.context import build_context_path
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_context_paths(tool_name: str) -> tuple[str, str]:
+    tool_root = build_context_path("tools", tool_name)
+    return (
+        build_context_path(tool_root, "readme.md"),
+        build_context_path(tool_root, "schema.md"),
+    )
+
+
+def _build_tool_schema_json(
+    *,
+    tool_name: str,
+    display_name: str,
+    description: str | None,
+    input_schema: dict,
+) -> str:
+    full_schema = {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": description or display_name,
+            "parameters": input_schema,
+        },
+    }
+    return json.dumps(full_schema, ensure_ascii=False, indent=2)
+
+
+def _build_tool_readme(
+    *,
+    tool_name: str,
+    display_name: str,
+    description: str | None,
+    tool_tags: list[str],
+) -> str:
+    lines = [f"# {display_name}", "", f"- Tool code: `{tool_name}`"]
+    if tool_tags:
+        lines.append(f"- Tags: {', '.join(tool_tags)}")
+    if description:
+        lines.extend(["", description])
+    return "\n".join(lines)
+
+
+def _build_tool_schema_markdown(schema_json: str) -> str:
+    return f"# Tool Schema\n\n```json\n{schema_json}\n```"
 
 
 @celery_app.task(
@@ -53,78 +97,105 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             )
             tool_tags = list(tool.tags or [])
 
-            # Store the full OpenAI function-calling schema so read_context results
-            # can be directly parsed by _extract_context_tool_schemas without needing
-            # to reconstruct the description from scattered fields.
             input_schema = tool.input_schema or {}
-            full_schema = {
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": tool.description or display_name,
-                    "parameters": input_schema,
-                },
-            }
-            schema_str = json.dumps(full_schema, ensure_ascii=False)
+            schema_json = _build_tool_schema_json(
+                tool_name=tool_name,
+                display_name=display_name,
+                description=tool.description,
+                input_schema=input_schema,
+            )
+            readme_content = _build_tool_readme(
+                tool_name=tool_name,
+                display_name=display_name,
+                description=tool.description,
+                tool_tags=tool_tags,
+            )
+            schema_content = _build_tool_schema_markdown(schema_json)
+            readme_path, schema_path = _tool_context_paths(tool_name)
 
-            ctx, needs_embedding = await _upsert_context(
+            readme_ctx, readme_needs_embedding = await _upsert_context_at_path(
                 session,
                 user_id=user_id,
                 context_type=ContextType.TOOL,
                 source_id=tool_id,
                 glance=glance,
-                content=schema_str,
-                path=f"/tools/{_slugify(tool_name)}",
-                tags=["tool"] + tool_tags,  # noqa: RUF005
-                meta={"tool_id": tool_id, "tool_code": tool_name},
+                content=readme_content,
+                path=readme_path,
+                tags=["tool", "readme", *tool_tags],
+                meta={"tool_id": tool_id, "tool_code": tool_name, "tool_file": "readme"},
             )
-
-            await _update_workspace_contexts(
+            schema_ctx, schema_needs_embedding = await _upsert_context_at_path(
                 session,
-                meta_key="tool_id",
-                resource_id=tool_id,
-                glance=glance,
-                content=schema_str,
+                user_id=user_id,
+                context_type=ContextType.TOOL,
+                source_id=tool_id,
+                glance=f"{display_name} schema",
+                content=schema_content,
+                path=schema_path,
+                tags=["tool", "schema", *tool_tags],
+                meta={"tool_id": tool_id, "tool_code": tool_name, "tool_file": "schema"},
             )
 
             workspace_ids = await _get_user_workspace_ids(session, user_id)
             await session.flush()
-            ctx_id = str(ctx.id)
+            embed_targets = [
+                (str(readme_ctx.id), " ".join(filter(None, [glance, readme_content])))
+                if readme_needs_embedding
+                else None,
+                (str(schema_ctx.id), " ".join(filter(None, [display_name, schema_json])))
+                if schema_needs_embedding
+                else None,
+            ]
             tool_description = tool.description
-            embed_text = " ".join(
-                filter(None, [display_name, tool_description, schema_str])
-            )
             emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
-        # ── 2. Sync WorkspaceContext at tools/{name} for each workspace ───
-        path = f"/tools/{_slugify(tool_name)}"
+        # ── 2. Sync WorkspaceContext files for each workspace ─────────────
         dirty_ids = await _sync_path_to_workspaces(
             workspace_ids,
-            path=path,
+            path=readme_path,
             glance=glance,
             overview=tool_description,
-            detail=schema_str,
-            tags=["tool"] + tool_tags,  # noqa: RUF005
-            meta={"tool_id": tool_id, "tool_code": tool_name},
+            detail=readme_content,
+            tags=["tool", "readme", *tool_tags],
+            meta={"tool_id": tool_id, "tool_code": tool_name, "tool_file": "readme"},
             created_by=user_id,
         )
-        await _invalidate_workspace_caches(dirty_ids)
+        dirty_ids.extend(
+            await _sync_path_to_workspaces(
+                workspace_ids,
+                path=schema_path,
+                glance=f"{display_name} schema",
+                overview=tool_description,
+                detail=schema_content,
+                tags=["tool", "schema", *tool_tags],
+                meta={
+                    "tool_id": tool_id,
+                    "tool_code": tool_name,
+                    "tool_file": "schema",
+                },
+                created_by=user_id,
+            )
+        )
+        await _invalidate_workspace_caches(dirty_ids, raise_on_error=True)
 
         logger.info(
             f"sync_tool: upserted Context + synced to {len(dirty_ids)} workspace(s) "
-            f"at '{path}' for tool {tool_id}"
+            f"under '{build_context_path('tools', tool_name)}' for tool {tool_id}"
         )
 
         # ── 3. Generate embedding only when content changed ────────────────
-        if needs_embedding and embed_text.strip():
+        for target in embed_targets:
+            if not target:
+                continue
+            ctx_id, embed_text = target
+            if not embed_text.strip():
+                continue
             vector, field = _generate_embedding(embed_text, emb_svc)
             async with get_session("structure") as session:
                 await _store_embedding(session, ctx_id, vector, field)
                 await session.commit()
             logger.info(f"sync_tool: embedded Context {ctx_id}")
-        elif not needs_embedding:
-            logger.debug(f"sync_tool: content unchanged, skipped re-embedding {ctx_id}")
 
     try:
         run_async(_execute())
@@ -170,15 +241,20 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
             display_name = tool.display_name or tool.name
             glance = f"{display_name} — {(tool.description or '')[:60]}"
             input_schema = tool.input_schema or {}
-            full_schema = {
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": tool.description or display_name,
-                    "parameters": input_schema,
-                },
-            }
-            schema_str = json.dumps(full_schema, ensure_ascii=False)
+            schema_json = _build_tool_schema_json(
+                tool_name=tool_name,
+                display_name=display_name,
+                description=tool.description,
+                input_schema=input_schema,
+            )
+            readme_content = _build_tool_readme(
+                tool_name=tool_name,
+                display_name=display_name,
+                description=tool.description,
+                tool_tags=list(tool.tags or []),
+            )
+            schema_content = _build_tool_schema_markdown(schema_json)
+            readme_path, schema_path = _tool_context_paths(tool_name)
             tool_tags = list(tool.tags or [])
 
             # All active workspaces (inner tools are global)
@@ -203,19 +279,35 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
         # ── 1. Sync WorkspaceContext paths ────────────────────────────────
         dirty_ids = await _sync_path_to_workspaces(
             all_workspace_ids,
-            path=f"/tools/{_slugify(tool_name)}",
+            path=readme_path,
             glance=glance,
             overview=tool.description,
-            detail=schema_str,
-            tags=["tool"] + tool_tags,  # noqa: RUF005
-            meta={"tool_id": tool_id, "tool_code": tool_name},
+            detail=readme_content,
+            tags=["tool", "readme", *tool_tags],
+            meta={"tool_id": tool_id, "tool_code": tool_name, "tool_file": "readme"},
             created_by=None,
         )
-        await _invalidate_workspace_caches(dirty_ids)
+        dirty_ids.extend(
+            await _sync_path_to_workspaces(
+                all_workspace_ids,
+                path=schema_path,
+                glance=f"{display_name} schema",
+                overview=tool.description,
+                detail=schema_content,
+                tags=["tool", "schema", *tool_tags],
+                meta={
+                    "tool_id": tool_id,
+                    "tool_code": tool_name,
+                    "tool_file": "schema",
+                },
+                created_by=None,
+            )
+        )
+        await _invalidate_workspace_caches(dirty_ids, raise_on_error=True)
 
         # ── 2. Generate embedding and store for all per-user Context rows ─
         embed_text = " ".join(
-            filter(None, [display_name, tool.description, schema_str])
+            filter(None, [display_name, tool.description, schema_json])
         )
         if embed_text.strip() and ctx_ids:
             vector, field = _generate_embedding(embed_text, emb_svc)
@@ -286,43 +378,58 @@ def resync_all_tools_to_contexts(self):
                     tool_name = tool.tool_code or tool.name
                     display_name = tool.display_name or tool.name
                     input_schema = tool.input_schema or {}
-                    full_schema = {
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "description": tool.description or display_name,
-                            "parameters": input_schema,
-                        },
-                    }
-                    schema_str = json.dumps(full_schema, ensure_ascii=False)
+                    schema_json = _build_tool_schema_json(
+                        tool_name=tool_name,
+                        display_name=display_name,
+                        description=tool.description,
+                        input_schema=input_schema,
+                    )
                     glance = (
                         f"{display_name} — {tool.description[:60]}"
                         if tool.description
                         else display_name
                     )
 
-                    async with get_session("structure") as session:
-                        await _update_workspace_contexts(
-                            session,
-                            meta_key="tool_id",
-                            resource_id=tool_id,
-                            glance=glance,
-                            content=schema_str,
-                        )
-                        await session.commit()
-
                     tool_tags = list(tool.tags or [])
+                    readme_content = _build_tool_readme(
+                        tool_name=tool_name,
+                        display_name=display_name,
+                        description=tool.description,
+                        tool_tags=tool_tags,
+                    )
+                    schema_content = _build_tool_schema_markdown(schema_json)
+                    readme_path, schema_path = _tool_context_paths(tool_name)
                     dirty_ids = await _sync_path_to_workspaces(
                         all_workspace_ids,
-                        path=f"/tools/{_slugify(tool_name)}",
+                        path=readme_path,
                         glance=glance,
                         overview=tool.description,
-                        detail=schema_str,
-                        tags=["tool"] + tool_tags,  # noqa: RUF005
-                        meta={"tool_id": tool_id, "tool_code": tool_name},
+                        detail=readme_content,
+                        tags=["tool", "readme", *tool_tags],
+                        meta={
+                            "tool_id": tool_id,
+                            "tool_code": tool_name,
+                            "tool_file": "readme",
+                        },
                         created_by=None,
                     )
-                    await _invalidate_workspace_caches(dirty_ids)
+                    dirty_ids.extend(
+                        await _sync_path_to_workspaces(
+                            all_workspace_ids,
+                            path=schema_path,
+                            glance=f"{display_name} schema",
+                            overview=tool.description,
+                            detail=schema_content,
+                            tags=["tool", "schema", *tool_tags],
+                            meta={
+                                "tool_id": tool_id,
+                                "tool_code": tool_name,
+                                "tool_file": "schema",
+                            },
+                            created_by=None,
+                        )
+                    )
+                    await _invalidate_workspace_caches(dirty_ids, raise_on_error=True)
                     dispatched += 1
                 except Exception as exc:
                     logger.error(

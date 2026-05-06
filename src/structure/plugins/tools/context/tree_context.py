@@ -10,6 +10,12 @@ from structure.core.interfaces.tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
+from structure.extensions.database import get_session
+from structure.plugins.tools.context._sql_context import (
+    list_contexts,
+    normalize_path,
+    publish_context_using,
+)
 
 
 def _disclose_overview(ctx: dict) -> dict[str, Any]:
@@ -94,6 +100,8 @@ class TreeContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
+        run_id: str | None = Field(default=None, description="Run ID")
+        user_id: str | None = Field(default=None, description="User ID")
         root: str | None = Field(
             default=None,
             description="Root path to build tree from (None for full tree)",
@@ -102,19 +110,32 @@ class TreeContextTool(InnerTool):
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
-        from structure.services.context.client import context_service_client
-
         try:
             workspace_id = UUID(input_data.workspace_id)
-            root_normalized = (
-                ("/" + input_data.root.strip("/")) if input_data.root else ""
-            )
+            root_normalized = normalize_path(input_data.root) if input_data.root else ""
 
-            result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id, prefix=root_normalized, recursive=True
-            )
-
-            contexts = result_data.get("items", [])
+            async with get_session("structure") as session:
+                contexts = await list_contexts(
+                    session,
+                    workspace_id,
+                    prefix=root_normalized or None,
+                    level="overview",
+                    user_id=input_data.user_id,
+                    recursive=True,
+                    limit=500,
+                )
+                paths = [ctx.get("path", "") for ctx in contexts if ctx.get("path")]
+                await publish_context_using(
+                    session,
+                    workspace_id,
+                    operation="tree",
+                    paths=paths,
+                    level="overview",
+                    run_id=input_data.run_id,
+                    user_id=input_data.user_id,
+                    meta={"root": root_normalized or "/"},
+                )
+                await session.commit()
 
             tree = _build_tree(contexts, root_normalized or None)
             total_nodes = _count_nodes(tree) if tree else 0

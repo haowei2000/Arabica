@@ -12,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structure.core.enums import ContextType
 from structure.models.context.context import Context
 from structure.schemas.context.context_schema import ContextCreate, ContextUpdate
+from structure.utils.context import (
+    context_path_variants,
+    semantic_context_path,
+)
 
 
 def normalize_uuid_to_str(val: str | UUID) -> str:
@@ -824,18 +828,21 @@ class ContextCRUD:
         and clears embeddings when content changes.
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
+        normalized_path = semantic_context_path(path) or "/"
+        path_variants = context_path_variants(normalized_path)
 
         stmt = select(Context).where(
             Context.user_id == normalized_user_id,
-            Context.path == path,
+            Context.path.in_(path_variants),
         )
         result = await self.db.execute(stmt)
-        ctx = result.scalar_one_or_none()
+        ctx = result.scalars().first()
 
         content = data.get("content", "")
         if ctx:
             content_changed = content != ctx.content
             ctx.glance = data.get("glance", ctx.glance)
+            ctx.path = normalized_path
             ctx.content = content
             if data.get("tags") is not None:
                 ctx.tags = data["tags"]
@@ -853,7 +860,7 @@ class ContextCRUD:
             ctx = Context(
                 id=uuid4(),
                 user_id=normalized_user_id,
-                path=path,
+                path=normalized_path,
                 context_type=data.get("context_type", ContextType.WORKSPACE),
                 source_id=UUID(str(source_id)) if source_id else None,
                 glance=data.get("glance", ""),
@@ -884,6 +891,7 @@ class ContextCRUD:
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
         source_uuid = UUID(str(source_id))
+        normalized_path = semantic_context_path(data.get("path"))
 
         stmt = select(Context).where(
             Context.source_id == source_uuid,
@@ -891,7 +899,7 @@ class ContextCRUD:
             Context.user_id == normalized_user_id,
         )
         result = await self.db.execute(stmt)
-        ctx = result.scalar_one_or_none()
+        ctx = result.scalars().first()
 
         content = data.get("content") or ""
         if ctx:
@@ -899,8 +907,8 @@ class ContextCRUD:
             content_changed = new_content != ctx.content
             ctx.glance = data.get("glance", ctx.glance)
             ctx.content = new_content
-            if data.get("path") is not None:
-                ctx.path = data["path"]
+            if normalized_path is not None:
+                ctx.path = normalized_path
             if data.get("tags") is not None:
                 ctx.tags = data["tags"]
             ctx.meta = {**(ctx.meta or {}), **(data.get("meta") or {})}
@@ -917,7 +925,7 @@ class ContextCRUD:
                 context_type=context_type,
                 source_id=source_uuid,
                 glance=data.get("glance"),
-                path=data.get("path"),
+                path=normalized_path,
                 content=content,
                 tags=data.get("tags") or [],
                 meta=data.get("meta") or {},
@@ -950,21 +958,24 @@ class ContextCRUD:
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
         source_uuid = UUID(str(source_id))
+        normalized_path = semantic_context_path(path) or "/"
+        path_variants = context_path_variants(normalized_path)
 
         stmt = select(Context).where(
             Context.source_id == source_uuid,
             Context.context_type == context_type,
             Context.user_id == normalized_user_id,
-            Context.path == path,
+            Context.path.in_(path_variants),
         )
         result = await self.db.execute(stmt)
-        ctx = result.scalar_one_or_none()
+        ctx = result.scalars().first()
 
         content = data.get("content") or ""
         if ctx:
             new_content = content or ctx.content
             content_changed = new_content != ctx.content
             ctx.glance = data.get("glance", ctx.glance)
+            ctx.path = normalized_path
             ctx.content = new_content
             if data.get("tags") is not None:
                 ctx.tags = data["tags"]
@@ -982,7 +993,7 @@ class ContextCRUD:
                 context_type=context_type,
                 source_id=source_uuid,
                 glance=data.get("glance"),
-                path=path,
+                path=normalized_path,
                 content=content,
                 tags=data.get("tags") or [],
                 meta=data.get("meta") or {},

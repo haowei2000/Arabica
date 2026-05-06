@@ -1,3 +1,7 @@
+"""Read context tool - retrieve SQL-backed context by path."""
+
+from typing import Literal
+
 from pydantic import Field
 
 from structure.core.interfaces.tool import (
@@ -5,6 +9,13 @@ from structure.core.interfaces.tool import (
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
+)
+from structure.extensions.database import get_session
+from structure.plugins.tools.context._sql_context import (
+    find_context_by_path,
+    normalize_level,
+    normalize_path,
+    publish_context_using,
 )
 
 
@@ -20,37 +31,54 @@ class ReadContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
+        run_id: str | None = Field(default=None, description="Run ID")
+        user_id: str | None = Field(default=None, description="User ID")
         path: str = Field(
             description="Context path (e.g., 'tools/web_search' or 'knowledge/python_guide')"
+        )
+        level: Literal["glance", "overview", "detail"] = Field(
+            default="detail",
+            description="Disclosure level to return",
         )
 
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
-        from structure.services.context.client import context_service_client
-
         try:
             workspace_id = UUID(input_data.workspace_id)
-            ctx_data = await context_service_client.get_context(
-                workspace_id=workspace_id, path=input_data.path
-            )
+            level = normalize_level(input_data.level)
+            normalized_path = normalize_path(input_data.path)
 
-            if ctx_data is None:
-                return ToolOutputSchema(
-                    success=False,
-                    message=f"Context not found at path: {input_data.path}",
-                    data={"path": input_data.path, "exists": False},
+            async with get_session("structure") as session:
+                ctx = await find_context_by_path(
+                    session,
+                    workspace_id,
+                    normalized_path,
+                    user_id=input_data.user_id,
                 )
+                if ctx is None:
+                    return ToolOutputSchema(
+                        success=False,
+                        message=f"Context not found at path: {normalized_path}",
+                        data={"path": normalized_path, "exists": False},
+                    )
+
+                data = ctx.disclose(level)
+                await publish_context_using(
+                    session,
+                    workspace_id,
+                    operation="read",
+                    paths=[normalized_path],
+                    level=level,
+                    run_id=input_data.run_id,
+                    user_id=input_data.user_id,
+                )
+                await session.commit()
 
             return ToolOutputSchema(
                 success=True,
-                message=f"Retrieved context: {input_data.path}",
-                data={
-                    "path": input_data.path,
-                    "content": ctx_data.get("content"),
-                    "content_type": ctx_data.get("content_type"),
-                    "glance": ctx_data.get("glance"),
-                },
+                message=f"Retrieved context: {normalized_path}",
+                data=data,
             )
 
         except Exception as e:

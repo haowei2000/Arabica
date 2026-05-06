@@ -62,6 +62,7 @@ from structure.schemas.app import AppConfig
 from structure.schemas.context.tools.execution import ReadContextResult
 from structure.schemas.events.event_payloads import EventType
 from structure.schemas.llm.chat_llm import ChatLLM
+from structure.services.events.event_gc import EventGarbageCollector
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +338,41 @@ def _clean_parameters_schema(raw: dict) -> dict:
     return schema
 
 
+def _tool_name_from_context_path(path: str) -> str | None:
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) < 2 or parts[0] != "tools":
+        return None
+
+    leaf = parts[-1]
+    if leaf in {"readme.md", "readme", "overview.md"}:
+        return None
+    if leaf in {"schema.md", "schema.json", "input-schema.ctx"} and len(parts) >= 3:
+        leaf = parts[-2]
+    return leaf.replace("-", "_")
+
+
+def _parse_context_tool_schema(content: object) -> dict | None:
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        return None
+
+    try:
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
     """Convert ``read_context`` TOOL_RESULT events at ``/tools/*`` paths into
     OpenAI function-calling schemas ready to pass as the ``tools`` parameter.
@@ -377,10 +413,13 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             logger.warning("_extract_context_tool_schemas: failed to parse event")
             continue
 
-        if not data.path.startswith("tools/"):
+        if not data.path.lstrip("/").startswith("tools/"):
             continue
 
-        tool_name_from_path = data.path.split("/")[-1]
+        tool_name_from_path = _tool_name_from_context_path(data.path)
+        if not tool_name_from_path:
+            continue
+
         content_raw = data.content
         description_hint: str = data.summary or data.glance or ""
 
@@ -390,26 +429,13 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             type(content_raw).__name__,
             str(content_raw)[:150] if content_raw else None,
         )
-        if isinstance(content_raw, str):
-            try:
-                parsed = json.loads(content_raw)
-            except json.JSONDecodeError:
-                logger.warning(
-                    "_extract_context_tool_schemas: failed to parse content at %r",
-                    data.path,
-                )
-                continue
-        elif isinstance(content_raw, dict):
-            parsed = content_raw
-        else:
+        parsed = _parse_context_tool_schema(content_raw)
+        if parsed is None:
             logger.warning(
-                "_extract_context_tool_schemas: unexpected content type at %r: %s",
+                "_extract_context_tool_schemas: failed to parse schema at %r: %s",
                 data.path,
                 type(content_raw).__name__,
             )
-            continue
-
-        if not isinstance(parsed, dict):
             continue
 
         try:
@@ -560,9 +586,11 @@ class DefaultExecutor(Executor):
 
         self.workspace_id: str = config.get("workspace_id", "")
         self.run_id: str = config.get("run_id", "")
+        self.user_id: str = config.get("user_id", "")
         self.global_event: bool = config.get("global_event", False)
         self.tool_caller = config.get("tool_caller")
         self.tool_provider = config.get("tool_provider")
+        self.event_gc = config.get("event_gc") or EventGarbageCollector()
 
         # Cache the LLM client so it is not recreated for every LLM call
         # within the same run (saves connection overhead on multi-iteration loops).
@@ -583,6 +611,17 @@ class DefaultExecutor(Executor):
         # Pre-fetched event list injected by process_events().
         # When set, _fetch_events() returns this cache instead of querying DB.
         self._raw_events_cache: list[dict] | None = None
+
+    def _apply_event_gc(self, events: list[Event]) -> list[Event]:
+        """Apply prompt-visible event GC without mutating persisted history."""
+        if not events:
+            return events
+        try:
+            current_step = max((event.sequence or 0) for event in events)
+            return self.event_gc.collect(events, current_step=current_step)
+        except Exception as err:
+            logger.warning("Event GC failed; using uncollected history: %s", err)
+            return events
 
     # ── abstract method ───────────────────────────────────────────
 
@@ -769,9 +808,9 @@ class DefaultExecutor(Executor):
         logger.debug(
             "_on_user_message: all_raw=%d, after filter=%d",
             len(all_events),
-            len(filter_events_for_user_msg(all_events)),
+            len(filter_events_for_user_msg(self._apply_event_gc(all_events))),
         )
-        raw_events = filter_events_for_user_msg(all_events)
+        raw_events = filter_events_for_user_msg(self._apply_event_gc(all_events))
         messages, tools_info = self.get_messages_and_tools(raw_events)
         logger.info(
             "_on_user_message: run=%s built %d messages, starting agentic loop",
@@ -798,7 +837,7 @@ class DefaultExecutor(Executor):
             self._pending_tool_ids.discard(tool_id)
             self._pending_user_input = None
 
-        raw_events = filter_events_for_user_msg(events)
+        raw_events = filter_events_for_user_msg(self._apply_event_gc(events))
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -813,7 +852,7 @@ class DefaultExecutor(Executor):
         user messages, agent replies, and all resolved tool calls/results.
         Unresolved TOOL_CALL references are stripped by _strip_orphaned_tool_messages.
         """
-        raw_events = filter_events_for_user_msg(events)
+        raw_events = filter_events_for_user_msg(self._apply_event_gc(events))
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -831,7 +870,7 @@ class DefaultExecutor(Executor):
         if self._pending_tool_ids:
             return  # Still waiting for other parallel tool results
 
-        raw_events = filter_events_for_user_msg(events)
+        raw_events = filter_events_for_user_msg(self._apply_event_gc(events))
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -1148,6 +1187,8 @@ class DefaultExecutor(Executor):
                 args["workspace_id"] = self.workspace_id
             if self.run_id and "run_id" not in args:
                 args["run_id"] = self.run_id
+            if self.user_id and "user_id" not in args:
+                args["user_id"] = self.user_id
 
             yield self._emit_tool_call(tc.name, tc.id, args)
 

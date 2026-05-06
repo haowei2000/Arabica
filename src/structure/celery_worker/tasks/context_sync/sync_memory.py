@@ -13,7 +13,7 @@ from structure.celery_worker.tasks.workspace_context_sync import (
     _invalidate_workspace_caches,
     _update_workspace_contexts,
 )
-from structure.utils.context import slugify as _slugify
+from structure.utils.context import build_context_path
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,13 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):  # noqa: ARG001
             # Back-fill path for rows created before path was set
             if not mem.path:
                 if mem.glance:
-                    mem.path = f"memory/{_slugify(mem.glance[:50])}"
+                    mem.path = build_context_path("memory", mem.glance[:50])
                 elif mem.source_id:
-                    mem.path = f"memory/run-{str(mem.source_id)[:8]}"
+                    mem.path = build_context_path(
+                        "memory", f"run-{str(mem.source_id)[:8]}"
+                    )
                 else:
-                    mem.path = f"memory/{str(mem.id)[:8]}"
+                    mem.path = build_context_path("memory", str(mem.id)[:8])
 
             # Only clear and regenerate if no embedding exists yet
             needs_embedding = mem.embedding_1024 is None
@@ -63,7 +65,7 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):  # noqa: ARG001
                 mem.embedding_1024 = None
                 mem.embedding_1536 = None
 
-            count = await _update_workspace_contexts(
+            count, dirty_ids = await _update_workspace_contexts(
                 session,
                 meta_key="memory_id",
                 resource_id=memory_id,
@@ -78,6 +80,7 @@ def sync_memory_to_contexts(self, memory_id: str, user_id: str):  # noqa: ARG001
         logger.info(
             f"sync_memory: updated {count} WorkspaceContext(s) for memory {memory_id}"
         )
+        await _invalidate_workspace_caches(dirty_ids, raise_on_error=True)
 
         # ── 2. Generate embedding only when missing ────────────────────────
         if needs_embedding and embed_text.strip():
@@ -162,9 +165,8 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
             )
             wc_count = ws_del.rowcount
 
+            await _invalidate_workspace_caches(dirty_ids, raise_on_error=True)
             await session.commit()
-
-        await _invalidate_workspace_caches(dirty_ids)
 
         logger.info(
             f"delete_resource_contexts: removed {ctx_count} user Context row(s) and "

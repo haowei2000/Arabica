@@ -16,6 +16,8 @@ from structure.core.interfaces.tool import (
     ToolMetadata,
     ToolOutputSchema,
 )
+from structure.plugins.tools.context._sql_context import normalize_path
+from structure.utils.context import context_path_variants
 
 
 class RateContextTool(InnerTool):
@@ -33,6 +35,8 @@ class RateContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
+        run_id: str | None = Field(default=None, description="Run ID")
+        user_id: str | None = Field(default=None, description="User ID")
         path: str = Field(description="Context path that was consulted")
         rating: float = Field(
             description="Usefulness rating in [-1.0, 1.0]. Positive = helpful, "
@@ -68,9 +72,10 @@ class RateContextTool(InnerTool):
 
         try:
             async with get_session("structure") as session:
+                normalized_path = normalize_path(input_data.path)
                 stmt = select(Context).where(
                     Context.source_id == workspace_id,
-                    Context.path == input_data.path,
+                    Context.path.in_(context_path_variants(normalized_path)),
                 )
                 result = await session.execute(stmt)
                 ctx = result.scalars().first()
@@ -83,10 +88,12 @@ class RateContextTool(InnerTool):
                     event_type=EventType.CONTEXT_RATED,
                     workspace_id=workspace_id,
                     payload={
-                        "path": input_data.path,
+                        "path": normalized_path,
                         "rating": input_data.rating,
                         "comment": input_data.comment,
                     },
+                    run_id=input_data.run_id,
+                    user_id=input_data.user_id,
                     auto_commit=True,
                 )
 
@@ -95,10 +102,10 @@ class RateContextTool(InnerTool):
             return ToolOutputSchema(
                 success=True,
                 message=f"Rated {input_data.path} = {input_data.rating}",
-                data={
-                    "path": input_data.path,
-                    "rating_avg": rating_avg,
-                    "rating_count": rating_count,
+                    data={
+                        "path": normalized_path,
+                        "rating_avg": rating_avg,
+                        "rating_count": rating_count,
                     "context_found": ctx is not None,
                 },
             )

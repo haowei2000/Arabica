@@ -2,7 +2,7 @@ from structure.core.interfaces.structurer import BaseStructurer
 from structure.models.context.context import Context
 from structure.plugins.structurers import register_structurer
 from structure.schemas.context.context_schema import ContextCore
-from structure.utils.context import slugify
+from structure.utils.context import build_context_path, build_path
 
 
 @register_structurer
@@ -25,9 +25,9 @@ class MemoryStructurer(BaseStructurer):
 
         # Derive path: use stored path or fall back to id
         if ctx.path:
-            mem_path = slugify(f"/memory/{ctx.path.strip('/')}")
+            mem_path = build_path("memory", ctx.path)
         else:
-            mem_path = f"/memory/{ctx.id}"
+            mem_path = build_context_path("memory", str(ctx.id))
 
         # Build content block: metadata header + full content
         lines: list[str] = []

@@ -17,9 +17,9 @@ Design goals:
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Iterable, Sequence
 
 from structure.core.enums import EventType
 
@@ -64,6 +64,9 @@ DEFAULT_POLICY: dict[EventType, EventTTL] = {
     EventType.TOOL_CLIENT_REQUEST: EventTTL(steps=2),
     EventType.USING_CONTEXT: EventTTL(steps=1),
     EventType.CONTEXT_RATED: EventTTL(steps=4),
+    EventType.CONTEXT_CREATED: EventTTL(pin=True),
+    EventType.CONTEXT_UPDATED: EventTTL(steps=8),
+    EventType.CONTEXT_DELETED: EventTTL(steps=8),
     # --- Noise: drop immediately from context (audit log keeps them) ---
     EventType.AGENT_TOKEN: EventTTL(steps=0),
     EventType.AGENT_HEARTBEAT: EventTTL(steps=0),
@@ -98,7 +101,7 @@ class EventGarbageCollector:
 
     def is_live(
         self,
-        event: "_EventLike",
+        event: _EventLike,
         *,
         current_step: int,
         now: datetime | None = None,
@@ -125,11 +128,11 @@ class EventGarbageCollector:
 
     def collect(
         self,
-        events: Iterable["_EventLike"],
+        events: Iterable[_EventLike],
         *,
         current_step: int,
         now: datetime | None = None,
-    ) -> list["_EventLike"]:
+    ) -> list[_EventLike]:
         """Return only the events still live at ``current_step``."""
         return [
             e for e in events if self.is_live(e, current_step=current_step, now=now)
@@ -137,11 +140,11 @@ class EventGarbageCollector:
 
     def partition(
         self,
-        events: Sequence["_EventLike"],
+        events: Sequence[_EventLike],
         *,
         current_step: int,
         now: datetime | None = None,
-    ) -> tuple[list["_EventLike"], list["_EventLike"]]:
+    ) -> tuple[list[_EventLike], list[_EventLike]]:
         """Split ``events`` into ``(live, expired)``.
 
         Useful when callers want to summarise the expired batch into a

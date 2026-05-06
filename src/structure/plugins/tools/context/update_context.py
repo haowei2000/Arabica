@@ -1,20 +1,27 @@
-"""Update context tool - modify existing context."""
+"""Update context tool - modify SQL-backed context."""
 
-import json
 from typing import Any
 
 from pydantic import Field
 
+from structure.core.enums import EventType
 from structure.core.interfaces.tool import (
     InnerTool,
     ToolInputSchema,
     ToolMetadata,
     ToolOutputSchema,
 )
+from structure.extensions.database import get_session
+from structure.plugins.tools.context._sql_context import (
+    find_context_by_path,
+    normalize_path,
+    publish_context_event,
+    to_text,
+)
 
 
 class UpdateContextTool(InnerTool):
-    """Update an existing context entry - modify any field (glance/overview/detail/tags)."""
+    """Update an existing context entry."""
 
     METADATA = ToolMetadata(
         name="update_context",
@@ -27,6 +34,8 @@ class UpdateContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
+        run_id: str | None = Field(default=None, description="Run ID")
+        user_id: str | None = Field(default=None, description="User ID")
         path: str = Field(description="Context path to update")
         glance: str | None = Field(
             default=None, description="New glance text (one-line summary)"
@@ -45,78 +54,75 @@ class UpdateContextTool(InnerTool):
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
-        from structure.services.context.client import context_service_client
-
         try:
             workspace_id = UUID(input_data.workspace_id)
-            normalized_path = "/" + input_data.path.lstrip("/")
+            normalized_path = normalize_path(input_data.path)
+            updated_fields: list[str] = []
 
-            # Fetch existing context to perform partial update
-            ctx = await context_service_client.get_context(
-                workspace_id, normalized_path
-            )
-
-            if ctx is None:
-                return ToolOutputSchema(
-                    success=False,
-                    message=f"Context not found at path: {input_data.path}",
-                    data={"path": input_data.path, "exists": False},
+            async with get_session("structure") as session:
+                ctx = await find_context_by_path(
+                    session,
+                    workspace_id,
+                    normalized_path,
+                    user_id=input_data.user_id,
                 )
+                if ctx is None:
+                    return ToolOutputSchema(
+                        success=False,
+                        message=f"Context not found at path: {normalized_path}",
+                        data={"path": normalized_path, "exists": False},
+                    )
 
-            updated_fields = []
-            update_payload = {
-                "path": normalized_path,
-                "content": ctx.get("content", ""),
-            }
+                if input_data.glance is not None:
+                    ctx.glance = input_data.glance
+                    updated_fields.append("glance")
+                if input_data.overview is not None:
+                    ctx.meta = {
+                        **(ctx.meta or {}),
+                        "overview": to_text(input_data.overview),
+                    }
+                    updated_fields.append("overview")
+                if input_data.detail is not None:
+                    new_content = to_text(input_data.detail)
+                    if new_content != ctx.content:
+                        ctx.content = new_content
+                        ctx.embedding_384 = None
+                        ctx.embedding_768 = None
+                        ctx.embedding_1024 = None
+                        ctx.embedding_1536 = None
+                    updated_fields.append("detail")
+                if input_data.tags is not None:
+                    ctx.tags = input_data.tags
+                    updated_fields.append("tags")
+                if input_data.meta is not None:
+                    ctx.meta = {**(ctx.meta or {}), **input_data.meta}
+                    updated_fields.append("meta")
 
-            if input_data.glance is not None:
-                update_payload["glance"] = input_data.glance
-                updated_fields.append("glance")
+                if not updated_fields:
+                    return ToolOutputSchema(
+                        success=False,
+                        message="No fields provided to update",
+                        data={"path": normalized_path},
+                    )
 
-            if input_data.overview is not None:
-                update_payload["summary"] = (
-                    json.dumps(input_data.overview, ensure_ascii=False)
-                    if isinstance(input_data.overview, dict)
-                    else input_data.overview
+                await publish_context_event(
+                    session,
+                    EventType.CONTEXT_UPDATED,
+                    workspace_id,
+                    run_id=input_data.run_id,
+                    user_id=input_data.user_id,
+                    payload={
+                        "path": normalized_path,
+                        "context_id": str(ctx.id),
+                        "updated_fields": updated_fields,
+                    },
                 )
-                updated_fields.append("overview")
-
-            if input_data.detail is not None:
-                update_payload["content"] = (
-                    json.dumps(input_data.detail, ensure_ascii=False)
-                    if isinstance(input_data.detail, (dict, list))
-                    else str(input_data.detail)
-                )
-                updated_fields.append("detail")
-
-            if input_data.tags is not None:
-                update_payload["tags"] = input_data.tags
-                updated_fields.append("tags")
-
-            if input_data.meta is not None:
-                existing_meta = ctx.get("meta") or {}
-                update_payload["meta"] = {**existing_meta, **input_data.meta}
-                updated_fields.append("meta")
-
-            if not updated_fields:
-                return ToolOutputSchema(
-                    success=False,
-                    message="No fields provided to update",
-                    data={"path": input_data.path},
-                )
-
-            # Perform the update via create_context (upsert)
-            await context_service_client.create_context(
-                workspace_id=workspace_id, **update_payload
-            )
+                await session.commit()
 
             return ToolOutputSchema(
                 success=True,
-                message=f"Updated context at: {input_data.path}",
-                data={
-                    "path": input_data.path,
-                    "updated_fields": updated_fields,
-                },
+                message=f"Updated context at: {normalized_path}",
+                data={"path": normalized_path, "updated_fields": updated_fields},
             )
 
         except Exception as e:

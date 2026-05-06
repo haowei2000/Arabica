@@ -3,14 +3,19 @@
 Pipeline per file type
 ----------------------
 - .md / text/markdown  → MarkdownStructurer → one Context record per section
-- Everything else      → single Context record with the full raw text
+- Everything else      → MarkItDown → MarkdownStructurer → one Context record
+  per section
 
 This mirrors the SkillStructurer pattern: each structural unit becomes its own
 path-addressable Context row so retrieval and navigation work at section level.
 """
 
+from __future__ import annotations
+
+import io
 import logging
-import re
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from structure.celery_worker.celery_app import celery_app
@@ -32,15 +37,142 @@ def _is_markdown(mime_type: str, original_name: str) -> bool:
     return ext in {"md", "markdown"} or "markdown" in (mime_type or "").lower()
 
 
-# Matches ATX headings (# … ######) at the start of a line
-_ATX_RE = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
-# Matches setext H1/H2 underlines (===… or ---…) on their own line
-_SETEXT_RE = re.compile(r"^(?:={3,}|-{3,})\s*$", re.MULTILINE)
+def _sanitize_text(text: str) -> str:
+    """Remove characters that are invalid for PostgreSQL UTF-8 text fields."""
+    text = text.replace("\x00", "")
+    return "".join(
+        char
+        for char in text
+        if ord(char) in {9, 10, 13} or ord(char) >= 32
+    )
 
 
-def _has_headings(text: str) -> bool:
-    """Return True only if the text contains at least one Markdown heading."""
-    return bool(_ATX_RE.search(text) or _SETEXT_RE.search(text))
+def _decode_text_bytes(file_data: bytes) -> str:
+    """Decode uploaded text/Markdown bytes with common fallback encodings."""
+    for encoding in ("utf-8", "gbk", "gb2312", "latin-1"):
+        try:
+            return _sanitize_text(file_data.decode(encoding))
+        except UnicodeDecodeError:
+            continue
+    return _sanitize_text(file_data.decode("utf-8", errors="replace"))
+
+
+def _parse_markdown_upload(
+    file_data: bytes,
+    mime_type: str,  # noqa: ARG001
+    original_name: str,  # noqa: ARG001
+) -> str:
+    """Decode uploaded Markdown bytes without converting Markdown syntax."""
+    return _decode_text_bytes(file_data)
+
+
+def _convert_with_markitdown(
+    file_data: bytes,
+    mime_type: str,  # noqa: ARG001
+    original_name: str,
+) -> str:
+    """Convert arbitrary uploaded bytes to Markdown using MarkItDown."""
+    from markitdown import MarkItDown
+
+    stream = io.BytesIO(file_data)
+    stream.name = original_name
+
+    extension = Path(original_name).suffix.lower() or None
+    result = MarkItDown(enable_plugins=False).convert_stream(
+        stream,
+        file_extension=extension,
+    )
+    text = getattr(result, "text_content", "") or ""
+    return _sanitize_text(text)
+
+
+def _document_to_markdown(
+    file_data: bytes,
+    mime_type: str,
+    original_name: str,
+) -> tuple[str, str]:
+    """Return ``(markdown_text, conversion_source)`` for an uploaded document."""
+    if _is_markdown(mime_type, original_name):
+        return _parse_markdown_upload(file_data, mime_type, original_name), "markdown"
+
+    return _convert_with_markitdown(file_data, mime_type, original_name), "markitdown"
+
+
+def _section_to_core(
+    section: dict[str, Any],
+    *,
+    doc_root: tuple[str, ...],
+    original_name: str,
+    conversion_source: str,
+) -> dict[str, Any] | None:
+    """Map one Markdown section to a Context core payload."""
+    content = (section.get("content") or "").strip()
+    title = (section.get("title") or "").strip()
+    if not content and not title:
+        return None
+    if not content:
+        content = title
+
+    section_path = section.get("section_path") or title or str(section["position"])
+    return {
+        "path": build_path(*doc_root, section_path),
+        "glance": title or original_name,
+        "content": content,
+        "meta": {
+            "conversion_source": conversion_source,
+            "section_title": title,
+            "section_level": section.get("level"),
+            "section_path": section.get("section_path"),
+            "section_position": section.get("position"),
+            "structure_type": section.get("structure_type"),
+        },
+    }
+
+
+def _structure_document_markdown(
+    markdown_text: str,
+    *,
+    mime_type: str,
+    original_name: str,
+    knowledge_name: str,
+    conversion_source: str,
+) -> list[dict[str, Any]]:
+    """Structure Markdown text into path-addressable Context core payloads."""
+    from structure.plugins.structurers.markdown_structure import MarkdownStructurer
+
+    doc_root = ("knowledge", knowledge_name, "documents", original_name)
+    sections = MarkdownStructurer().structure(markdown_text, mime_type)
+    cores = [
+        core
+        for section in sections
+        if (
+            core := _section_to_core(
+                section,
+                doc_root=doc_root,
+                original_name=original_name,
+                conversion_source=conversion_source,
+            )
+        )
+    ]
+
+    if cores:
+        return cores
+
+    return [
+        {
+            "path": build_path(*doc_root),
+            "glance": original_name,
+            "content": markdown_text,
+            "meta": {
+                "conversion_source": conversion_source,
+                "section_title": "",
+                "section_level": 1,
+                "section_path": "/",
+                "section_position": 0,
+                "structure_type": "markdown",
+            },
+        }
+    ]
 
 
 @celery_app.task(
@@ -62,8 +194,8 @@ def sync_document_to_contexts(
 ) -> dict:
     """Download → structure → store → embed an uploaded document.
 
-    .md files are split into per-section Context records.
-    All other file types are stored as a single Context record.
+    Markdown files are split directly. Other file types are converted to
+    Markdown with MarkItDown first, then split by the same Markdown structurer.
     """
 
     async def _execute() -> dict:
@@ -72,7 +204,6 @@ def sync_document_to_contexts(
         from structure.extensions.database import get_session
         from structure.extensions.storage.global_storage import get_global_s3_storage
         from structure.models.context.knowledge.documents import Document
-        from structure.services.context.knowledge.parser import DocumentParser
 
         doc_uuid = UUID(document_id)
 
@@ -87,7 +218,7 @@ def sync_document_to_contexts(
 
         file_data = get_global_s3_storage().get_bytes(object_key)
 
-        # ── Phase 2: Parse text ──────────────────────────────────────────────
+        # ── Phase 2: Convert to Markdown ─────────────────────────────────────
         async with get_session("structure") as session:
             await session.execute(
                 update(Document)
@@ -96,9 +227,13 @@ def sync_document_to_contexts(
             )
             await session.commit()
 
-        text_content = DocumentParser().parse(file_data, mime_type)
+        markdown_content, conversion_source = _document_to_markdown(
+            file_data,
+            mime_type,
+            original_name,
+        )
 
-        if not text_content.strip():
+        if not markdown_content.strip():
             logger.warning(f"sync_document: document {document_id} yielded no text")
             async with get_session("structure") as session:
                 await session.execute(
@@ -114,39 +249,13 @@ def sync_document_to_contexts(
             }
 
         # ── Phase 3: Structure ───────────────────────────────────────────────
-        # Path root: /knowledge/<name>/documents/<filename>
-        doc_root = ("knowledge", knowledge_name, "documents", original_name)
-
-        if _is_markdown(mime_type, original_name) and _has_headings(text_content):
-            from structure.plugins.structurers.markdown_structure import (
-                MarkdownStructurer,
-            )
-
-            sections = MarkdownStructurer().structure(text_content, mime_type)
-            # Only keep heading-derived sections (title non-empty).
-            # _has_headings() already guards this branch, but filter defensively.
-            cores = [
-                {
-                    "path": build_path(
-                        *doc_root,
-                        sec.get("section_path")
-                        or sec.get("title")
-                        or str(sec["position"]),
-                    ),
-                    "glance": sec["title"] or original_name,
-                    "content": sec["content"],
-                }
-                for sec in sections
-                if sec.get("title") and sec["content"].strip()
-            ]
-        else:
-            cores = [
-                {
-                    "path": build_path(*doc_root),
-                    "glance": original_name,
-                    "content": text_content,
-                }
-            ]
+        cores = _structure_document_markdown(
+            markdown_content,
+            mime_type="text/markdown",
+            original_name=original_name,
+            knowledge_name=knowledge_name,
+            conversion_source=conversion_source,
+        )
 
         # ── Phase 4: Upsert Context records ──────────────────────────────────
         async with get_session("structure") as session:
@@ -160,10 +269,12 @@ def sync_document_to_contexts(
             "document_id": document_id,
             "knowledge_id": knowledge_id,
             "document_name": original_name,
+            "mime_type": mime_type,
         }
 
         async with get_session("structure") as session:
             for core in cores:
+                meta = {**common_meta, **core["meta"]}
                 ctx, needs_embedding = await _upsert_context_at_path(
                     session,
                     user_id=user_id,
@@ -173,7 +284,7 @@ def sync_document_to_contexts(
                     glance=core["glance"],
                     content=core["content"],
                     tags=["knowledge", "document"],
-                    meta=common_meta,
+                    meta=meta,
                 )
                 await session.flush()
                 if needs_embedding:
@@ -188,7 +299,7 @@ def sync_document_to_contexts(
                 update(Document)
                 .where(Document.id == doc_uuid)
                 .values(
-                    content=text_content[:1000],
+                    content=markdown_content[:1000],
                     status="completed",
                     chunk_count=len(cores),
                 )

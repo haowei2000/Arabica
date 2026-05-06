@@ -69,6 +69,10 @@ EVENT_CODE: dict[str, str] = {
     EventType.WORKSPACE_MEMBER_LEAVE: "s",
     EventType.WORKSPACE_MEMBER_ROLE_CHANGE: "t",
     EventType.USING_CONTEXT: "u",
+    EventType.CONTEXT_RATED: "v",
+    EventType.CONTEXT_CREATED: "w",
+    EventType.CONTEXT_UPDATED: "x",
+    EventType.CONTEXT_DELETED: "y",
 }
 
 # ── Reverse map: single-char code → EventType string ─────────────────────────

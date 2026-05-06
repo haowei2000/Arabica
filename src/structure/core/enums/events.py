@@ -30,6 +30,9 @@ class EventType(StrEnum):
     # Context events
     USING_CONTEXT = "context.using"
     CONTEXT_RATED = "context.rated"
+    CONTEXT_CREATED = "context.created"
+    CONTEXT_UPDATED = "context.updated"
+    CONTEXT_DELETED = "context.deleted"
     # Run lifecycle events
     RUN_CREATED = "run.created"
     RUN_STATE_CHANGE = "run.state.change"

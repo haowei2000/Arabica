@@ -3,7 +3,7 @@ from structure.models.context import Skill
 from structure.plugins.structurers import register_structurer
 from structure.plugins.structurers.file_structure import FileInput, FileStructurer
 from structure.schemas.context.context_schema import ContextCore
-from structure.utils.context import slugify
+from structure.utils.context import build_context_path
 
 _file_structurer = FileStructurer()
 
@@ -24,7 +24,7 @@ class SkillStructurer(BaseStructurer):
             glance = f"{skill.name} — {skill.description}"
 
         files_meta: dict = skill.files or {}
-        skill_path = slugify(f"/skill/{skill.name}")
+        skill_path = build_context_path("skills", skill.name)
 
         # Level 1: skill overview with file listing tree
         lines: list[str] = [f"{skill.name}/"]

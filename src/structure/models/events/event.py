@@ -329,6 +329,14 @@ class Event(Base):
                 head = f"Context rated: {path}={rating}" if path else f"Context rated: {rating}"
                 return f"{head} ({_trim(comment, 80)})" if comment else head
 
+            case (
+                EventType.CONTEXT_CREATED
+                | EventType.CONTEXT_UPDATED
+                | EventType.CONTEXT_DELETED
+            ):
+                path = p.get("path") or p.get("context_path") or ""
+                return f"{self.event_type}: {path}" if path else str(self.event_type)
+
             # ── Run lifecycle ─────────────────────────────────────────────
             case EventType.RUN_CREATED:
                 return "Run created"

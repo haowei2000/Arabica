@@ -14,10 +14,9 @@ from structure.celery_worker.tasks.workspace_context_sync import (
     _get_user_workspace_ids,
     _invalidate_workspace_caches,
     _sync_path_to_workspaces,
-    _update_workspace_contexts,
 )
 from structure.core.enums import ContextType
-from structure.utils.context import slugify as _slugify
+from structure.utils.context import build_context_path
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ def sync_skill_to_contexts(
             ) or skill.name
             skill_name = skill.name
             skill_tags = list(skill.tags or [])
-            skill_path = f"/skills/{_slugify(skill_name)}"
+            skill_path = build_context_path("skills", skill_name)
 
             try:
                 context_cores = SkillStructurer().structure(skill)
@@ -100,14 +99,6 @@ def sync_skill_to_contexts(
             # Use first (overview) entry for workspace sync
             overview_content = context_cores[0].content if context_cores else ""
 
-            await _update_workspace_contexts(
-                session,
-                meta_key="skill_id",
-                resource_id=skill_id,
-                glance=glance,
-                content=overview_content,
-            )
-
             workspace_ids = await _get_user_workspace_ids(session, user_id)
             emb_svc = await _fetch_embedding_service(session)
             await session.commit()
@@ -122,7 +113,7 @@ def sync_skill_to_contexts(
             meta={"skill_id": skill_id},
             created_by=user_id,
         )
-        await _invalidate_workspace_caches(dirty_ids)
+        await _invalidate_workspace_caches(dirty_ids, raise_on_error=True)
 
         logger.info(
             f"sync_skill: stored {len(context_cores)} context chunk(s) for skill {skill_id}, "
