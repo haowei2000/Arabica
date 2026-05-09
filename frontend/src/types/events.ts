@@ -250,12 +250,14 @@ export interface OutcomeState {
 // Error Categories (for categorized error display)
 // ============================================================================
 
-export enum ErrorCategory {
-  NETWORK = 'network',
-  TIMEOUT = 'timeout',
-  RUN_FAILED = 'run_failed',
-  UNKNOWN = 'unknown',
-}
+export const ErrorCategory = {
+  NETWORK: 'network',
+  TIMEOUT: 'timeout',
+  RUN_FAILED: 'run_failed',
+  UNKNOWN: 'unknown',
+} as const;
+
+export type ErrorCategory = (typeof ErrorCategory)[keyof typeof ErrorCategory];
 
 export interface StreamError {
   category: ErrorCategory;

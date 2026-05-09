@@ -1,0 +1,3 @@
+section,value
+marker,markitdown-upload-20260510
+purpose,verify non-markdown uploads are converted to markdown before chunking

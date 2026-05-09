@@ -86,6 +86,12 @@ class EmbeddingService:
             case _:
                 raise ValueError(f"Unsupported embedding provider: {self.provider}")
 
+    def _uses_dashscope_compatible_api(self) -> bool:
+        """Return True when embeddings should bypass LangChain's OpenAI wrapper."""
+        if self.provider in ("tongyi", "dashscope"):
+            return True
+        return "dashscope.aliyuncs.com" in self._base_url.lower()
+
     def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text.
 
@@ -97,7 +103,7 @@ class EmbeddingService:
         """
         text = self._sanitize_text(text)
         # Tongyi/DashScope rejects tokenized input from LangChain — use direct path.
-        if self.provider in ("tongyi", "dashscope"):
+        if self._uses_dashscope_compatible_api():
             return self._embed_tongyi_direct([text])[0]
         return self._client.embed_query(text)
 
@@ -167,7 +173,7 @@ class EmbeddingService:
 
         try:
             # For Tongyi/DashScope, use direct API call to avoid langchain issues
-            if self.provider in ("tongyi", "dashscope"):
+            if self._uses_dashscope_compatible_api():
                 embeddings = self._embed_tongyi_direct(valid_texts)
             else:
                 embeddings = self._client.embed_documents(valid_texts)

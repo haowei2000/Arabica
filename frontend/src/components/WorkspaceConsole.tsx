@@ -18,9 +18,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { Workspace } from '@/types/workspace';
 import type { Run } from '@/types/run';
 import type { Event } from '@/types/event';
+import type { WorkspaceListResponse } from '@/types/workspace';
 
 import WorkspaceContextTree from '@/components/WorkspaceContextTree';
 import { useWorkspaceStream } from '@/hooks/useWorkspaceStream';
@@ -539,7 +539,11 @@ function RunTimelineItem({
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-export default function WorkspaceConsole() {
+type WorkspaceConsoleProps = {
+  onRunCountChange?: (workspaceId: string, runCount: number) => void;
+};
+
+export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleProps) {
   const [input, setInput] = useState('');
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -687,6 +691,41 @@ export default function WorkspaceConsole() {
   useWorkspaceStream(currentWorkspaceId);
 
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!currentWorkspaceId || !runsData?.items) return;
+    onRunCountChange?.(currentWorkspaceId, runsData.items.length);
+  }, [currentWorkspaceId, runsData?.items?.length, onRunCountChange]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId || typeof runsData?.total !== 'number') return;
+
+    const workspaceQueries = queryClient.getQueryCache().findAll({
+      predicate: (query) =>
+        Array.isArray(query.queryKey) && query.queryKey[0] === 'workspaces',
+    });
+
+    workspaceQueries.forEach((query) => {
+      queryClient.setQueryData<WorkspaceListResponse>(query.queryKey, (current) => {
+        if (!current?.items?.length) return current;
+
+        let changed = false;
+        const items = current.items.map((workspace) => {
+          if (workspace.id !== currentWorkspaceId || workspace.run_count === runsData.total) {
+            return workspace;
+          }
+
+          changed = true;
+          return {
+            ...workspace,
+            run_count: runsData.total,
+          };
+        });
+
+        return changed ? { ...current, items } : current;
+      });
+    });
+  }, [currentWorkspaceId, runsData?.total, queryClient]);
 
   // Real-time tasks: poll every 3 s while any run is active
   const hasActiveRun = runsData?.items?.some(

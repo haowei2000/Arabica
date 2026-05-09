@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Moon, Sun, Trash2, Plus,
@@ -31,6 +31,7 @@ export default function AppWorkspacePage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
   const [historyOpen, setHistoryOpen] = useState(true);
+  const [runCountOverrides, setRunCountOverrides] = useState<Record<string, number>>({});
 
   const navigate = useNavigate();
   const { clearCurrentApp } = useAppStore();
@@ -95,6 +96,13 @@ export default function AppWorkspacePage() {
     resetChat();
     setCurrentWorkspace(workspaceId, name, appId || null);
   };
+
+  const handleRunCountChange = useCallback((workspaceId: string, runCount: number) => {
+    setRunCountOverrides((current) => {
+      if (current[workspaceId] === runCount) return current;
+      return { ...current, [workspaceId]: runCount };
+    });
+  }, []);
 
   const handleLogout = () => {
     authService.logout();
@@ -194,6 +202,10 @@ export default function AppWorkspacePage() {
                   {workspaces.map((workspace: Workspace) => {
                     const dotCls = STATUS_DOT[workspace.status] ?? 'bg-muted-foreground/30';
                     const isActive = currentWorkspaceId === workspace.id;
+                    const runCount = Math.max(
+                      workspace.run_count,
+                      runCountOverrides[workspace.id] ?? workspace.run_count
+                    );
                     return (
                       <div
                         key={workspace.id}
@@ -224,10 +236,10 @@ export default function AppWorkspacePage() {
                           {/* Run count */}
                           <span
                             className="inline-flex items-center gap-1 text-[11px] font-mono text-muted-foreground/40 tabular-nums shrink-0"
-                            title={`${workspace.run_count} runs`}
+                            title={`${runCount} runs`}
                           >
                             <Play className="size-3" />
-                            {workspace.run_count}
+                            {runCount}
                           </span>
                           {/* Actions — visible on hover only */}
                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all shrink-0">
@@ -259,7 +271,7 @@ export default function AppWorkspacePage() {
                             )}
                             <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 pt-2.5 border-t border-border/50 text-muted-foreground">
                               <span className="font-medium">Status</span><span className="text-foreground font-bold capitalize">{workspace.status}</span>
-                              <span className="font-medium">Runs</span><span className="text-foreground font-bold tabular-nums">{workspace.run_count}</span>
+                              <span className="font-medium">Runs</span><span className="text-foreground font-bold tabular-nums">{runCount}</span>
                               {(workspace.executor_code || workspace.app_id) && (
                                 <>
                                   <span className="flex items-center gap-1 font-medium"><Cpu className="size-3" />Executor</span>
@@ -308,7 +320,7 @@ export default function AppWorkspacePage() {
         )}
 
         <main className="flex-1 flex flex-col min-h-0 min-w-0">
-          <WorkspaceConsole />
+          <WorkspaceConsole onRunCountChange={handleRunCountChange} />
         </main>
       </div>
 

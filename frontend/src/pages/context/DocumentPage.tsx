@@ -11,7 +11,7 @@ import { useKnowledge, useKnowledgeHybridSearch } from '@/hooks/useKnowledge';
 import { useDeleteDocument, useDocumentList, useUploadDocument } from '@/hooks/useDocuments';
 import { useChunksByDocument } from '@/hooks/useChunks';
 import { documentService } from '@/services/documentService';
-import type { StructureType, FolderUploadResult } from '@/services/documentService';
+import type { FolderUploadResult } from '@/services/documentService';
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -949,7 +949,6 @@ export default function DocumentPage() {
                   type="file"
                   className="hidden"
                   multiple
-                  accept=".pdf,.doc,.docx,.txt,.md,.html,.csv"
                   onChange={(e) => handleFileUpload(e.target.files)}
                 />
                 <input
@@ -981,7 +980,7 @@ export default function DocumentPage() {
                   </button>
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  PDF, DOCX, TXT, MD, HTML, CSV · .md files are split by section, others stored whole
+                  PDF, Office, text, web, archives, images, audio · converted to Markdown sections
                 </p>
               </div>
             </div>
@@ -1171,7 +1170,7 @@ export default function DocumentPage() {
 
               <div className="space-y-4 py-1">
                 <p className="text-xs text-muted-foreground">
-                  Check the files you want to upload. .md files are split by section; others stored whole.
+                  Check the files you want to upload. Files are converted to Markdown and split into sections.
                   Use <span className="font-medium">Upload Folder</span> again to pick a different folder.
                 </p>
 

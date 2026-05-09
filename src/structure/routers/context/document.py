@@ -109,7 +109,7 @@ async def upload_document(
 
     The document will be:
     1. Uploaded to S3 storage
-    2. Parsed and structured into semantic sections via Celery
+    2. Converted to Markdown and structured into semantic sections via Celery
     3. Each section stored in the Context table and embedded using the default embedding model
 
     Args:
@@ -227,8 +227,8 @@ async def upload_folder(
     """
     Upload an entire folder to a knowledge base.
 
-    .md files are split by heading sections; all other file types are stored
-    as a single context record. Files that fail to upload are skipped.
+    Each file is converted to Markdown and split into context sections.
+    Files that fail to upload are skipped.
     """
     # Validate knowledge base
     knowledge = await knowledge_crud.get_by_id(knowledge_id)

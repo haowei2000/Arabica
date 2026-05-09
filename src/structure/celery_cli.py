@@ -26,7 +26,7 @@ def cli():
 @click.option(
     "--queues",
     "-Q",
-    default="default,knowledge",
+    default="celery,knowledge",
     show_default=True,
     help="监听的队列（逗号分隔）",
 )

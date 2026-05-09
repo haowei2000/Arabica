@@ -112,6 +112,7 @@ export function useWorkspaceStream(workspaceId: string | null) {
             case 'run.failed':
             case 'run.cancelled':
               queryClient.invalidateQueries({ queryKey: ['runs', id] });
+              queryClient.invalidateQueries({ queryKey: ['workspaces'] });
               break;
 
             // Workspace metadata changes

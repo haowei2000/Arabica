@@ -1,16 +1,12 @@
 """Celery task: process and sync an uploaded document to the Context table.
 
-Pipeline per file type
-----------------------
-- .md / text/markdown  → MarkdownStructurer → one Context record per section
-- Everything else      → single Context record with the full raw text
-
-This mirrors the SkillStructurer pattern: each structural unit becomes its own
-path-addressable Context row so retrieval and navigation work at section level.
+Pipeline:
+- Convert every uploaded file to Markdown via MarkItDown.
+- Split the Markdown into path-addressable sections.
+- Store each section as a Context chunk and embed it.
 """
 
 import logging
-import re
 from uuid import UUID
 
 from structure.celery_worker.celery_app import celery_app
@@ -27,20 +23,11 @@ from structure.utils.context import build_path
 logger = logging.getLogger(__name__)
 
 
-def _is_markdown(mime_type: str, original_name: str) -> bool:
-    ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
-    return ext in {"md", "markdown"} or "markdown" in (mime_type or "").lower()
-
-
-# Matches ATX headings (# … ######) at the start of a line
-_ATX_RE = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
-# Matches setext H1/H2 underlines (===… or ---…) on their own line
-_SETEXT_RE = re.compile(r"^(?:={3,}|-{3,})\s*$", re.MULTILINE)
-
-
-def _has_headings(text: str) -> bool:
-    """Return True only if the text contains at least one Markdown heading."""
-    return bool(_ATX_RE.search(text) or _SETEXT_RE.search(text))
+def _dedupe_path(path: str, seen_paths: set[str], position: int) -> str:
+    """Avoid overwriting repeated section paths in one document."""
+    if path not in seen_paths:
+        return path
+    return f"{path}/section_{position + 1}"
 
 
 @celery_app.task(
@@ -62,19 +49,21 @@ def sync_document_to_contexts(
 ) -> dict:
     """Download → structure → store → embed an uploaded document.
 
-    .md files are split into per-section Context records.
-    All other file types are stored as a single Context record.
+    Every supported file type is first converted to Markdown, then split into
+    per-section Context records.
     """
 
     async def _execute() -> dict:
-        from sqlalchemy import update
+        from sqlalchemy import select, update
 
         from structure.extensions.database import get_session
         from structure.extensions.storage.global_storage import get_global_s3_storage
         from structure.models.context.knowledge.documents import Document
+        from structure.models.context.knowledge.knowledge import Knowledge
         from structure.services.context.knowledge.parser import DocumentParser
 
         doc_uuid = UUID(document_id)
+        knowledge_uuid = UUID(knowledge_id)
 
         # ── Phase 1: Download ────────────────────────────────────────────────
         async with get_session("structure") as session:
@@ -87,7 +76,7 @@ def sync_document_to_contexts(
 
         file_data = get_global_s3_storage().get_bytes(object_key)
 
-        # ── Phase 2: Parse text ──────────────────────────────────────────────
+        # ── Phase 2: Convert to Markdown ────────────────────────────────────
         async with get_session("structure") as session:
             await session.execute(
                 update(Document)
@@ -96,16 +85,27 @@ def sync_document_to_contexts(
             )
             await session.commit()
 
-        text_content = DocumentParser().parse(file_data, mime_type)
+        markdown_content = DocumentParser().parse(file_data, mime_type, original_name)
 
-        if not text_content.strip():
+        if not markdown_content.strip():
             logger.warning(f"sync_document: document {document_id} yielded no text")
             async with get_session("structure") as session:
+                previous_chunk_count = await session.scalar(
+                    select(Document.chunk_count).where(Document.id == doc_uuid)
+                )
                 await session.execute(
                     update(Document)
                     .where(Document.id == doc_uuid)
-                    .values(status="completed", chunk_count=0)
+                    .values(status="completed", chunk_count=0, content="")
                 )
+                if previous_chunk_count:
+                    await session.execute(
+                        update(Knowledge)
+                        .where(Knowledge.id == knowledge_uuid)
+                        .values(
+                            chunk_count=Knowledge.chunk_count - previous_chunk_count
+                        )
+                    )
                 await session.commit()
             return {
                 "document_id": document_id,
@@ -117,34 +117,39 @@ def sync_document_to_contexts(
         # Path root: /knowledge/<name>/documents/<filename>
         doc_root = ("knowledge", knowledge_name, "documents", original_name)
 
-        if _is_markdown(mime_type, original_name) and _has_headings(text_content):
-            from structure.plugins.structurers.markdown_structure import (
-                MarkdownStructurer,
+        from structure.plugins.structurers.markdown_structure import MarkdownStructurer
+
+        sections = MarkdownStructurer().structure(markdown_content, "text/markdown")
+        cores = []
+        seen_paths: set[str] = set()
+        for sec in sections:
+            content = (sec.get("content") or "").strip()
+            if not content:
+                continue
+
+            title = (sec.get("title") or "").strip()
+            position = int(sec.get("position") or 0)
+            section_path = sec.get("section_path") or ""
+            path = build_path(
+                *doc_root,
+                section_path if section_path != "/" else title or f"section-{position + 1}",
+            )
+            path = _dedupe_path(path, seen_paths, position)
+            seen_paths.add(path)
+            cores.append(
+                {
+                    "path": path,
+                    "glance": title or original_name,
+                    "content": content,
+                }
             )
 
-            sections = MarkdownStructurer().structure(text_content, mime_type)
-            # Only keep heading-derived sections (title non-empty).
-            # _has_headings() already guards this branch, but filter defensively.
-            cores = [
-                {
-                    "path": build_path(
-                        *doc_root,
-                        sec.get("section_path")
-                        or sec.get("title")
-                        or str(sec["position"]),
-                    ),
-                    "glance": sec["title"] or original_name,
-                    "content": sec["content"],
-                }
-                for sec in sections
-                if sec.get("title") and sec["content"].strip()
-            ]
-        else:
+        if not cores:
             cores = [
                 {
                     "path": build_path(*doc_root),
                     "glance": original_name,
-                    "content": text_content,
+                    "content": markdown_content,
                 }
             ]
 
@@ -160,9 +165,19 @@ def sync_document_to_contexts(
             "document_id": document_id,
             "knowledge_id": knowledge_id,
             "document_name": original_name,
+            "converted_to": "markdown",
+            "source_mime_type": mime_type,
         }
 
         async with get_session("structure") as session:
+            previous_chunk_count = (
+                await session.scalar(
+                    select(Document.chunk_count).where(Document.id == doc_uuid)
+                )
+                or 0
+            )
+            emb_svc = await _fetch_embedding_service(session)
+            embedding_field = emb_svc.get_embedding_field_name()
             for core in cores:
                 ctx, needs_embedding = await _upsert_context_at_path(
                     session,
@@ -176,23 +191,29 @@ def sync_document_to_contexts(
                     meta=common_meta,
                 )
                 await session.flush()
-                if needs_embedding:
+                missing_embedding = getattr(ctx, embedding_field, None) is None
+                if needs_embedding or missing_embedding:
                     embed_text = " ".join(
                         filter(None, [core["glance"], core["content"]])
                     )
                     ctx_ids_need_embed.append((str(ctx.id), embed_text))
 
-            emb_svc = await _fetch_embedding_service(session)
-
             await session.execute(
                 update(Document)
                 .where(Document.id == doc_uuid)
                 .values(
-                    content=text_content[:1000],
+                    content=markdown_content[:1000],
                     status="completed",
                     chunk_count=len(cores),
                 )
             )
+            chunk_delta = len(cores) - previous_chunk_count
+            if chunk_delta:
+                await session.execute(
+                    update(Knowledge)
+                    .where(Knowledge.id == knowledge_uuid)
+                    .values(chunk_count=Knowledge.chunk_count + chunk_delta)
+                )
             await session.commit()
 
         logger.info(

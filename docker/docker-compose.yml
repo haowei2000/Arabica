@@ -43,6 +43,7 @@ services:
       <<: *common-env
       RELOAD: ${RELOAD:-false}
       APP_PORT: 8000
+      STRUCTURE_APP_PORT: 8000
       APP_HOST: 0.0.0.0
       APP_NAME: ${APP_NAME:-Modular FastAPI App}
       DEBUG: ${DEBUG:-false}
