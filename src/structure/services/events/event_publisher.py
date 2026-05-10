@@ -348,9 +348,7 @@ class EventPublisher:
 
                 workspace_id = str(event.workspace_id)
                 # Primary stream for both SSE and worker consumers
-                workspace_stream = (
-                    f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
-                )
+                workspace_stream = f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
                 pipe.xadd(workspace_stream, fields, maxlen=10000, approximate=True)
 
                 await pipe.execute()

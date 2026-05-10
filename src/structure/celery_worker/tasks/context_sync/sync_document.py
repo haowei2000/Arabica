@@ -132,7 +132,9 @@ def sync_document_to_contexts(
             section_path = sec.get("section_path") or ""
             path = build_path(
                 *doc_root,
-                section_path if section_path != "/" else title or f"section-{position + 1}",
+                section_path
+                if section_path != "/"
+                else title or f"section-{position + 1}",
             )
             path = _dedupe_path(path, seen_paths, position)
             seen_paths.add(path)

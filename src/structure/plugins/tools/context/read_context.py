@@ -62,7 +62,9 @@ class ReadContextTool(InnerTool):
         return children
 
     @staticmethod
-    def _directory_response(path: str, children: list[dict[str, Any]]) -> ToolOutputSchema:
+    def _directory_response(
+        path: str, children: list[dict[str, Any]]
+    ) -> ToolOutputSchema:
         content = "\n".join(
             f"- {child['path']}: {child.get('glance', '')}".rstrip()
             for child in children
@@ -79,7 +81,9 @@ class ReadContextTool(InnerTool):
             },
         )
 
-    async def _read_workspace_context(self, workspace_id, path: str) -> ToolOutputSchema | None:
+    async def _read_workspace_context(
+        self, workspace_id, path: str
+    ) -> ToolOutputSchema | None:
         from structure.extensions.database import get_session
         from structure.utils.workspace_context_cache import get_cached_workspace_context
 

@@ -93,7 +93,9 @@ async def _call_tool(client_config: str | dict, tool_name: str, arguments: dict)
     """Call an MCP tool with the transport strategy appropriate for its config."""
     from fastmcp import Client
 
-    if isinstance(client_config, str) and client_config.startswith(("http://", "https://")):
+    if isinstance(client_config, str) and client_config.startswith(
+        ("http://", "https://")
+    ):
         async with Client(client_config) as client:
             return await client.call_tool(tool_name, arguments)
 

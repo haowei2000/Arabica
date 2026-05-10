@@ -141,9 +141,7 @@ class DocumentParser:
                 file_extension=extension,
             )
         except Exception as exc:
-            raise ValueError(
-                f"Unable to convert document to Markdown: {exc}"
-            ) from exc
+            raise ValueError(f"Unable to convert document to Markdown: {exc}") from exc
 
         markdown = self._sanitize_text(result.text_content or "")
         logger.info(

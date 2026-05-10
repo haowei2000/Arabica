@@ -8,8 +8,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-logger = logging.getLogger(__name__)
-
 from structure.config.factory import get_settings
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
@@ -22,6 +20,8 @@ from structure.core.dependencies.workspace import (
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.events.event_payloads import EventListResponse
 from structure.services.runs.stuck_run_detector import StuckRunDetector
+
+logger = logging.getLogger(__name__)
 
 _redis_cfg = get_settings().redis
 EVENT_TYPE_DISCONNECT = _redis_cfg.event_type_disconnect

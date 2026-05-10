@@ -792,7 +792,9 @@ class DefaultExecutor(Executor):
             tools_info = _filter_tools_by_name(base_tools_info, requested_tool_names)
 
             available_names = {
-                name for tool in (base_tools_info or []) if (name := _tool_schema_name(tool))
+                name
+                for tool in (base_tools_info or [])
+                if (name := _tool_schema_name(tool))
             }
             missing = [
                 name for name in requested_tool_names if name not in available_names
