@@ -885,9 +885,10 @@ class DefaultExecutor(Executor):
         path with global_event enabled); otherwise fetches the current run only.
 
         For global scope, only conversation-relevant event types are fetched
-        and the query returns the *most recent* events (ordered by sequence
-        DESC, then reversed) so the LLM sees the latest context rather than
-        the oldest.
+        and the query returns the *most recent* events (ordered by creation time
+        DESC, then reversed) so the LLM sees the latest context in chronological
+        order. ``sequence`` is scoped to a run, so it is only a tie-breaker for
+        events created at the same timestamp.
 
         Returns an empty list on any error.
         """
@@ -916,15 +917,19 @@ class DefaultExecutor(Executor):
                         str(ET.USER_FEEDBACK),
                         str(ET.TOOL_CALL),
                     ]
-                    # Fetch the most recent N events (DESC), then reverse
-                    # so the final list is in chronological order.
+                    # Fetch the most recent N workspace events (DESC), then
+                    # reverse so the final list is in chronological order.
+                    # Event.sequence is per-run, not workspace-global.
                     stmt = (
                         select(EventModel)
                         .where(
                             EventModel.workspace_id == UUID(self.workspace_id),
                             EventModel.event_type.in_(conv_types),
                         )
-                        .order_by(EventModel.sequence.desc())
+                        .order_by(
+                            EventModel.created_at.desc(),
+                            EventModel.sequence.desc(),
+                        )
                         .limit(limit)
                     )
                     result = await db.execute(stmt)
