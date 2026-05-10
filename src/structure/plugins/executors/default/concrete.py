@@ -1016,6 +1016,7 @@ class DefaultExecutor(Executor):
                         .where(
                             EventModel.workspace_id == UUID(self.workspace_id),
                             EventModel.event_type.in_(conv_types),
+                            EventModel.is_archived.is_(False),
                         )
                         .order_by(
                             EventModel.created_at.desc(),
@@ -1033,7 +1034,10 @@ class DefaultExecutor(Executor):
 
                     stmt = (
                         select(EventModel)
-                        .where(EventModel.run_id == UUID(self.run_id))
+                        .where(
+                            EventModel.run_id == UUID(self.run_id),
+                            EventModel.is_archived.is_(False),
+                        )
                         .order_by(EventModel.sequence.asc())
                         .limit(limit)
                     )

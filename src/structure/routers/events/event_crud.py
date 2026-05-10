@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
@@ -11,8 +12,15 @@ from structure.core.dependencies.workspace import (
     RunCRUDDep,
     WorkspaceCRUDDep,
 )
+from structure.extensions.database import get_structure_db
 from structure.schemas.auth.user import UserResponse
-from structure.schemas.events.event_payloads import EventListResponse, EventResponse
+from structure.schemas.events.event_payloads import (
+    EventArchiveRequest,
+    EventArchiveResponse,
+    EventListResponse,
+    EventResponse,
+)
+from structure.services.events.event_archive import EventArchiveService
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -66,6 +74,7 @@ async def list_events_by_workspace(
     event_types: str | None = Query(
         None, description="Comma-separated event types to filter"
     ),
+    include_archived: bool = Query(False, description="Include archived events"),
 ):
     """List events for a workspace with pagination.
 
@@ -88,6 +97,7 @@ async def list_events_by_workspace(
         skip=skip,
         limit=limit,
         event_types=types_list,
+        include_archived=include_archived,
     )
 
     last_seq = items[0].sequence if items else None
@@ -105,6 +115,7 @@ async def list_events_by_run(
     event_types: str | None = Query(
         None, description="Comma-separated event types to filter"
     ),
+    include_archived: bool = Query(False, description="Include archived events"),
 ):
     """List events for a run with pagination.
 
@@ -127,6 +138,7 @@ async def list_events_by_run(
         skip=skip,
         limit=limit,
         event_types=types_list,
+        include_archived=include_archived,
     )
 
     last_seq = items[-1].sequence if items else None
@@ -145,6 +157,7 @@ async def list_events_by_user(
     workspace_id: UUID | None = Query(  # noqa: B008
         None, description="Narrow to a specific workspace"
     ),
+    include_archived: bool = Query(False, description="Include archived events"),
 ):
     """List events triggered by the current user.
 
@@ -161,6 +174,7 @@ async def list_events_by_user(
         limit=limit,
         event_types=types_list,
         workspace_id=workspace_id,
+        include_archived=include_archived,
     )
 
     last_seq = items[0].sequence if items else None
@@ -184,6 +198,7 @@ async def search_events(
     ),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Max events to return"),
+    include_archived: bool = Query(False, description="Include archived events"),
 ):
     """Search events with multiple filters.
 
@@ -226,12 +241,101 @@ async def search_events(
         event_types=types_list,
         from_sequence=from_sequence,
         to_sequence=to_sequence,
+        include_archived=include_archived,
         skip=skip,
         limit=limit,
     )
 
     last_seq = items[0].sequence if items else None
     return EventListResponse(total=total, items=items, last_sequence=last_seq)
+
+
+@router.post("/run/{run_id}/archive", response_model=EventArchiveResponse)
+async def archive_run_events(
+    run_id: UUID,
+    data: EventArchiveRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    run_crud: RunCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+):
+    """Archive active event memory for one run.
+
+    Event rows are not deleted. They are marked archived and mirrored into an
+    archive Context row so the audit trail remains recoverable.
+    """
+    run = await run_crud.get_by_id_and_user(run_id, current_user.id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run '{run_id}' not found or access denied",
+        )
+
+    service = EventArchiveService(db)
+    try:
+        result = await service.archive_run_memory(
+            run_id,
+            user_id=current_user.id,
+            keep_last=data.keep_last,
+            include_pinned=data.include_pinned,
+            event_types=data.event_types,
+            strategy=data.strategy,
+            strategy_config=data.strategy_config,
+            dry_run=data.dry_run,
+            reason=data.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    if not data.dry_run:
+        await db.commit()
+    return result.as_dict()
+
+
+@router.post("/workspace/{workspace_id}/archive", response_model=EventArchiveResponse)
+async def archive_workspace_events(
+    workspace_id: UUID,
+    data: EventArchiveRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    workspace_crud: WorkspaceCRUDDep,
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+):
+    """Archive active event memory for a workspace."""
+    workspace = await workspace_crud.get_by_id_and_user(workspace_id, current_user.id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace '{workspace_id}' not found or access denied",
+        )
+    if str(workspace.owner_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can archive workspace events",
+        )
+
+    service = EventArchiveService(db)
+    try:
+        result = await service.archive_workspace_memory(
+            workspace_id,
+            user_id=current_user.id,
+            keep_last=data.keep_last,
+            include_pinned=data.include_pinned,
+            include_run_events=data.include_run_events,
+            event_types=data.event_types,
+            strategy=data.strategy,
+            strategy_config=data.strategy_config,
+            dry_run=data.dry_run,
+            reason=data.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    if not data.dry_run:
+        await db.commit()
+    return result.as_dict()
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)

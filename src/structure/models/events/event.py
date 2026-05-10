@@ -8,7 +8,7 @@ import json
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import (
     JSONB,
     UUID as PGUUID,
@@ -114,6 +114,31 @@ class Event(Base):
         comment="父事件ID",
     )
 
+    # Archive metadata. Archiving removes an event from active run/workspace
+    # memory while preserving the immutable audit row.
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="是否已从活跃事件记忆归档",
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="归档时间"
+    )
+    archive_scope: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="归档范围: run/workspace"
+    )
+    archive_reason: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="归档原因"
+    )
+    archive_context_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("context.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="归档摘要 Context ID",
+    )
+
     # Audit fields
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -141,6 +166,15 @@ class Event(Base):
         Index("ix_event_parent", "parent_event_id"),
         # Index for executor code queries
         Index("ix_event_executor_code", "executor_code"),
+        # Indexes for active-memory and archive queries
+        Index("ix_event_archived", "is_archived"),
+        Index("ix_event_run_archived_sequence", "run_id", "is_archived", "sequence"),
+        Index(
+            "ix_event_workspace_archived_created",
+            "workspace_id",
+            "is_archived",
+            "created_at",
+        ),
     )
 
     @classmethod

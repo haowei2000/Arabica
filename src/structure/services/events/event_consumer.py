@@ -238,6 +238,7 @@ class EventReplayer:
         from_sequence: int = 0,
         to_sequence: int | None = None,
         limit: int = 1000,
+        include_archived: bool = False,
     ) -> list[EventResponse]:
         """Replay events for a run from PostgreSQL.
 
@@ -252,10 +253,14 @@ class EventReplayer:
         """
         run_id_str = str(run_id) if isinstance(run_id, UUID) else run_id
 
-        stmt = select(Event).where(
+        conditions = [
             Event.run_id == run_id_str,
             Event.sequence >= from_sequence,
-        )
+        ]
+        if not include_archived:
+            conditions.append(Event.is_archived.is_(False))
+
+        stmt = select(Event).where(*conditions)
 
         if to_sequence is not None:
             stmt = stmt.where(Event.sequence <= to_sequence)
@@ -273,6 +278,7 @@ class EventReplayer:
         from_sequence: int = 0,
         limit: int = 1000,
         event_types: list[str] | None = None,
+        include_archived: bool = False,
     ) -> list[EventResponse]:
         """Replay events for a workspace from PostgreSQL.
 
@@ -289,10 +295,14 @@ class EventReplayer:
             str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
         )
 
-        stmt = select(Event).where(
+        conditions = [
             Event.workspace_id == workspace_id_str,
             Event.sequence >= from_sequence,
-        )
+        ]
+        if not include_archived:
+            conditions.append(Event.is_archived.is_(False))
+
+        stmt = select(Event).where(*conditions)
 
         if event_types:
             stmt = stmt.where(Event.event_type.in_(event_types))

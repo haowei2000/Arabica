@@ -159,6 +159,11 @@ class EventResponse(BaseModel):
     parent_event_id: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    is_archived: bool = False
+    archived_at: datetime | None = None
+    archive_scope: str | None = None
+    archive_reason: str | None = None
+    archive_context_id: str | None = None
     created_at: datetime
 
     @model_validator(mode="before")
@@ -171,6 +176,8 @@ class EventResponse(BaseModel):
                 value = getattr(data, field_name, None)
                 if isinstance(value, UUID):
                     result[field_name] = str(value)
+                elif field_name == "is_archived":
+                    result[field_name] = bool(value)
                 else:
                     result[field_name] = value
             return result
@@ -183,3 +190,61 @@ class EventListResponse(BaseModel):
     total: int = Field(..., description="事件总数")
     items: list[EventResponse] = Field(..., description="事件列表")
     last_sequence: int | None = Field(None, description="最后一个事件的序列号")
+
+
+class EventArchiveRequest(BaseModel):
+    """Request body for archiving active event memory."""
+
+    keep_last: int | None = Field(
+        None,
+        ge=0,
+        le=10000,
+        description=(
+            "Backward-compatible shorthand for strategy_config.keep_last_floor. "
+            "If omitted, the strategy chooses the scope default."
+        ),
+    )
+    include_pinned: bool = Field(
+        False,
+        description="Whether to archive pinned durable events such as user/agent messages",
+    )
+    event_types: list[str] | None = Field(
+        None,
+        description="Optional event type allow-list. If omitted, all event types are eligible",
+    )
+    include_run_events: bool = Field(
+        True,
+        description="Workspace archive only: include events that belong to runs",
+    )
+    dry_run: bool = Field(
+        False,
+        description="Preview selected events without writing Context rows or marking events",
+    )
+    strategy: str = Field(
+        "event_count_ttl",
+        description="Registered event GC strategy name",
+    )
+    strategy_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Strategy-specific configuration such as TTL overrides and decay rules",
+    )
+    reason: str = Field(
+        "manual_event_gc",
+        max_length=255,
+        description="Archive reason stored on each archived event",
+    )
+
+
+class EventArchiveResponse(BaseModel):
+    """Archive operation result."""
+
+    scope: str
+    scope_id: str
+    dry_run: bool = False
+    archived_count: int
+    skipped_count: int
+    active_count_before: int
+    archive_context_id: str | None = None
+    archive_path: str | None = None
+    reason: str
+    strategy: str
