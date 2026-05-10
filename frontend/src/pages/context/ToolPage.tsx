@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Wrench, Loader2, Trash2, ToggleLeft, ToggleRight,
   Search, Play, ChevronRight, ChevronDown,

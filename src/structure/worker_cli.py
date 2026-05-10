@@ -33,7 +33,6 @@ import click
 # 配置会在 structure.config.factory 模块导入时自动加载
 from structure.core.bootstrap import bootstrap_worker
 from structure.extensions.database import get_session
-from structure.services.events.event_publisher import REDIS_EXECUTOR_LABEL
 from structure.services.events.event_worker import Worker
 from structure.services.executor.runtime import ExecutorInstanceManager
 from structure.services.workspaces.workspace_crud import WorkspaceCRUD
@@ -48,6 +47,134 @@ def generate_consumer_name(prefix: str, workspace_id: str, index: int) -> str:
     # Include workspace_id in consumer name for easier tracking
     ws_prefix = workspace_id[:8]
     return f"{prefix}-{ws_prefix}-{hostname}-{os.getpid()}-{index}-{short_uuid}"
+
+
+_WORKSPACE_POLL_INTERVAL_SECONDS = 30
+
+
+async def _list_active_workspace_ids() -> list[str]:
+    """Return all active workspace IDs."""
+    async with get_session("structure") as db:
+        workspace_ids = await WorkspaceCRUD(db).get_all_active_ids()
+    return list(workspace_ids)
+
+
+async def _wait_for_workspaces(label: str = "Worker") -> list[str]:
+    """Poll the DB until at least one active workspace exists, then return its IDs.
+
+    Replaces the previous ``await asyncio.sleep(float("inf"))`` pattern: that
+    blocked the event loop indefinitely on a fresh deploy with no workspaces
+    yet, and SIGTERM could not interrupt cleanly. Polling in finite chunks
+    keeps the loop responsive to signals and lets the worker pick up the first
+    workspace as soon as it is created.
+    """
+    while True:
+        workspace_ids = await _list_active_workspace_ids()
+        if workspace_ids:
+            logger.info(f"📋 [{label}] Found {len(workspace_ids)} active workspace(s)")
+            return workspace_ids
+
+        logger.info(
+            "⏳ [%s] No active workspaces yet, retrying in %ds...",
+            label,
+            _WORKSPACE_POLL_INTERVAL_SECONDS,
+        )
+        await asyncio.sleep(_WORKSPACE_POLL_INTERVAL_SECONDS)
+
+
+def _raise_if_worker_failed(tasks: list[asyncio.Task]) -> None:
+    """Raise if any worker task finished with an exception."""
+    for task in tasks:
+        if not task.done():
+            continue
+
+        exception = task.exception()
+        if exception:
+            raise exception
+
+
+def _start_missing_worker_tasks(
+    *,
+    redis_client: Any,
+    tasks: list[asyncio.Task],
+    started_keys: set[tuple[str, int]],
+    workspace_ids: list[str],
+    num_workers_per_workspace: int,
+    name_prefix: str,
+    shared_runtime: ExecutorInstanceManager,
+    task_name_prefix: str,
+) -> int:
+    """Start worker tasks for active workspaces that are not being watched yet."""
+    created = 0
+    for workspace_id in workspace_ids:
+        for worker_index in range(num_workers_per_workspace):
+            key = (workspace_id, worker_index)
+            if key in started_keys:
+                continue
+
+            consumer_name = generate_consumer_name(
+                name_prefix,
+                workspace_id,
+                worker_index,
+            )
+            task = asyncio.create_task(
+                run_single_worker(
+                    redis_client,
+                    get_session("structure"),
+                    workspace_id,
+                    consumer_name,
+                    worker_index,
+                    shared_runtime,
+                ),
+                name=f"{task_name_prefix}-{workspace_id[:8]}-{worker_index}",
+            )
+            tasks.append(task)
+            started_keys.add(key)
+            created += 1
+    return created
+
+
+async def _supervise_workspace_workers(
+    *,
+    redis_client: Any,
+    tasks: list[asyncio.Task],
+    started_keys: set[tuple[str, int]],
+    num_workers_per_workspace: int,
+    name_prefix: str,
+    shared_runtime: ExecutorInstanceManager,
+    label: str,
+    task_name_prefix: str,
+) -> None:
+    """Keep worker tasks in sync with active workspaces.
+
+    Workspaces can be created after the API or standalone worker has started.
+    Polling lets the worker subscribe to those new workspace streams without
+    requiring a process restart.
+    """
+    while True:
+        _raise_if_worker_failed(tasks)
+
+        workspace_ids = await _list_active_workspace_ids()
+        created = _start_missing_worker_tasks(
+            redis_client=redis_client,
+            tasks=tasks,
+            started_keys=started_keys,
+            workspace_ids=workspace_ids,
+            num_workers_per_workspace=num_workers_per_workspace,
+            name_prefix=name_prefix,
+            shared_runtime=shared_runtime,
+            task_name_prefix=task_name_prefix,
+        )
+        if created:
+            watched_workspaces = len({workspace_id for workspace_id, _ in started_keys})
+            logger.info(
+                "[%s] Added %s worker(s); watching %s active workspace(s)",
+                label,
+                created,
+                watched_workspaces,
+            )
+
+        await asyncio.sleep(_WORKSPACE_POLL_INTERVAL_SECONDS)
 
 
 async def run_single_worker(
@@ -94,6 +221,7 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
 
     bootstrap = None
     tasks: list[asyncio.Task] = []
+    supervisor_task: asyncio.Task | None = None
 
     try:
         # Initialize bootstrap
@@ -103,31 +231,24 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         # Single shared runtime so all workers can find executors created by any peer
         shared_runtime = ExecutorInstanceManager()
 
-        # Get all active workspace IDs
-        async with get_session("structure") as db:
-            workspace_crud = WorkspaceCRUD(db)
-            workspace_ids = await workspace_crud.get_all_active_ids()
+        # Get all active workspace IDs.  On a fresh deployment this list may be
+        # empty — we poll until at least one workspace appears so the worker
+        # starts as soon as it has work to do, instead of blocking on
+        # ``sleep(float("inf"))`` (which made the event loop appear hung and
+        # ate SIGTERM on container shutdown).
+        workspace_ids = await _wait_for_workspaces()
 
-        logger.info(f"📋 Found {len(workspace_ids)} active workspace(s)")
-
-        # Create worker tasks for each workspace
-        for ws_idx, workspace_id in enumerate(workspace_ids):
-            for i in range(num_workers_per_workspace):
-                consumer_name = generate_consumer_name(name_prefix, workspace_id, i)
-                db_factory = get_session("structure")
-
-                task = asyncio.create_task(
-                    run_single_worker(
-                        redis_client,
-                        db_factory,
-                        workspace_id,
-                        consumer_name,
-                        i,
-                        shared_runtime,
-                    ),
-                    name=f"worker-{ws_idx}-{i}",
-                )
-                tasks.append(task)
+        started_keys: set[tuple[str, int]] = set()
+        _start_missing_worker_tasks(
+            redis_client=redis_client,
+            tasks=tasks,
+            started_keys=started_keys,
+            workspace_ids=workspace_ids,
+            num_workers_per_workspace=num_workers_per_workspace,
+            name_prefix=name_prefix,
+            shared_runtime=shared_runtime,
+            task_name_prefix="worker",
+        )
 
         logger.info("=" * 60)
         logger.info(
@@ -135,15 +256,23 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         )
         logger.info("=" * 60)
 
-        if not tasks:
-            logger.info(
-                "⏳ No workspaces found, waiting for workspaces to be created..."
-            )
-            await asyncio.sleep(float("inf"))
+        supervisor_task = asyncio.create_task(
+            _supervise_workspace_workers(
+                redis_client=redis_client,
+                tasks=tasks,
+                started_keys=started_keys,
+                num_workers_per_workspace=num_workers_per_workspace,
+                name_prefix=name_prefix,
+                shared_runtime=shared_runtime,
+                label="Worker",
+                task_name_prefix="worker",
+            ),
+            name="workspace-worker-supervisor",
+        )
 
-        # Wait for all workers (or until one fails)
+        # Wait for all workers or the supervisor (or until one fails)
         done, pending = await asyncio.wait(
-            tasks,
+            [*tasks, supervisor_task],
             return_when=asyncio.FIRST_EXCEPTION,
         )
 
@@ -167,11 +296,15 @@ async def run_workers(num_workers_per_workspace: int, name_prefix: str) -> None:
         sys.exit(1)
     finally:
         # Cancel all running tasks
+        if supervisor_task and not supervisor_task.done():
+            supervisor_task.cancel()
         for task in tasks:
             if not task.done():
                 task.cancel()
 
         # Wait for tasks to complete cancellation
+        if supervisor_task:
+            await asyncio.gather(supervisor_task, return_exceptions=True)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -207,36 +340,44 @@ async def run_workers_embedded(
     """
     shared_runtime = ExecutorInstanceManager()
     tasks: list[asyncio.Task] = []
+    supervisor_task: asyncio.Task | None = None
 
     try:
-        async with get_session("structure") as db:
-            workspace_crud = WorkspaceCRUD(db)
-            workspace_ids = await workspace_crud.get_all_active_ids()
-
+        # Same fresh-deploy concern as run_workers: poll instead of sleeping
+        # forever so the API lifespan can shut down cleanly on signal.
+        workspace_ids = await _wait_for_workspaces(label="Embedded Worker")
         logger.info(f"[Embedded Worker] {len(workspace_ids)} active workspace(s)")
 
-        for ws_idx, workspace_id in enumerate(workspace_ids):
-            for i in range(num_workers):
-                consumer_name = generate_consumer_name(name_prefix, workspace_id, i)
-                task = asyncio.create_task(
-                    run_single_worker(
-                        redis_client,
-                        get_session("structure"),
-                        workspace_id,
-                        consumer_name,
-                        i,
-                        shared_runtime,
-                    ),
-                    name=f"embedded-worker-{ws_idx}-{i}",
-                )
-                tasks.append(task)
+        started_keys: set[tuple[str, int]] = set()
+        _start_missing_worker_tasks(
+            redis_client=redis_client,
+            tasks=tasks,
+            started_keys=started_keys,
+            workspace_ids=workspace_ids,
+            num_workers_per_workspace=num_workers,
+            name_prefix=name_prefix,
+            shared_runtime=shared_runtime,
+            task_name_prefix="embedded-worker",
+        )
 
-        if not tasks:
-            logger.info("[Embedded Worker] No workspaces found, sleeping...")
-            await asyncio.sleep(float("inf"))
-            return
+        supervisor_task = asyncio.create_task(
+            _supervise_workspace_workers(
+                redis_client=redis_client,
+                tasks=tasks,
+                started_keys=started_keys,
+                num_workers_per_workspace=num_workers,
+                name_prefix=name_prefix,
+                shared_runtime=shared_runtime,
+                label="Embedded Worker",
+                task_name_prefix="embedded-worker",
+            ),
+            name="embedded-workspace-worker-supervisor",
+        )
 
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        done, pending = await asyncio.wait(
+            [*tasks, supervisor_task],
+            return_when=asyncio.FIRST_EXCEPTION,
+        )
 
         for task in done:
             exc = task.exception()
@@ -246,9 +387,13 @@ async def run_workers_embedded(
                 raise exc
 
     except asyncio.CancelledError:
+        if supervisor_task and not supervisor_task.done():
+            supervisor_task.cancel()
         for task in tasks:
             if not task.done():
                 task.cancel()
+        if supervisor_task:
+            await asyncio.gather(supervisor_task, return_exceptions=True)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         logger.info("[Embedded Worker] Stopped")

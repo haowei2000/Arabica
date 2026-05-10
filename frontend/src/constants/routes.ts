@@ -4,6 +4,7 @@ export const ROUTES = {
   LOGIN: '/login',
     HOME: '/home',
     CHAT: '/chat',
+    TRIGGERS: '/triggers',
     KNOWLEDGE_DOCUMENTS: '/knowledge/:knowledgeId/documents',
     // Legacy routes (redirect to home)
   APPS: '/apps',

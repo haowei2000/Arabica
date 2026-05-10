@@ -28,6 +28,7 @@ interface FolderNode {
 }
 
 type TreeNode = FileNode | FolderNode;
+type TreeEntry = { node: FolderNode; map: Map<string, TreeEntry> };
 
 // ─── Folder config ─────────────────────────────────────────────────────────────
 
@@ -44,16 +45,16 @@ const ROOT_FOLDER_META: Record<string, { label: string; color: string; icon: typ
 // ─── Tree builder ──────────────────────────────────────────────────────────────
 
 function buildTree(items: WorkspaceContext[]): TreeNode[] {
-  const root = new Map<string, { folder: FolderNode; map: Map<string, unknown> }>();
+  const root = new Map<string, TreeEntry>();
 
   for (const item of items) {
-    let rel = (item.path ?? item.name).replace(/^\/+/, '');
+    const rel = (item.path ?? item.name).replace(/^\/+/, '');
 
     const segments = rel.split('/').filter(Boolean);
     if (segments.length === 0) continue;
 
     // Build nested folders
-    let currentMap = root as Map<string, any>;
+    let currentMap = root;
     let currentChildren: TreeNode[] | null = null;
 
     for (let i = 0; i < segments.length - 1; i++) {
@@ -71,7 +72,7 @@ function buildTree(items: WorkspaceContext[]): TreeNode[] {
           // top-level: handled below, just register
         }
       }
-      const entry = currentMap.get(seg);
+      const entry = currentMap.get(seg)!;
       currentChildren = entry.node.children;
       currentMap = entry.map;
     }
@@ -144,12 +145,10 @@ function FileRow({
   node,
   depth,
   folderKey,
-  isLast,
 }: {
   node: FileNode;
   depth: number;
   folderKey: string;
-  isLast: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetail = !!(node.item.glance);
@@ -258,7 +257,7 @@ function FolderRow({
             style={{ left: `${depth * 12 + 11}px` }}
           />
           <div className="space-y-px">
-            {node.children.map((child, i) =>
+            {node.children.map((child) =>
               child.kind === 'folder' ? (
                 <FolderRow
                   key={child.fullPath}
@@ -273,7 +272,6 @@ function FolderRow({
                   node={child}
                   depth={depth + 1}
                   folderKey={folderKey}
-                  isLast={i === node.children.length - 1}
                 />
               )
             )}
@@ -380,7 +378,6 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
                   node={node as FileNode}
                   depth={0}
                   folderKey=""
-                  isLast={false}
                 />
               )
             )}

@@ -10,7 +10,7 @@ function randomAppCode() {
   return `${adj}-${noun}-${num}`;
 }
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Layers, Library, Wrench, Brain, Sparkles, FolderKanban, Cpu } from 'lucide-react';
+import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Layers, Library, Wrench, Brain, Sparkles, FolderKanban, Cpu, Zap } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -32,8 +32,15 @@ import ToolPage from './context/ToolPage';
 import MemoryPage from './context/MemoryPage';
 import SkillPage from './context/SkillPage';
 import LLMModelsPage from './LLMModelsPage';
+import TriggerPage from './TriggerPage';
 
-export default function HomePage() {
+type HomeTab = 'app' | 'trigger' | 'context' | 'models';
+
+interface HomePageProps {
+  defaultTab?: HomeTab;
+}
+
+export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
   const [showCreateAppForm, setShowCreateAppForm] = useState(false);
   const [appCode, setAppCode] = useState(() => randomAppCode());
   const [executorCode, setExecutorCode] = useState('');
@@ -300,15 +307,20 @@ export default function HomePage() {
       </header>
 
       <div className="max-w-[1600px] mx-auto px-4 sm:px-8 py-8">
-        <Tabs defaultValue="app" className="space-y-6">
-          <TabsList className="h-10 p-1 bg-muted/50">
-            <TabsTrigger value="app" className="text-sm px-4 gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Bot className="size-3.5" />App</TabsTrigger>
-            <TabsTrigger value="context" className="text-sm px-4 gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Layers className="size-3.5" />Context</TabsTrigger>
-            <TabsTrigger value="models" className="text-sm px-4 gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Cpu className="size-3.5" />Models</TabsTrigger>
+        <Tabs defaultValue={defaultTab} className="space-y-6">
+          <TabsList className="h-10 w-full sm:w-auto p-1 bg-muted/50">
+            <TabsTrigger value="app" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Bot className="size-3.5" />App</TabsTrigger>
+            <TabsTrigger value="trigger" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Zap className="size-3.5" />Trigger</TabsTrigger>
+            <TabsTrigger value="context" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Layers className="size-3.5" />Context</TabsTrigger>
+            <TabsTrigger value="models" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Cpu className="size-3.5" />Models</TabsTrigger>
           </TabsList>
 
           <TabsContent value="app" className="mt-0 outline-none">
             {renderAppContent()}
+          </TabsContent>
+
+          <TabsContent value="trigger" className="mt-0 outline-none">
+            <TriggerPage />
           </TabsContent>
 
           <TabsContent value="context" className="mt-0 outline-none">

@@ -44,7 +44,9 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
                 logger.warning(f"sync_tool: tool {tool_id} not found")
                 return
 
-            tool_name = tool.tool_code or tool.name
+            # Use the callable registry name, not the internal tool_code
+            # (for imported MCP tools this is often "mcp__<name>").
+            tool_name = tool.name
             display_name = tool.display_name or tool.name
             glance = (
                 f"{display_name} — {tool.description[:60]}"
@@ -76,7 +78,11 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
                 content=schema_str,
                 path=f"/tools/{_slugify(tool_name)}",
                 tags=["tool"] + tool_tags,  # noqa: RUF005
-                meta={"tool_id": tool_id, "tool_code": tool_name},
+                meta={
+                    "tool_id": tool_id,
+                    "tool_name": tool.name,
+                    "tool_code": tool.tool_code,
+                },
             )
 
             await _update_workspace_contexts(
@@ -106,7 +112,11 @@ def sync_tool_to_contexts(self, tool_id: str, user_id: str):
             overview=tool_description,
             detail=schema_str,
             tags=["tool"] + tool_tags,  # noqa: RUF005
-            meta={"tool_id": tool_id, "tool_code": tool_name},
+            meta={
+                "tool_id": tool_id,
+                "tool_name": tool.name,
+                "tool_code": tool.tool_code,
+            },
             created_by=user_id,
         )
         await _invalidate_workspace_caches(dirty_ids)
@@ -166,7 +176,7 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
                 logger.warning(f"sync_inner_tool: tool {tool_id} not found")
                 return
 
-            tool_name = tool.tool_code or tool.name
+            tool_name = tool.name
             display_name = tool.display_name or tool.name
             glance = f"{display_name} — {(tool.description or '')[:60]}"
             input_schema = tool.input_schema or {}
@@ -208,7 +218,11 @@ def sync_inner_tool_to_contexts(self, tool_id: str):
             overview=tool.description,
             detail=schema_str,
             tags=["tool"] + tool_tags,  # noqa: RUF005
-            meta={"tool_id": tool_id, "tool_code": tool_name},
+            meta={
+                "tool_id": tool_id,
+                "tool_name": tool.name,
+                "tool_code": tool.tool_code,
+            },
             created_by=None,
         )
         await _invalidate_workspace_caches(dirty_ids)
@@ -276,14 +290,14 @@ def resync_all_tools_to_contexts(self):
         skipped = 0
         for tool in tools:
             tool_id = str(tool.id)
-            if tool.tool_type == "external" and tool.user_id:
+            if tool.tool_type in {"external", "mcp"} and tool.user_id:
                 sync_tool_to_contexts.delay(tool_id, str(tool.user_id))
                 dispatched += 1
             elif tool.tool_type == "inner":
                 # InnerTools have no owner; rebuild content directly for all
                 # WorkspaceContext rows that already reference this tool.
                 try:
-                    tool_name = tool.tool_code or tool.name
+                    tool_name = tool.name
                     display_name = tool.display_name or tool.name
                     input_schema = tool.input_schema or {}
                     full_schema = {
@@ -319,7 +333,11 @@ def resync_all_tools_to_contexts(self):
                         overview=tool.description,
                         detail=schema_str,
                         tags=["tool"] + tool_tags,  # noqa: RUF005
-                        meta={"tool_id": tool_id, "tool_code": tool_name},
+                        meta={
+                            "tool_id": tool_id,
+                            "tool_name": tool.name,
+                            "tool_code": tool.tool_code,
+                        },
                         created_by=None,
                     )
                     await _invalidate_workspace_caches(dirty_ids)

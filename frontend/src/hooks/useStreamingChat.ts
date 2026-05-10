@@ -5,6 +5,7 @@ import { streamService } from '@/services/streamService';
 import { MessageRole } from '@/types/message';
 import { ErrorCategory } from '@/types/events';
 import type { StreamError } from '@/types/events';
+import type { WorkspaceListResponse } from '@/types/workspace';
 import { generateUUID } from '@/utils/uuid';
 
 function categorizeError(error: Error): StreamError {
@@ -24,6 +25,7 @@ function categorizeError(error: Error): StreamError {
 
 export const useStreamingChat = (workspaceId: string, appId?: string | null) => {
   const lastUserMessageRef = useRef<string>('');
+  const optimisticRunIdsRef = useRef<Set<string>>(new Set());
   const queryClient = useQueryClient();
 
   const {
@@ -93,6 +95,40 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
     clearStreamingTokens();
   }, [clearStreamingMessage, setThinkingContent, clearToolCalls, clearPlanSteps, clearPendingApprovals, clearPendingQueries, clearContextUsages, clearOutcomes, clearStreamingTokens]);
 
+  const incrementWorkspaceRunCount = useCallback(() => {
+    const workspaceQueries = queryClient.getQueryCache().findAll({
+      predicate: (query) =>
+        Array.isArray(query.queryKey) && query.queryKey[0] === 'workspaces',
+    });
+
+    workspaceQueries.forEach((query) => {
+      queryClient.setQueryData<WorkspaceListResponse>(query.queryKey, (current) => {
+        if (!current?.items?.length) return current;
+
+        let changed = false;
+        const items = current.items.map((workspace) => {
+          if (workspace.id !== workspaceId) return workspace;
+
+          changed = true;
+          return {
+            ...workspace,
+            run_count: workspace.run_count + 1,
+            updated_at: new Date().toISOString(),
+          };
+        });
+
+        return changed ? { ...current, items } : current;
+      });
+    });
+  }, [queryClient, workspaceId]);
+
+  const invalidateWorkspaceQueries = useCallback(() => {
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        Array.isArray(query.queryKey) && query.queryKey[0] === 'workspaces',
+    });
+  }, [queryClient]);
+
   const sendMessage = useCallback(
     async (content: string, forcedTools?: string[]) => {
       if (!workspaceId) {
@@ -121,7 +157,13 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         forcedTools,
 
         // ── run lifecycle ───────────────────────────────
-        onRunStart: (runId) => setCurrentRun(runId),
+        onRunStart: (runId) => {
+          setCurrentRun(runId);
+          if (!optimisticRunIdsRef.current.has(runId)) {
+            optimisticRunIdsRef.current.add(runId);
+            incrementWorkspaceRunCount();
+          }
+        },
 
         // ── text stream ─────────────────────────────────
         onChunk: (chunk) => appendStreamingMessage(chunk),
@@ -172,6 +214,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         // ── run status ─────────────────────────────────
         onStatus: () => {
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          invalidateWorkspaceQueries();
         },
 
         // ── context events ────────────────────────────
@@ -187,6 +230,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           saveStreamingStateAsMessage();
           clearStreamingState();
           setIsStreaming(false);
+          queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          invalidateWorkspaceQueries();
         },
 
         // ── stream errored ──────────────────────────────
@@ -196,6 +241,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           clearStreamingState();
           setIsStreaming(false);
           setStreamError(categorizeError(error));
+          queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          invalidateWorkspaceQueries();
         },
       });
     },
@@ -217,6 +264,8 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
       setStreamError,
       saveStreamingStateAsMessage,
       clearStreamingState,
+      incrementWorkspaceRunCount,
+      invalidateWorkspaceQueries,
       queryClient,
     ]
   );

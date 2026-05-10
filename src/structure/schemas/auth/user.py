@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserBase(BaseModel):
@@ -37,6 +37,8 @@ class UserLogin(BaseModel):
 class UserInDB(UserBase):
     """User model as stored in database."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     tenant_id: UUID
     role: str
@@ -44,14 +46,13 @@ class UserInDB(UserBase):
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class UserResponse(UserBase):
     """User response model."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     tenant_id: UUID
     role: str
@@ -59,6 +60,3 @@ class UserResponse(UserBase):
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True

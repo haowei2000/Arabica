@@ -26,7 +26,7 @@ function App() {
     // Initialize theme on mount
     useEffect(() => {
         setTheme(theme);
-    }, []);
+    }, [setTheme, theme]);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -34,6 +34,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
             <Route path="/home" element={<HomePage/>}/>
+            <Route path="/triggers" element={<HomePage defaultTab="trigger" />}/>
             <Route path="/app" element={<AppWorkspacePage />} />
           <Route path="/chat" element={<ChatPage />} />
             <Route path="/knowledge/:knowledgeId/documents" element={<DocumentPage/>}/>

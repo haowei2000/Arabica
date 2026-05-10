@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserToolBase(BaseModel):
@@ -95,6 +95,8 @@ class UserToolUpdate(BaseModel):
 class UserToolResponse(UserToolBase):
     """Schema for user tool response (both inner and external tools)"""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     tool_code: str = Field(default="", description="Unique tool identifier code")
     user_id: UUID | None = Field(
@@ -121,9 +123,6 @@ class UserToolResponse(UserToolBase):
     last_used_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None
-
-    class Config:
-        from_attributes = True
 
 
 class UserToolListResponse(BaseModel):

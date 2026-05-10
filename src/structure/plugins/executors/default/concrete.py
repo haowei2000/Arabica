@@ -71,6 +71,7 @@ logger = logging.getLogger(__name__)
 #   <tool>tool_name_1</tool> <tool>tool_name_2</tool>
 _TOOLS_XML_RE = re.compile(r"<tools>(.*?)</tools>", re.DOTALL | re.IGNORECASE)
 _TOOL_XML_RE = re.compile(r"<tool>(.*?)</tool>", re.DOTALL | re.IGNORECASE)
+_TOOL_MENTION_RE = re.compile(r"@([A-Za-z_][A-Za-z0-9_]*)")
 # Event types kept by filter_events_for_user_msg (conversation-relevant only).
 _CONVERSATION_EVENT_TYPES = {
     EventType.USER_MESSAGE,
@@ -98,6 +99,61 @@ def _parse_tool_names_from_xml(text: str) -> list[str] | None:
     ]
     if names:
         return list(dict.fromkeys(names))
+
+    return None
+
+
+def _normalise_tool_names(value: Any) -> list[str] | None:
+    if not isinstance(value, (list, tuple, set)):
+        return None
+    names = [str(name).strip() for name in value if str(name).strip()]
+    return list(dict.fromkeys(names)) or None
+
+
+def _parse_tool_names_from_message(text: str) -> list[str] | None:
+    """Extract explicit tool selection from XML tags or @tool mentions."""
+    xml_names = _parse_tool_names_from_xml(text)
+    if xml_names:
+        return xml_names
+
+    names = [m.group(1).strip() for m in _TOOL_MENTION_RE.finditer(text)]
+    return list(dict.fromkeys(names)) or None
+
+
+def _tool_schema_name(tool: Any) -> str | None:
+    """Return the function name from an OpenAI tool schema object or dict."""
+    if isinstance(tool, dict):
+        function = tool.get("function")
+        return function.get("name") if isinstance(function, dict) else None
+
+    function = getattr(tool, "function", None)
+    return getattr(function, "name", None)
+
+
+def _filter_tools_by_name(
+    tools_info: list[Any] | None,
+    tool_names: list[str] | None,
+) -> list[Any] | None:
+    if tools_info is None or tool_names is None:
+        return tools_info
+
+    allowed = set(tool_names)
+    return [tool for tool in tools_info if _tool_schema_name(tool) in allowed]
+
+
+def _requested_tool_names(raw_events: list[Event]) -> list[str] | None:
+    """Return explicit tool names from the latest user message, if any."""
+    for event in reversed(raw_events):
+        if event.event_type != str(EventType.USER_MESSAGE):
+            continue
+        payload = event.payload or {}
+        forced_tools = _normalise_tool_names(payload.get("forced_tools"))
+        if forced_tools:
+            return forced_tools
+        message = payload.get("message")
+        if isinstance(message, str):
+            return _parse_tool_names_from_message(message)
+        return None
 
     return None
 
@@ -377,16 +433,17 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             logger.warning("_extract_context_tool_schemas: failed to parse event")
             continue
 
-        if not data.path.startswith("tools/"):
+        context_path = data.path.lstrip("/")
+        if not context_path.startswith("tools/"):
             continue
 
-        tool_name_from_path = data.path.split("/")[-1]
+        tool_name_from_path = context_path.split("/")[-1]
         content_raw = data.content
         description_hint: str = data.summary or data.glance or ""
 
         logger.info(
             "_extract_context_tool_schemas: path=%r content_type=%s content_preview=%r",
-            data.path,
+            context_path,
             type(content_raw).__name__,
             str(content_raw)[:150] if content_raw else None,
         )
@@ -396,7 +453,7 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             except json.JSONDecodeError:
                 logger.warning(
                     "_extract_context_tool_schemas: failed to parse content at %r",
-                    data.path,
+                    context_path,
                 )
                 continue
         elif isinstance(content_raw, dict):
@@ -404,7 +461,7 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
         else:
             logger.warning(
                 "_extract_context_tool_schemas: unexpected content type at %r: %s",
-                data.path,
+                context_path,
                 type(content_raw).__name__,
             )
             continue
@@ -454,14 +511,14 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             else:
                 logger.warning(
                     "_extract_context_tool_schemas: unrecognised schema format at %r: keys=%s",
-                    data.path,
+                    context_path,
                     list(parsed.keys())[:8],
                 )
                 continue
         except Exception:
             logger.warning(
                 "_extract_context_tool_schemas: failed to build OpenAITool at %r",
-                data.path,
+                context_path,
                 exc_info=True,
             )
             continue
@@ -473,7 +530,7 @@ def _extract_context_tool_schemas(raw_events: list[Event]) -> list[OpenAITool]:
             logger.info(
                 "_extract_context_tool_schemas: added tool %r from path %r",
                 name,
-                data.path,
+                context_path,
             )
 
     logger.info(
@@ -563,6 +620,15 @@ class DefaultExecutor(Executor):
         self.global_event: bool = config.get("global_event", False)
         self.tool_caller = config.get("tool_caller")
         self.tool_provider = config.get("tool_provider")
+        configured_tools_info = config.get("tools_info")
+        if configured_tools_info is not None:
+            self.tools_info = configured_tools_info
+        elif self.tool_provider is not None:
+            self.tools_info = self.strategy.format_tools(
+                self.tool_provider.get_tool_classes()
+            )
+        else:
+            self.tools_info = []
 
         # Cache the LLM client so it is not recreated for every LLM call
         # within the same run (saves connection overhead on multi-iteration loops).
@@ -687,7 +753,7 @@ class DefaultExecutor(Executor):
 
     def get_messages_and_tools(
         self, raw_events: list[Event]
-    ) -> tuple[list[ChatMessage], list[OpenAITool]]:
+    ) -> tuple[list[ChatMessage], list[Any] | None]:
         """Build last-exchange messages + tools_info from *raw_events*.
 
         Symmetric with ``get_message_tool_from_events`` but uses
@@ -711,7 +777,34 @@ class DefaultExecutor(Executor):
             else:
                 conv_events.append(e)
 
-        tools_info = _extract_context_tool_schemas(schema_events)
+        context_tools_info = (
+            _extract_context_tool_schemas(schema_events) if schema_events else None
+        )
+        requested_tool_names = _requested_tool_names(conv_events)
+        tools_info: list[Any] | None = context_tools_info
+
+        if requested_tool_names:
+            base_tools_info = (
+                context_tools_info
+                if context_tools_info is not None
+                else self.tools_info
+            )
+            tools_info = _filter_tools_by_name(base_tools_info, requested_tool_names)
+
+            available_names = {
+                name
+                for tool in (base_tools_info or [])
+                if (name := _tool_schema_name(tool))
+            }
+            missing = [
+                name for name in requested_tool_names if name not in available_names
+            ]
+            if missing:
+                logger.warning(
+                    "Requested tool(s) not available for run %s: %s",
+                    self.run_id,
+                    missing,
+                )
 
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=self.system_prompt)
@@ -885,9 +978,10 @@ class DefaultExecutor(Executor):
         path with global_event enabled); otherwise fetches the current run only.
 
         For global scope, only conversation-relevant event types are fetched
-        and the query returns the *most recent* events (ordered by sequence
-        DESC, then reversed) so the LLM sees the latest context rather than
-        the oldest.
+        and the query returns the *most recent* events (ordered by creation time
+        DESC, then reversed) so the LLM sees the latest context in chronological
+        order. ``sequence`` is scoped to a run, so it is only a tie-breaker for
+        events created at the same timestamp.
 
         Returns an empty list on any error.
         """
@@ -916,15 +1010,19 @@ class DefaultExecutor(Executor):
                         str(ET.USER_FEEDBACK),
                         str(ET.TOOL_CALL),
                     ]
-                    # Fetch the most recent N events (DESC), then reverse
-                    # so the final list is in chronological order.
+                    # Fetch the most recent N workspace events (DESC), then
+                    # reverse so the final list is in chronological order.
+                    # Event.sequence is per-run, not workspace-global.
                     stmt = (
                         select(EventModel)
                         .where(
                             EventModel.workspace_id == UUID(self.workspace_id),
                             EventModel.event_type.in_(conv_types),
                         )
-                        .order_by(EventModel.sequence.desc())
+                        .order_by(
+                            EventModel.created_at.desc(),
+                            EventModel.sequence.desc(),
+                        )
                         .limit(limit)
                     )
                     result = await db.execute(stmt)
@@ -953,7 +1051,7 @@ class DefaultExecutor(Executor):
     async def _agentic_loop(
         self,
         messages: list[ChatMessage],
-        tools_info: list[OpenAITool] | None = None,
+        tools_info: list[Any] | None = None,
     ) -> AsyncGenerator[Event, None]:
         """Run the agentic loop: call LLM, process tool calls, repeat.
 
@@ -971,7 +1069,7 @@ class DefaultExecutor(Executor):
         # can display which tools are loaded into the LLM request.
         if active_tools_info:
             tool_names = [
-                t.function.name for t in active_tools_info if hasattr(t, "function")
+                name for tool in active_tools_info if (name := _tool_schema_name(tool))
             ]
             if tool_names:
                 yield self._make_event(

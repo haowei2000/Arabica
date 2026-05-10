@@ -74,6 +74,7 @@ _redis_cfg = get_settings().redis
 REDIS_CONSUMER_GROUP = _redis_cfg.consumer_group
 REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
+REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
 
 # Event type codec (encode/decode + routing patterns) lives in event_codec.py.
@@ -279,7 +280,9 @@ class Worker:
 
     async def start(self, workspace_id: str):
         """Start consuming messages from the workspace stream using consumer groups."""
-        stream_name = f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        stream_name = (
+            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+        )
         await self._ensure_consumer_group(stream_name)
         logger.info(
             f"Worker '{self.consumer_name}' listening on workspace stream: {stream_name}"
@@ -331,9 +334,10 @@ class Worker:
         forwarding) to avoid repeated round-trips.  xack is sent only on
         success; failed messages re-enter the pending queue for retry.
         """
+        parsed_event: Event | None = None
         try:
-            event = self._parse_redis_event(event_data)
-            workspace_id = event.workspace_id or ""
+            parsed_event = self._parse_redis_event(event_data)
+            workspace_id = parsed_event.workspace_id or ""
             if not workspace_id:
                 # Try to extract from stream name if not in event payload
                 parts = stream_name.split(":")
@@ -354,12 +358,51 @@ class Worker:
                 )
                 state_machine = RunStateMachine(db, self.redis, publisher)
                 ctx = _Ctx(db=db, publisher=publisher, state_machine=state_machine)
-                await self.handle_event(event, ctx, workspace_events)
+                await self.handle_event(parsed_event, ctx, workspace_events)
 
             await self.redis.xack(stream_name, REDIS_CONSUMER_GROUP, event_id)
         except Exception as e:
             logger.error("Failed to process message %s: %s", event_id, e, exc_info=True)
-            # Not acked → enters pending queue for retry
+            # The handler couldn't surface the error itself (likely a poisoned
+            # session or an unhandled path).  Try once more with a fresh DB
+            # session so the run is marked failed and the SSE client sees
+            # a terminal event instead of a silently stalled stream.
+            if parsed_event is not None and parsed_event.run_id:
+                try:
+                    run_id = (
+                        parsed_event.run_id
+                        if isinstance(parsed_event.run_id, UUID)
+                        else UUID(str(parsed_event.run_id))
+                    )
+                    await self._safe_fail_run(run_id, str(e))
+                except Exception as report_err:
+                    logger.error(
+                        "Failed to report dispatch error for run %s: %s",
+                        parsed_event.run_id,
+                        report_err,
+                    )
+            # Ack the message regardless — leaving it in PEL only delays the
+            # next message and re-runs would hit the same crash.
+            with contextlib.suppress(Exception):
+                await self.redis.xack(stream_name, REDIS_CONSUMER_GROUP, event_id)
+
+    async def _safe_fail_run(self, run_id: UUID, error_msg: str) -> None:
+        """Mark *run_id* failed using a fresh DB session.
+
+        Called from outer/recovery paths where the in-flight session may be
+        poisoned (rolled back or detached after an exception).  Guarantees a
+        ``RUN_STATE_CHANGE`` event reaches Redis so SSE clients exit cleanly.
+        """
+        async with get_session("structure") as fresh_db:
+            publisher = EventPublisher(fresh_db, self.redis)
+            state_machine = RunStateMachine(fresh_db, self.redis, publisher)
+            await state_machine.fail(run_id, error=error_msg, auto_commit=True)
+        # Drop any lingering per-run state so the next attempt starts clean.
+        run_id_str = str(run_id)
+        self._run_tool_callers.pop(run_id_str, None)
+        self._run_event_buffers.pop(run_id_str, None)
+        self._run_seq_cursors.pop(run_id_str, None)
+        self.runtime.release(run_id)
 
     def prepare_executor(
         self,
@@ -656,13 +699,18 @@ class Worker:
                 "handle_event error for %s: %s", event.event_type, e, exc_info=True
             )
             if event.run_id:
+                run_id = (
+                    event.run_id
+                    if isinstance(event.run_id, UUID)
+                    else UUID(str(event.run_id))
+                )
+                run_id_str = str(run_id)
+                # The active session is likely poisoned by the exception that
+                # bubbled up from the handler chain. Roll back first so the
+                # subsequent fail() write isn't silently dropped.
+                with contextlib.suppress(Exception):
+                    await ctx.db.rollback()
                 try:
-                    run_id = (
-                        event.run_id
-                        if isinstance(event.run_id, UUID)
-                        else UUID(str(event.run_id))
-                    )
-                    run_id_str = str(run_id)
                     buffered = self._pop_run_buffer(run_id_str)
                     if buffered:
                         ctx.db.add_all(buffered)
@@ -670,7 +718,14 @@ class Worker:
                     self._run_tool_callers.pop(run_id_str, None)
                     self.runtime.release(run_id)
                 except Exception as fail_err:
-                    logger.error("Failed to mark run as failed: %s", fail_err)
+                    # In-flight session truly broken — fall back to a fresh
+                    # one so the failure still reaches Redis/SSE.
+                    logger.error(
+                        "fail() on in-flight session failed (%s); retrying with fresh session",
+                        fail_err,
+                    )
+                    with contextlib.suppress(Exception):
+                        await self._safe_fail_run(run_id, str(e))
 
     async def _publish_to_executor_event(self, event: Event, ctx: _Ctx) -> None:
         """Publish a TO_EXECUTOR routing event to trigger executor dispatch.
@@ -696,7 +751,7 @@ class Worker:
     ) -> list[Event]:
         """Load events for *workspace_id* from the Redis workspace stream."""
         workspace_stream = (
-            f"{RE_CODE_WORKSPACE}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
+            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
         )
         try:
             messages = await self.redis.xrange(workspace_stream, count=count)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,6 +20,8 @@ from structure.core.dependencies.workspace import (
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.events.event_payloads import EventListResponse
 from structure.services.runs.stuck_run_detector import StuckRunDetector
+
+logger = logging.getLogger(__name__)
 
 _redis_cfg = get_settings().redis
 EVENT_TYPE_DISCONNECT = _redis_cfg.event_type_disconnect
@@ -53,6 +56,16 @@ async def _event_stream_generator(
 
     except asyncio.CancelledError:
         yield f"event: {EVENT_TYPE_DISCONNECT}\ndata: {json.dumps({'reason': 'client_disconnected'})}\n\n"
+    except Exception as exc:
+        # Without this, an unhandled error in the consumer (Redis dropped, decoder
+        # blew up, etc.) closed the SSE stream silently and the client just saw
+        # the connection end with no terminal event.
+        logger.exception(
+            "SSE generator failed for %s entity=%s", subscribe_method, entity_id
+        )
+        error_payload = {"type": EVENT_TYPE_ERROR, "message": f"Stream error: {exc}"}
+        yield f"event: {EVENT_TYPE_ERROR}\ndata: {json.dumps(error_payload)}\n\n"
+        yield f"event: {EVENT_TYPE_DISCONNECT}\ndata: {json.dumps({'reason': 'stream_error'})}\n\n"
 
 
 @router.get("/runs/{run_id}/events/stream", tags=["events"])

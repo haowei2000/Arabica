@@ -68,7 +68,7 @@ async def create_trigger(
         action_params=data.action_params,
         priority=data.priority,
         enabled=data.enabled,
-        created_by=UUID(current_user.id) if current_user.id else None,
+        created_by=UUID(str(current_user.id)) if current_user.id else None,
     )
     db.add(trigger)
     await db.commit()

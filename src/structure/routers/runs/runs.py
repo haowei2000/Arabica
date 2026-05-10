@@ -102,6 +102,10 @@ async def create_run(
         if workspace.executor_code:
             executor_code = workspace.executor_code
 
+    # Preserve client-side routing hints such as forced_tools. UserMessage allows
+    # extra fields, and the executor can use them to narrow the tool set.
+    user_payload = user_message_event.payload.model_dump(exclude_none=True)
+
     # Publish user message event (also triggers Worker via run_tasks stream)
     await event_publisher.publish(
         event_type=EventType.USER_MESSAGE,
@@ -110,9 +114,7 @@ async def create_run(
         app_id=str(app_id) if app_id else None,
         user_id=str(current_user.id),
         executor_code=executor_code,
-        payload={
-            "message": user_message_event.payload.message,
-        },
+        payload=user_payload,
         auto_commit=True,
     )
 
@@ -352,10 +354,9 @@ async def resume_run(
             detail=f"Run is not in waiting state (current: {run.status})",
         )
 
-    # Read waiting_for BEFORE resume_from_tool clears it – we need
-    # executor_code to re-trigger the worker on the correct stream.
+    # Read waiting_for BEFORE resume_from_tool clears it; the tool metadata is
+    # needed for the synthetic tool.result payload.
     waiting_info = run.waiting_for or {}
-    executor_code = waiting_info.get("executor_code", "SimpleAgent")
 
     # ── store approval for the worker ──────────────────────────
     if state_machine.redis:
@@ -371,21 +372,6 @@ async def resume_run(
             ex=300,  # 5-minute TTL – worker consumes almost instantly
         )
 
-    # Publish tool-result event into the run's event log
-    await event_publisher.publish(
-        event_type=EventType.TOOL_RESULT,
-        workspace_id=workspace_id,
-        run_id=run_id,
-        user_id=str(current_user.id),
-        payload={
-            "tool_name": waiting_info.get("tool_name", "unknown"),
-            "tool_id": waiting_info.get("tool_id", "unknown"),
-            "result": data.tool_result,
-            "success": data.approval if data.approval is not None else True,
-        },
-        auto_commit=False,
-    )
-
     # Resume the run (waiting → running)
     try:
         run = await state_machine.resume_from_tool(
@@ -398,21 +384,21 @@ async def resume_run(
             detail=str(e),
         )
 
-    # ── re-trigger the worker ──────────────────────────────────
-    # Push onto the same Redis stream the worker polls so it picks
-    # up the resumed run and calls stream() with the approval data.
-    if state_machine.redis:
-        from structure.services.events.event_worker import RUN_STREAM
-
-        await state_machine.redis.xadd(
-            RUN_STREAM,
-            fields={
-                "run_id": run_id,
-                "executor_code": executor_code,
-                "input": json.dumps(run.input_data or {}),
-                "triggered_by": "resume",
-            },
-        )
+    # Publish tool.result after the resume state-change so the workspace stream's
+    # latest event is the executor-forwarding event, not run.state.change.
+    await event_publisher.publish(
+        event_type=EventType.TOOL_RESULT,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        user_id=str(current_user.id),
+        payload={
+            "tool_name": waiting_info.get("tool_name", "unknown"),
+            "tool_id": waiting_info.get("tool_id", "unknown"),
+            "result": data.tool_result,
+            "success": data.approval if data.approval is not None else True,
+        },
+        auto_commit=True,
+    )
 
     return run
 

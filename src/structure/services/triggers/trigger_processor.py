@@ -17,7 +17,7 @@ import logging
 import re
 import time
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -211,7 +211,7 @@ class TriggerProcessor:
                 )
                 if not matched:
                     continue
-                result = await self._execute_action(trigger)
+                result = await self._execute_action(trigger, event)
                 logger.info(
                     "Trigger '%s' fired: tool=%s result_type=%s",
                     trigger.name,
@@ -268,7 +268,36 @@ class TriggerProcessor:
         result = await self.db.execute(stmt)
         return result.scalar_one() == 1
 
-    async def _execute_action(self, trigger: WorkspaceTrigger) -> Any:
+    async def _resolve_tool_instance(
+        self,
+        tool_name: str,
+        event: Any,
+    ) -> Any | None:
+        from structure.registries.core import ToolRegistry
+
+        tool_instance = ToolRegistry.get_tool_instance(tool_name)
+        if tool_instance is not None:
+            return tool_instance
+
+        user_id = getattr(event, "user_id", None)
+        if user_id is None:
+            return None
+
+        from structure.registries.dynamic_loader import DynamicToolLoader
+
+        workspace_id = UUID(str(self.workspace_id))
+        user_tool_classes = await DynamicToolLoader.load_user_tools(
+            self.db,
+            UUID(str(user_id)),
+            workspace_id,
+        )
+        for tool_cls in user_tool_classes:
+            if tool_cls.METADATA.name == tool_name:
+                return tool_cls()
+
+        return None
+
+    async def _execute_action(self, trigger: WorkspaceTrigger, event: Any) -> Any:
         """Execute the trigger action by invoking a registered tool by name.
 
         ``trigger.tool_name`` is the tool name.  ``trigger.action_params``
@@ -288,10 +317,9 @@ class TriggerProcessor:
             The tool's output dict, or None if the tool was not found.
         """
         from structure.core.enums.events import EventType
-        from structure.registries.core import ToolRegistry
 
         tool_name = trigger.tool_name
-        tool_instance = ToolRegistry.get_tool_instance(tool_name)
+        tool_instance = await self._resolve_tool_instance(tool_name, event)
 
         if tool_instance is None:
             logger.warning(
@@ -307,7 +335,7 @@ class TriggerProcessor:
         # Auto-inject workspace_id if the tool's schema declares it
         if "workspace_id" not in kwargs:
             input_fields = tool_instance.InputSchema.model_fields
-            if "workspace_id" in input_fields:
+            if "workspace_id" in input_fields or "arguments" in input_fields:
                 kwargs["workspace_id"] = self.workspace_id
 
         tool_id = str(uuid4())

@@ -18,9 +18,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { Workspace } from '@/types/workspace';
 import type { Run } from '@/types/run';
 import type { Event } from '@/types/event';
+import type { WorkspaceListResponse } from '@/types/workspace';
 
 import WorkspaceContextTree from '@/components/WorkspaceContextTree';
 import { useWorkspaceStream } from '@/hooks/useWorkspaceStream';
@@ -539,7 +539,11 @@ function RunTimelineItem({
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-export default function WorkspaceConsole() {
+type WorkspaceConsoleProps = {
+  onRunCountChange?: (workspaceId: string, runCount: number) => void;
+};
+
+export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleProps) {
   const [input, setInput] = useState('');
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -639,10 +643,11 @@ export default function WorkspaceConsole() {
     }
   };
 
-  const { sendMessage, stopStreaming, approveToolCall, respondToQuery } = useStreamingChat(
+  const { sendMessage, stopStreaming, approveToolCall, respondToQuery, streamError, retryLastMessage } = useStreamingChat(
     currentWorkspaceId || '',
     currentWorkspaceAppId
   );
+  const clearStreamError = useChatStore((s) => s.setStreamError);
 
   // ── Tool mention (@) ──────────────────────────────────────────────────────
   const { data: toolListData } = useToolList({ enabled_only: true });
@@ -686,6 +691,41 @@ export default function WorkspaceConsole() {
   useWorkspaceStream(currentWorkspaceId);
 
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!currentWorkspaceId || !runsData?.items) return;
+    onRunCountChange?.(currentWorkspaceId, runsData.items.length);
+  }, [currentWorkspaceId, runsData?.items?.length, onRunCountChange]);
+
+  useEffect(() => {
+    if (!currentWorkspaceId || typeof runsData?.total !== 'number') return;
+
+    const workspaceQueries = queryClient.getQueryCache().findAll({
+      predicate: (query) =>
+        Array.isArray(query.queryKey) && query.queryKey[0] === 'workspaces',
+    });
+
+    workspaceQueries.forEach((query) => {
+      queryClient.setQueryData<WorkspaceListResponse>(query.queryKey, (current) => {
+        if (!current?.items?.length) return current;
+
+        let changed = false;
+        const items = current.items.map((workspace) => {
+          if (workspace.id !== currentWorkspaceId || workspace.run_count === runsData.total) {
+            return workspace;
+          }
+
+          changed = true;
+          return {
+            ...workspace,
+            run_count: runsData.total,
+          };
+        });
+
+        return changed ? { ...current, items } : current;
+      });
+    });
+  }, [currentWorkspaceId, runsData?.total, queryClient]);
 
   // Real-time tasks: poll every 3 s while any run is active
   const hasActiveRun = runsData?.items?.some(
@@ -902,6 +942,44 @@ export default function WorkspaceConsole() {
                       </span>
                     )}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {streamError && (
+              <div
+                role="alert"
+                className="flex items-start gap-3 rounded-xl border border-red-500/40 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-300 animate-fade-in"
+              >
+                <AlertCircle className="size-4 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold">{streamError.category.replace(/_/g, ' ')}</p>
+                  <p className="text-red-700/80 dark:text-red-200/80 break-words">{streamError.message}</p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {streamError.retryable && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        clearStreamError(null);
+                        retryLastMessage();
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => clearStreamError(null)}
+                  >
+                    Dismiss
+                  </Button>
                 </div>
               </div>
             )}

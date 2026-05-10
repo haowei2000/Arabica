@@ -48,7 +48,7 @@ class StreamService {
   private lastEventId: string | null = null;
 
   async sendStreamingMessage(options: StreamOptions): Promise<void> {
-    const { workspaceId, appId, message, forcedTools, onChunk, onComplete, onError } = options;
+    const { workspaceId, appId, message, forcedTools, onError } = options;
     const token = localStorage.getItem('access_token');
 
     try {

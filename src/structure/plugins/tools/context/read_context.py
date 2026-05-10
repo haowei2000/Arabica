@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import Field
 
 from structure.core.interfaces.tool import (
@@ -24,6 +26,97 @@ class ReadContextTool(InnerTool):
             description="Context path (e.g., 'tools/web_search' or 'knowledge/python_guide')"
         )
 
+    @staticmethod
+    def _normalise_path(path: str) -> str:
+        return path.strip("/")
+
+    @staticmethod
+    def _direct_children(
+        contexts: list[dict[str, Any]],
+        parent_path: str,
+    ) -> list[dict[str, Any]]:
+        parent = ReadContextTool._normalise_path(parent_path)
+        children: list[dict[str, Any]] = []
+
+        for ctx in contexts:
+            raw_path = str(ctx.get("path") or "")
+            path = ReadContextTool._normalise_path(raw_path)
+            if not path or path == parent:
+                continue
+
+            if parent:
+                if not path.startswith(f"{parent}/"):
+                    continue
+                remainder = path[len(parent) + 1 :]
+            else:
+                remainder = path
+
+            if remainder and "/" not in remainder:
+                children.append(
+                    {
+                        "path": raw_path,
+                        "glance": ctx.get("glance") or "",
+                    }
+                )
+
+        return children
+
+    @staticmethod
+    def _directory_response(
+        path: str, children: list[dict[str, Any]]
+    ) -> ToolOutputSchema:
+        content = "\n".join(
+            f"- {child['path']}: {child.get('glance', '')}".rstrip()
+            for child in children
+        )
+        return ToolOutputSchema(
+            success=True,
+            message=f"Listed {len(children)} context child item(s): {path}",
+            data={
+                "path": ReadContextTool._normalise_path(path),
+                "content": content,
+                "content_type": "text/markdown",
+                "glance": f"{len(children)} child context item(s)",
+                "items": children,
+            },
+        )
+
+    async def _read_workspace_context(
+        self, workspace_id, path: str
+    ) -> ToolOutputSchema | None:
+        from structure.extensions.database import get_session
+        from structure.utils.workspace_context_cache import get_cached_workspace_context
+
+        normalised_path = self._normalise_path(path)
+        async with get_session("structure") as session:
+            service = await get_cached_workspace_context(session, str(workspace_id))
+
+            ctx_data = await service.get(normalised_path, level="detail")
+            listed = await service.list(normalised_path, level="glance")
+            children = self._direct_children(listed, normalised_path)
+
+            if ctx_data is None and children:
+                return self._directory_response(normalised_path, children)
+
+            if ctx_data is not None:
+                data = {
+                    "path": self._normalise_path(str(ctx_data.get("path") or path)),
+                    "content": ctx_data.get("content"),
+                    "content_type": ctx_data.get("context_type"),
+                    "glance": ctx_data.get("glance"),
+                    "summary": ctx_data.get("glance"),
+                    "meta": ctx_data.get("meta"),
+                }
+                if children:
+                    data["children"] = children
+                return ToolOutputSchema(
+                    success=True,
+                    message=f"Retrieved context: {normalised_path}",
+                    data=data,
+                )
+
+        return None
+
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
@@ -31,6 +124,12 @@ class ReadContextTool(InnerTool):
 
         try:
             workspace_id = UUID(input_data.workspace_id)
+            db_result = await self._read_workspace_context(
+                workspace_id, input_data.path
+            )
+            if db_result is not None:
+                return db_result
+
             ctx_data = await context_service_client.get_context(
                 workspace_id=workspace_id, path=input_data.path
             )

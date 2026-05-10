@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from structure.core.enums import EventType
 
@@ -13,14 +13,13 @@ from structure.core.enums import EventType
 class BaseEventSchema(BaseModel):
     """Base class for all event payloads."""
 
+    model_config = ConfigDict(extra="allow")
+
     event_type: EventType = Field(..., description="事件类型")
     app_id: UUID | None = Field(None, description="应用ID")
     workspace_id: UUID | str | None = Field(None, description="工作空间ID")
     run_id: UUID | str | None = Field(None, description="运行ID")
     executor_code: str | None = Field(None, description="执行器代码")
-
-    class Config:
-        extra = "allow"
 
 
 class UserMessage(BaseModel):
@@ -147,6 +146,8 @@ class EventCreate(BaseModel):
 class EventResponse(BaseModel):
     """Schema for event response."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     event_type: str
     workspace_id: str
@@ -174,9 +175,6 @@ class EventResponse(BaseModel):
                     result[field_name] = value
             return result
         return data
-
-    class Config:
-        from_attributes = True
 
 
 class EventListResponse(BaseModel):

@@ -38,7 +38,7 @@ export default defineConfig(({ mode }) => {
           // closes, causing the frontend to receive nothing until the
           // run finishes.
           configure: (proxy) => {
-            proxy.on('proxyRes', (proxyRes, req, res) => {
+            proxy.on('proxyRes', (proxyRes) => {
               if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
                 // Disable any proxy-level buffering / compression
                 proxyRes.headers['cache-control'] = 'no-cache'

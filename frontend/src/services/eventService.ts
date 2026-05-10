@@ -1,6 +1,6 @@
 import { apiClient } from './api';
 import { API_ENDPOINTS } from '@/constants/api';
-import type { Event, EventListResponse, EventFilterParams } from '@/types/event';
+import type { Event, EventListResponse } from '@/types/event';
 
 export const eventService = {
   async getEvent(id: string): Promise<Event> {
