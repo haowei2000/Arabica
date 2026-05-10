@@ -43,6 +43,15 @@ def archive_run_memory(
                 strategy_config=opts.get("strategy_config"),
                 dry_run=opts.get("dry_run", False),
                 reason=opts.get("reason", "event_gc_task"),
+                max_events_per_archive_context=opts.get(
+                    "max_events_per_archive_context",
+                    500,
+                ),
+                max_chars_per_archive_context=opts.get(
+                    "max_chars_per_archive_context",
+                    200_000,
+                ),
+                bulk_update_chunk_size=opts.get("bulk_update_chunk_size", 1000),
             )
             if not result.dry_run:
                 await session.commit()
@@ -88,6 +97,15 @@ def archive_workspace_memory(
                 strategy_config=opts.get("strategy_config"),
                 dry_run=opts.get("dry_run", False),
                 reason=opts.get("reason", "event_gc_task"),
+                max_events_per_archive_context=opts.get(
+                    "max_events_per_archive_context",
+                    500,
+                ),
+                max_chars_per_archive_context=opts.get(
+                    "max_chars_per_archive_context",
+                    200_000,
+                ),
+                bulk_update_chunk_size=opts.get("bulk_update_chunk_size", 1000),
             )
             if not result.dry_run:
                 await session.commit()

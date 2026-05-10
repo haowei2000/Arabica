@@ -228,6 +228,24 @@ class EventArchiveRequest(BaseModel):
         default_factory=dict,
         description="Strategy-specific configuration such as TTL overrides and decay rules",
     )
+    max_events_per_archive_context: int = Field(
+        500,
+        ge=1,
+        le=10000,
+        description="Maximum number of events written to one archive Context row",
+    )
+    max_chars_per_archive_context: int = Field(
+        200_000,
+        ge=1000,
+        le=5_000_000,
+        description="Approximate maximum archive Context content size before chunking",
+    )
+    bulk_update_chunk_size: int = Field(
+        1000,
+        ge=1,
+        le=10000,
+        description="Number of Event rows updated per bulk archive statement",
+    )
     reason: str = Field(
         "manual_event_gc",
         max_length=255,
@@ -248,3 +266,6 @@ class EventArchiveResponse(BaseModel):
     archive_path: str | None = None
     reason: str
     strategy: str
+    archive_context_ids: list[str] = Field(default_factory=list)
+    archive_paths: list[str] = Field(default_factory=list)
+    archive_chunks: int = 0

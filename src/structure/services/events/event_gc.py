@@ -9,6 +9,7 @@ strategy-specific decay cost.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, runtime_checkable
@@ -212,27 +213,52 @@ class EventCountTTLStrategy:
         protected = self._protected_recent_events(events, keep_last_floor)
 
         candidates: list[_EventLike] = []
-        for index, event in enumerate(events):
-            if id(event) in protected:
-                continue
-
+        newer_type_counts: Counter[str] = Counter()
+        for event in reversed(events):
             event_type = _event_type_value(event.event_type)
-            if allowed_types and event_type not in allowed_types:
-                continue
+            if id(event) not in protected and (
+                not allowed_types or event_type in allowed_types
+            ):
+                ttl = ttl_policy.get(
+                    event_type,
+                    EventTTL(ttl_events=default_ttl_events),
+                )
+                if not ttl.pin or include_pinned:
+                    ttl_events = ttl.ttl_events
+                    if ttl_events is None:
+                        ttl_events = (
+                            pinned_ttl_events if ttl.pin else default_ttl_events
+                        )
 
-            ttl = ttl_policy.get(event_type, EventTTL(ttl_events=default_ttl_events))
-            if ttl.pin and not include_pinned:
-                continue
+                    ttl_decay = self.ttl_decay_from_counts(
+                        event_type,
+                        newer_type_counts,
+                        decay_rules,
+                    )
+                    if ttl_decay > ttl_events:
+                        candidates.append(event)
 
-            ttl_events = ttl.ttl_events
-            if ttl_events is None:
-                ttl_events = pinned_ttl_events if ttl.pin else default_ttl_events
+            newer_type_counts[event_type] += 1
 
-            ttl_decay = self.ttl_decay_for(event, events[index + 1 :], decay_rules)
-            if ttl_decay > ttl_events:
-                candidates.append(event)
-
+        candidates.reverse()
         return candidates
+
+    @staticmethod
+    def ttl_decay_from_counts(
+        event_type: str,
+        newer_type_counts: Mapping[str, int],
+        decay_rules: Mapping[str, Mapping[str, int]] | None = None,
+    ) -> int:
+        rules = decay_rules or DEFAULT_DECAY_RULES
+        return sum(
+            count
+            * EventCountTTLStrategy.decay_cost(
+                event_type,
+                newer_event_type,
+                rules,
+            )
+            for newer_event_type, count in newer_type_counts.items()
+        )
 
     @staticmethod
     def ttl_decay_for(

@@ -282,6 +282,9 @@ async def archive_run_events(
             strategy_config=data.strategy_config,
             dry_run=data.dry_run,
             reason=data.reason,
+            max_events_per_archive_context=data.max_events_per_archive_context,
+            max_chars_per_archive_context=data.max_chars_per_archive_context,
+            bulk_update_chunk_size=data.bulk_update_chunk_size,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -327,6 +330,9 @@ async def archive_workspace_events(
             strategy_config=data.strategy_config,
             dry_run=data.dry_run,
             reason=data.reason,
+            max_events_per_archive_context=data.max_events_per_archive_context,
+            max_chars_per_archive_context=data.max_chars_per_archive_context,
+            bulk_update_chunk_size=data.bulk_update_chunk_size,
         )
     except ValueError as exc:
         raise HTTPException(

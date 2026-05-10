@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import UTC, datetime
 from typing import ClassVar
 from uuid import uuid4
@@ -133,6 +134,24 @@ def test_event_count_ttl_strategy_exposes_decay_calculation():
     assert decay == 4
 
 
+def test_event_count_ttl_suffix_count_decay_matches_event_scan():
+    events = [
+        _event(EventType.TOOL_CALL, 1),
+        _event(EventType.TOOL_RESULT, 2),
+        _event(EventType.AGENT_MESSAGE, 3),
+        _event(EventType.TOOL_ERROR, 4),
+    ]
+    newer_type_counts = Counter(str(event.event_type) for event in events[1:])
+
+    scan_decay = EventCountTTLStrategy.ttl_decay_for(events[0], events[1:])
+    suffix_decay = EventCountTTLStrategy.ttl_decay_from_counts(
+        str(events[0].event_type),
+        newer_type_counts,
+    )
+
+    assert suffix_decay == scan_decay
+
+
 def test_event_gc_strategy_registry_accepts_plugins():
     @register_event_gc_strategy
     class FakeEventGCStrategy:
@@ -161,6 +180,51 @@ def test_event_gc_strategy_registry_reports_unknown_strategy():
         EventGCStrategyRegistry.get("missing_event_gc_strategy")
 
 
+def test_event_archive_splits_context_chunks_by_event_count():
+    events = [_event(EventType.TOOL_RESULT, sequence) for sequence in range(1, 6)]
+
+    chunks = EventArchiveService._split_event_chunks(
+        events,
+        max_events_per_archive_context=2,
+        max_chars_per_archive_context=100_000,
+    )
+
+    assert [[event.sequence for event in chunk] for chunk in chunks] == [
+        [1, 2],
+        [3, 4],
+        [5],
+    ]
+
+
+async def test_event_archive_dry_run_uses_lightweight_candidates_only():
+    class DryRunArchiveService(EventArchiveService):
+        loaded_full_events = False
+
+        async def _load_run_event_candidates(self, run_id):
+            return [
+                _event(EventType.AGENT_TOKEN, 1),
+                _event(EventType.TOOL_RESULT, 2),
+            ]
+
+        async def _load_full_events(self, candidates):
+            self.loaded_full_events = True
+            raise AssertionError("dry-run should not load full Event payloads")
+
+    service = DryRunArchiveService(db=None)
+
+    result = await service.archive_run_memory(
+        uuid4(),
+        user_id=uuid4(),
+        keep_last=0,
+        include_pinned=False,
+        dry_run=True,
+    )
+
+    assert result.dry_run is True
+    assert result.archived_count == 1
+    assert service.loaded_full_events is False
+
+
 def test_event_archive_result_serializes_as_api_shape():
     result = EventArchiveResult(
         scope="run",
@@ -186,4 +250,7 @@ def test_event_archive_result_serializes_as_api_shape():
         "archive_path": None,
         "reason": "test",
         "strategy": DEFAULT_EVENT_GC_STRATEGY,
+        "archive_context_ids": [],
+        "archive_paths": [],
+        "archive_chunks": 0,
     }
