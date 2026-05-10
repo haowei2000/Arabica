@@ -102,6 +102,10 @@ async def create_run(
         if workspace.executor_code:
             executor_code = workspace.executor_code
 
+    # Preserve client-side routing hints such as forced_tools. UserMessage allows
+    # extra fields, and the executor can use them to narrow the tool set.
+    user_payload = user_message_event.payload.model_dump(exclude_none=True)
+
     # Publish user message event (also triggers Worker via run_tasks stream)
     await event_publisher.publish(
         event_type=EventType.USER_MESSAGE,
@@ -110,9 +114,7 @@ async def create_run(
         app_id=str(app_id) if app_id else None,
         user_id=str(current_user.id),
         executor_code=executor_code,
-        payload={
-            "message": user_message_event.payload.message,
-        },
+        payload=user_payload,
         auto_commit=True,
     )
 

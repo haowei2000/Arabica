@@ -6,8 +6,8 @@
 
 ``build_mcp_tool_class(record)``
     Create a dynamic ``InnerTool`` subclass from a ``Tool`` DB record whose
-    ``tool_type == "mcp"``.  The subclass's ``execute()`` reuses a global
-    FastMCP ``Client`` per unique server config (lazy-connect, auto-reconnect).
+    ``tool_type == "mcp"``.  Stdio transports reuse a global FastMCP ``Client``;
+    HTTP transports use short-lived clients to avoid stale stream sessions.
 
 Both helpers are called by ``DynamicToolLoader`` (for runtime loading) and
 by the tools router (for the probe / import-from-mcp endpoints).
@@ -87,6 +87,18 @@ async def _get_client(client_config: str | dict) -> Any:
             raise ConnectionError(f"MCP server connection timed out: {key}")  # noqa: B904
 
     return client
+
+
+async def _call_tool(client_config: str | dict, tool_name: str, arguments: dict) -> Any:
+    """Call an MCP tool with the transport strategy appropriate for its config."""
+    from fastmcp import Client
+
+    if isinstance(client_config, str) and client_config.startswith(("http://", "https://")):
+        async with Client(client_config) as client:
+            return await client.call_tool(tool_name, arguments)
+
+    client = await _get_client(client_config)
+    return await client.call_tool(tool_name, arguments)
 
 
 async def close_all_clients() -> None:
@@ -196,11 +208,23 @@ def _build_input_schema(json_schema: dict[str, Any] | None) -> type[ToolInputSch
     return create_model("MCPInput", __base__=ToolInputSchema, **fields)
 
 
+def _is_arguments_wrapper_schema(json_schema: dict[str, Any] | None) -> bool:
+    """Return True for FastMCP's generic ``arguments: object`` wrapper schema."""
+    if not json_schema:
+        return False
+
+    properties = json_schema.get("properties") or {}
+    return (
+        set(properties) == {"arguments"}
+        and properties.get("arguments", {}).get("type") == "object"
+    )
+
+
 def build_mcp_tool_class(record: Any) -> type[InnerTool]:
     """Create a dynamic ``InnerTool`` subclass from a Tool DB record (tool_type='mcp').
 
-    The subclass's ``execute()`` reuses a global FastMCP Client per server,
-    reconnecting automatically if the connection has dropped.
+    The subclass's ``execute()`` uses the shared MCP call helper so stdio
+    transports can reuse a client while HTTP transports avoid stale sessions.
 
     Args:
         record: A ``Tool`` ORM instance with ``tool_type == "mcp"`` and a
@@ -210,9 +234,11 @@ def build_mcp_tool_class(record: Any) -> type[InnerTool]:
     mcp_tool_name: str = cfg.get("mcp_tool_name") or record.name
     client_config = client_config_from_tool_config(cfg)
     input_schema_cls = _build_input_schema(record.input_schema)
+    uses_arguments_wrapper = _is_arguments_wrapper_schema(record.input_schema)
 
     _client_config = client_config
     _mcp_tool_name = mcp_tool_name
+    _uses_arguments_wrapper = uses_arguments_wrapper
 
     class _MCPTool(InnerTool):
         METADATA = ToolMetadata(
@@ -225,11 +251,15 @@ def build_mcp_tool_class(record: Any) -> type[InnerTool]:
         )
         InputSchema = input_schema_cls
 
+        async def validate_input(self, raw_input: dict[str, Any]) -> ToolInputSchema:
+            if _uses_arguments_wrapper and "arguments" not in raw_input:
+                raw_input = {"arguments": raw_input}
+            return await super().validate_input(raw_input)
+
         async def execute(self, input_data: ToolInputSchema) -> ToolOutputSchema:  # type: ignore[override]
             arguments = input_data.model_dump(exclude_none=True)
             try:
-                client = await _get_client(_client_config)
-                result = await client.call_tool(_mcp_tool_name, arguments)
+                result = await _call_tool(_client_config, _mcp_tool_name, arguments)
             except Exception as exc:
                 # Connection may have died mid-call; evict cache so next call reconnects.
                 _client_cache.pop(_config_key(_client_config), None)

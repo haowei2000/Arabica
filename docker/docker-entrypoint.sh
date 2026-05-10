@@ -95,7 +95,7 @@ fi
 
 if [ "${START_CELERY:-false}" = "true" ]; then
     echo "==> Starting Celery worker..."
-    celery -A structure.celery_worker.celery_app worker --loglevel=info --concurrency=1 -Q celery,knowledge &
+    celery -A structure.celery_worker.celery_app worker --loglevel=info --concurrency=1 -Q celery,default,knowledge &
     CELERY_PID=$!
     PIDS="$PIDS $CELERY_PID"
 fi
