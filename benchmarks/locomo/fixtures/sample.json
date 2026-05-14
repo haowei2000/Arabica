@@ -1,0 +1,74 @@
+[
+  {
+    "conversation_id": "locomo-smoke-001",
+    "sessions": [
+      [
+        {
+          "role": "user",
+          "content": "I named my sourdough starter Pixel before my Kyoto trip."
+        },
+        {
+          "role": "assistant",
+          "content": "Pixel is a memorable starter name."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Pixel fails with rye flour but doubles with bread flour."
+        },
+        {
+          "role": "assistant",
+          "content": "Bread flour is the reliable option."
+        }
+      ]
+    ],
+    "qas": [
+      {
+        "qa_id": "pet-name",
+        "category": "single-hop",
+        "question": "What is the user's sourdough starter named?",
+        "answer": "Pixel"
+      },
+      {
+        "qa_id": "starter-flour",
+        "category": "multi-hop",
+        "question": "Which flour makes the user's starter double?",
+        "answer": "bread flour"
+      }
+    ]
+  },
+  {
+    "conversation_id": "locomo-smoke-002",
+    "sessions": [
+      [
+        {
+          "role": "user",
+          "content": "My preferred project codename used to be Harbor."
+        },
+        {
+          "role": "assistant",
+          "content": "I will remember Harbor as the old codename."
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Update the project codename to Lantern from now on."
+        },
+        {
+          "role": "assistant",
+          "content": "Lantern is the current codename."
+        }
+      ]
+    ],
+    "qas": [
+      {
+        "qa_id": "current-codename",
+        "category": "temporal-update",
+        "question": "What is the current project codename?",
+        "answer": "Lantern"
+      }
+    ]
+  }
+]

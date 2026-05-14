@@ -105,6 +105,113 @@ def test_get_messages_and_tools_defaults_to_executor_tool_set():
     assert tools_info is None
 
 
+def test_lazy_tool_schema_mode_uses_bootstrap_tools_until_schema_is_read():
+    executor = DefaultExecutor(
+        {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+    executor.tools_info = [
+        _tool_schema("list_context"),
+        _tool_schema("read_context"),
+        _tool_schema("codex_echo_tool"),
+    ]
+
+    active_tools = executor._resolve_active_tools_info(None)
+
+    assert [tool["function"]["name"] for tool in active_tools] == [
+        "list_context",
+        "read_context",
+    ]
+
+
+def test_lazy_tool_schema_mode_merges_bootstrap_with_selected_schema():
+    executor = DefaultExecutor(
+        {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+    executor.tools_info = [
+        _tool_schema("list_context"),
+        _tool_schema("read_context"),
+        _tool_schema("codex_echo_tool"),
+    ]
+
+    active_tools = executor._resolve_active_tools_info(
+        [_tool_schema("codex_echo_tool")]
+    )
+
+    assert [tool["function"]["name"] for tool in active_tools] == [
+        "list_context",
+        "read_context",
+        "codex_echo_tool",
+    ]
+
+
+def test_get_messages_and_tools_keeps_tool_description_result_in_conversation():
+    executor = DefaultExecutor(
+        {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+    executor.tools_info = [
+        _tool_schema("list_context"),
+        _tool_schema("read_context"),
+        _tool_schema("codex_echo_tool"),
+    ]
+
+    messages, tools_info = executor.get_messages_and_tools(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={"message": "Find an echo-like tool."},
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.AGENT_MESSAGE),
+                payload={
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-read-description",
+                            "name": "read_context",
+                            "arguments": {"path": "/tools/codex_echo_tool/description"},
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.TOOL_RESULT),
+                payload={
+                    "tool_id": "call-read-description",
+                    "tool_name": "read_context",
+                    "result": {
+                        "data": {
+                            "path": "/tools/codex_echo_tool/description",
+                            "content": "Echoes input text back to the caller.",
+                            "glance": "Echo tool",
+                        }
+                    },
+                },
+            ),
+        ]
+    )
+
+    assert tools_info is None
+    assert any(
+        message.role == "tool" and "Echoes input text back" in str(message.content)
+        for message in messages
+    )
+
+
 def test_get_messages_and_tools_filters_forced_tools():
     executor = DefaultExecutor(
         {
@@ -134,6 +241,48 @@ def test_get_messages_and_tools_filters_forced_tools():
     assert tools_info == [_tool_schema("codex_echo_tool")]
 
 
+def test_get_messages_and_tools_can_force_new_tool_after_schema_was_loaded():
+    executor = DefaultExecutor(
+        {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+    executor.tools_info = [
+        _tool_schema("codex_echo_tool"),
+        _tool_schema("codex_math_tool"),
+    ]
+
+    _, tools_info = executor.get_messages_and_tools(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.TOOL_RESULT),
+                payload={
+                    "tool_name": "read_context",
+                    "result": {
+                        "data": {
+                            "path": "/tools/codex_echo_tool/schema",
+                            "content": json.dumps(_tool_schema("codex_echo_tool")),
+                            "glance": "Echo tool",
+                        }
+                    },
+                },
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={
+                    "message": "please run the math tool",
+                    "forced_tools": ["codex_math_tool"],
+                },
+            ),
+        ]
+    )
+
+    assert tools_info == [_tool_schema("codex_math_tool")]
+
+
 def test_extract_context_tool_schemas_accepts_leading_slash_path():
     event = SimpleNamespace(
         payload={
@@ -152,3 +301,40 @@ def test_extract_context_tool_schemas_accepts_leading_slash_path():
 
     assert len(tools_info) == 1
     assert tools_info[0]["function"]["name"] == "codex_echo_tool"
+
+
+def test_extract_context_tool_schemas_accepts_structured_schema_path():
+    event = SimpleNamespace(
+        payload={
+            "tool_name": "read_context",
+            "result": {
+                "data": {
+                    "path": "/tools/codex_echo_tool/schema",
+                    "content": json.dumps(_tool_schema("codex_echo_tool")),
+                    "glance": "Schema for Echo tool",
+                }
+            },
+        }
+    )
+
+    tools_info = _extract_context_tool_schemas([event])
+
+    assert len(tools_info) == 1
+    assert tools_info[0]["function"]["name"] == "codex_echo_tool"
+
+
+def test_extract_context_tool_schemas_ignores_tool_description_path():
+    event = SimpleNamespace(
+        payload={
+            "tool_name": "read_context",
+            "result": {
+                "data": {
+                    "path": "/tools/codex_echo_tool/description",
+                    "content": "Echoes text back to the user",
+                    "glance": "Echo tool",
+                }
+            },
+        }
+    )
+
+    assert _extract_context_tool_schemas([event]) == []

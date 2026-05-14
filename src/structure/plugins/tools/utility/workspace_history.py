@@ -66,6 +66,7 @@ class GetWorkspaceHistoryTool(InnerTool):
                         and_(
                             Event.workspace_id == input_data.workspace_id,
                             Event.event_type.in_(_IMPORTANT_TYPES),
+                            Event.is_archived.is_(False),
                         )
                     )
                     .order_by(Event.created_at.asc())

@@ -202,6 +202,7 @@ def sync_run_events_to_context(self, run_id: str, user_id: str):
                 .where(
                     Event.run_id == UUID(run_id),
                     Event.event_type.not_in(list(_NOISE_EVENT_TYPES)),
+                    Event.is_archived.is_(False),
                 )
                 .order_by(Event.sequence.asc())
             )

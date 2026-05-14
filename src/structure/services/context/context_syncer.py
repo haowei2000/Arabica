@@ -6,7 +6,10 @@ the global ``context`` table always reflects the latest state.
 
 Path conventions
 ----------------
-/tools/{tool_name}                         — one entry per external tool
+/tools/index                               — compact tool discovery index
+/tools/{tool_name}                         — lightweight tool profile
+/tools/{tool_name}/description             — natural-language tool description
+/tools/{tool_name}/schema                  — OpenAI function-calling schema
 /skills/{skill_name}                       — one entry per skill
 /knowledge/{knowledge_name}                — one entry per knowledge base
 /triggers/{trigger_name}                   — one entry per workspace trigger
@@ -25,7 +28,6 @@ Key root paths (schema / directory nodes)
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 from uuid import UUID
@@ -36,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structure.core.enums.context import ContextType
 from structure.models.context.context import Context
 from structure.services.context.context_crud import ContextCRUD
+from structure.utils.context import build_path
 
 logger = logging.getLogger(__name__)
 
@@ -66,43 +69,33 @@ class ContextSyncer:
     # ──────────────────────────────────────────────────────────────
 
     async def sync_tool(self, tool: Any) -> None:
-        """Upsert a context entry for an external Tool at /tools/{name}."""
+        """Upsert structured context entries for an external Tool."""
         if not tool.user_id:
             return  # inner tools have no owner — skip
 
-        path = f"/tools/{tool.name}"
-        glance = tool.display_name or tool.name
-        if tool.description:
-            glance += f" — {tool.description[:60]}"
+        from structure.services.context.tool_context import build_tool_context_entries
 
-        parts: list[str] = [f"Tool: {tool.name}"]
-        if tool.description:
-            parts.append(f"Description: {tool.description}")
-        if tool.input_schema:
-            parts.append(
-                f"Input Schema:\n{json.dumps(tool.input_schema, ensure_ascii=False, indent=2)}"
+        for entry in build_tool_context_entries(tool):
+            await self._upsert(
+                user_id=str(tool.user_id),
+                path=entry.path,
+                source_id=str(tool.id),
+                context_type=ContextType.TOOL,
+                glance=entry.glance,
+                content=entry.content,
+                tags=entry.tags,
+                meta=entry.meta,
             )
-
-        await self._upsert(
-            user_id=str(tool.user_id),
-            path=path,
-            source_id=str(tool.id),
-            context_type=ContextType.TOOL,
-            glance=glance,
-            content="\n".join(parts),
-            tags=(tool.tags or []) + ["tool"],
-            meta={
-                "tool_code": tool.tool_code,
-                "tool_type": tool.tool_type,
-                "enabled": tool.enabled,
-            },
-        )
+        await self._refresh_tool_index(str(tool.user_id))
 
     async def remove_tool(self, tool: Any) -> None:
-        """Delete the context entry for a Tool."""
+        """Delete all structured context entries for a Tool."""
         if not tool.user_id:
             return
-        await self._delete(str(tool.user_id), f"/tools/{tool.name}")
+        from structure.services.context.tool_context import tool_context_base_path
+
+        await self._delete_prefix(str(tool.user_id), tool_context_base_path(tool.name))
+        await self._refresh_tool_index(str(tool.user_id))
 
     # ──────────────────────────────────────────────────────────────
     # Skill
@@ -114,7 +107,7 @@ class ContextSyncer:
         ``content`` is the Markdown body (no longer stored on the Skill row).
         If omitted, any existing content in the Context row is preserved.
         """
-        path = f"/skills/{skill.name}"
+        path = build_path("skills", skill.name)
         glance = (
             skill.description[:80] if skill.description else None
         ) or f"Skill: {skill.name}"
@@ -123,7 +116,7 @@ class ContextSyncer:
         if skill.description:
             parts.append(f"Description: {skill.description}")
         if content:
-            parts.append(f"Content:\n{content}")
+            parts.append(f"Content path: {build_path(path, 'content')}")
 
         await self._upsert(
             user_id=str(skill.user_id),
@@ -135,10 +128,21 @@ class ContextSyncer:
             tags=(skill.tags or []) + ["skill"],
             meta={"skill_id": str(skill.id)},
         )
+        if content:
+            await self._upsert(
+                user_id=str(skill.user_id),
+                path=build_path(path, "content"),
+                source_id=str(skill.id),
+                context_type=ContextType.SKILL,
+                glance=f"{skill.name} content",
+                content=content,
+                tags=(skill.tags or []) + ["skill", "content"],
+                meta={"skill_id": str(skill.id), "context_kind": "skill_content"},
+            )
 
     async def remove_skill(self, skill: Any) -> None:
-        """Delete the context entry for a Skill."""
-        await self._delete(str(skill.user_id), f"/skills/{skill.name}")
+        """Delete all context entries for a Skill."""
+        await self._delete_prefix(str(skill.user_id), build_path("skills", skill.name))
 
     # ──────────────────────────────────────────────────────────────
     # Knowledge
@@ -146,7 +150,7 @@ class ContextSyncer:
 
     async def sync_knowledge(self, knowledge: Any) -> None:
         """Upsert a context entry for a Knowledge base at /knowledge/{name}."""
-        path = f"/knowledge/{knowledge.name}"
+        path = build_path("knowledge", knowledge.name)
         glance = f"Knowledge: {knowledge.name}"
         if knowledge.description:
             glance += f" — {knowledge.description[:60]}"
@@ -169,8 +173,11 @@ class ContextSyncer:
         )
 
     async def remove_knowledge(self, knowledge: Any) -> None:
-        """Delete the context entry for a Knowledge base."""
-        await self._delete(str(knowledge.user_id), f"/knowledge/{knowledge.name}")
+        """Delete all context entries for a Knowledge base."""
+        await self._delete_prefix(
+            str(knowledge.user_id),
+            build_path("knowledge", knowledge.name),
+        )
 
     # ──────────────────────────────────────────────────────────────
     # Trigger
@@ -344,3 +351,65 @@ class ContextSyncer:
         )
         await self.db.flush()
         logger.debug("context_syncer: deleted path=%s user=%s", path, user_id)
+
+    async def _delete_prefix(self, user_id: str, path_prefix: str) -> None:
+        user_uuid = _uuid(user_id)
+        await self.db.execute(
+            delete(Context).where(
+                Context.user_id == user_uuid,
+                (
+                    (Context.path == path_prefix)
+                    | (Context.path.like(f"{path_prefix.rstrip('/')}/%"))
+                ),
+            )
+        )
+        await self.db.flush()
+        logger.debug(
+            "context_syncer: deleted path prefix=%s user=%s", path_prefix, user_id
+        )
+
+    async def _refresh_tool_index(self, user_id: str) -> None:
+        from types import SimpleNamespace
+
+        from structure.services.context.tool_context import (
+            TOOL_CONTEXT_KIND_PROFILE,
+            build_tool_index_entry,
+        )
+
+        user_uuid = _uuid(user_id)
+        result = await self.db.execute(
+            select(Context).where(
+                Context.user_id == user_uuid,
+                Context.context_type == ContextType.TOOL,
+            )
+        )
+        profile_contexts = [
+            ctx
+            for ctx in result.scalars().all()
+            if (ctx.meta or {}).get("context_kind") == TOOL_CONTEXT_KIND_PROFILE
+        ]
+        tools = [
+            SimpleNamespace(
+                name=(ctx.meta or {}).get("tool_name")
+                or (ctx.path or "").strip("/").split("/")[-1],
+                display_name=(ctx.meta or {}).get("display_name")
+                or (ctx.meta or {}).get("tool_name")
+                or (ctx.path or "").strip("/").split("/")[-1],
+                description=(ctx.glance or "").split(" - ", 1)[-1],
+                tags=[
+                    tag for tag in (ctx.tags or []) if tag not in {"tool", "profile"}
+                ],
+            )
+            for ctx in profile_contexts
+        ]
+        entry = build_tool_index_entry(tools)
+        await self._upsert(
+            user_id=user_id,
+            path=entry.path,
+            source_id=None,
+            context_type=ContextType.TOOL,
+            glance=entry.glance,
+            content=entry.content,
+            tags=entry.tags,
+            meta=entry.meta,
+        )

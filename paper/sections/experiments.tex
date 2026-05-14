@@ -76,8 +76,9 @@ table once the final configurations are fixed.}
 
 \subsection{Baselines}
 
-We compare \textsc{Structure} against four baselines that cover the
-space of current practice.
+We use two baseline tiers. The first tier compares \textsc{Structure}
+against four native baselines that cover the space of current
+practice.
 \textbf{(B1) Flat window.} All tool outputs and retrieved documents
 are appended to the prompt, truncated from the oldest when the window
 is reached. This is the \texttt{ReAct} \citep{yao2023react} default
@@ -94,6 +95,15 @@ store, giving the agent \texttt{memory\_insert} and
 reflection tokens \citep{asai2024selfrag} to decide when to retrieve.
 All baselines use the same underlying language model and tool
 implementations; only the context layer differs.
+
+The second tier aligns the evaluation with the LightMem/MemBase memory
+suite~\citep{fang2026lightmem}. We track the LoCoMo-reported FullText,
+NaiveRAG, A-MEM, MemoryOS, Mem0, Mem0(api), and Mem0-g(api) rows as
+external reference baselines, and we keep MemBase-supported LangMem,
+EverMemOS, HippoRAG2, and Long-Context entries in the code registry so
+newly reported rows can be added without changing the paper pipeline.
+These external numbers are used for benchmark calibration only; new
+\textsc{Structure} runs are always reported separately.
 
 \subsection{Implementation Details}
 

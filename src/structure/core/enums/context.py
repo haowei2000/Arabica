@@ -25,6 +25,7 @@ class ContextType(StrEnum):
     TRIGGER = "trigger"
     RUN = "run"
     RUN_EVENTS = "run_events"
+    EVENT_ARCHIVE = "event_archive"
 
 
 class ContextPathSuffix:

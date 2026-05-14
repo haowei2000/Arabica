@@ -11,9 +11,10 @@ produce comparable accuracy / token / step numbers across them.
 ```
 benchmarks/
 ├── core/              # Common types: BenchmarkCase, CostLedger, runner, metrics
-├── baselines/         # LLM-free agents used for harness self-tests (EchoAgent)
+├── baselines/         # EchoAgent + LightMem/MemBase reference baselines
+├── scripts/           # Export/check scripts for benchmark artifacts
 ├── longmemeval/       # P0 adapter: loader + scorer + synthetic fixture
-├── locomo/            # P0 stub (README only)
+├── locomo/            # P0 adapter: loader + scorer + synthetic fixture
 ├── helmet/            # P1 stub
 ├── taubench/          # P1 stub
 └── ruler/             # P2 stub
@@ -28,7 +29,8 @@ couple the platform's import graph to dataset-specific parsers.
 | Benchmark | Priority | Adapter | Dataset | Scorer | Notes |
 |-----------|:--:|:--:|:--:|:--:|---|
 | LongMemEval | P0 | ✓ | fixture + upstream JSON | exact/substring | reference adapter |
-| LoCoMo      | P0 | stub | — | — | multi-session memory |
+| LoCoMo      | P0 | ✓ | fixture + upstream JSON/JSONL | exact/F1 | multi-session memory |
+| LightMem/MemBase baselines | P0 | ✓ | reported LoCoMo table | source-table check | FullText, NaiveRAG, A-MEM, MemoryOS, Mem0, LangMem/EverMemOS catalog |
 | HELMET      | P1 | stub | — | — | application long-context |
 | τ-bench     | P1 | stub | — | — | tool + simulated user |
 | RULER       | P2 | stub | — | — | synthetic NIAH-style |
@@ -43,6 +45,26 @@ token Pareto; the P2+ entries validate generalisation across regimes.
 ```bash
 # Run the harness self-test (uses EchoAgent + the bundled fixture).
 pytest tests/benchmarks -m unit
+
+# Export the LightMem/MemBase LoCoMo baseline table used by the paper.
+python -m benchmarks.scripts.lightmem_baseline_report --format markdown
+
+# Verify paper/tables/lightmem_locomo_baselines.tex matches the code data.
+python -m benchmarks.scripts.lightmem_baseline_report \
+  --check-paper-table paper/tables/lightmem_locomo_baselines.tex
+
+# Run deterministic FullText/NaiveRAG memory baseline smoke tests.
+python -m benchmarks.scripts.run_memory_baselines --benchmark locomo
+python -m benchmarks.scripts.run_memory_baselines --benchmark longmemeval
+
+# Run a real LLM smoke test through an OpenAI-compatible endpoint.
+# Do not commit the key; keep it in the shell environment.
+export BENCHMARK_LLM_API_KEY=...
+python -m benchmarks.scripts.run_llm_benchmark \
+  --benchmark longmemeval \
+  --model qwen-plus \
+  --max-cases 4 \
+  --format json
 
 # Score a fixture run end-to-end from Python:
 python -c "

@@ -1,8 +1,8 @@
 \subsection{Main Results}
 
-Table~\ref{tab:main} compares \textsc{Structure} against all four
-baselines on the three benchmarks. \todo{Fill in the numbers once
-experiments are run; the table scaffold already enumerates the
+Table~\ref{tab:main} compares \textsc{Structure} against the four
+native baselines on the three benchmarks. \todo{Fill in the numbers
+once experiments are run; the table scaffold already enumerates the
 configurations we intend to report.}
 
 \begin{table}[t]
@@ -32,6 +32,18 @@ filled in. Emphasise the accuracy-vs-token Pareto frontier; a
 plausible narrative is that \textsc{Structure} reaches comparable or
 better accuracy at a fraction of the token cost of the flat-window
 and vector-RAG baselines.}
+
+\subsection{External Memory-Layer Baselines}
+
+To make the comparison compatible with the LightMem/MemBase benchmark
+suite, Table~\ref{tab:lightmem-locomo-baselines} records the published
+LoCoMo baseline rows we use as external calibration data. The table is
+generated from the repository script
+\path{benchmarks/scripts/lightmem_baseline_report.py}, and CI
+checks that the paper artifact stays in sync with the code-level
+baseline registry.
+
+\input{tables/lightmem_locomo_baselines}
 
 \subsection{Ablation Study}
 
