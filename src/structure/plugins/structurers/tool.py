@@ -4,7 +4,7 @@ from structure.core.interfaces.structurer import BaseStructurer
 from structure.models.context.tools.tool import Tool
 from structure.plugins.structurers import register_structurer
 from structure.schemas.context.context_schema import ContextCore
-from structure.utils.context import slugify
+from structure.utils.context import build_path
 
 
 @register_structurer
@@ -20,7 +20,7 @@ class ToolStructurer(BaseStructurer):
         if tool.description:
             glance = f"{tool.name} — {tool.description}"
 
-        tool_path = slugify(f"/tool/{tool.name}")
+        tool_path = build_path("tools", tool.name)
 
         # Level 1: tool overview
         lines: list[str] = [f"{tool.name}/"]
@@ -68,7 +68,7 @@ class ToolStructurer(BaseStructurer):
                 ContextCore(
                     glance=f"{tool.name} / input schema",
                     content=json.dumps(tool.input_schema, indent=2, ensure_ascii=False),
-                    path=f"{tool_path}/schema.ctx",
+                    path=build_path(tool_path, "schema"),
                 )
             )
 

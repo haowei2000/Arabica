@@ -1,6 +1,6 @@
 import { apiClient } from './api';
 import { API_ENDPOINTS } from '@/constants/api';
-import type { Event, EventListResponse } from '@/types/event';
+import type { Event, EventArchiveRequest, EventArchiveResponse, EventListResponse } from '@/types/event';
 
 export const eventService = {
   async getEvent(id: string): Promise<Event> {
@@ -24,6 +24,7 @@ export const eventService = {
       skip?: number;
       limit?: number;
       event_types?: string;
+      include_archived?: boolean;
     }
   ): Promise<EventListResponse> {
     return apiClient.get(API_ENDPOINTS.EVENTS.LIST_BY_RUN(runId), { params });
@@ -36,5 +37,12 @@ export const eventService = {
     workspace_id?: string;
   }): Promise<EventListResponse> {
     return apiClient.get(API_ENDPOINTS.EVENTS.LIST_BY_USER, { params });
+  },
+
+  async archiveRun(
+    runId: string,
+    data: EventArchiveRequest
+  ): Promise<EventArchiveResponse> {
+    return apiClient.post(API_ENDPOINTS.EVENTS.ARCHIVE_RUN(runId), data);
   },
 };

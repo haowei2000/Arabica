@@ -23,6 +23,33 @@ def _build_md_tree(contexts: list[dict], root_path: str) -> str:
     return "\n".join(lines)
 
 
+def _normalise_path(path: str | None) -> str:
+    return (path or "").strip("/")
+
+
+def _filter_contexts_by_mode(
+    contexts: list[dict],
+    root_path: str,
+    mode: str,
+) -> list[dict]:
+    root = _normalise_path(root_path)
+    filtered: list[dict] = []
+    for ctx in contexts:
+        path = _normalise_path(ctx.get("path"))
+        if not path or path == root:
+            continue
+        if root:
+            if not path.startswith(f"{root}/"):
+                continue
+            remainder = path[len(root) + 1 :]
+        else:
+            remainder = path
+        if mode == "children" and "/" in remainder:
+            continue
+        filtered.append(ctx)
+    return filtered
+
+
 from pydantic import Field  # noqa: E402
 
 from structure.core.interfaces.tool import (  # noqa: E402
@@ -64,17 +91,30 @@ class ListContextTool(InnerTool):
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
+        from structure.extensions.database import get_session
         from structure.services.context.client import context_service_client
+        from structure.utils.workspace_context_cache import get_cached_workspace_context
 
         try:
             workspace_id = UUID(input_data.workspace_id)
             recursive = input_data.mode == "descendants"
 
-            result_data = await context_service_client.list_contexts(
-                workspace_id=workspace_id, prefix=input_data.path, recursive=recursive
+            async with get_session("structure") as session:
+                service = await get_cached_workspace_context(session, str(workspace_id))
+                db_contexts = await service.list(input_data.path, level="glance")
+            contexts = _filter_contexts_by_mode(
+                db_contexts,
+                input_data.path,
+                input_data.mode,
             )
+            if not contexts:
+                result_data = await context_service_client.list_contexts(
+                    workspace_id=workspace_id,
+                    prefix=input_data.path,
+                    recursive=recursive,
+                )
+                contexts = result_data.get("items", [])
 
-            contexts = result_data.get("items", [])
             contexts = contexts[: input_data.limit]
 
             tree = _build_md_tree(contexts, input_data.path)
@@ -82,7 +122,18 @@ class ListContextTool(InnerTool):
             return ToolOutputSchema(
                 success=True,
                 message=f"Found {len(contexts)} {input_data.mode} under: {input_data.path}",
-                data={"tree": tree},
+                data={
+                    "path": input_data.path,
+                    "mode": input_data.mode,
+                    "tree": tree,
+                    "items": [
+                        {
+                            "path": ctx.get("path"),
+                            "glance": ctx.get("glance") or "",
+                        }
+                        for ctx in contexts
+                    ],
+                },
             )
 
         except Exception as e:

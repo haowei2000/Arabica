@@ -185,6 +185,8 @@ export const API_ENDPOINTS = {
         LIST_BY_WORKSPACE: (workspaceId: string) => `/events/workspace/${workspaceId}/list`,
         LIST_BY_RUN: (runId: string) => `/events/run/${runId}/list`,
         LIST_BY_USER: '/events/user/list',
+        ARCHIVE_RUN: (runId: string) => `/events/run/${runId}/archive`,
+        ARCHIVE_WORKSPACE: (workspaceId: string) => `/events/workspace/${workspaceId}/archive`,
         RUN_STREAM: (runId: string) => `/runs/${runId}/events/stream`,
         RUN_EVENTS: (runId: string) => `/runs/${runId}/events`,
         RUN_STATE: (runId: string) => `/runs/${runId}/state`,

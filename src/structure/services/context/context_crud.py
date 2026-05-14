@@ -6,10 +6,22 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from sqlalchemy import Integer, and_, cast, delete, func, or_, select, text
+from sqlalchemy import (
+    Float,
+    Integer,
+    and_,
+    cast,
+    delete,
+    func,
+    literal_column,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.enums import ContextType
+from structure.core.enums.context import ContextScope
 from structure.models.context.context import Context
 from structure.schemas.context.context_schema import ContextCreate, ContextUpdate
 
@@ -507,14 +519,13 @@ class ContextCRUD:
         # Calculate cosine distance (pgvector uses <=> for cosine distance)
         # Cosine distance = 1 - cosine_similarity
         # So we need to convert: similarity = 1 - distance
-        embedding_str = f"[{','.join(map(str, embedding))}]"
-        distance_expr = embedding_column.op("<=>")(
-            cast(embedding_str, embedding_column.type)
-        )
+        embedding_str = f"[{','.join(str(float(value)) for value in embedding)}]"
+        embedding_literal = literal_column(f"'{embedding_str}'::vector({dimension})")
+        distance_expr = embedding_column.op("<=>", return_type=Float)(embedding_literal)
 
         # Build query with distance calculation
         stmt = (
-            select(Context, (1 - distance_expr).label("similarity"))
+            select(Context, (literal_column("1.0") - distance_expr).label("similarity"))
             .where(and_(*conditions))
             .order_by(
                 distance_expr
@@ -824,10 +835,13 @@ class ContextCRUD:
         and clears embeddings when content changes.
         """
         normalized_user_id = normalize_uuid_to_str(user_id)
+        scope = data.get("scope", ContextScope.USER.value)
+        scope_value = scope.value if hasattr(scope, "value") else str(scope)
 
         stmt = select(Context).where(
             Context.user_id == normalized_user_id,
             Context.path == path,
+            Context.scope == scope_value,
         )
         result = await self.db.execute(stmt)
         ctx = result.scalar_one_or_none()
@@ -854,6 +868,7 @@ class ContextCRUD:
                 id=uuid4(),
                 user_id=normalized_user_id,
                 path=path,
+                scope=scope_value,
                 context_type=data.get("context_type", ContextType.WORKSPACE),
                 source_id=UUID(str(source_id)) if source_id else None,
                 glance=data.get("glance", ""),

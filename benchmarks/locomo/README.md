@@ -11,17 +11,25 @@ Multi-session dialogues averaging 300 turns / 9 K tokens across up to
 sub-tasks. Directly tests the persistent-workspace-context claim
 (does ContextStore survive dozens of sessions?).
 
-## Planned layout
+## Layout
 
-- `dataset.py` — parse LoCoMo's conversation + QA JSONL. Each case
-  becomes a `BenchmarkCase` whose `inputs["sessions"]` mirrors
+- `dataset.py` — parses conversation-centric JSON/JSONL and expands
+  each QA pair into a `BenchmarkCase`. `inputs["sessions"]` mirrors
   LongMemEval for cross-benchmark reuse.
-- `scorer.py` — ROUGE-L / exact-match for the QA sub-task; BLEURT or
-  LLM judge for the open-ended summary sub-task (optional, gated).
-- `fixtures/sample.json` — two synthetic multi-session conversations
-  for the harness self-test.
+- `scorer.py` — deterministic exact/substring match with token-F1
+  fallback for the QA sub-task. LLM-judge scoring for open-ended
+  summary tasks can be swapped in later with the same scorer signature.
+- `fixtures/sample.json` — synthetic multi-session conversations for
+  the harness self-test.
 
 ## Status
 
-Stub. Pick this up after LongMemEval end-to-end integration is live,
-since the schema is similar enough that the loader can share helpers.
+P0 adapter is live for QA-style LoCoMo cases. Run:
+
+```bash
+pytest tests/benchmarks/test_locomo.py -q
+python -m benchmarks.scripts.run_memory_baselines --benchmark locomo
+```
+
+The bundled runner uses deterministic FullText/NaiveRAG retrieval
+smoke baselines and does not call an LLM.
