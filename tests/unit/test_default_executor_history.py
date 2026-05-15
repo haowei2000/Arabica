@@ -283,6 +283,56 @@ def test_get_messages_and_tools_can_force_new_tool_after_schema_was_loaded():
     assert tools_info == [_tool_schema("codex_math_tool")]
 
 
+def test_get_messages_and_tools_loads_legacy_tool_schema_result():
+    executor = DefaultExecutor(
+        {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+    executor.tools_info = [
+        _tool_schema("list_context"),
+        _tool_schema("read_context"),
+        _tool_schema("codex_echo_tool"),
+    ]
+
+    messages, tools_info = executor.get_messages_and_tools(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={"message": "Load the legacy echo schema."},
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.TOOL_RESULT),
+                payload={
+                    "tool_name": "read_context",
+                    "result": {
+                        "data": {
+                            "path": "/tools/codex_echo_tool",
+                            "content": json.dumps(_tool_schema("codex_echo_tool")),
+                            "glance": "Echo tool",
+                        }
+                    },
+                },
+            ),
+        ]
+    )
+
+    assert tools_info is not None
+    assert [tool["function"]["name"] for tool in tools_info] == ["codex_echo_tool"]
+    active_tools = executor._resolve_active_tools_info(tools_info)
+    assert [tool["function"]["name"] for tool in active_tools] == [
+        "list_context",
+        "read_context",
+        "codex_echo_tool",
+    ]
+    assert all(
+        "codex_echo_tool" not in str(message.content) for message in messages
+    )
+
+
 def test_extract_context_tool_schemas_accepts_leading_slash_path():
     event = SimpleNamespace(
         payload={

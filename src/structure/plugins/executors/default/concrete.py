@@ -572,7 +572,13 @@ def _is_tool_schema_context_result(event: Event) -> bool:
         .lstrip("/")
     )
     parts = path.split("/")
-    return len(parts) >= 3 and parts[0] == "tools" and parts[-1] == "schema"
+    is_structured_schema_path = (
+        len(parts) >= 3 and parts[0] == "tools" and parts[-1] == "schema"
+    )
+    is_legacy_tool_path = (
+        len(parts) == 2 and parts[0] == "tools" and parts[1] not in {"", "index"}
+    )
+    return is_structured_schema_path or is_legacy_tool_path
 
 
 def filter_events_for_user_msg(raw_events: list[Event]) -> list[Event]:
