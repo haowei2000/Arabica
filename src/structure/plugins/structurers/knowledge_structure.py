@@ -10,7 +10,7 @@ from structure.core.interfaces.structurer import BaseStructurer
 from structure.models.context import Knowledge
 from structure.plugins.structurers import register_structurer
 from structure.schemas.context.context_schema import ContextCore
-from structure.utils.context import slugify
+from structure.utils.context import build_path
 
 
 @register_structurer
@@ -45,11 +45,11 @@ class KnowledgeStructurer(BaseStructurer):
             ContextCore(
                 glance=glance,
                 content="\n".join(lines),
-                path=slugify(f"/knowledge/{kb.name}"),
+                path=build_path("knowledge", kb.name),
             ),
             ContextCore(
                 glance=glance,
                 content="\n".join(lines),
-                path=slugify(f"/knowledge/{kb.name}/base.ctx"),
+                path=build_path("knowledge", kb.name, "base_ctx"),
             ),
         ]

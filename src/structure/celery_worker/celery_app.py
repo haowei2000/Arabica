@@ -28,6 +28,7 @@ celery_app.conf.update(
         "structure.celery_worker.tasks.knowledge_tasks",
         "structure.celery_worker.tasks.summarize_tasks",
         "structure.celery_worker.tasks.background_tasks",
+        "structure.celery_worker.tasks.event_gc_tasks",
         "structure.celery_worker.tasks.context_sync_tasks",
         "structure.celery_worker.tasks.workspace_context_sync",
         "structure.celery_worker.tasks.context_sync.sync_document",

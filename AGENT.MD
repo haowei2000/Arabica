@@ -833,6 +833,35 @@ Frontend commands:
 - `cd frontend && npm run lint`
 - `cd frontend && npm run preview`
 
+### 5.3 Production Integration Target
+
+Production site:
+
+- URL: `https://www.structure.chat`
+- Server IP: `46.225.119.90`
+
+After any change is merged into `main`, run the integration testing workflow
+from `docs/integration_testing.md` against the production website. The run must
+use the real deployed Docker services and a real browser, not mocked
+infrastructure.
+
+Required post-merge production coverage:
+
+- Browser login with a dedicated integration-test account.
+- Create, update, verify, and delete the major user-facing resources, including
+  workspaces, apps or agents, model configuration, knowledge, memory, skills,
+  tools, context entries, and event history visibility.
+- Core chat effect validation, including basic chat, multi-turn continuity,
+  context-grounded chat, tool-assisted chat, and failure recovery.
+- Persist the required artifacts for every run: conversation records, total and
+  per-message token usage when available, total elapsed time, first-token
+  latency, run and workspace IDs, screenshots, browser traces, and sanitized
+  service logs.
+
+Use key-based SSH access to `46.225.119.90` only for operational log inspection
+after deployment or test failures. Do not commit SSH keys, credentials, JWTs,
+API keys, database passwords, or unredacted production logs.
+
 ## 6. Current Verified State
 
 The following functionality was verified locally in Docker on 2026-05-09:

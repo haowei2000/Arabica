@@ -1,5 +1,6 @@
 """REST API endpoints for knowledge base management."""
 
+import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -30,6 +31,22 @@ from structure.services.llm.embedding_model_crud import EmbeddingModelCRUD
 from structure.utils.model_converters import models_to_schemas
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+logger = logging.getLogger(__name__)
+
+
+def _queue_knowledge_context_sync(knowledge_id: str, user_id: str) -> None:
+    try:
+        from structure.celery_worker.tasks.context_sync_tasks import (
+            sync_knowledge_to_contexts,
+        )
+
+        sync_knowledge_to_contexts.apply_async(
+            args=(knowledge_id, user_id),
+            ignore_result=True,
+            retry=False,
+        )
+    except Exception as exc:
+        logger.warning("Failed to queue knowledge context sync: %s", exc)
 
 
 @router.post(
@@ -52,11 +69,7 @@ async def create_knowledge(
         Created knowledge base
     """
     knowledge = await crud.create(data, user_id=current_user.id)
-    from structure.celery_worker.tasks.context_sync_tasks import (
-        sync_knowledge_to_contexts,
-    )
-
-    sync_knowledge_to_contexts.delay(str(knowledge.id), str(current_user.id))
+    _queue_knowledge_context_sync(str(knowledge.id), str(current_user.id))
     return knowledge
 
 
@@ -149,7 +162,8 @@ async def update_knowledge(
         )
 
     knowledge = await crud.update(knowledge_id, data)
-    return knowledge  # noqa: RET504
+    _queue_knowledge_context_sync(str(knowledge.id), str(current_user.id))
+    return knowledge
 
 
 @router.post("/{knowledge_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
@@ -310,9 +324,9 @@ async def hybrid_search_knowledge(
         emb_svc = EmbeddingService(
             provider=model_config.provider,
             model=model_config.model_id,
-            dimension=model_config.dimensions,
-            api_key=model_config.api_key,
-            base_url=model_config.base_url,
+            dimension=model_config.dimension,
+            api_key=model_config.api_key_ref or "",
+            base_url=model_config.base_url or "",
         )
         query_vector = emb_svc.embed_text(q)
     except Exception as e:
@@ -326,7 +340,7 @@ async def hybrid_search_knowledge(
         query=q,
         embedding=query_vector,
         user_id=current_user.id,
-        dimension=model_config.dimensions,
+        dimension=model_config.dimension,
         context_type=ContextType.CHUNK.value,
         knowledge_id=knowledge_id,
         top_k=top_k,

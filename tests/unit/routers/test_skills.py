@@ -41,6 +41,8 @@ def make_skill(**kwargs):
 def mock_skill_crud():
     """Mock for endpoints that use Depends(get_skill_crud)."""
     crud = AsyncMock()
+    crud.create = AsyncMock(return_value=make_skill())
+    crud.get_by_name = AsyncMock(return_value=None)
     crud.get_by_id = AsyncMock(return_value=make_skill())
     crud.update = AsyncMock(return_value=make_skill())
     crud.delete = AsyncMock(return_value=True)
@@ -74,19 +76,36 @@ def client(mock_skill_crud, mock_db, mock_storage, patch_bootstrap):
 BASE = "/api/agent/skills"
 
 
-@pytest.mark.skip(reason="Create skill endpoint removed from router")
 class TestCreateSkill:
-    def test_create_success(self, client):
-        pass
+    def test_create_success(self, client, mock_skill_crud):
+        resp = client.post(
+            BASE,
+            json={
+                "name": "Test Skill",
+                "description": "A test skill",
+                "content": "# Test\nThis is a test skill.",
+                "tags": ["test"],
+            },
+        )
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "Test Skill"
+        mock_skill_crud.create.assert_awaited_once()
 
-    def test_create_duplicate_name(self, client):
-        pass
+    def test_create_duplicate_name(self, client, mock_skill_crud):
+        mock_skill_crud.get_by_name = AsyncMock(return_value=make_skill())
+        resp = client.post(
+            BASE,
+            json={
+                "name": "Test Skill",
+                "content": "# Test\nThis is a test skill.",
+            },
+        )
+        assert resp.status_code == 400
+        assert "already exists" in resp.json()["detail"]
 
     def test_create_missing_fields(self, client):
-        pass
-
-    def test_create_process_failure(self, client):
-        pass
+        resp = client.post(BASE, json={"name": "Incomplete"})
+        assert resp.status_code == 422
 
 
 class TestGetSkill:

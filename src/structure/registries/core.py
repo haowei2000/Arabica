@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.interfaces import Executor
@@ -527,15 +527,16 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
 
         # ── Phase 5: Upsert inner tools into context table for all users ─
         # For every registered inner tool × every user: create or update a
-        # Context row (context_type="tool", source_id=tool.id, user_id=user.id).
+        # structured Context rows under /tools/{name}/...
         try:
-            import json as _json
-            from uuid import uuid4 as _uuid4
-
             from structure.core.enums import ContextType as _ContextType
             from structure.models.auth.user import User
             from structure.models.context.context import Context
-            from structure.utils.context import slugify as _slugify
+            from structure.services.context.context_crud import ContextCRUD
+            from structure.services.context.tool_context import (
+                build_tool_context_entries,
+                build_tool_index_entry,
+            )
 
             # All registered inner tools (no enabled filter — sync all)
             synced_tools = (
@@ -562,99 +563,54 @@ class ToolRegistry(BaseRegistry[str, type[BaseTool]]):
             if not synced_tools or not all_users:
                 self.logger.info("Phase 5: nothing to sync, skipping")
             else:
-                tool_ids = [t.id for t in synced_tools]
-                user_ids = [u.id for u in all_users]
-
-                # Load all existing (source_id, user_id) pairs in one shot
-                existing_pairs: set[tuple] = {
-                    (row.source_id, row.user_id)
-                    for row in (
-                        await db.execute(
-                            select(Context.source_id, Context.user_id).where(
-                                Context.context_type == _ContextType.TOOL,
-                                Context.source_id.in_(tool_ids),
-                                Context.user_id.in_(user_ids),
-                            )
-                        )
-                    )
-                }
-
-                # Load existing Context objects that need updating
-                existing_ctx_map: dict[tuple, Context] = {
-                    (ctx.source_id, ctx.user_id): ctx
-                    for ctx in (
-                        await db.execute(
-                            select(Context).where(
-                                Context.context_type == _ContextType.TOOL,
-                                Context.source_id.in_(tool_ids),
-                                Context.user_id.in_(user_ids),
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
-                }
-
-                ctx_created = ctx_updated = 0
+                crud = ContextCRUD(db)
+                ctx_upserted = 0
                 for tool in synced_tools:
-                    tool_name = tool.tool_code or tool.name
-                    display_name = tool.display_name or tool.name
-                    glance = f"{display_name} — {(tool.description or '')[:60]}"
-                    content = _json.dumps(
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": tool_name,
-                                "description": tool.description or display_name,
-                                "parameters": tool.input_schema or {},
-                            },
-                        },
-                        ensure_ascii=False,
-                    )
-                    tags = ["tool"] + (tool.tags or [])
-                    meta = {
-                        "tool_id": str(tool.id),
-                        "tool_code": tool_name,
-                        "name": display_name,
-                    }
-
-                    tool_path = f"tools/{_slugify(tool_name)}"
+                    entries = build_tool_context_entries(tool)
+                    legacy_paths = [entry.path.lstrip("/") for entry in entries]
                     for user in all_users:
-                        key = (tool.id, user.id)
-                        if key in existing_pairs:
-                            ctx = existing_ctx_map.get(key)
-                            if ctx:
-                                ctx.glance = glance
-                                ctx.content = content
-                                ctx.path = tool_path
-                                ctx.tags = tags
-                                ctx.meta = {**(ctx.meta or {}), **meta}
-                                ctx.embedding_384 = None
-                                ctx.embedding_768 = None
-                                ctx.embedding_1024 = None
-                                ctx.embedding_1536 = None
-                            ctx_updated += 1
-                        else:
-                            db.add(
-                                Context(
-                                    id=_uuid4(),
-                                    user_id=user.id,
-                                    context_type=_ContextType.TOOL,
-                                    source_id=tool.id,
-                                    glance=glance,
-                                    path=tool_path,
-                                    content=content,
-                                    tags=tags,
-                                    meta=meta,
-                                )
+                        await db.execute(
+                            delete(Context).where(
+                                Context.source_id == tool.id,
+                                Context.context_type == _ContextType.TOOL,
+                                Context.user_id == user.id,
+                                Context.path.in_(legacy_paths),
                             )
-                            ctx_created += 1
+                        )
+                        for entry in entries:
+                            await crud.upsert_by_source_and_path(
+                                source_id=tool.id,
+                                context_type=_ContextType.TOOL,
+                                user_id=user.id,
+                                path=entry.path,
+                                data={
+                                    "glance": entry.glance,
+                                    "content": entry.content,
+                                    "tags": entry.tags,
+                                    "meta": entry.meta,
+                                },
+                            )
+                            ctx_upserted += 1
+
+                index_entry = build_tool_index_entry(synced_tools)
+                for user in all_users:
+                    await crud.upsert_by_path(
+                        user_id=user.id,
+                        path=index_entry.path,
+                        data={
+                            "context_type": _ContextType.TOOL,
+                            "glance": index_entry.glance,
+                            "content": index_entry.content,
+                            "tags": index_entry.tags,
+                            "meta": index_entry.meta,
+                        },
+                    )
+                    ctx_upserted += 1
 
                 await db.commit()
                 self.logger.info(
-                    "Phase 5 done: created=%d updated=%d (%d tools × %d users)",
-                    ctx_created,
-                    ctx_updated,
+                    "Phase 5 done: upserted=%d structured context rows (%d tools × %d users)",
+                    ctx_upserted,
                     len(synced_tools),
                     len(all_users),
                 )

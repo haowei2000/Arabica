@@ -1,6 +1,7 @@
 # structure/routers/triggers.py
 """REST API endpoints for workspace trigger management."""
 
+from types import SimpleNamespace
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -245,7 +246,7 @@ async def test_trigger(
     workspace_id: str,
     trigger_id: str,
     data: TriggerTestRequest,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],  # noqa: ARG001
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_structure_db)],
 ):
     """Dry-run test a trigger against a sample payload.
@@ -288,7 +289,12 @@ async def test_trigger(
 
         proc = TriggerProcessor(db, workspace_id)
         try:
-            result = await proc._execute_action(trigger)
+            event = SimpleNamespace(
+                event_type=trigger.event_type,
+                payload=data.payload,
+                user_id=current_user.id,
+            )
+            result = await proc._execute_action(trigger, event)
         except Exception as exc:
             error = str(exc)
             matched = False

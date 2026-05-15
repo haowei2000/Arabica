@@ -14,10 +14,9 @@ from structure.celery_worker.tasks.workspace_context_sync import (
     _get_user_workspace_ids,
     _invalidate_workspace_caches,
     _sync_path_to_workspaces,
-    _update_workspace_contexts,
 )
 from structure.core.enums import ContextType
-from structure.utils.context import slugify as _slugify
+from structure.utils.context import build_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,12 @@ def sync_skill_to_contexts(
     """
 
     async def _execute():
+        from uuid import UUID
+
+        from sqlalchemy import delete
+
         from structure.extensions.database import get_session
+        from structure.models.context.context import Context
         from structure.models.context.skill import Skill
         from structure.plugins.structurers.skill_structure import SkillStructurer
 
@@ -61,7 +65,7 @@ def sync_skill_to_contexts(
             ) or skill.name
             skill_name = skill.name
             skill_tags = list(skill.tags or [])
-            skill_path = f"/skills/{_slugify(skill_name)}"
+            skill_path = build_path("skills", skill_name)
 
             try:
                 context_cores = SkillStructurer().structure(skill)
@@ -78,6 +82,13 @@ def sync_skill_to_contexts(
                 ]
 
             ctx_ids_need_embed: list[tuple[str, str]] = []  # (ctx_id, embed_text)
+            await session.execute(
+                delete(Context).where(
+                    Context.source_id == UUID(skill_id),
+                    Context.context_type == ContextType.SKILL,
+                    Context.path.not_like("/skills/%"),
+                )
+            )
 
             for core in context_cores:
                 path = core.path or skill_path
@@ -97,36 +108,29 @@ def sync_skill_to_contexts(
                     embed_text = " ".join(filter(None, [core.glance, core.content]))
                     ctx_ids_need_embed.append((str(ctx.id), embed_text))
 
-            # Use first (overview) entry for workspace sync
-            overview_content = context_cores[0].content if context_cores else ""
-
-            await _update_workspace_contexts(
-                session,
-                meta_key="skill_id",
-                resource_id=skill_id,
-                glance=glance,
-                content=overview_content,
-            )
-
             workspace_ids = await _get_user_workspace_ids(session, user_id)
             emb_svc = await _fetch_embedding_service(session)
             await session.commit()
 
-        # ── 2. Sync WorkspaceContext at skills/{name} for each workspace ─
-        dirty_ids = await _sync_path_to_workspaces(
-            workspace_ids,
-            path=skill_path,
-            glance=glance,
-            detail=overview_content,
-            tags=["skills"] + skill_tags,  # noqa: RUF005
-            meta={"skill_id": skill_id},
-            created_by=user_id,
-        )
-        await _invalidate_workspace_caches(dirty_ids)
+        # ── 2. Sync structured WorkspaceContext entries for each workspace ─
+        dirty_set: set[str] = set()
+        for core in context_cores:
+            dirty_ids = await _sync_path_to_workspaces(
+                workspace_ids,
+                path=core.path or skill_path,
+                glance=core.glance or glance,
+                overview=None,
+                detail=core.content,
+                tags=["skills"] + skill_tags,  # noqa: RUF005
+                meta={"skill_id": skill_id},
+                created_by=user_id,
+            )
+            dirty_set.update(dirty_ids)
+        await _invalidate_workspace_caches(list(dirty_set))
 
         logger.info(
             f"sync_skill: stored {len(context_cores)} context chunk(s) for skill {skill_id}, "
-            f"synced to {len(dirty_ids)} workspace(s) at '{skill_path}'"
+            f"synced to {len(dirty_set)} workspace(s) at '{skill_path}'"
         )
 
         # ── 3. Generate embeddings for changed entries ────────────────────

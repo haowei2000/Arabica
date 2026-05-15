@@ -34,6 +34,11 @@ def make_event(**kwargs):
     e.payload = {"message": "Hello"}
     e.input_tokens = 0
     e.output_tokens = 0
+    e.is_archived = False
+    e.archived_at = None
+    e.archive_scope = None
+    e.archive_reason = None
+    e.archive_context_id = None
     e.sequence = 1
     e.parent_event_id = None
     e.created_at = now
@@ -137,6 +142,14 @@ class TestListByWorkspace:
             f"{BASE}/workspace/{WORKSPACE_ID}/list?event_types=user.message,agent.message"
         )
         assert resp.status_code == 200
+
+    def test_list_can_include_archived(self, client, mock_event_crud):
+        resp = client.get(f"{BASE}/workspace/{WORKSPACE_ID}/list?include_archived=true")
+
+        assert resp.status_code == 200
+        assert mock_event_crud.list_by_workspace.call_args.kwargs[
+            "include_archived"
+        ] is True
 
 
 # ── GET /api/events/run/{run_id}/list ────────────────────────────

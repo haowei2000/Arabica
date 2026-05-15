@@ -16,6 +16,10 @@ from structure.celery_worker.tasks.context_sync._base import (
     _upsert_context_at_path,
 )
 from structure.celery_worker.tasks.knowledge_tasks import run_async
+from structure.celery_worker.tasks.workspace_context_sync import (
+    _get_user_workspace_ids,
+    _invalidate_workspace_caches,
+)
 from structure.core.enums import ContextType
 from structure.services.context.context_embedding import embed_batch_for_context
 from structure.utils.context import build_path
@@ -54,7 +58,7 @@ def sync_document_to_contexts(
     """
 
     async def _execute() -> dict:
-        from sqlalchemy import select, update
+        from sqlalchemy import delete, select, update
 
         from structure.extensions.database import get_session
         from structure.extensions.storage.global_storage import get_global_s3_storage
@@ -90,8 +94,16 @@ def sync_document_to_contexts(
         if not markdown_content.strip():
             logger.warning(f"sync_document: document {document_id} yielded no text")
             async with get_session("structure") as session:
+                from structure.models.context.context import Context
+
                 previous_chunk_count = await session.scalar(
                     select(Document.chunk_count).where(Document.id == doc_uuid)
+                )
+                await session.execute(
+                    delete(Context).where(
+                        Context.source_id == doc_uuid,
+                        Context.context_type == ContextType.CHUNK,
+                    )
                 )
                 await session.execute(
                     update(Document)
@@ -106,7 +118,9 @@ def sync_document_to_contexts(
                             chunk_count=Knowledge.chunk_count - previous_chunk_count
                         )
                     )
+                workspace_ids = await _get_user_workspace_ids(session, user_id)
                 await session.commit()
+            await _invalidate_workspace_caches(workspace_ids)
             return {
                 "document_id": document_id,
                 "status": "completed",
@@ -172,6 +186,8 @@ def sync_document_to_contexts(
         }
 
         async with get_session("structure") as session:
+            from structure.models.context.context import Context
+
             previous_chunk_count = (
                 await session.scalar(
                     select(Document.chunk_count).where(Document.id == doc_uuid)
@@ -180,6 +196,14 @@ def sync_document_to_contexts(
             )
             emb_svc = await _fetch_embedding_service(session)
             embedding_field = emb_svc.get_embedding_field_name()
+            current_paths = [core["path"] for core in cores]
+            await session.execute(
+                delete(Context).where(
+                    Context.source_id == doc_uuid,
+                    Context.context_type == ContextType.CHUNK,
+                    Context.path.not_in(current_paths),
+                )
+            )
             for core in cores:
                 ctx, needs_embedding = await _upsert_context_at_path(
                     session,
@@ -216,7 +240,10 @@ def sync_document_to_contexts(
                     .where(Knowledge.id == knowledge_uuid)
                     .values(chunk_count=Knowledge.chunk_count + chunk_delta)
                 )
+            workspace_ids = await _get_user_workspace_ids(session, user_id)
             await session.commit()
+
+        await _invalidate_workspace_caches(workspace_ids)
 
         logger.info(
             f"sync_document: {document_id} ({original_name}) → {len(cores)} context(s)"

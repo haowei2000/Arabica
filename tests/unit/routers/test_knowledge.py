@@ -82,13 +82,21 @@ def mock_db():
 
 
 @pytest.fixture()
-def client(mock_knowledge_crud, mock_context_crud, mock_embedding_model_crud, mock_db, patch_bootstrap):
+def client(
+    mock_knowledge_crud,
+    mock_context_crud,
+    mock_embedding_model_crud,
+    mock_db,
+    patch_bootstrap,
+):
     user = make_user()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_structure_db] = lambda: mock_db
     app.dependency_overrides[get_knowledge_crud] = lambda: mock_knowledge_crud
     app.dependency_overrides[get_context_crud] = lambda: mock_context_crud
-    app.dependency_overrides[get_embedding_model_crud] = lambda: mock_embedding_model_crud
+    app.dependency_overrides[get_embedding_model_crud] = (
+        lambda: mock_embedding_model_crud
+    )
 
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
@@ -101,8 +109,10 @@ def client(mock_knowledge_crud, mock_context_crud, mock_embedding_model_crud, mo
 
 class TestCreateKnowledge:
     def test_create_success(self, client):
-        with patch("structure.celery_worker.tasks.context_sync_tasks.sync_knowledge_to_contexts") as mock_task:
-            mock_task.delay = MagicMock()
+        with patch(
+            "structure.celery_worker.tasks.context_sync_tasks.sync_knowledge_to_contexts"
+        ) as mock_task:
+            mock_task.apply_async = MagicMock()
 
             resp = client.post(
                 f"{BASE}/create",
@@ -111,7 +121,7 @@ class TestCreateKnowledge:
 
         assert resp.status_code == 201
         assert resp.json()["name"] == "Test Knowledge"
-        mock_task.delay.assert_called_once()
+        mock_task.apply_async.assert_called_once()
 
     def test_create_missing_name(self, client):
         resp = client.post(f"{BASE}/create", json={})
@@ -144,11 +154,16 @@ class TestGetKnowledge:
 
 class TestUpdateKnowledge:
     def test_update_success(self, client):
-        resp = client.post(
-            f"{BASE}/{KNOWLEDGE_ID}/update",
-            json={"name": "Updated KB"},
-        )
+        with patch(
+            "structure.celery_worker.tasks.context_sync_tasks.sync_knowledge_to_contexts"
+        ) as mock_task:
+            mock_task.apply_async = MagicMock()
+            resp = client.post(
+                f"{BASE}/{KNOWLEDGE_ID}/update",
+                json={"name": "Updated KB"},
+            )
         assert resp.status_code == 200
+        mock_task.apply_async.assert_called_once()
 
     def test_update_not_found(self, client, mock_knowledge_crud):
         mock_knowledge_crud.get_by_id.return_value = None
@@ -165,7 +180,10 @@ class TestUpdateKnowledge:
 class TestDeleteKnowledge:
     def test_delete_success(self, client):
         from unittest.mock import MagicMock, patch
-        with patch("structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts") as mock_task:
+
+        with patch(
+            "structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts"
+        ) as mock_task:
             mock_task.delay = MagicMock()
             resp = client.post(f"{BASE}/{KNOWLEDGE_ID}/delete")
         assert resp.status_code == 204
@@ -217,7 +235,10 @@ class TestSearchKnowledge:
 
 class TestHybridSearchKnowledge:
     def test_search_success(self, client, mock_context_crud):
-        with patch("structure.services.context.knowledge.embeddings.EmbeddingService.embed_text", return_value=[0.1]*1536):
+        with patch(
+            "structure.services.context.knowledge.embeddings.EmbeddingService.embed_text",
+            return_value=[0.1] * 1536,
+        ):
             resp = client.get(f"{BASE}/{KNOWLEDGE_ID}/hybrid-search?q=hello")
 
         assert resp.status_code == 200

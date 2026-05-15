@@ -10,6 +10,7 @@ from structure.celery_worker.tasks.context_sync._base import (
 )
 from structure.celery_worker.tasks.knowledge_tasks import run_async
 from structure.celery_worker.tasks.workspace_context_sync import (
+    _get_user_workspace_ids,
     _invalidate_workspace_caches,
     _update_workspace_contexts,
 )
@@ -115,7 +116,7 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
     async def _execute():
         from uuid import UUID
 
-        from sqlalchemy import delete, select
+        from sqlalchemy import delete, or_, select
 
         from structure.core.enums.context import ContextScope
         from structure.extensions.database import get_session
@@ -132,6 +133,22 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
             dirty_ids = list(
                 {str(row[0].get("workspace_id")) for row in wc_result.all() if row[0]}
             )
+            user_result = await session.execute(
+                select(Context.user_id).where(
+                    or_(
+                        (
+                            (Context.source_id == UUID(resource_id))
+                            & (Context.context_type == context_type)
+                            & (Context.scope == ContextScope.USER)
+                        ),
+                        (
+                            (Context.scope == ContextScope.USER)
+                            & (Context.meta[meta_key].astext == resource_id)
+                        ),
+                    )
+                )
+            )
+            affected_user_ids = {str(row) for row in user_result.scalars().all()}
 
             # Bulk delete user-scoped Context rows matched by source_id + type
             user_del = await session.execute(
@@ -164,6 +181,11 @@ def delete_resource_contexts(self, resource_id: str, context_type: str, meta_key
 
             await session.commit()
 
+        for affected_user_id in affected_user_ids:
+            async with get_session("structure") as session:
+                dirty_ids.extend(
+                    await _get_user_workspace_ids(session, affected_user_id)
+                )
         await _invalidate_workspace_caches(dirty_ids)
 
         logger.info(

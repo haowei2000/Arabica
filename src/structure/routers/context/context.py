@@ -49,7 +49,7 @@ async def create_context(
         Created context
     """
     context = await crud.create(data, user_id=current_user.id)
-    if data.context_type == "user_memory":
+    if data.context_type == ContextType.SHORT_MEMORY:
         from structure.celery_worker.tasks.context_sync_tasks import (
             sync_memory_to_contexts,
         )

@@ -137,6 +137,7 @@ class EventCRUD:
         skip: int = 0,
         limit: int = 100,
         event_types: list[str] | None = None,
+        include_archived: bool = False,
     ) -> tuple[list[Event], int]:
         """List events for a workspace with optional type filter.
 
@@ -152,6 +153,8 @@ class EventCRUD:
         normalized_id = _normalize_uuid(workspace_id)
 
         conditions = [Event.workspace_id == normalized_id]
+        if not include_archived:
+            conditions.append(Event.is_archived.is_(False))
         if event_types:
             conditions.append(Event.event_type.in_(event_types))
 
@@ -177,6 +180,7 @@ class EventCRUD:
         skip: int = 0,
         limit: int = 100,
         event_types: list[str] | None = None,
+        include_archived: bool = False,
     ) -> tuple[list[Event], int]:
         """List events for a run with optional type filter.
 
@@ -192,6 +196,8 @@ class EventCRUD:
         normalized_id = _normalize_uuid(run_id)
 
         conditions = [Event.run_id == normalized_id]
+        if not include_archived:
+            conditions.append(Event.is_archived.is_(False))
         if event_types:
             conditions.append(Event.event_type.in_(event_types))
 
@@ -218,6 +224,7 @@ class EventCRUD:
         limit: int = 100,
         event_types: list[str] | None = None,
         workspace_id: str | UUID | None = None,
+        include_archived: bool = False,
     ) -> tuple[list[Event], int]:
         """List events triggered by a user.
 
@@ -242,6 +249,8 @@ class EventCRUD:
             Event.workspace_id.in_(member_ws_subq),
         )
         conditions = [ownership_condition]
+        if not include_archived:
+            conditions.append(Event.is_archived.is_(False))
         if event_types:
             conditions.append(Event.event_type.in_(event_types))
         if workspace_id:
@@ -271,6 +280,7 @@ class EventCRUD:
         event_types: list[str] | None = None,
         from_sequence: int | None = None,
         to_sequence: int | None = None,
+        include_archived: bool = False,
         skip: int = 0,
         limit: int = 100,
     ) -> tuple[list[Event], int]:
@@ -299,6 +309,8 @@ class EventCRUD:
             conditions.append(Event.user_id == _normalize_uuid(user_id))
         if event_types:
             conditions.append(Event.event_type.in_(event_types))
+        if not include_archived:
+            conditions.append(Event.is_archived.is_(False))
         if from_sequence is not None:
             conditions.append(Event.sequence >= from_sequence)
         if to_sequence is not None:
@@ -356,7 +368,10 @@ class EventCRUD:
             Number of events
         """
         normalized_id = _normalize_uuid(run_id)
-        stmt = select(func.count(Event.id)).where(Event.run_id == normalized_id)
+        stmt = select(func.count(Event.id)).where(
+            Event.run_id == normalized_id,
+            Event.is_archived.is_(False),
+        )
         result = await self.db.execute(stmt)
         return result.scalar() or 0
 
@@ -370,7 +385,10 @@ class EventCRUD:
             Number of events
         """
         normalized_id = _normalize_uuid(workspace_id)
-        stmt = select(func.count(Event.id)).where(Event.workspace_id == normalized_id)
+        stmt = select(func.count(Event.id)).where(
+            Event.workspace_id == normalized_id,
+            Event.is_archived.is_(False),
+        )
         result = await self.db.execute(stmt)
         return result.scalar() or 0
 

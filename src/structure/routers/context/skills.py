@@ -44,6 +44,29 @@ def _build_skill_response(skill) -> SkillResponse:
     )
 
 
+@router.post(
+    "",
+    response_model=SkillResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a skill",
+)
+async def create_skill(
+    data: SkillCreate,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    crud: Annotated[SkillCRUD, Depends(get_skill_crud)],
+):
+    """Create a new user skill and sync it into the context index."""
+    existing = await crud.get_by_name(data.name, current_user.id)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Skill with name '{data.name}' already exists",
+        )
+
+    skill = await crud.create(data, user_id=current_user.id)
+    return _build_skill_response(skill)
+
+
 @router.get(
     "/{skill_id}/context",
     response_model=ContextListResponse,

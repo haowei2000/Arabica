@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { ChevronRight, Brain, Loader2, Play, Trash2, ChevronDown } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Archive, ChevronRight, Brain, Loader2, Play, Trash2, ChevronDown } from 'lucide-react';
 import { useWorkspaces, useWorkspaceRuns, useRunEvents } from '@/hooks/useMemory';
 import { useDeleteWorkspace } from '@/hooks/useWorkspaces';
 import { useMemories } from '@/hooks/useEntityContext';
+import { eventService } from '@/services/eventService';
+import type { EventArchiveResponse } from '@/types/event';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { cn } from '@/lib/utils';
@@ -38,13 +41,39 @@ export default function MemoryPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [hiddenEventTypes, setHiddenEventTypes] = useState<Set<string>>(new Set(['agent_token']));
   const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [archiveResult, setArchiveResult] = useState<EventArchiveResponse | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   const [showShortMemories, setShowShortMemories] = useState(false);
+  const queryClient = useQueryClient();
   const { data: workspaceData, isLoading: workspacesLoading } = useWorkspaces({ page_size: 50 });
   const { data: memoriesData } = useMemories({ page_size: 50 });
   const { data: runsData } = useWorkspaceRuns(selectedWorkspace, expandedWorkspaces.has(selectedWorkspace || '') || viewMode === 'drawer');
   const { data: eventsData } = useRunEvents(selectedRun, expandedRuns.has(selectedRun || '') || (viewMode === 'drawer' && !!selectedRun));
   const deleteWorkspaceMutation = useDeleteWorkspace();
+  const archiveRunMutation = useMutation({
+    mutationFn: ({ runId, dryRun }: { runId: string; dryRun: boolean }) =>
+      eventService.archiveRun(runId, {
+        keep_last: 0,
+        include_pinned: false,
+        dry_run: dryRun,
+        reason: dryRun ? 'ui_event_gc_preview' : 'ui_event_gc_archive',
+        max_events_per_archive_context: 2,
+      }),
+    onSuccess: async (result, variables) => {
+      setArchiveResult(result);
+      setArchiveError(null);
+      if (!variables.dryRun) {
+        await queryClient.invalidateQueries({ queryKey: ['runs', variables.runId, 'events'] });
+        if (selectedWorkspace) {
+          await queryClient.invalidateQueries({ queryKey: ['workspaces', selectedWorkspace, 'runs'] });
+        }
+      }
+    },
+    onError: (error) => {
+      setArchiveError(error instanceof Error ? error.message : 'Archive failed');
+    },
+  });
 
   const workspaces = workspaceData?.items ?? [];
   const runs = runsData?.items ?? [];
@@ -76,12 +105,20 @@ export default function MemoryPage() {
   const selectWorkspace = (id: string) => {
     setSelectedWorkspace(id === selectedWorkspace ? null : id);
     setSelectedRun(null);
+    setArchiveResult(null);
+    setArchiveError(null);
   };
   const selectRun = (id: string) => {
     setSelectedRun(id === selectedRun ? null : id);
+    setArchiveResult(null);
+    setArchiveError(null);
   };
 
   const handleModeToggle = (m: ViewMode) => setViewMode(m);
+  const handleArchiveRun = (dryRun: boolean) => {
+    if (!selectedRun) return;
+    archiveRunMutation.mutate({ runId: selectedRun, dryRun });
+  };
 
   const handleDeleteWorkspace = async (e: React.MouseEvent, workspaceId: string, name: string) => {
     e.stopPropagation();
@@ -369,7 +406,43 @@ export default function MemoryPage() {
                 {selectedRun && events.length > 0 && (
                   <span className="text-[10px] text-muted-foreground/50 tabular-nums">{events.length}</span>
                 )}
+                {selectedRun && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleArchiveRun(true)}
+                      disabled={archiveRunMutation.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50"
+                    >
+                      <Archive className="size-3" />
+                      Preview GC
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleArchiveRun(false)}
+                      disabled={archiveRunMutation.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {archiveRunMutation.isPending ? <Loader2 className="size-3 animate-spin" /> : <Archive className="size-3" />}
+                      Archive Run
+                    </button>
+                  </div>
+                )}
               </div>
+              {(archiveResult || archiveError) && (
+                <div className={cn(
+                  'border-b border-border/40 px-3 py-2 text-[10px]',
+                  archiveError ? 'bg-destructive/10 text-destructive' : 'bg-muted/30 text-muted-foreground'
+                )}>
+                  {archiveError ? archiveError : (
+                    <span>
+                      {archiveResult?.dry_run ? 'Preview' : 'Archived'} {archiveResult?.archived_count ?? 0} event(s)
+                      {' · '}skipped {archiveResult?.skipped_count ?? 0}
+                      {' · '}chunks {archiveResult?.archive_chunks ?? 0}
+                    </span>
+                  )}
+                </div>
+              )}
               <ScrollArea className="flex-1">
                 {events.length > 0 ? (
                   events.map((event) => (
