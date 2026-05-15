@@ -11,6 +11,8 @@ export interface User {
   role: UserRole;
   is_active: boolean;
   is_superuser: boolean;
+  email_verified: boolean;
+  email_verified_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +29,18 @@ export interface RegisterRequest {
   password: string;
   email?: string;
   phone?: string;
+}
+
+// Email registration request
+export interface EmailRegisterRequest {
+  email: string;
+  password: string;
+}
+
+// Email verification response
+export interface EmailVerificationResponse {
+  verified: boolean;
+  message: string;
 }
 
 // Token 响应

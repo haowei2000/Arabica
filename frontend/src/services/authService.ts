@@ -1,10 +1,32 @@
 import { apiClient } from './api';
 import { API_ENDPOINTS, API_BASE_URL } from '@/constants/api';
 import type {
+  EmailRegisterRequest,
+  EmailVerificationResponse,
   RegisterRequest,
   TokenResponse,
   User,
 } from '@/types/auth';
+
+type ApiErrorResponse = {
+  response?: {
+    data?: {
+      detail?: string;
+    };
+  };
+  message?: string;
+};
+
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  const apiError = error as ApiErrorResponse;
+  if (apiError.response?.data?.detail) {
+    return apiError.response.data.detail;
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
 
 export const authService = {
   /**
@@ -45,6 +67,35 @@ export const authService = {
    */
   async register(data: RegisterRequest): Promise<User> {
     return apiClient.post(API_ENDPOINTS.AUTH.REGISTER, data);
+  },
+
+  /**
+   * Register a user with email and password.
+   */
+  async registerWithEmail(data: EmailRegisterRequest): Promise<User> {
+    try {
+      return await apiClient.post(API_ENDPOINTS.AUTH.REGISTER_EMAIL, data);
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Registration failed'));
+    }
+  },
+
+  async verifyEmail(token: string): Promise<EmailVerificationResponse> {
+    try {
+      return await apiClient.get(
+        `${API_ENDPOINTS.AUTH.VERIFY_EMAIL}?token=${encodeURIComponent(token)}`
+      );
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Email verification failed'));
+    }
+  },
+
+  async resendVerificationEmail(email: string): Promise<EmailVerificationResponse> {
+    try {
+      return await apiClient.post(API_ENDPOINTS.AUTH.RESEND_VERIFY_EMAIL, { email });
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Failed to resend verification email'));
+    }
   },
 
   /**

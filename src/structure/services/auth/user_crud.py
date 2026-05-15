@@ -100,7 +100,9 @@ class UserCRUD:
         Returns:
             User instance if found, None otherwise
         """
-        result = await self.db_session.execute(select(User).where(User.email == email))
+        result = await self.db_session.execute(
+            select(User).where(func.lower(User.email) == email.lower())
+        )
         return result.scalar_one_or_none()
 
     async def list_users(

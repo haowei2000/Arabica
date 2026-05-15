@@ -6,6 +6,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from structure.config.components.auth import AuthConfig
+from structure.config.components.email import EmailConfig
 from structure.config.components.ollama import OllamaConfig
 from structure.config.components.openai import OpenAIConfig
 from structure.config.components.postgres import PostgresConfig
@@ -60,6 +61,7 @@ class AppSettings(BaseSettings):
     postgres: PostgresConfig
     redis: RedisConfig
     auth: AuthConfig
+    email: EmailConfig = Field(default_factory=EmailConfig)
     ollama: OllamaConfig | None = None
     openai: OpenAIConfig | None = None
     rustfs: RustfsConfig

@@ -1,13 +1,19 @@
 """Token service for JWT token management."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+import logging
 from uuid import UUID
 
+from jose import JWTError, jwt
+
+from structure.config.factory import get_settings
 from structure.utils.jwt_utils import (
     create_access_token,
     create_refresh_token,
     get_user_from_token,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TokenService:
@@ -78,3 +84,46 @@ class TokenService:
             User data if token is valid, None otherwise
         """
         return get_user_from_token(access_token)
+
+    @staticmethod
+    def create_email_verification_token(user_id: UUID, email: str) -> str:
+        """Create a short-lived token for email verification."""
+        settings = get_settings()
+        expire = datetime.now(UTC) + timedelta(
+            minutes=settings.email.verification_token_expire_minutes
+        )
+        token_data = {
+            "sub": str(user_id),
+            "email": email,
+            "purpose": "email_verification",
+            "exp": expire,
+        }
+        return jwt.encode(
+            token_data,
+            settings.auth.jwt_secret_key,
+            algorithm=settings.auth.jwt_algorithm,
+        )
+
+    @staticmethod
+    def verify_email_verification_token(token: str) -> dict | None:
+        """Decode and validate an email verification token."""
+        settings = get_settings()
+        try:
+            payload = jwt.decode(
+                token,
+                settings.auth.jwt_secret_key,
+                algorithms=[settings.auth.jwt_algorithm],
+            )
+        except JWTError as exc:
+            logger.warning("Email verification token failed: %s", exc)
+            return None
+
+        if payload.get("purpose") != "email_verification":
+            return None
+
+        user_id = payload.get("sub")
+        email = payload.get("email")
+        if not user_id or not email:
+            return None
+
+        return {"user_id": user_id, "email": email}
