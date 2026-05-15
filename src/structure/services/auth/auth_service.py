@@ -150,9 +150,11 @@ class AuthService:
         Returns:
             Created user object
         """
-        # Derive a username from the email local part
-        local_part = email.split("@")[0]
-        base_username = re.sub(r"[^a-zA-Z0-9_]", "_", local_part)[:40]
+        # Derive a valid username from the email local part.
+        local_part = email.split("@", 1)[0].lower()
+        base_username = re.sub(r"[^a-zA-Z0-9_]", "_", local_part).strip("_")[:40]
+        if len(base_username) < 3:
+            base_username = f"user_{base_username or 'email'}"[:40]
 
         # Ensure the username is unique
         username = base_username
@@ -180,7 +182,7 @@ class AuthService:
     async def create_tenant(
         self,
         name: str,
-        admin_id,
+        admin_id: UUID | None = None,
         description: str | None = None,
         auto_commit: bool = True,
     ) -> Tenant:

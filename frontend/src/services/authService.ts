@@ -1,10 +1,31 @@
 import { apiClient } from './api';
 import { API_ENDPOINTS, API_BASE_URL } from '@/constants/api';
 import type {
+  EmailRegisterRequest,
   RegisterRequest,
   TokenResponse,
   User,
 } from '@/types/auth';
+
+type ApiErrorResponse = {
+  response?: {
+    data?: {
+      detail?: string;
+    };
+  };
+  message?: string;
+};
+
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  const apiError = error as ApiErrorResponse;
+  if (apiError.response?.data?.detail) {
+    return apiError.response.data.detail;
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
 
 export const authService = {
   /**
@@ -45,6 +66,17 @@ export const authService = {
    */
   async register(data: RegisterRequest): Promise<User> {
     return apiClient.post(API_ENDPOINTS.AUTH.REGISTER, data);
+  },
+
+  /**
+   * Register a user with email and password.
+   */
+  async registerWithEmail(data: EmailRegisterRequest): Promise<User> {
+    try {
+      return await apiClient.post(API_ENDPOINTS.AUTH.REGISTER_EMAIL, data);
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Registration failed'));
+    }
   },
 
   /**

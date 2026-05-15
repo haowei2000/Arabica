@@ -7,10 +7,16 @@ import { useUIStore } from '@/stores/useUIStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+type AuthMode = 'login' | 'register';
 
 export default function LoginPage() {
+  const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -19,17 +25,49 @@ export default function LoginPage() {
   const { setUser } = useAuthStore();
   const { toggleTheme, theme } = useUIStore();
 
+  const handleModeChange = (value: string) => {
+    setMode(value as AuthMode);
+    setError('');
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+  };
+
+  const finishAuthenticatedFlow = async (loginName: string) => {
+    await authService.login(loginName, password);
+    const user = await authService.getCurrentUser();
+    setUser(user);
+    navigate('/app');
+  };
+
+  const handleLogin = async () => {
+    await finishAuthenticatedFlow(username);
+  };
+
+  const handleRegister = async () => {
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    await authService.registerWithEmail({ email, password });
+    await finishAuthenticatedFlow(email);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
+    setError('');
+
     try {
-      await authService.login(username, password);
-      const user = await authService.getCurrentUser();
-      setUser(user);
-      navigate('/app');
+      if (mode === 'register') {
+        await handleRegister();
+      } else {
+        await handleLogin();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      const fallback = mode === 'register' ? 'Registration failed' : 'Login failed';
+      setError(err instanceof Error ? err.message : fallback);
     } finally {
       setLoading(false);
     }
@@ -65,33 +103,67 @@ export default function LoginPage() {
               <img src="/icon.png" alt="Structure" className="size-9 object-contain" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">Structure</h1>
-            <p className="text-sm text-muted-foreground mt-1">Sign in to your account</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {mode === 'register' ? 'Create your account' : 'Sign in to your account'}
+            </p>
           </div>
 
+          <Tabs value={mode} onValueChange={handleModeChange} className="mb-6">
+            <TabsList className="grid w-full grid-cols-2 bg-muted/50">
+              <TabsTrigger value="login" className="rounded-md">
+                Sign In
+              </TabsTrigger>
+              <TabsTrigger value="register" className="rounded-md">
+                Register
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
-              <Input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter your username"
-                className="h-11 bg-white/60 dark:bg-navy-900/40"
-                required
-              />
-            </div>
+            {mode === 'login' ? (
+              <div className="space-y-2">
+                <Label htmlFor="username">Username or email</Label>
+                <Input
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter username or email"
+                  className="h-11 bg-white/60 dark:bg-navy-900/40"
+                  autoComplete="username"
+                  required
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Enter your email"
+                  className="h-11 bg-white/60 dark:bg-navy-900/40"
+                  autoComplete="email"
+                  required
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor={mode === 'register' ? 'register-password' : 'password'}>
+                Password
+              </Label>
               <div className="relative">
                 <Input
-                  id="password"
+                  id={mode === 'register' ? 'register-password' : 'password'}
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
                   className="h-11 pr-10 bg-white/60 dark:bg-navy-900/40"
+                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                  minLength={mode === 'register' ? 8 : undefined}
                   required
                 />
                 <button
@@ -99,11 +171,29 @@ export default function LoginPage() {
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   tabIndex={-1}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
               </div>
             </div>
+
+            {mode === 'register' && (
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm password</Label>
+                <Input
+                  id="confirm-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm your password"
+                  className="h-11 bg-white/60 dark:bg-navy-900/40"
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </div>
+            )}
 
             {error && (
               <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20 animate-fade-in">
@@ -119,10 +209,10 @@ export default function LoginPage() {
               {loading ? (
                 <span className="flex items-center gap-2">
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Signing in...
+                  {mode === 'register' ? 'Creating account...' : 'Signing in...'}
                 </span>
               ) : (
-                'Sign In'
+                mode === 'register' ? 'Create Account' : 'Sign In'
               )}
             </Button>
           </form>

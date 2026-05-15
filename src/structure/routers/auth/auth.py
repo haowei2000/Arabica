@@ -60,7 +60,9 @@ async def register_user(
     # In a real application, you would need to determine the tenant
     default_tenant = await auth_service.get_tenant_by_name("default")
     if not default_tenant:
-        default_tenant = await auth_service.create_tenant("default", "Default tenant")
+        default_tenant = await auth_service.create_tenant(
+            "default", description="Default tenant"
+        )
 
     # Create user
     user = await auth_service.create_user(user_data, default_tenant.id)
@@ -98,7 +100,9 @@ async def register_user_by_email(
 
     default_tenant = await auth_service.get_tenant_by_name("default")
     if not default_tenant:
-        default_tenant = await auth_service.create_tenant("default", "Default tenant")
+        default_tenant = await auth_service.create_tenant(
+            "default", description="Default tenant"
+        )
 
     user = await auth_service.create_user_by_email(
         register_data.email, register_data.password, default_tenant.id

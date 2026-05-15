@@ -29,6 +29,12 @@ export interface RegisterRequest {
   phone?: string;
 }
 
+// Email registration request
+export interface EmailRegisterRequest {
+  email: string;
+  password: string;
+}
+
 // Token 响应
 export interface TokenResponse {
   access_token: string;

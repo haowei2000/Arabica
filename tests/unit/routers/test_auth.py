@@ -115,6 +115,42 @@ class TestRegister:
         svc.create_tenant.assert_awaited_once()
         assert resp.status_code == 201
 
+    def test_register_by_email_success(self, client):
+        user = make_user(username="newuser", email="new@example.com")
+        tenant = MagicMock(id=TENANT_ID)
+
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
+            svc = MockService.return_value
+            svc.get_user_by_email = AsyncMock(return_value=None)
+            svc.get_tenant_by_name = AsyncMock(return_value=tenant)
+            svc.create_user_by_email = AsyncMock(return_value=user)
+
+            resp = client.post(
+                "/api/auth/register/email",
+                json={"email": "new@example.com", "password": "securepass"},
+            )
+
+        svc.create_user_by_email.assert_awaited_once_with(
+            "new@example.com", "securepass", TENANT_ID
+        )
+        assert resp.status_code == 201
+        assert resp.json()["email"] == "new@example.com"
+
+    def test_register_by_email_duplicate_email(self, client):
+        existing = make_user()
+
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
+            svc = MockService.return_value
+            svc.get_user_by_email = AsyncMock(return_value=existing)
+
+            resp = client.post(
+                "/api/auth/register/email",
+                json={"email": "test@example.com", "password": "securepass"},
+            )
+
+        assert resp.status_code == 400
+        assert "already registered" in resp.json()["detail"]
+
 
 # ── /api/auth/login ─────────────────────────────────────────────
 
