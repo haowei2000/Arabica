@@ -42,20 +42,54 @@ async def get_email_service() -> EmailService:
 async def _send_verification_email_if_needed(
     user,
     email_service: EmailService,
+    require_delivery: bool = False,
 ) -> bool:
     """Send a verification email when the user has an email address."""
     if not user.email:
         return False
 
     try:
-        return await email_service.send_verification_email(
+        delivered = await email_service.send_verification_email(
             user_id=user.id,
             email=user.email,
             username=user.username,
         )
-    except EmailDeliveryError:
+    except EmailDeliveryError as exc:
         logger.exception("Failed to send verification email for user_id=%s", user.id)
+        if require_delivery:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Verification email could not be sent. Please try again later.",
+            ) from exc
         return False
+
+    if require_delivery and not delivered:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification email could not be sent. Please try again later.",
+        )
+
+    return delivered
+
+
+async def _commit_user_with_required_verification(
+    user,
+    auth_service: AuthService,
+    email_service: EmailService,
+) -> None:
+    """Commit a user only after required verification delivery succeeds."""
+    try:
+        await _send_verification_email_if_needed(
+            user,
+            email_service,
+            require_delivery=True,
+        )
+        await auth_service.db.commit()
+    except Exception:
+        await auth_service.db.rollback()
+        raise
+
+    await auth_service.db.refresh(user)
 
 
 @router.post(
@@ -100,9 +134,23 @@ async def register_user(
             "default", description="Default tenant"
         )
 
-    # Create user
-    user = await auth_service.create_user(user_data, default_tenant.id)
-    await _send_verification_email_if_needed(user, email_service)
+    requires_verification_delivery = bool(
+        user_data.email and get_settings().auth.require_email_verification
+    )
+
+    user = await auth_service.create_user(
+        user_data,
+        default_tenant.id,
+        auto_commit=not requires_verification_delivery,
+    )
+    if requires_verification_delivery:
+        await _commit_user_with_required_verification(
+            user,
+            auth_service,
+            email_service,
+        )
+    else:
+        await _send_verification_email_if_needed(user, email_service)
 
     return user
 
@@ -142,10 +190,22 @@ async def register_user_by_email(
             "default", description="Default tenant"
         )
 
+    requires_verification_delivery = get_settings().auth.require_email_verification
+
     user = await auth_service.create_user_by_email(
-        register_data.email, register_data.password, default_tenant.id
+        register_data.email,
+        register_data.password,
+        default_tenant.id,
+        auto_commit=not requires_verification_delivery,
     )
-    await _send_verification_email_if_needed(user, email_service)
+    if requires_verification_delivery:
+        await _commit_user_with_required_verification(
+            user,
+            auth_service,
+            email_service,
+        )
+    else:
+        await _send_verification_email_if_needed(user, email_service)
     return user
 
 

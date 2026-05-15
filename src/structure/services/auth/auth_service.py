@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import re
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.models.auth.tenant import Tenant
@@ -48,7 +48,9 @@ class AuthService:
         Returns:
             User object if found, None otherwise
         """
-        result = await self.db.execute(select(User).where(User.email == email.lower()))
+        result = await self.db.execute(
+            select(User).where(func.lower(User.email) == email.lower())
+        )
         return result.scalar_one_or_none()
 
     async def get_user_by_id(self, user_id: UUID) -> User | None:

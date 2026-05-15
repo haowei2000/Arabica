@@ -9,6 +9,7 @@ from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
 from structure.routers.auth.auth import get_email_service
+from structure.services.auth.auth_service import AuthService
 from tests.unit.routers.conftest import TENANT_ID, make_user
 
 
@@ -23,7 +24,7 @@ def mock_db():
 @pytest.fixture()
 def mock_email_service():
     service = MagicMock()
-    service.send_verification_email = AsyncMock(return_value=False)
+    service.send_verification_email = AsyncMock(return_value=True)
     return service
 
 
@@ -35,6 +36,35 @@ def client(mock_db, patch_bootstrap, mock_email_service):
         yield c
     app.dependency_overrides.pop(get_structure_db, None)
     app.dependency_overrides.pop(get_email_service, None)
+
+
+def attach_service_db(service):
+    service.db = MagicMock()
+    service.db.commit = AsyncMock()
+    service.db.rollback = AsyncMock()
+    service.db.refresh = AsyncMock()
+    return service.db
+
+
+# ── AuthService ─────────────────────────────────────────────────
+
+
+class TestAuthService:
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_uses_case_insensitive_lookup(self):
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        db.execute.return_value = result
+
+        service = AuthService(db)
+        await service.get_user_by_email("Mixed@Example.COM")
+
+        stmt = db.execute.await_args.args[0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True})).lower()
+        assert "lower(" in compiled
+        assert "auth_user.email" in compiled
+        assert "mixed@example.com" in compiled
 
 
 # ── /api/auth/register ──────────────────────────────────────────
@@ -49,6 +79,7 @@ class TestRegister:
             patch("structure.routers.auth.auth.AuthService") as MockService,
         ):
             svc = MockService.return_value
+            service_db = attach_service_db(svc)
             svc.get_user_by_username = AsyncMock(return_value=None)
             svc.get_user_by_email = AsyncMock(return_value=None)
             svc.get_tenant_by_name = AsyncMock(return_value=tenant)
@@ -65,6 +96,9 @@ class TestRegister:
 
         assert resp.status_code == 201
         assert resp.json()["username"] == "testuser"
+        svc.create_user.assert_awaited_once()
+        assert svc.create_user.await_args.kwargs["auto_commit"] is False
+        service_db.commit.assert_awaited_once()
 
     def test_register_duplicate_username(self, client):
         existing = make_user()
@@ -105,6 +139,35 @@ class TestRegister:
         assert resp.status_code == 400
         assert "already registered" in resp.json()["detail"]
 
+    def test_register_rejects_when_required_verification_not_sent(
+        self, client, mock_email_service
+    ):
+        mock_email_service.send_verification_email.return_value = False
+        user = make_user(email="new@example.com")
+        tenant = MagicMock(id=TENANT_ID)
+
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
+            svc = MockService.return_value
+            service_db = attach_service_db(svc)
+            svc.get_user_by_username = AsyncMock(return_value=None)
+            svc.get_user_by_email = AsyncMock(return_value=None)
+            svc.get_tenant_by_name = AsyncMock(return_value=tenant)
+            svc.create_user = AsyncMock(return_value=user)
+
+            resp = client.post(
+                "/api/auth/register",
+                json={
+                    "username": "newuser",
+                    "email": "new@example.com",
+                    "password": "securepass",
+                },
+            )
+
+        assert resp.status_code == 503
+        assert "could not be sent" in resp.json()["detail"]
+        service_db.rollback.assert_awaited_once()
+        service_db.commit.assert_not_awaited()
+
     def test_register_creates_default_tenant(self, client):
         user = make_user()
         tenant = MagicMock(id=TENANT_ID)
@@ -131,6 +194,7 @@ class TestRegister:
 
         with patch("structure.routers.auth.auth.AuthService") as MockService:
             svc = MockService.return_value
+            service_db = attach_service_db(svc)
             svc.get_user_by_email = AsyncMock(return_value=None)
             svc.get_tenant_by_name = AsyncMock(return_value=tenant)
             svc.create_user_by_email = AsyncMock(return_value=user)
@@ -141,11 +205,12 @@ class TestRegister:
             )
 
         svc.create_user_by_email.assert_awaited_once_with(
-            "new@example.com", "securepass", TENANT_ID
+            "new@example.com", "securepass", TENANT_ID, auto_commit=False
         )
         assert resp.status_code == 201
         assert resp.json()["email"] == "new@example.com"
         mock_email_service.send_verification_email.assert_awaited_once()
+        service_db.commit.assert_awaited_once()
 
     def test_register_by_email_duplicate_email(self, client):
         existing = make_user()
@@ -161,6 +226,30 @@ class TestRegister:
 
         assert resp.status_code == 400
         assert "already registered" in resp.json()["detail"]
+
+    def test_register_by_email_rejects_when_required_verification_not_sent(
+        self, client, mock_email_service
+    ):
+        mock_email_service.send_verification_email.return_value = False
+        user = make_user(username="newuser", email="new@example.com")
+        tenant = MagicMock(id=TENANT_ID)
+
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
+            svc = MockService.return_value
+            service_db = attach_service_db(svc)
+            svc.get_user_by_email = AsyncMock(return_value=None)
+            svc.get_tenant_by_name = AsyncMock(return_value=tenant)
+            svc.create_user_by_email = AsyncMock(return_value=user)
+
+            resp = client.post(
+                "/api/auth/register/email",
+                json={"email": "new@example.com", "password": "securepass"},
+            )
+
+        assert resp.status_code == 503
+        assert "could not be sent" in resp.json()["detail"]
+        service_db.rollback.assert_awaited_once()
+        service_db.commit.assert_not_awaited()
 
 
 # ── /api/auth/login ─────────────────────────────────────────────
