@@ -102,7 +102,8 @@ class ReadContextTool(InnerTool):
                 data = {
                     "path": self._normalise_path(str(ctx_data.get("path") or path)),
                     "content": ctx_data.get("content"),
-                    "content_type": ctx_data.get("context_type"),
+                    "content_type": ctx_data.get("context_type")
+                    or ctx_data.get("content_type"),
                     "glance": ctx_data.get("glance"),
                     "summary": ctx_data.get("glance"),
                     "meta": ctx_data.get("meta"),

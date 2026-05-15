@@ -105,6 +105,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         python3-dev \
         rustc \
         cargo \
+        gosu \
         file; \
     rm -rf /var/lib/apt/lists/*
 
@@ -118,6 +119,7 @@ COPY --from=app-builder --chown=appuser:appuser /app/src /app/src
 COPY --from=app-builder --chown=appuser:appuser /app/alembic.ini /app/alembic.ini
 COPY --from=app-builder --chown=appuser:appuser /app/docker/docker-entrypoint.sh /app/docker/docker-entrypoint.sh
 COPY --from=app-builder --chown=appuser:appuser /app/pyproject.toml /app/pyproject.toml
+COPY --from=app-builder --chown=appuser:appuser /app/uv.lock /app/uv.lock
 COPY --from=app-builder --chown=appuser:appuser /app/README.md /app/README.md
 
 # Fix venv Python symlinks to point to system Python
@@ -135,8 +137,9 @@ RUN mkdir -p /app/logs && chown -R appuser:appuser /app/logs
 # Final recursive chown to ensure everything is owned by appuser
 RUN chown -R appuser:appuser /app
 
-# Switch to non-root user
-USER appuser
+# Start as root so the entrypoint can fix ownership of mounted volumes, then
+# re-exec as appuser before launching application processes.
+USER root
 
 # Set PATH to include virtual environment
 ENV PATH="/app/.venv/bin:$PATH" \

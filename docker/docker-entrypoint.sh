@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+if [ "$(id -u)" = "0" ]; then
+    mkdir -p /app/logs /app/data/context
+    chown -R appuser:appuser /app/logs /app/data
+    exec gosu appuser "$0" "$@"
+fi
+
 echo "==> Starting structure services..."
 
 PIDS=""

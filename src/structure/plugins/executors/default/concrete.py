@@ -623,7 +623,7 @@ class DefaultExecutor(Executor):
         self._config = config  # kept for _resolve_llm_config
         self.model_provider = config.get("model_provider", "tongyi")
         self.model_name = config.get("model_name", "qwen-plus")
-        self.max_history_messages = config.get("max_history_messages", 20)
+        self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")
         self.bootstrap_tool_names = config.get(

@@ -1,7 +1,7 @@
 """Unit tests for /api/workspaces/* endpoints."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -273,3 +273,19 @@ class TestWorkspaceContexts:
         mock_workspace_crud.get_by_id_and_user.return_value = None
         resp = client.get(f"/api/workspaces/{uuid4()}/contexts")
         assert resp.status_code == 404
+
+    def test_copy_contexts_accepts_uuid_user_id(self, client):
+        context_id = uuid4()
+        with patch(
+            "structure.routers.workspaces.workspace.copy_contexts_to_workspace",
+            new=AsyncMock(return_value=[]),
+        ) as mock_copy:
+            resp = client.post(
+                f"/api/workspaces/{WORKSPACE_ID}/contexts/copy",
+                json={"context_ids": [str(context_id)], "path_prefix": "/memory"},
+            )
+
+        assert resp.status_code == 201
+        assert resp.json()["copied_count"] == 0
+        kwargs = mock_copy.await_args.kwargs
+        assert kwargs["created_by"] == USER_ID

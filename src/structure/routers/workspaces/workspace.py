@@ -519,7 +519,7 @@ async def copy_contexts_to_workspace_endpoint(
         db,
         workspace_id=UUID(workspace_id),
         context_ids=context_uuids,
-        created_by=UUID(current_user.id),
+        created_by=UUID(str(current_user.id)),
         path_prefix=body.path_prefix,
         auto_commit=True,
     )
