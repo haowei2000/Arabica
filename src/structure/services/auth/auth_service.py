@@ -1,5 +1,6 @@
 """Authentication service for user management."""
 
+from datetime import UTC, datetime
 import re
 from uuid import UUID
 
@@ -47,7 +48,7 @@ class AuthService:
         Returns:
             User object if found, None otherwise
         """
-        result = await self.db.execute(select(User).where(User.email == email))
+        result = await self.db.execute(select(User).where(User.email == email.lower()))
         return result.scalar_one_or_none()
 
     async def get_user_by_id(self, user_id: UUID) -> User | None:
@@ -108,11 +109,12 @@ class AuthService:
         """
         # Hash the password
         hashed_password = hash_password(user_data.password)
+        email = user_data.email.lower() if user_data.email else None
 
         # Create user object
         user = User(
             username=user_data.username,
-            email=user_data.email,
+            email=email,
             phone=user_data.phone,
             password_hash=hashed_password,
             tenant_id=tenant_id,
@@ -151,7 +153,8 @@ class AuthService:
             Created user object
         """
         # Derive a valid username from the email local part.
-        local_part = email.split("@", 1)[0].lower()
+        normalized_email = email.lower()
+        local_part = normalized_email.split("@", 1)[0]
         base_username = re.sub(r"[^a-zA-Z0-9_]", "_", local_part).strip("_")[:40]
         if len(base_username) < 3:
             base_username = f"user_{base_username or 'email'}"[:40]
@@ -163,8 +166,32 @@ class AuthService:
             username = f"{base_username}_{counter}"
             counter += 1
 
-        user_data = UserCreate(username=username, email=email, password=password)
+        user_data = UserCreate(
+            username=username, email=normalized_email, password=password
+        )
         return await self.create_user(user_data, tenant_id, auto_commit)
+
+    async def mark_email_verified(
+        self,
+        user_id: UUID,
+        email: str,
+        auto_commit: bool = True,
+    ) -> User | None:
+        """Mark a user's email address as verified."""
+        user = await self.get_user_by_id(user_id)
+        if not user or not user.email or user.email.lower() != email.lower():
+            return None
+
+        user.email_verified = True
+        user.email_verified_at = datetime.now(UTC)
+
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
+
+        await self.db.refresh(user)
+        return user
 
     async def get_tenant_by_name(self, name: str) -> Tenant | None:
         """

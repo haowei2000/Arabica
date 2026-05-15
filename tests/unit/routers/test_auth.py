@@ -8,6 +8,7 @@ import pytest
 from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
+from structure.routers.auth.auth import get_email_service
 from tests.unit.routers.conftest import TENANT_ID, make_user
 
 
@@ -20,11 +21,20 @@ def mock_db():
 
 
 @pytest.fixture()
-def client(mock_db, patch_bootstrap):
+def mock_email_service():
+    service = MagicMock()
+    service.send_verification_email = AsyncMock(return_value=False)
+    return service
+
+
+@pytest.fixture()
+def client(mock_db, patch_bootstrap, mock_email_service):
     app.dependency_overrides[get_structure_db] = lambda: mock_db
+    app.dependency_overrides[get_email_service] = lambda: mock_email_service
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
     app.dependency_overrides.pop(get_structure_db, None)
+    app.dependency_overrides.pop(get_email_service, None)
 
 
 # ── /api/auth/register ──────────────────────────────────────────
@@ -115,7 +125,7 @@ class TestRegister:
         svc.create_tenant.assert_awaited_once()
         assert resp.status_code == 201
 
-    def test_register_by_email_success(self, client):
+    def test_register_by_email_success(self, client, mock_email_service):
         user = make_user(username="newuser", email="new@example.com")
         tenant = MagicMock(id=TENANT_ID)
 
@@ -135,6 +145,7 @@ class TestRegister:
         )
         assert resp.status_code == 201
         assert resp.json()["email"] == "new@example.com"
+        mock_email_service.send_verification_email.assert_awaited_once()
 
     def test_register_by_email_duplicate_email(self, client):
         existing = make_user()
@@ -188,6 +199,74 @@ class TestLogin:
             )
 
         assert resp.status_code == 401
+
+    def test_login_unverified_email(self, client):
+        user = make_user(email_verified=False, email_verified_at=None)
+
+        with (
+            patch("structure.routers.auth.auth.AuthService") as MockService,
+            patch("structure.routers.auth.auth.get_settings") as mock_get_settings,
+        ):
+            mock_get_settings.return_value.auth.require_email_verification = True
+            svc = MockService.return_value
+            svc.authenticate_user = AsyncMock(return_value=user)
+
+            resp = client.post(
+                "/api/auth/login",
+                data={"username": "test@example.com", "password": "securepass"},
+            )
+
+        assert resp.status_code == 403
+        assert "not verified" in resp.json()["detail"]
+
+
+# ── /api/auth/verify-email ──────────────────────────────────────
+
+
+class TestEmailVerification:
+    def test_verify_email_success(self, client):
+        user = make_user()
+
+        with (
+            patch("structure.routers.auth.auth.AuthService") as MockService,
+            patch("structure.routers.auth.auth.TokenService") as MockTokenService,
+        ):
+            MockTokenService.verify_email_verification_token.return_value = {
+                "user_id": str(user.id),
+                "email": user.email,
+            }
+            svc = MockService.return_value
+            svc.mark_email_verified = AsyncMock(return_value=user)
+
+            resp = client.get("/api/auth/verify-email?token=valid-token")
+
+        assert resp.status_code == 200
+        assert resp.json()["verified"] is True
+        svc.mark_email_verified.assert_awaited_once()
+
+    def test_verify_email_invalid_token(self, client):
+        with patch("structure.routers.auth.auth.TokenService") as MockTokenService:
+            MockTokenService.verify_email_verification_token.return_value = None
+
+            resp = client.get("/api/auth/verify-email?token=bad-token")
+
+        assert resp.status_code == 400
+
+    def test_resend_verification_email(self, client, mock_email_service):
+        user = make_user(email_verified=False, email_verified_at=None)
+
+        with patch("structure.routers.auth.auth.AuthService") as MockService:
+            svc = MockService.return_value
+            svc.get_user_by_email = AsyncMock(return_value=user)
+
+            resp = client.post(
+                "/api/auth/verify-email/resend",
+                json={"email": "test@example.com"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["verified"] is False
+        mock_email_service.send_verification_email.assert_awaited_once()
 
 
 # ── /api/auth/refresh ────────────────────────────────────────────

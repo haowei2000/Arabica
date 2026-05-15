@@ -40,3 +40,8 @@ class AuthConfig(BaseModel):
         default=7,
         description="刷新令牌的过期时间（天），默认为7天",
     )
+
+    require_email_verification: bool = Field(
+        default=True,
+        description="是否要求有邮箱的用户完成邮箱验证后才能登录",
+    )

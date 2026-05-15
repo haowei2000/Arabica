@@ -18,7 +18,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const navigate = useNavigate();
@@ -28,6 +30,7 @@ export default function LoginPage() {
   const handleModeChange = (value: string) => {
     setMode(value as AuthMode);
     setError('');
+    setSuccess('');
     setPassword('');
     setConfirmPassword('');
     setShowPassword(false);
@@ -51,7 +54,24 @@ export default function LoginPage() {
     }
 
     await authService.registerWithEmail({ email, password });
-    await finishAuthenticatedFlow(email);
+    setSuccess('Check your email for a verification link before signing in.');
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  const handleResendVerification = async () => {
+    setError('');
+    setSuccess('');
+    setResending(true);
+
+    try {
+      const result = await authService.resendVerificationEmail(email);
+      setSuccess(result.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resend verification email');
+    } finally {
+      setResending(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -201,9 +221,27 @@ export default function LoginPage() {
               </div>
             )}
 
+            {success && (
+              <div className="space-y-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300 animate-fade-in">
+                <p>{success}</p>
+                {mode === 'register' && email && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={resending}
+                    onClick={handleResendVerification}
+                    className="h-8 bg-white/50 dark:bg-navy-900/40"
+                  >
+                    {resending ? 'Resending...' : 'Resend verification email'}
+                  </Button>
+                )}
+              </div>
+            )}
+
             <Button
               type="submit"
-              disabled={loading}
+              disabled={loading || resending}
               className="w-full h-11 text-base font-medium bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 shadow-lg shadow-primary-500/20 transition-all duration-200"
             >
               {loading ? (

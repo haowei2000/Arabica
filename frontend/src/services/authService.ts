@@ -2,6 +2,7 @@ import { apiClient } from './api';
 import { API_ENDPOINTS, API_BASE_URL } from '@/constants/api';
 import type {
   EmailRegisterRequest,
+  EmailVerificationResponse,
   RegisterRequest,
   TokenResponse,
   User,
@@ -76,6 +77,24 @@ export const authService = {
       return await apiClient.post(API_ENDPOINTS.AUTH.REGISTER_EMAIL, data);
     } catch (error) {
       throw new Error(getApiErrorMessage(error, 'Registration failed'));
+    }
+  },
+
+  async verifyEmail(token: string): Promise<EmailVerificationResponse> {
+    try {
+      return await apiClient.get(
+        `${API_ENDPOINTS.AUTH.VERIFY_EMAIL}?token=${encodeURIComponent(token)}`
+      );
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Email verification failed'));
+    }
+  },
+
+  async resendVerificationEmail(email: string): Promise<EmailVerificationResponse> {
+    try {
+      return await apiClient.post(API_ENDPOINTS.AUTH.RESEND_VERIFY_EMAIL, { email });
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Failed to resend verification email'));
     }
   },
 

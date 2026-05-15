@@ -54,6 +54,12 @@ class User(Base):
     is_superuser: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", comment="是否超级用户"
     )
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", comment="邮箱是否已验证"
+    )
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="邮箱验证时间"
+    )
 
     # Audit fields
     created_at: Mapped[datetime] = mapped_column(

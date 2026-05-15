@@ -44,6 +44,8 @@ class UserInDB(UserBase):
     role: str
     is_active: bool
     is_superuser: bool
+    email_verified: bool = False
+    email_verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -58,5 +60,20 @@ class UserResponse(UserBase):
     role: str
     is_active: bool
     is_superuser: bool
+    email_verified: bool = False
+    email_verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class EmailVerificationResponse(BaseModel):
+    """Email verification result."""
+
+    verified: bool
+    message: str
+
+
+class EmailVerificationResendRequest(BaseModel):
+    """Request to resend email verification."""
+
+    email: EmailStr = Field(..., description="邮箱地址")

@@ -30,6 +30,8 @@ def make_user(**kwargs) -> UserResponse:
         "role": "user",
         "is_active": True,
         "is_superuser": False,
+        "email_verified": True,
+        "email_verified_at": now,
         "created_at": now,
         "updated_at": now,
     }
