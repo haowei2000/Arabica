@@ -139,7 +139,7 @@ config = {
     # LLM settings
     "model_provider": "tongyi",
     "model_name": "qwen-plus",
-    "max_history_messages": 20,
+    "max_history_messages": 80,
 
     # Browser tools (for web scraping, screenshots, etc.)
     "enable_browser_tools": True,

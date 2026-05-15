@@ -179,3 +179,8 @@ cython_debug/
 .claude
 /src/nul
 /docker/rustfs
+
+# Integration test artifacts
+/tests/artifacts/*
+!/tests/artifacts/README.md
+!/tests/artifacts/.gitkeep
