@@ -14,6 +14,10 @@ export const API_ENDPOINTS = {
     ME: '/auth/me',
   },
 
+  QUOTA: {
+    ME: '/quota/me',
+  },
+
   // 流式对话
   CHAT: {
       // Split endpoints (recommended)

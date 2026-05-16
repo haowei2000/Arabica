@@ -71,17 +71,11 @@ class QuotaService:
         return quota
 
     def _configured_free_tokens_per_user(self) -> int:
-        """Return the configured default free grant with legacy fallback."""
+        """Return the configured default free grant."""
         quota_settings = self.settings.quota
         configured = getattr(quota_settings, "default_free_tokens_per_user", None)
         if configured is None:
             configured = getattr(quota_settings, "free_tokens_per_user", None)
-        if configured is None:
-            configured = getattr(
-                quota_settings,
-                "free_tokens_per_verified_email",
-                None,
-            )
         if configured is None:
             configured = self.DEFAULT_FREE_TOKENS_PER_USER
         return int(configured)
