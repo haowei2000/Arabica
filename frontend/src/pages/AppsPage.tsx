@@ -1,14 +1,39 @@
-import {useState} from 'react';
-import {useNavigate} from 'react-router-dom';
-import {useApps, useCreateApp, useDeleteApp, useTemplates} from '@/hooks/useApps';
-import {useAppStore} from '@/stores/useAppStore';
-import {useChatStore} from '@/stores/useChatStore';
-import {authService} from '@/services/authService';
+import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Bot,
+  CalendarClock,
+  CheckCircle2,
+  Circle,
+  Cpu,
+  ExternalLink,
+  Loader2,
+  LogOut,
+  Plus,
+  Trash2,
+} from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useApps, useCreateApp, useDeleteApp, useTemplates } from '@/hooks/useApps';
+import { cn } from '@/lib/utils';
+import { authService } from '@/services/authService';
+import { useAppStore } from '@/stores/useAppStore';
+import { useChatStore } from '@/stores/useChatStore';
+import { formatRelativeTime } from '@/utils/formatDate';
 
 export default function AppsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [appCode, setAppCode] = useState('');
   const [executorCode, setExecutorCode] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const navigate = useNavigate();
   const { data: appsData, isLoading } = useApps();
@@ -18,48 +43,48 @@ export default function AppsPage() {
   const { currentAppId, setCurrentApp, clearCurrentApp } = useAppStore();
   const { reset: resetChat } = useChatStore();
 
-  const handleCreateApp = async (e: React.FormEvent) => {
+  const apps = appsData?.items ?? [];
+
+  const resetCreateForm = () => {
+    setShowCreateForm(false);
+    setAppCode('');
+    setExecutorCode('');
+    setFormError(null);
+  };
+
+  const handleCreateApp = async (e: FormEvent) => {
     e.preventDefault();
+    setFormError(null);
 
     try {
       await createAppMutation.mutateAsync({
         app_code: appCode,
-        executor_code: executorCode,
+        executor_code: executorCode || undefined,
         enabled: true,
       });
-
-      setShowCreateForm(false);
-      setAppCode('');
-      alert('App 创建成功！');
+      resetCreateForm();
     } catch (error) {
-      alert(`创建失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      setFormError(error instanceof Error ? error.message : 'App creation failed');
     }
   };
 
-    const handleDeleteApp = async (appId: string, appCode: string) => {
-    if (!confirm(`确定要删除 App "${appCode}" 吗？`)) return;
+  const handleDeleteApp = async (appId: string, code: string) => {
+    if (!confirm(`Delete app "${code}"? This cannot be undone.`)) return;
 
     try {
-        await deleteAppMutation.mutateAsync(appId);
-        if (currentAppId === appId) {
-          clearCurrentApp();
-        }
-      alert('App 删除成功！');
+      await deleteAppMutation.mutateAsync(appId);
+      if (currentAppId === appId) {
+        clearCurrentApp();
+      }
     } catch (error) {
-      alert(`删除失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      alert(`Delete failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
-  const handleStartChat = (appId: string, appCode: string) => {
-    console.log('🚀 Starting chat with app:', { appId, appCode });
+  const handleStartChat = (appId: string, code: string) => {
     resetChat();
-    setCurrentApp(appId, appCode);
-
-    // Use setTimeout to ensure state update completes before navigation
-    setTimeout(() => {
-      console.log('✅ App set in store, navigating to /chat');
-      navigate('/chat');
-    }, 0);
+    setCurrentApp(appId, code);
+    setTimeout(() => navigate('/chat'), 0);
   };
 
   const handleLogout = () => {
@@ -68,205 +93,213 @@ export default function AppsPage() {
     navigate('/login');
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-500">加载中...</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between max-w-6xl mx-auto">
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">App 管理</h1>
-          <button
-            onClick={handleLogout}
-            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
-          >
-            退出登录
-          </button>
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="border-b border-border bg-card/80 px-4 py-3 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm shadow-primary/20">
+              <Bot className="size-4" />
+            </div>
+            <div>
+              <h1 className="text-base font-bold tracking-tight">AI Agent Platform</h1>
+              <p className="text-[11px] text-muted-foreground">Apps</p>
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="sm" className="gap-2" onClick={handleLogout}>
+            <LogOut className="size-4" />
+            Logout
+          </Button>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        {/* Create Button */}
-        <div className="mb-6 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">我的 Apps</h2>
-          <button
-            onClick={() => setShowCreateForm(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            + 创建 App
-          </button>
-        </div>
-
-        {/* Create Form Modal */}
-        {showCreateForm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-              <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">创建新 App</h3>
-
-              <form onSubmit={handleCreateApp} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    App Code *
-                  </label>
-                  <input
-                    type="text"
-                    value={appCode}
-                    onChange={(e) => setAppCode(e.target.value)}
-                    placeholder="例如: my-chat-app"
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    唯一标识符，只能包含字母、数字、中划线
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    执行器
-                  </label>
-                  <select
-                    value={executorCode}
-                    onChange={(e) => setExecutorCode(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {!templates ? (
-                      <option value="" disabled>加载中...</option>
-                    ) : templates.length === 0 ? (
-                      <option value="" disabled>暂无可用执行器</option>
-                    ) : (
-                      <>
-                        <option value="">请选择执行器</option>
-                        {templates.map((template) => (
-                          <option key={template.id} value={template.executor_code}>
-                            {template.executor_name}
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateForm(false);
-                      setAppCode('');
-                    }}
-                    className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={createAppMutation.isPending}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {createAppMutation.isPending ? '创建中...' : '创建'}
-                  </button>
-                </div>
-              </form>
+      <main className="mx-auto max-w-[1600px] px-4 py-8 sm:px-8">
+        <section className="mb-5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Bot className="size-3.5 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">Apps</h2>
             </div>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+              {apps.length}
+            </span>
           </div>
-        )}
+          <Button type="button" size="sm" className="gap-1.5" onClick={() => setShowCreateForm(true)}>
+            <Plus className="size-3.5" />
+            New App
+          </Button>
+        </section>
 
-        {/* Apps Grid */}
-        {appsData?.items && appsData.items.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {appsData.items.map((app) => (
-              <div
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : apps.length > 0 ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {apps.map((app) => (
+              <article
                 key={app.id}
-                className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 hover:shadow-lg dark:hover:shadow-gray-900/50 transition-shadow"
+                className={cn(
+                  'rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:bg-muted/20',
+                  currentAppId === app.id && 'ring-1 ring-primary/30',
+                )}
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                      {app.app_code}
-                    </h3>
-                    <span
-                      className={`inline-block px-2 py-1 text-xs rounded ${
-                        app.enabled
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-400'
-                      }`}
-                    >
-                      {app.enabled ? '已启用' : '已禁用'}
-                    </span>
+                <div className="flex items-start gap-3">
+                  <span
+                    className={cn(
+                      'mt-1 size-2 rounded-full shrink-0',
+                      app.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/30',
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate font-mono text-sm font-semibold">{app.app_code}</h3>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant={app.enabled ? 'default' : 'secondary'} className="gap-1 px-2 py-0 text-[10px]">
+                        {app.enabled ? <CheckCircle2 className="size-3" /> : <Circle className="size-3" />}
+                        {app.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                      {(app.executor_code || app.executor_id) && (
+                        <Badge variant="outline" className="gap-1 px-2 py-0 text-[10px] font-mono text-muted-foreground">
+                          <Cpu className="size-3" />
+                          {app.executor_code || app.executor_id}
+                        </Badge>
+                      )}
+                      <Badge variant="secondary" className="px-2 py-0 text-[10px] font-mono">
+                        v{app.version}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
 
-                <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 space-y-1">
-                  <p>ID: {app.id}</p>
-                  <p>版本: v{app.version}</p>
-                  <p className="text-xs">
-                    创建于: {new Date(app.created_at).toLocaleDateString()}
-                  </p>
+                <div className="mt-4 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <CalendarClock className="size-3.5" />
+                  <span>{formatRelativeTime(app.created_at)}</span>
+                  <span className="ml-auto max-w-36 truncate font-mono" title={app.id}>
+                    {app.id}
+                  </span>
                 </div>
 
-                <div className="flex gap-2">
-                  <button
+                <div className="mt-4 flex gap-2 border-t border-border/40 pt-3">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="flex-1 gap-1.5"
                     onClick={() => handleStartChat(app.id, app.app_code)}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
                   >
-                    开始对话
-                  </button>
-                  <button
-                      onClick={() => handleDeleteApp(app.id, app.app_code)}
+                    <ExternalLink className="size-3.5" />
+                    Start Chat
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
                     disabled={deleteAppMutation.isPending}
-                    className="px-4 py-2 border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 text-sm rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                    onClick={() => handleDeleteApp(app.id, app.app_code)}
                   >
-                    删除
-                  </button>
+                    <Trash2 className="size-3.5" />
+                    <span className="sr-only">Delete {app.app_code}</span>
+                  </Button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         ) : (
-          <div className="text-center py-12">
-            <div className="text-gray-400 dark:text-gray-600 mb-4">
-              <svg
-                className="mx-auto h-12 w-12"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-                />
-              </svg>
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-1">
-              还没有 App
-            </h3>
-            <p className="text-gray-500 dark:text-gray-400 mb-4">创建你的第一个 App 开始对话吧</p>
-            <button
-              onClick={() => setShowCreateForm(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              创建 App
-            </button>
+          <div className="rounded-xl border border-dashed border-border py-16 text-center">
+            <Bot className="mx-auto mb-3 size-8 text-muted-foreground/30" />
+            <h3 className="text-sm font-semibold">No Apps Yet</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Create an app to start a chat workflow.</p>
+            <Button type="button" size="sm" className="mt-4 gap-1.5" onClick={() => setShowCreateForm(true)}>
+              <Plus className="size-3.5" />
+              New App
+            </Button>
           </div>
         )}
 
-        {/* Pagination */}
         {appsData && appsData.total > appsData.page_size && (
-          <div className="mt-8 flex justify-center">
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              显示 {appsData.items.length} / {appsData.total} 个 Apps
-            </div>
-          </div>
+          <p className="mt-8 text-center text-sm text-muted-foreground">
+            Showing {appsData.items.length} of {appsData.total} apps
+          </p>
         )}
-      </div>
+      </main>
+
+      <Dialog open={showCreateForm} onOpenChange={(open) => { if (!open) resetCreateForm(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create App</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateApp} className="space-y-4">
+            <div className="space-y-1.5">
+              <label htmlFor="app-code" className="text-sm font-medium">
+                App Code
+              </label>
+              <input
+                id="app-code"
+                name="app_code"
+                type="text"
+                value={appCode}
+                onChange={(e) => setAppCode(e.target.value)}
+                placeholder="example-agent"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Use letters, numbers, and hyphens.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="executor-code" className="text-sm font-medium">
+                Executor
+              </label>
+              <select
+                id="executor-code"
+                name="executor_code"
+                value={executorCode}
+                onChange={(e) => setExecutorCode(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              >
+                {!templates ? (
+                  <option value="" disabled>Loading executors…</option>
+                ) : templates.length === 0 ? (
+                  <option value="" disabled>No executors available</option>
+                ) : (
+                  <>
+                    <option value="">Select an executor</option>
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.executor_code}>
+                        {template.executor_name || template.executor_code}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
+
+            {formError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {formError}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={resetCreateForm}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createAppMutation.isPending || !appCode.trim()}>
+                {createAppMutation.isPending ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  'Create App'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

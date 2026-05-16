@@ -20,7 +20,7 @@ export function ThinkingBlock({ content, defaultCollapsed = false }: { content: 
         className="w-full flex items-center gap-2 px-3 py-2 text-left bg-muted/50 hover:bg-muted/70 text-muted-foreground text-xs font-medium transition-colors"
       >
         {expanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
-        <span className="text-muted-foreground/70">Thinking...</span>
+        <span className="text-muted-foreground/70">Thinking…</span>
         {!expanded && <span className="ml-auto text-[10px] opacity-50">expand</span>}
       </button>
       {expanded && <div className="px-3 py-2 text-xs text-muted-foreground/80 whitespace-pre-wrap leading-relaxed border-t border-border/40">{text}</div>}
@@ -32,11 +32,11 @@ export function ThinkingBlock({ content, defaultCollapsed = false }: { content: 
 
 function StatusBadge({ status }: { status: ToolCallState['status'] }) {
   const styles = {
-    pending: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
-    completed: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
-    error: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
+    pending: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    completed: 'bg-primary/10 text-primary',
+    error: 'bg-destructive/10 text-destructive',
   } as const;
-  const dots = { pending: 'bg-amber-500 animate-pulse', completed: 'bg-emerald-500', error: 'bg-red-500' } as const;
+  const dots = { pending: 'bg-amber-500 animate-pulse', completed: 'bg-primary', error: 'bg-destructive' } as const;
   const labels = { pending: 'Running', completed: 'Done', error: 'Failed' } as const;
   const s = status === 'error' ? 'error' : status;
 
@@ -176,18 +176,18 @@ export function QueryCard({ query, onRespond }: { query: AgentQueryState; onResp
   };
 
   return (
-    <div className="rounded-lg border border-indigo-300 dark:border-indigo-700 overflow-hidden bg-indigo-50 dark:bg-indigo-900/20">
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-indigo-200 dark:border-indigo-700/50">
-        <MessageCircleQuestion className="size-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
-        <span className="text-sm font-semibold text-indigo-800 dark:text-indigo-200 flex-1">Agent is asking a question</span>
-        <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+    <div className="rounded-lg border border-primary/25 bg-card overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-primary/5">
+        <MessageCircleQuestion className="size-4 text-primary shrink-0" />
+        <span className="text-sm font-semibold text-foreground flex-1">Agent is asking a question</span>
+        <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
       </div>
       <div className="px-3 py-3 space-y-3">
-        <p className="text-sm text-indigo-900 dark:text-indigo-100">{query.question}</p>
+        <p className="text-sm text-foreground">{query.question}</p>
         <textarea
-          className="w-full rounded-md border border-indigo-200 dark:border-indigo-700 bg-white dark:bg-indigo-950/40 text-sm text-foreground px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 placeholder:text-muted-foreground"
+          className="w-full rounded-md border border-input bg-background text-sm text-foreground px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 placeholder:text-muted-foreground"
           rows={3}
-          placeholder="Type your answer..."
+          placeholder="Type your answer…"
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
           onKeyDown={(e) => {
@@ -195,7 +195,7 @@ export function QueryCard({ query, onRespond }: { query: AgentQueryState; onResp
           }}
         />
         <div className="flex justify-end">
-          <Button type="button" onClick={handleSubmit} disabled={!answer.trim()} size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+          <Button type="button" onClick={handleSubmit} disabled={!answer.trim()} size="sm">
             Submit
           </Button>
         </div>
@@ -209,19 +209,19 @@ export function QueryCard({ query, onRespond }: { query: AgentQueryState; onResp
 export function ContextUsageCard({ usage }: { usage: ContextUsageState }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-blue-200 dark:border-blue-800 overflow-hidden">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
-        <BookOpen className="size-4 text-blue-500 dark:text-blue-400 shrink-0" />
-        <span className="text-sm font-medium text-blue-800 dark:text-blue-200 flex-1 truncate">Using {usage.context_type}: {usage.context_name}</span>
-        {usage.results_count != null && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-800/40 text-blue-700 dark:text-blue-300">{usage.results_count} results</span>}
-        {open ? <ChevronDown className="size-4 text-blue-400 shrink-0" /> : <ChevronRight className="size-4 text-blue-400 shrink-0" />}
+    <div className="rounded-lg border border-border overflow-hidden bg-card">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left bg-muted/40 hover:bg-muted/70 transition-colors">
+        <BookOpen className="size-4 text-primary shrink-0" />
+        <span className="text-sm font-medium text-foreground flex-1 truncate">Using {usage.context_type}: {usage.context_name}</span>
+        {usage.results_count != null && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">{usage.results_count} results</span>}
+        {open ? <ChevronDown className="size-4 text-muted-foreground shrink-0" /> : <ChevronRight className="size-4 text-muted-foreground shrink-0" />}
       </button>
       {open && (
-        <div className="px-3 py-2 space-y-2 border-t border-blue-200 dark:border-blue-800">
-          {usage.query && <div><p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide">Query</p><p className="mt-1 text-xs text-blue-700 dark:text-blue-300">{usage.query}</p></div>}
+        <div className="px-3 py-2 space-y-2 border-t border-border">
+          {usage.query && <div><p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Query</p><p className="mt-1 text-xs text-foreground/80">{usage.query}</p></div>}
           {usage.details && Object.keys(usage.details).length > 0 && (
-            <div><p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide">Details</p>
-            <pre className="mt-1 text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(usage.details, null, 2)}</pre></div>
+            <div><p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Details</p>
+            <pre className="mt-1 text-xs text-foreground/80 bg-muted rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(usage.details, null, 2)}</pre></div>
           )}
         </div>
       )}
@@ -258,33 +258,33 @@ export function OutcomeCard({
   };
 
   return (
-    <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 overflow-hidden">
-      <div className="w-full flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
+    <div className="rounded-lg border border-border overflow-hidden bg-card">
+      <div className="w-full flex items-center gap-2 px-3 py-2 bg-muted/40 hover:bg-muted/70 transition-colors">
         <button type="button" onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 flex items-center gap-2 text-left">
-          <Package className="size-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-          <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200 flex-1 truncate">Produced {outcome.outcome_type}: {outcome.outcome_name}</span>
+          <Package className="size-4 text-primary shrink-0" />
+          <span className="text-sm font-medium text-foreground flex-1 truncate">Produced {outcome.outcome_type}: {outcome.outcome_name}</span>
         </button>
         {canDownload && (
           <button
             type="button"
             onClick={handleDownload}
             disabled={downloading}
-            className="size-7 inline-flex items-center justify-center rounded-md text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 transition-colors"
+            className="size-7 inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground transition-colors"
             title="Download artifact"
           >
             {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
           </button>
         )}
-        <button type="button" onClick={() => setOpen((v) => !v)} className="size-6 inline-flex items-center justify-center">
-          {open ? <ChevronDown className="size-4 text-emerald-400 shrink-0" /> : <ChevronRight className="size-4 text-emerald-400 shrink-0" />}
+        <button type="button" onClick={() => setOpen((v) => !v)} className="size-6 inline-flex items-center justify-center text-muted-foreground">
+          {open ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
         </button>
       </div>
       {open && (
-        <div className="px-3 py-2 space-y-2 border-t border-emerald-200 dark:border-emerald-800">
-          {outcome.summary && <div><p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">Summary</p><p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">{outcome.summary}</p></div>}
+        <div className="px-3 py-2 space-y-2 border-t border-border">
+          {outcome.summary && <div><p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Summary</p><p className="mt-1 text-xs text-foreground/80">{outcome.summary}</p></div>}
           {outcome.details && Object.keys(outcome.details).length > 0 && (
-            <div><p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">Details</p>
-            <pre className="mt-1 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/30 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(outcome.details, null, 2)}</pre></div>
+            <div><p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Details</p>
+            <pre className="mt-1 text-xs text-foreground/80 bg-muted rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(outcome.details, null, 2)}</pre></div>
           )}
         </div>
       )}

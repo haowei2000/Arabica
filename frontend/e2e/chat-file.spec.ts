@@ -6,11 +6,18 @@ const RUN_ID = '22222222-2222-2222-2222-222222222222';
 const FILE_NAME = 'chat-file-browser-note.txt';
 const CONTEXT_PATH = `/chat/uploads/${CONTEXT_ID}/${FILE_NAME}`;
 
+type RunStartBody = {
+  payload?: {
+    message?: string;
+    attachments?: Array<{ path?: string }>;
+  };
+};
+
 test('chat file selection, preview, upload, send, and remote preview', async ({ page }) => {
   const captured = {
     uploadSeen: false,
     uploadHadFile: false,
-    runStartBody: undefined as any,
+    runStartBody: undefined as RunStartBody | undefined,
     downloadSeen: false,
   };
 

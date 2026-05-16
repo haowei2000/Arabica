@@ -139,9 +139,9 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
                   <p className="text-sm font-semibold font-mono leading-snug flex-1 min-w-0 truncate">{app.app_code}</p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {app.executor_id && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/50 font-mono">
-                      {app.executor_id}
+                  {(app.executor_code || app.executor_id) && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">
+                      {app.executor_code || app.executor_id}
                     </span>
                   )}
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
@@ -171,7 +171,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
                 <span className={cn('size-2 rounded-full shrink-0', app.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
               );
               const executorChip = app.executor_code ? (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/50 shrink-0 font-mono">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 shrink-0 font-mono">
                   {app.executor_code}
                 </span>
               ) : null;
@@ -276,32 +276,38 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
             <h1 className="text-base font-bold text-foreground tracking-tight">AI Agent Platform</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => { resetChat(); navigate('/app'); }}
-              className="h-9 px-4 text-sm font-medium text-muted-foreground rounded-xl hover:bg-muted hover:text-foreground transition-all flex items-center gap-2"
+              className="h-9 rounded-xl text-muted-foreground hover:text-foreground"
               title="Open Workspaces"
             >
               <FolderKanban className="size-4" />
               <span className="hidden sm:inline">Workspaces</span>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={toggleTheme}
-              className="size-9 flex items-center justify-center rounded-xl hover:bg-muted transition-all"
+              className="size-9 rounded-xl text-muted-foreground hover:text-foreground"
               title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
             >
               {theme === 'dark'
-                ? <Sun className="size-4.5 text-muted-foreground" />
-                : <Moon className="size-4.5 text-muted-foreground" />}
-            </button>
-            <button
+                ? <Sun className="size-4.5" />
+                : <Moon className="size-4.5" />}
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={handleLogout}
-              className="h-9 px-4 text-sm font-medium text-muted-foreground rounded-xl hover:bg-muted hover:text-foreground transition-all"
+              className="h-9 rounded-xl text-muted-foreground hover:text-foreground"
             >
               Logout
-            </button>
+            </Button>
           </div>
         </div>
       </header>
@@ -372,7 +378,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
                 </SelectTrigger>
                 <SelectContent>
                   {!templatesData ? (
-                    <SelectItem value="_loading" disabled>Loading...</SelectItem>
+                    <SelectItem value="_loading" disabled>Loading…</SelectItem>
                   ) : templatesData.length === 0 ? (
                     <SelectItem value="_none" disabled>No executors available</SelectItem>
                   ) : (
@@ -396,7 +402,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
               Cancel
             </Button>
             <Button type="submit" form="create-app-form" disabled={createAppMutation.isPending}>
-              {createAppMutation.isPending ? 'Creating...' : 'Create'}
+              {createAppMutation.isPending ? 'Creating…' : 'Create'}
             </Button>
           </DialogFooter>
         </DialogContent>

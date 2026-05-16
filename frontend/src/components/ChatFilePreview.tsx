@@ -46,7 +46,7 @@ type FileVisual = {
   bg: string;
 };
 
-export function formatFileSize(size?: number | null) {
+function formatFileSize(size?: number | null) {
   if (!size) return '';
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
