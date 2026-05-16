@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 import logging
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -17,31 +18,41 @@ from structure.config.factory import get_settings
 from structure.models.events.event import Event
 from structure.models.runs.run import Run
 from structure.schemas.events.event_payloads import EventType
+from structure.services.events.conversation_window import record_conversation_event
+from structure.services.events.event_commands import (
+    command_created_at_ms,
+    executor_command_stream_name,
+)
 
 logger = logging.getLogger(__name__)
 
 _redis_cfg = get_settings().redis
-REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
 REDIS_STREAM_EVENTS_SUFFIX = _redis_cfg.stream_events_suffix
 REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 
-# Event types that workers must consume from the executor stream.
-# Defined at module level to avoid recreating the set on every publish() call.
-_EXECUTOR_STREAM_TYPES: frozenset[str] = frozenset(
+# Event types that workers must consume from the executor command stream.
+_EXECUTOR_COMMAND_TYPES: frozenset[str] = frozenset(
     {
         # External input events that the worker must receive to validate + re-publish
         # as TO_EXECUTOR.
-        EventType.USER_MESSAGE,
-        EventType.USER_FEEDBACK,
-        EventType.TOOL_RESULT,
-        EventType.TOOL_ERROR,
+        str(EventType.USER_MESSAGE),
+        str(EventType.USER_FEEDBACK),
+        str(EventType.TOOL_RESULT),
+        str(EventType.TOOL_ERROR),
         # TOOL_CALL is dispatched directly to handle_tool_call (no TO_EXECUTOR hop).
-        EventType.TOOL_CALL,
+        str(EventType.TOOL_CALL),
         # Infrastructure events handled before executor routing.
-        EventType.RUN_CANCELLED,
+        str(EventType.RUN_CANCELLED),
         # Internal worker-routing event: carries validated events to the executor.
-        EventType.TO_EXECUTOR,
+        str(EventType.TO_EXECUTOR),
+    }
+)
+
+_VOLATILE_REALTIME_TYPES: frozenset[str] = frozenset(
+    {
+        str(EventType.AGENT_TOKEN),
+        str(EventType.AGENT_HEARTBEAT),
     }
 )
 
@@ -84,9 +95,8 @@ class EventPublisher:
             db: SQLAlchemy async session
             redis_client: Redis async client (optional, for real-time broadcasting)
             run_buffer_provider: Callable that returns the in-memory event buffer
-                for a run_id, or None if that run is not being buffered.  When a
-                buffer is returned, events are appended there instead of being
-                written to PostgreSQL — DB sync happens at run completion.
+                for a run_id, or None if that run is not being buffered. Kept for
+                older worker hooks; semantic events now write through immediately.
             run_seq_cursor: Shared Worker-level dict mapping run_id → current max
                 sequence.  Used to keep sequence numbers consistent across the
                 multiple per-dispatch EventPublisher instances that service the
@@ -131,10 +141,197 @@ class EventPublisher:
         Returns:
             Created Event instance
         """
-        # Normalize IDs to strings for storage
-        workspace_id_str = (
-            str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        event_type_str = self._event_type_str(event_type)
+        if event_type_str in _VOLATILE_REALTIME_TYPES:
+            return await self.publish_realtime(
+                event_type=event_type_str,
+                workspace_id=workspace_id,
+                run_id=run_id,
+                user_id=user_id,
+                payload=payload,
+                executor_code=executor_code,
+                parent_event_id=parent_event_id,
+                app_id=app_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+        return await self.publish_durable(
+            event_type=event_type_str,
+            workspace_id=workspace_id,
+            run_id=run_id,
+            user_id=user_id,
+            payload=payload,
+            executor_code=executor_code,
+            parent_event_id=parent_event_id,
+            app_id=app_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            auto_commit=auto_commit,
         )
+
+    async def publish_durable(
+        self,
+        event_type: EventType | str,
+        workspace_id: UUID | str,
+        run_id: UUID | str | None = None,
+        user_id: UUID | str | None = None,
+        payload: dict[str, Any] | None = None,
+        executor_code: str | None = None,
+        parent_event_id: UUID | str | None = None,
+        app_id: UUID | str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        auto_commit: bool = False,
+    ) -> Event:
+        """Persist a semantic event before broadcasting it.
+
+        Durable events are written to PostgreSQL first. When the transaction is
+        committed here, executor-relevant events are then scheduled on the
+        worker command stream. Callers that pass ``auto_commit=False`` are
+        responsible for scheduling after their transaction commits.
+        """
+        event = await self._build_event(
+            event_type=event_type,
+            workspace_id=workspace_id,
+            run_id=run_id,
+            user_id=user_id,
+            payload=payload,
+            executor_code=executor_code,
+            parent_event_id=parent_event_id,
+            app_id=app_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+        write_start = perf_counter()
+        self.db.add(event)
+        await self.db.flush()
+
+        if event.run_id:
+            await self._update_run_sequence(
+                str(event.run_id),
+                event.sequence,
+                auto_commit=False,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+        if auto_commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
+
+        durable_event_write_ms = int((perf_counter() - write_start) * 1000)
+
+        if self.redis:
+            await self._broadcast_to_redis(event)
+            if auto_commit and str(event.event_type) in _EXECUTOR_COMMAND_TYPES:
+                await self.publish_executor_command(event)
+        if auto_commit:
+            record_conversation_event(event)
+
+        logger.debug(
+            "Published durable event %s type=%s workspace=%s run=%s seq=%s "
+            "durable_event_write_ms=%s",
+            event.id,
+            event.event_type,
+            event.workspace_id,
+            event.run_id,
+            event.sequence,
+            durable_event_write_ms,
+        )
+        return event
+
+    async def publish_realtime(
+        self,
+        event_type: EventType | str,
+        workspace_id: UUID | str,
+        run_id: UUID | str | None = None,
+        user_id: UUID | str | None = None,
+        payload: dict[str, Any] | None = None,
+        executor_code: str | None = None,
+        parent_event_id: UUID | str | None = None,
+        app_id: UUID | str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> Event:
+        """Publish a volatile realtime event to Redis only."""
+        event = await self._build_event(
+            event_type=event_type,
+            workspace_id=workspace_id,
+            run_id=run_id,
+            user_id=user_id,
+            payload=payload,
+            executor_code=executor_code,
+            parent_event_id=parent_event_id,
+            app_id=app_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        if self.redis:
+            await self._broadcast_to_redis(event)
+        logger.debug(
+            "Published realtime event %s type=%s workspace=%s run=%s seq=%s",
+            event.id,
+            event.event_type,
+            event.workspace_id,
+            event.run_id,
+            event.sequence,
+        )
+        return event
+
+    async def publish_executor_command(
+        self,
+        event: Event,
+        *,
+        executor_code: str | None = None,
+    ) -> None:
+        """Schedule a durable event for worker execution."""
+        if not self.redis or not event.run_id:
+            return
+
+        workspace_id = str(event.workspace_id)
+        stream_name = executor_command_stream_name(workspace_id)
+        fields = {
+            "event_id": str(event.id),
+            "event_type": str(event.event_type),
+            "workspace_id": workspace_id,
+            "run_id": str(event.run_id),
+            "executor_code": executor_code or event.executor_code or "",
+            "created_at_ms": command_created_at_ms(),
+        }
+        try:
+            await self.redis.xadd(stream_name, fields, maxlen=10000, approximate=True)
+            logger.debug(
+                "Queued executor command event=%s type=%s stream=%s",
+                event.id,
+                event.event_type,
+                stream_name,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to queue executor command event=%s stream=%s: %s",
+                event.id,
+                stream_name,
+                exc,
+                exc_info=True,
+            )
+
+    async def _build_event(
+        self,
+        event_type: EventType | str,
+        workspace_id: UUID | str,
+        run_id: UUID | str | None = None,
+        user_id: UUID | str | None = None,
+        payload: dict[str, Any] | None = None,
+        executor_code: str | None = None,
+        parent_event_id: UUID | str | None = None,
+        app_id: UUID | str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> Event:
+        workspace_id_str = str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
         run_id_str = str(run_id) if isinstance(run_id, UUID) else run_id
         app_id_str = str(app_id) if isinstance(app_id, UUID) else app_id
         user_id_str = str(user_id) if isinstance(user_id, UUID) else user_id
@@ -143,26 +340,17 @@ class EventPublisher:
             if isinstance(parent_event_id, UUID)
             else parent_event_id
         )
-        event_type_str = (
-            event_type.value if isinstance(event_type, EventType) else event_type
-        )
-
-        # Get the next sequence number for this run (or workspace if no run)
         sequence = await self._get_next_sequence(workspace_id_str, run_id_str)
 
-        jsonable_payload = _to_jsonable(payload)
-
-        # Build the event with explicit Python-side defaults so the object is
-        # fully usable (including .id) without a DB flush or refresh.
-        event = Event(
+        return Event(
             id=uuid4(),
             created_at=datetime.now(UTC),
-            event_type=event_type_str,
+            event_type=self._event_type_str(event_type),
             workspace_id=workspace_id_str,
             run_id=run_id_str,
             app_id=app_id_str,
             user_id=user_id_str,
-            payload=jsonable_payload,
+            payload=_to_jsonable(payload),
             sequence=sequence,
             parent_event_id=parent_event_id_str,
             executor_code=executor_code,
@@ -170,44 +358,9 @@ class EventPublisher:
             output_tokens=output_tokens,
         )
 
-        # Check if this run is in buffered mode (Redis-only during execution).
-        buffer = (
-            self._run_buffer_provider(run_id_str)
-            if (self._run_buffer_provider and run_id_str)
-            else None
-        )
-
-        if buffer is not None:
-            # Buffered mode: hold in memory, broadcast to Redis for real-time SSE.
-            # The buffer is flushed to DB atomically when the run completes/fails.
-            buffer.append(event)
-            if self.redis:
-                await self._broadcast_to_redis(event)
-        else:
-            # Normal mode: persist to PostgreSQL immediately.
-            self.db.add(event)
-            if auto_commit:
-                await self.db.commit()
-            else:
-                await self.db.flush()
-
-            if run_id_str:
-                await self._update_run_sequence(
-                    run_id_str,
-                    sequence,
-                    auto_commit,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-            if self.redis:
-                await self._broadcast_to_redis(event)
-
-        logger.debug(
-            f"Published event {event.id} type={event_type_str} "
-            f"workspace={workspace_id_str} run={run_id_str} seq={sequence}"
-        )
-
-        return event
+    @staticmethod
+    def _event_type_str(event_type: EventType | str) -> str:
+        return event_type.value if isinstance(event_type, EventType) else str(event_type)
 
     async def publish_batch(
         self,
@@ -240,6 +393,10 @@ class EventPublisher:
 
         if auto_commit:
             await self.db.commit()
+            for event in created_events:
+                if self.redis and str(event.event_type) in _EXECUTOR_COMMAND_TYPES:
+                    await self.publish_executor_command(event)
+                record_conversation_event(event)
         else:
             await self.db.flush()
 
@@ -333,7 +490,7 @@ class EventPublisher:
 
         Streams written:
           - run:{id}:events       – SSE clients subscribed to this run
-          - workspace:{id}:events – SSE clients subscribed to the workspace / worker consumers
+          - workspace:{id}:events – SSE clients subscribed to the workspace
         """
         if not self.redis:
             return
@@ -357,5 +514,9 @@ class EventPublisher:
                 f"Broadcast event {event.event_type} workspace={workspace_id} run={event.run_id}"
             )
         except Exception as e:
-            logger.error(f"Failed to broadcast event {event.id} to Redis: {e}")
+            logger.error(
+                "Failed to broadcast event %s to Redis: %s redis_publish_error_count=1",
+                event.id,
+                e,
+            )
             # Don't fail the whole publication if Redis broadcast fails

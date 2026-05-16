@@ -1,11 +1,19 @@
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
+from structure.services.workspace_context.workspace_context_read_model import (
+    WorkspaceContextReadModel,
+)
 from structure.services.workspace_context.workspace_context_service import (
     WorkspaceContextService,
+)
+from structure.utils.workspace_context_cache import (
+    clear_workspace_context_cache,
+    get_cached_workspace_context,
 )
 
 
@@ -65,3 +73,26 @@ async def test_list_includes_workspace_context_rows():
             "glance": "project codename",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_cached_workspace_context_uses_versioned_key(monkeypatch):
+    clear_workspace_context_cache()
+    workspace_id = str(uuid4())
+    version_result = MagicMock()
+    version_result.scalar_one_or_none.return_value = 7
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=version_result)
+
+    async def fake_load(self):
+        self._loaded = True
+        return []
+
+    monkeypatch.setattr(WorkspaceContextReadModel, "load", fake_load)
+
+    first = await get_cached_workspace_context(session, workspace_id)
+    second = await get_cached_workspace_context(session, workspace_id)
+
+    assert first is second
+    assert first.context_version == 7
+    session.execute.assert_awaited_once()

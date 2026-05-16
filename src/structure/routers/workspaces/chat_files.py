@@ -33,7 +33,10 @@ from structure.schemas.workspaces.chat_file import (
     ChatFileUploadResponse,
 )
 from structure.services.context.knowledge.parser import DocumentParser
-from structure.utils.workspace_context_cache import invalidate_workspace_context_cache
+from structure.utils.workspace_context_cache import (
+    bump_workspace_context_version,
+    invalidate_workspace_context_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +254,7 @@ async def upload_chat_files(
         db.add(row)
         rows.append(row)
 
+    await bump_workspace_context_version(db, workspace_id)
     await db.commit()
     for row in rows:
         await db.refresh(row)

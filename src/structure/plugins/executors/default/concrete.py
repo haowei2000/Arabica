@@ -40,6 +40,7 @@ from collections.abc import AsyncGenerator
 import json
 import logging
 import re
+from time import perf_counter
 from typing import Any, ClassVar
 
 from structure.core.interfaces import (
@@ -1085,39 +1086,15 @@ class DefaultExecutor(Executor):
 
             async with get_session("structure") as db:
                 if global_scope and self.workspace_id:
-                    from uuid import UUID
-
-                    from structure.core.enums import EventType as ET
-
-                    # Only fetch conversation-relevant event types so the
-                    # limit is not consumed by noise events.
-                    conv_types = [
-                        str(ET.USER_MESSAGE),
-                        str(ET.AGENT_MESSAGE),
-                        str(ET.TOOL_RESULT),
-                        str(ET.TOOL_ERROR),
-                        str(ET.USER_FEEDBACK),
-                        str(ET.TOOL_CALL),
-                    ]
-                    # Fetch the most recent N workspace events (DESC), then
-                    # reverse so the final list is in chronological order.
-                    # Event.sequence is per-run, not workspace-global.
-                    stmt = (
-                        select(EventModel)
-                        .where(
-                            EventModel.workspace_id == UUID(self.workspace_id),
-                            EventModel.event_type.in_(conv_types),
-                            EventModel.is_archived.is_(False),
-                        )
-                        .order_by(
-                            EventModel.created_at.desc(),
-                            EventModel.sequence.desc(),
-                        )
-                        .limit(limit)
+                    from structure.services.events.conversation_window import (
+                        get_conversation_window,
                     )
-                    result = await db.execute(stmt)
-                    rows = list(result.scalars().all())
-                    rows.reverse()
+
+                    rows = await get_conversation_window(
+                        db,
+                        self.workspace_id,
+                        limit=limit,
+                    )
                 else:
                     if not self.run_id:
                         return []
@@ -1198,6 +1175,8 @@ class DefaultExecutor(Executor):
                 _iteration,
                 self.model_name,
             )
+            llm_call_started = perf_counter()
+            saw_first_token = False
             stream = self.strategy.call_llm_stream(
                 messages,
                 active_tools_info,
@@ -1214,6 +1193,15 @@ class DefaultExecutor(Executor):
                 token: str = item
                 if not token:
                     continue
+                if not saw_first_token:
+                    saw_first_token = True
+                    logger.info(
+                        "llm_first_token_ms=%s run=%s workspace=%s model=%s",
+                        int((perf_counter() - llm_call_started) * 1000),
+                        self.run_id,
+                        self.workspace_id,
+                        self.model_name,
+                    )
 
                 # --- thinking-block detection ---------------------
                 if in_thinking is None:

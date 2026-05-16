@@ -59,7 +59,7 @@ class RedisConfig(BaseModel):
     )
     worker_max_concurrent_events: PositiveInt = Field(
         default=32,
-        description="Maximum number of workspace stream events processed concurrently per worker",
+        description="Maximum number of executor commands processed concurrently per worker",
     )
 
     # SSE event type names

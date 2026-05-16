@@ -1,6 +1,11 @@
 # structure/schemas/workspace/__init__.py
 """Workspace schemas package."""
 
+from structure.schemas.workspaces.chat_file import (
+    ChatFileAttachment,
+    ChatFileResponse,
+    ChatFileUploadResponse,
+)
 from structure.schemas.workspaces.workspace import (
     InvitationStatus,
     MemberRole,
@@ -19,11 +24,6 @@ from structure.schemas.workspaces.workspace_context import (
     CopyContextsResponse,
     WorkspaceContextListResponse,
     WorkspaceContextResponse,
-)
-from structure.schemas.workspaces.chat_file import (
-    ChatFileAttachment,
-    ChatFileResponse,
-    ChatFileUploadResponse,
 )
 
 __all__ = [
