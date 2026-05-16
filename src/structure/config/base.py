@@ -10,6 +10,7 @@ from structure.config.components.email import EmailConfig
 from structure.config.components.ollama import OllamaConfig
 from structure.config.components.openai import OpenAIConfig
 from structure.config.components.postgres import PostgresConfig
+from structure.config.components.quota import QuotaConfig
 from structure.config.components.redis import RedisConfig
 from structure.config.components.rustfs import RustfsConfig
 
@@ -62,6 +63,7 @@ class AppSettings(BaseSettings):
     redis: RedisConfig
     auth: AuthConfig
     email: EmailConfig = Field(default_factory=EmailConfig)
+    quota: QuotaConfig = Field(default_factory=QuotaConfig)
     ollama: OllamaConfig | None = None
     openai: OpenAIConfig | None = None
     rustfs: RustfsConfig

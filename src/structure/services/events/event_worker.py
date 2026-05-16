@@ -849,6 +849,13 @@ class Worker:
                         output_tokens=Run.output_tokens + total_output,
                     )
                 )
+                from structure.services.auth.quota_service import QuotaService
+
+                await QuotaService(ctx.db).consume_run_tokens(
+                    run_id_str,
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                )
 
             # ── Finalize run ─────────────────────────────────────────────────
             logger.info("_handle_to_executor: completing run %s", run_id)

@@ -380,6 +380,10 @@ class ApplicationBootstrap:
                 session.add(admin_user)
                 await session.flush()
 
+                from structure.services.auth.quota_service import QuotaService
+
+                await QuotaService(session).ensure_user_quota(admin_user)
+
                 # Update tenant admin ID
                 tenant.admin_id = admin_user.id
                 session.add(tenant)

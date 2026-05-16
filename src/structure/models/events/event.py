@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from structure.core.enums import EventType
+from structure.core.enums.events import EventType
 from structure.extensions.database import get_base
 
 if TYPE_CHECKING:
