@@ -34,8 +34,12 @@ export interface StreamOptions {
 
 interface StreamEventPayload {
   event_type?: string;
-  payload?: Record<string, any> | null;
+  payload?: Record<string, unknown> | null;
   sequence?: number;
+  type?: string;
+  message?: string;
+  input_tokens?: number;
+  output_tokens?: number;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -73,7 +77,16 @@ class StreamService {
       );
 
       if (!startResponse.ok) {
-        throw new Error(`Failed to start run: ${startResponse.status}`);
+        let detail = `Failed to start run: ${startResponse.status}`;
+        try {
+          const body = await startResponse.json();
+          if (typeof body?.detail === 'string') {
+            detail = body.detail;
+          }
+        } catch {
+          // Keep the status-based fallback when the server returns no JSON body.
+        }
+        throw new Error(detail);
       }
 
       const runInfo = await startResponse.json();
@@ -212,12 +225,12 @@ class StreamService {
 
         const eventType = payload?.event_type || eventName;
         const eventPayload = payload?.payload || {};
-        const internalType = (payload as any)?.type as string | undefined;
+        const internalType = payload?.type;
 
         // ── internal / error ──────────────────────────────
         if (eventType === 'error' || internalType === 'error') {
           finished = true;
-          onError(new Error((payload as any)?.message || 'Stream error'));
+          onError(new Error(payload?.message || 'Stream error'));
           return;
         }
         if (internalType === 'keepalive') return;
@@ -247,8 +260,8 @@ class StreamService {
 
         // ── to.executor: token usage summary for the completed run turn ──
         if (eventType === 'to.executor') {
-          const inputTokens = (payload as any)?.input_tokens as number | undefined;
-          const outputTokens = (payload as any)?.output_tokens as number | undefined;
+          const inputTokens = payload?.input_tokens;
+          const outputTokens = payload?.output_tokens;
           if ((inputTokens ?? 0) > 0 || (outputTokens ?? 0) > 0) {
             options.onAgentMessage?.({ inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 });
           }
@@ -354,7 +367,8 @@ class StreamService {
             onComplete();
           } else if (nextState === 'failed') {
             finished = true;
-            onError(new Error(eventPayload?.reason || 'Run failed'));
+            const reason = typeof eventPayload?.reason === 'string' ? eventPayload.reason : 'Run failed';
+            onError(new Error(reason));
           } else if (nextState === 'cancelled') {
             finished = true;
             onComplete();
@@ -364,7 +378,8 @@ class StreamService {
 
         if (eventType === 'run.failed') {
           finished = true;
-          onError(new Error(eventPayload?.error || 'Run failed'));
+          const reason = typeof eventPayload?.error === 'string' ? eventPayload.error : 'Run failed';
+          onError(new Error(reason));
         }
 
         if (eventType === 'run.cancelled' || eventType === 'run.completed') {

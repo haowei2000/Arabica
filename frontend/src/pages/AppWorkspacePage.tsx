@@ -14,6 +14,7 @@ import { useWorkspaces, useCreateWorkspace, useDeleteWorkspace } from '@/hooks/u
 import WorkspaceConsole from '@/components/WorkspaceConsole';
 import WorkspaceCreateModal from '@/components/WorkspaceCreateModal';
 import WorkspaceEditModal from '@/components/WorkspaceEditModal';
+import QuotaMeter from '@/components/QuotaMeter';
 import type { Workspace } from '@/types/workspace';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -127,6 +128,7 @@ export default function AppWorkspacePage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <QuotaMeter />
             <Button
               variant="ghost" size="icon" className="size-8 rounded-xl"
               onClick={() => navigate('/home')} title="Home"

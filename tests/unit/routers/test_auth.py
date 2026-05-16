@@ -9,6 +9,7 @@ from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.extensions.database import get_structure_db
 from structure.routers.auth.auth import get_email_service
+from structure.schemas.auth.user import UserCreate
 from structure.services.auth.auth_service import AuthService
 from tests.unit.routers.conftest import TENANT_ID, make_user
 
@@ -65,6 +66,30 @@ class TestAuthService:
         assert "lower(" in compiled
         assert "auth_user.email" in compiled
         assert "mixed@example.com" in compiled
+
+    @pytest.mark.asyncio
+    async def test_create_user_ensures_default_quota(self):
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+        db.refresh = AsyncMock()
+
+        with patch("structure.services.auth.quota_service.QuotaService") as MockQuota:
+            quota_service = MockQuota.return_value
+            quota_service.ensure_user_quota = AsyncMock()
+
+            user = await AuthService(db).create_user(
+                UserCreate(
+                    username="newuser",
+                    email="new@example.com",
+                    password="securepass",
+                ),
+                TENANT_ID,
+                auto_commit=False,
+            )
+
+        quota_service.ensure_user_quota.assert_awaited_once_with(user)
+        db.commit.assert_not_awaited()
 
 
 # ── /api/auth/register ──────────────────────────────────────────

@@ -11,6 +11,7 @@ from structure.config.factory import get_settings
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
     EventPublisherDep,
+    QuotaServiceDep,
     RunCRUDDep,
     RunStateMachineDep,
     WorkspaceCRUDDep,
@@ -27,6 +28,7 @@ from structure.schemas.runs.run import (
     RunResumeRequest,
     RunStatus,
 )
+from structure.services.auth.quota_service import QuotaExceededError
 
 _redis_cfg = get_settings().redis
 REDIS_RUN_LABEL = _redis_cfg.run_label
@@ -43,6 +45,7 @@ async def create_run(
     run_crud: RunCRUDDep,
     event_publisher: EventPublisherDep,
     state_machine: RunStateMachineDep,
+    quota_service: QuotaServiceDep,
 ):
     """
     Create and start a new run with a user message.
@@ -67,6 +70,14 @@ async def create_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workspace {workspace_id} not found or access denied",
         )
+
+    try:
+        await quota_service.assert_can_start_run(current_user)
+    except QuotaExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(exc),
+        ) from exc
 
     # Determine app_id (from request or workspace default)
     app_id = user_message_event.app_id
