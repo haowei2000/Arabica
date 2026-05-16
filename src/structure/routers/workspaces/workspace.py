@@ -38,6 +38,7 @@ from structure.schemas.workspaces.workspace_context import (
 )
 from structure.services.auth.friend_crud import FriendCRUD
 from structure.services.context.process import copy_contexts_to_workspace
+from structure.utils.workspace_context_cache import bump_workspace_context_version
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -521,8 +522,10 @@ async def copy_contexts_to_workspace_endpoint(
         context_ids=context_uuids,
         created_by=UUID(str(current_user.id)),
         path_prefix=body.path_prefix,
-        auto_commit=True,
+        auto_commit=False,
     )
+    await bump_workspace_context_version(db, workspace_id)
+    await db.commit()
 
     return CopyContextsResponse(
         copied_count=len(created),
@@ -565,6 +568,7 @@ async def remove_workspace_context(
         )
 
     ws_ctx.is_deleted = True
+    await bump_workspace_context_version(db, workspace_id)
     await db.commit()
 
 
@@ -600,6 +604,7 @@ async def reinit_workspace_context(
         )
         .values(is_deleted=True)
     )
+    await bump_workspace_context_version(db, workspace_id)
     await db.commit()
 
     # Re-populate WorkspaceContext table (for the workspace context UI)
@@ -610,8 +615,10 @@ async def reinit_workspace_context(
         workspace_id=UUID(workspace_id),
         user_id=UUID(str(current_user.id)),
         created_by=UUID(str(current_user.id)),
-        auto_commit=True,
+        auto_commit=False,
     )
+    await bump_workspace_context_version(db, workspace_id)
+    await db.commit()
 
     return {"success": True, "count": len(ws_contexts)}
 

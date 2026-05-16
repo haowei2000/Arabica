@@ -1,8 +1,15 @@
 import { format, formatDistanceToNow } from 'date-fns';
-import { zhCN } from 'date-fns/locale';
+import { enUS, zhCN } from 'date-fns/locale';
+
+function getDateLocale() {
+  if (typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh')) {
+    return zhCN;
+  }
+  return enUS;
+}
 
 /**
- * 格式化日期为可读字符串
+ * Format a date as a readable timestamp.
  */
 export function formatDate(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
@@ -10,15 +17,15 @@ export function formatDate(date: string | Date): string {
 }
 
 /**
- * 格式化为相对时间（例如：3 分钟前）
+ * Format relative time in the user's browser language.
  */
 export function formatRelativeTime(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
-  return formatDistanceToNow(d, { addSuffix: true, locale: zhCN });
+  return formatDistanceToNow(d, { addSuffix: true, locale: getDateLocale() });
 }
 
 /**
- * 格式化为简短时间（例如：14:30）
+ * Format a short time, for example 14:30.
  */
 export function formatTime(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;

@@ -55,6 +55,12 @@ export const API_ENDPOINTS = {
       CONTEXT_REINIT: (workspaceId: string) => `/workspaces/${workspaceId}/context/reinit`,
   },
 
+  CHAT_FILES: {
+      UPLOAD: (workspaceId: string) => `/workspaces/${workspaceId}/chat-files`,
+      DOWNLOAD: (workspaceId: string, contextId: string) =>
+          `/workspaces/${workspaceId}/chat-files/${contextId}/download`,
+  },
+
   // 对话管理
   CONVERSATIONS: {
       LIST: '/conversations/query',

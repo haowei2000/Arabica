@@ -106,6 +106,13 @@ class Workspace(Base):
     # Denormalized counts for performance
     run_count: Mapped[int] = mapped_column(Integer, default=0, comment="运行次数")
     member_count: Mapped[int] = mapped_column(Integer, default=1, comment="成员数量")
+    context_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+        comment="工作空间上下文缓存版本",
+    )
 
     # Migration support - link to legacy Conversation
     legacy_conversation_id: Mapped[UUID | None] = mapped_column(

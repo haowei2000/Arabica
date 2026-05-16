@@ -99,6 +99,7 @@ def mock_state_machine():
 def mock_event_publisher():
     pub = AsyncMock()
     pub.publish = AsyncMock()
+    pub.publish_durable = AsyncMock()
     return pub
 
 

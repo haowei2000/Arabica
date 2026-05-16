@@ -126,6 +126,11 @@ async def _sync_path_to_workspaces(
                     ctx.tags = tags
                     ctx.meta = {**meta, "workspace_id": ws_id}
 
+                from structure.utils.workspace_context_cache import (
+                    bump_workspace_context_version,
+                )
+
+                await bump_workspace_context_version(session, ws_id)
                 await session.commit()
             dirty.append(ws_id)
         except Exception as exc:
@@ -163,5 +168,14 @@ async def _update_workspace_contexts(
         row.glance = glance
         if content is not None:
             row.content = content
+
+    if rows:
+        from structure.utils.workspace_context_cache import (
+            bump_workspace_context_version,
+        )
+
+        workspace_ids = {str(row.source_id) for row in rows if row.source_id}
+        for workspace_id in workspace_ids:
+            await bump_workspace_context_version(session, workspace_id)
 
     return len(rows)
