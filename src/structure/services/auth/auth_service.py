@@ -125,6 +125,11 @@ class AuthService:
 
         # Add to database
         self.db.add(user)
+        await self.db.flush()
+
+        from structure.services.auth.quota_service import QuotaService
+
+        await QuotaService(self.db).ensure_user_quota(user)
 
         if auto_commit:
             await self.db.commit()

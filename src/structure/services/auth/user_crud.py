@@ -53,6 +53,11 @@ class UserCRUD:
         )
 
         self.db_session.add(user)
+        await self.db_session.flush()
+
+        from structure.services.auth.quota_service import QuotaService
+
+        await QuotaService(self.db_session).ensure_user_quota(user)
 
         if auto_commit:
             await self.db_session.commit()

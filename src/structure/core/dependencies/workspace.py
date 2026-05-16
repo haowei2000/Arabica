@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.extensions.database import get_structure_db
 from structure.middleware.cache_middleware import get_redis_client
+from structure.services.auth.quota_service import QuotaService
 from structure.services.events.event_consumer import EventConsumer, EventReplayer
 from structure.services.events.event_crud import EventCRUD
 from structure.services.events.event_publisher import EventPublisher
@@ -63,6 +64,13 @@ async def get_run_crud(
         RunCRUD instance
     """
     return RunCRUD(db)
+
+
+async def get_quota_service(
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+) -> QuotaService:
+    """Dependency to get QuotaService instance."""
+    return QuotaService(db)
 
 
 async def get_event_publisher(
@@ -145,6 +153,7 @@ WorkspaceMemberCRUDDep = Annotated[
     WorkspaceMemberCRUD, Depends(get_workspace_member_crud)
 ]
 RunCRUDDep = Annotated[RunCRUD, Depends(get_run_crud)]
+QuotaServiceDep = Annotated[QuotaService, Depends(get_quota_service)]
 EventCRUDDep = Annotated[EventCRUD, Depends(get_event_crud)]
 EventPublisherDep = Annotated[EventPublisher, Depends(get_event_publisher)]
 EventConsumerDep = Annotated[EventConsumer, Depends(get_event_consumer)]

@@ -11,6 +11,7 @@ from structure.app import app
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
     get_event_publisher,
+    get_quota_service,
     get_run_crud,
     get_run_state_machine,
     get_workspace_crud,
@@ -18,6 +19,7 @@ from structure.core.dependencies.workspace import (
 from structure.core.enums.events import EventType
 from structure.core.enums.runs import RunStatus, TriggerType
 from structure.extensions.database import get_structure_db
+from structure.services.auth.quota_service import QuotaExceededError
 from tests.unit.routers.conftest import (
     RUN_ID,
     USER_ID,
@@ -101,6 +103,13 @@ def mock_event_publisher():
 
 
 @pytest.fixture()
+def mock_quota_service():
+    service = AsyncMock()
+    service.assert_can_start_run = AsyncMock(return_value=None)
+    return service
+
+
+@pytest.fixture()
 def mock_db():
     db = AsyncMock()
     result = MagicMock()
@@ -116,6 +125,7 @@ def client(
     mock_run_crud,
     mock_state_machine,
     mock_event_publisher,
+    mock_quota_service,
     mock_db,
     patch_bootstrap,
 ):
@@ -126,6 +136,7 @@ def client(
     app.dependency_overrides[get_run_crud] = lambda: mock_run_crud
     app.dependency_overrides[get_run_state_machine] = lambda: mock_state_machine
     app.dependency_overrides[get_event_publisher] = lambda: mock_event_publisher
+    app.dependency_overrides[get_quota_service] = lambda: mock_quota_service
 
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
@@ -140,7 +151,7 @@ WS_RUNS = f"/api/workspaces/{WORKSPACE_ID}/runs"
 
 
 class TestCreateRun:
-    def test_create_success(self, client):
+    def test_create_success(self, client, mock_quota_service):
         resp = client.post(
             WS_RUNS,
             json={
@@ -150,6 +161,21 @@ class TestCreateRun:
         )
         assert resp.status_code == 201
         assert resp.json()["id"] == str(RUN_ID)
+        mock_quota_service.assert_can_start_run.assert_awaited_once()
+
+    def test_create_quota_exhausted(self, client, mock_quota_service):
+        mock_quota_service.assert_can_start_run.side_effect = QuotaExceededError(
+            "Free quota exhausted. Add credits to continue."
+        )
+        resp = client.post(
+            WS_RUNS,
+            json={
+                "workspace_id": str(WORKSPACE_ID),
+                "payload": {"message": "Hello"},
+            },
+        )
+        assert resp.status_code == 402
+        assert "Free quota exhausted" in resp.json()["detail"]
 
     def test_create_workspace_not_found(self, client, mock_workspace_crud):
         mock_workspace_crud.get_by_id_and_user.return_value = None

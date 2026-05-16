@@ -16,6 +16,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     """
     from structure.routers.auth.auth import router as auth_router
     from structure.routers.auth.friends import router as friends_router
+    from structure.routers.auth.quota import router as quota_router
 
     # User management
     from structure.routers.auth.users.user_examples import (
@@ -56,6 +57,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (user_examples_router, "/api"),
         (user_management_router, "/api"),
         (friends_router, "/api"),
+        (quota_router, "/api"),
         # Core Features
         (flush_redis_router, "/api"),
         # Agent System

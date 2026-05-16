@@ -15,8 +15,7 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from structure.core.enums import ContextType
-from structure.core.enums.context import ContextScope
+from structure.core.enums.context import ContextScope, ContextType
 from structure.extensions.database import get_base
 
 Base = get_base("structure")
