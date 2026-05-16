@@ -231,6 +231,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           clearStreamingState();
           setIsStreaming(false);
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          queryClient.invalidateQueries({ queryKey: ['quota', 'me'] });
           invalidateWorkspaceQueries();
         },
 
@@ -242,6 +243,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           setIsStreaming(false);
           setStreamError(categorizeError(error));
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          queryClient.invalidateQueries({ queryKey: ['quota', 'me'] });
           invalidateWorkspaceQueries();
         },
       });
@@ -262,6 +264,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
       addOutcome,
       setStreamingTokens,
       setStreamError,
+      addMessage,
       saveStreamingStateAsMessage,
       clearStreamingState,
       incrementWorkspaceRunCount,

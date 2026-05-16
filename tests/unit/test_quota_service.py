@@ -21,17 +21,6 @@ def quota_settings():
         quota=SimpleNamespace(
             enabled=True,
             free_tokens_per_user=100_000,
-            free_tokens_per_verified_email=None,
-            superuser_bypass=True,
-        )
-    )
-
-
-def legacy_quota_settings():
-    return SimpleNamespace(
-        quota=SimpleNamespace(
-            enabled=True,
-            free_tokens_per_verified_email=50_000,
             superuser_bypass=True,
         )
     )
@@ -107,28 +96,6 @@ async def test_ensure_user_quota_tops_up_existing_user_to_default():
     ledger = db.add.call_args.args[0]
     assert ledger.delta_tokens == 75_000
     assert ledger.balance_after == 90_000
-
-
-@pytest.mark.asyncio
-async def test_legacy_verified_email_setting_falls_back_for_grant_amount():
-    db = AsyncMock()
-    db.add = MagicMock()
-    quota = UserQuota(
-        user_id=USER_ID,
-        free_quota_total=0,
-        free_quota_used=0,
-        paid_quota_total=0,
-        paid_quota_used=0,
-    )
-    db.execute.return_value = result_for(quota)
-    user = MagicMock(id=USER_ID, email_verified=False, is_superuser=False)
-
-    updated = await QuotaService(db, legacy_quota_settings()).ensure_user_quota(user)
-
-    assert updated is quota
-    assert quota.free_quota_total == 50_000
-    assert quota.remaining_tokens == 50_000
-
 
 @pytest.mark.asyncio
 async def test_consume_run_tokens_records_usage():
