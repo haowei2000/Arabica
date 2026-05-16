@@ -118,6 +118,9 @@ class Worker:
         # Per-run locks: serialise concurrent process_event calls on the same executor.
         # Safe to share across tasks because asyncio is single-threaded.
         self._executor_locks: dict[UUID, asyncio.Lock] = {}
+        self._dispatch_semaphore = asyncio.Semaphore(
+            get_settings().redis.worker_max_concurrent_events
+        )
 
         self._stuck_detector_task: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
@@ -308,7 +311,7 @@ class Worker:
                     # Each event gets its own task + DB session so that long-running
                     # LLM calls for one run don't block event processing for others.
                     task = asyncio.create_task(
-                        self._dispatch(stream_name, event_id, event_data),
+                        self._dispatch_limited(stream_name, event_id, event_data),
                         name=f"event-{self.consumer_name}-{event_id}",
                     )
                     self._tasks.add(task)
@@ -323,6 +326,13 @@ class Worker:
                 await asyncio.sleep(1)
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
+
+    async def _dispatch_limited(
+        self, stream_name: str, event_id: bytes, event_data: dict
+    ) -> None:
+        """Process an event under the worker-level concurrency cap."""
+        async with self._dispatch_semaphore:
+            await self._dispatch(stream_name, event_id, event_data)
 
     async def _dispatch(
         self, stream_name: str, event_id: bytes, event_data: dict

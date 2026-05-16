@@ -57,6 +57,10 @@ class RedisConfig(BaseModel):
         default="resume_approval",
         description="Redis key suffix for run resume approval",
     )
+    worker_max_concurrent_events: PositiveInt = Field(
+        default=32,
+        description="Maximum number of workspace stream events processed concurrently per worker",
+    )
 
     # SSE event type names
     event_type_keepalive: str = Field(

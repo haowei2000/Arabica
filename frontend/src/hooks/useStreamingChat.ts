@@ -239,7 +239,10 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         },
 
         // ── run status ─────────────────────────────────
-        onStatus: () => {
+        onStatus: (status) => {
+          if (status !== 'finished' && status !== 'failed' && status !== 'cancelled') {
+            return;
+          }
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
           invalidateWorkspaceQueries();
         },

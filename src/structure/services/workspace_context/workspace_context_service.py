@@ -48,6 +48,8 @@ class WorkspaceContextService:
 
         self._contexts: list[Context] = []
         self._workspace_contexts: list[WorkspaceContext] = []
+        self._visible_contexts: list[Context | WorkspaceContext] | None = None
+        self._visible_by_path: dict[str, Context | WorkspaceContext] = {}
         self._loaded = False
 
     async def _ensure_owner_id(self) -> None:
@@ -106,6 +108,7 @@ class WorkspaceContextService:
         )
         workspace_result = await self.session.execute(workspace_stmt)
         self._workspace_contexts = list(workspace_result.scalars().all())
+        self._rebuild_visible_index()
         self._loaded = True
 
         logger.debug(
@@ -126,7 +129,15 @@ class WorkspaceContextService:
 
     def _iter_visible_contexts(self):
         """Yield merged contexts, preferring workspace-local rows by path."""
+        if self._visible_contexts is None:
+            self._rebuild_visible_index()
+        yield from self._visible_contexts or []
+
+    def _rebuild_visible_index(self) -> None:
+        """Build path indexes for hot read_context/list_context paths."""
         seen: set[str] = set()
+        visible: list[Context | WorkspaceContext] = []
+        by_path: dict[str, Context | WorkspaceContext] = {}
         for ctx in (*self._workspace_contexts, *self._contexts):
             if not ctx.path:
                 continue
@@ -134,7 +145,10 @@ class WorkspaceContextService:
             if path in seen:
                 continue
             seen.add(path)
-            yield ctx
+            visible.append(ctx)
+            by_path[path] = ctx
+        self._visible_contexts = visible
+        self._visible_by_path = by_path
 
     # ──────────────────────────────────────────────────────────────
     # Query API
@@ -145,10 +159,10 @@ class WorkspaceContextService:
         await self._ensure_loaded()
         target = self._normalize_path(path)
 
-        for ctx in self._iter_visible_contexts():
-            if self._normalize_path(ctx.path) == target:
-                return {"path": ctx.path, **ctx.disclose(level)}
-        return None
+        if self._visible_contexts is None:
+            self._rebuild_visible_index()
+        ctx = self._visible_by_path.get(target)
+        return {"path": ctx.path, **ctx.disclose(level)} if ctx else None
 
     async def glob(self, pattern: str, level: str = "overview") -> list[dict[str, Any]]:
         """Query contexts using glob patterns (e.g. 'tools/*', 'knowledge/**')."""

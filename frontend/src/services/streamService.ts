@@ -38,6 +38,7 @@ interface StreamEventPayload {
   event_type?: string;
   payload?: Record<string, unknown> | null;
   sequence?: number;
+  stream_id?: string;
   type?: string;
   message?: string;
   input_tokens?: number;
@@ -47,6 +48,7 @@ interface StreamEventPayload {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
+const INITIAL_REPLAY_EVENT_ID = '0-0';
 
 class StreamService {
   private controller: AbortController | null = null;
@@ -94,7 +96,7 @@ class StreamService {
 
       const runInfo = await startResponse.json();
       this.currentRunId = runInfo.id;
-      this.lastEventId = null;
+      this.lastEventId = INITIAL_REPLAY_EVENT_ID;
       options.onRunStart(runInfo.id);
 
       // 2. Open SSE stream with reconnect
@@ -126,7 +128,7 @@ class StreamService {
     const tokenState = { hasTokens: false };
 
     while (true) {
-      const lastId = this.lastEventId ?? '$';
+      const lastId = this.lastEventId ?? INITIAL_REPLAY_EVENT_ID;
       const result = await this.readSSEStream(runId, lastId, options, tokenState);
 
       if (result === 'terminal') {
@@ -218,8 +220,10 @@ class StreamService {
           return;
         }
 
-        // Track last event sequence for reconnect
-        if (payload?.sequence != null) {
+        // Track the Redis stream id for exact reconnect resume.
+        if (payload?.stream_id) {
+          this.lastEventId = payload.stream_id;
+        } else if (payload?.sequence != null) {
           this.lastEventId = String(payload.sequence);
         }
 
