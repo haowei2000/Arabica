@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle, Wrench, Paperclip } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Square, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle, Paperclip } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
@@ -38,8 +38,21 @@ import { artifactService, type Artifact } from '@/services/artifactService';
 import { chatFileService } from '@/services/chatFileService';
 import type { ChatFileAttachment } from '@/types/chatFile';
 import { useQueryClient } from '@tanstack/react-query';
+import { APP_ICONS } from '@/constants/icons';
 
 import remarkGfm from 'remark-gfm';
+
+const AssistantIcon = APP_ICONS.brand;
+const ChatIcon = APP_ICONS.chat;
+const ContextIcon = APP_ICONS.context;
+const NewIcon = APP_ICONS.new;
+const ResultIcon = APP_ICONS.results;
+const RunIcon = APP_ICONS.runs;
+const SaveIcon = APP_ICONS.save;
+const SendIcon = APP_ICONS.send;
+const SettingsIcon = APP_ICONS.settings;
+const TaskIcon = APP_ICONS.tasks;
+const ToolIcon = APP_ICONS.tool;
 
 // ─── Polished Markdown Component ──────────────────────────────────────────
 
@@ -706,10 +719,12 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
 
   const queryClient = useQueryClient();
 
+  const runListCount = runsData?.items?.length;
+
   useEffect(() => {
-    if (!currentWorkspaceId || !runsData?.items) return;
-    onRunCountChange?.(currentWorkspaceId, runsData.items.length);
-  }, [currentWorkspaceId, runsData?.items?.length, onRunCountChange]);
+    if (!currentWorkspaceId || runListCount === undefined) return;
+    onRunCountChange?.(currentWorkspaceId, runListCount);
+  }, [currentWorkspaceId, runListCount, onRunCountChange]);
 
   useEffect(() => {
     if (!currentWorkspaceId || typeof runsData?.total !== 'number') return;
@@ -870,21 +885,18 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
     <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-background">
       {/* ── Chat Column ── */}
       <div className="flex flex-col flex-1 min-h-0 overflow-hidden lg:border-r border-border">
-        <ScrollArea className="flex-1 px-4 sm:px-8 py-6">
-          <div className="max-w-4xl xl:max-w-5xl mx-auto space-y-6">
+        <ScrollArea className="flex-1 px-4 sm:px-6 py-5">
+          <div className="max-w-4xl xl:max-w-5xl mx-auto space-y-4">
             {isLoadingConversation ? (
               <div className="flex items-center justify-center h-40">
                 <Loader2 className="size-10 animate-spin text-muted-foreground/30" />
               </div>
             ) : messages.length === 0 && !streamingMessage ? (
-              <div className="flex flex-col items-center justify-center pt-24 pb-12 animate-fade-in">
-                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-primary-100 to-primary-200 dark:from-primary-900/40 dark:to-primary-800/30 flex items-center justify-center mb-6 shadow-sm">
-                  <MessageSquare className="size-10 text-primary-500" />
+              <div className="flex flex-col items-center justify-center pt-16 pb-8 animate-fade-in">
+                <div className="size-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-3 shadow-sm">
+                  <ChatIcon className="size-7 text-primary-500" />
                 </div>
-                <h3 className="text-xl font-bold text-foreground mb-3 tracking-tight">Start a conversation</h3>
-                <p className="text-base text-muted-foreground text-center max-w-sm leading-relaxed">
-                  Type a message below to begin interacting with the AI agent.
-                </p>
+                <h3 className="text-sm font-semibold text-muted-foreground tracking-tight">New chat</h3>
               </div>
             ) : null}
 
@@ -892,19 +904,19 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
               <div
                 key={message.id}
                 className={cn(
-                  'flex gap-4 animate-fade-in group/message',
+                  'flex gap-3 animate-fade-in group/message',
                   message.role === MessageRole.USER ? 'justify-end' : 'justify-start'
                 )}
               >
                 {message.role === MessageRole.ASSISTANT && (
-                  <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-md shadow-primary-500/20">
-                    <Bot className="size-5" />
+                  <div className="size-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-md shadow-primary-500/20">
+                    <AssistantIcon className="size-4.5" />
                   </div>
                 )}
 
                 {message.role === MessageRole.USER ? (
-                  <div className="max-w-[85%] sm:max-w-2xl rounded-2xl rounded-br-md px-5 py-3 bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all duration-200">
-                    <p className="text-sm sm:text-[15px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                  <div className="max-w-[85%] sm:max-w-2xl rounded-xl rounded-br-md px-4 py-2.5 bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all duration-200">
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
                     {message.attachments && (
                       <ChatAttachmentChips
                         attachments={message.attachments}
@@ -923,7 +935,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                   <div className="max-w-[90%] sm:max-w-3xl w-full space-y-3">
                     {message.contextUsages && message.contextUsages.some(c => c.tool_names) && (
                       <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground/80 px-1">
-                        <Wrench className="size-3.5 shrink-0" />
+                        <ToolIcon className="size-3.5 shrink-0" />
                         <span className="font-semibold">Tools:</span>
                         {message.contextUsages.filter(c => c.tool_names).flatMap(c => c.tool_names!).map(name => (
                           <span key={name} className="px-2 py-0.5 rounded-md bg-muted border border-border/50 font-mono font-medium">{name}</span>
@@ -962,7 +974,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     {(message.inputTokens || message.outputTokens) && (
                       <div className="flex items-center gap-2 px-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
                         <span className="text-[11px] text-muted-foreground/50 tabular-nums font-mono">
-                          ↑{message.inputTokens ?? 0} ↓{message.outputTokens ?? 0} tokens
+                          ↑{message.inputTokens ?? 0} ↓{message.outputTokens ?? 0}
                         </span>
                       </div>
                     )}
@@ -970,7 +982,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                 )}
 
                 {message.role === MessageRole.USER && (
-                  <div className="w-9 h-9 rounded-2xl bg-secondary flex items-center justify-center text-secondary-foreground text-[11px] shrink-0 font-black shadow-md ring-1 ring-border/20">
+                  <div className="size-8 rounded-xl bg-secondary flex items-center justify-center text-secondary-foreground text-[10px] shrink-0 font-black shadow-md ring-1 ring-border/20">
                     YOU
                   </div>
                 )}
@@ -978,14 +990,14 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
             ))}
 
             {isStreaming && (
-              <div className="flex gap-4 justify-start animate-fade-in">
-                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-md shadow-primary-500/20">
-                  <Bot className="size-5" />
+              <div className="flex gap-3 justify-start animate-fade-in">
+                <div className="size-8 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-md shadow-primary-500/20">
+                  <AssistantIcon className="size-4.5" />
                 </div>
                 <div className="max-w-[90%] sm:max-w-3xl w-full space-y-3">
                   {contextUsages.some(c => c.tool_names) && (
                     <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground/80 px-1">
-                      <Wrench className="size-3.5 shrink-0" />
+                      <ToolIcon className="size-3.5 shrink-0" />
                       <span className="font-semibold">Tools:</span>
                       {contextUsages.filter(c => c.tool_names).flatMap(c => c.tool_names!).map(name => (
                         <span key={name} className="px-2 py-0.5 rounded-md bg-muted border border-border/50 font-mono font-medium">{name}</span>
@@ -1093,14 +1105,14 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
         </ScrollArea>
 
         {/* ── Modern input area ── */}
-        <div className="border-t border-border/60 bg-gradient-to-t from-background to-background/80 px-4 sm:px-8 py-6">
+        <div className="border-t border-border/60 bg-gradient-to-t from-background to-background/80 px-4 sm:px-6 py-4">
           <div className="max-w-4xl xl:max-w-5xl mx-auto">
             <form onSubmit={handleSubmit} className="relative">
               {/* @ mention dropdown */}
               {mentionQuery !== null && mentionMatches.length > 0 && (
-                <div className="absolute bottom-full mb-2 left-0 right-0 z-50 rounded-2xl border border-border bg-card shadow-xl shadow-black/20 overflow-hidden">
-                  <div className="px-4 py-2 border-b border-border/40 flex items-center gap-2 bg-muted/30">
-                    <Wrench className="size-3.5 text-muted-foreground/50" />
+                <div className="absolute bottom-full mb-2 left-0 right-0 z-50 rounded-xl border border-border bg-card shadow-xl shadow-black/20 overflow-hidden">
+                  <div className="px-3 py-1.5 border-b border-border/40 flex items-center gap-2 bg-muted/30">
+                    <ToolIcon className="size-3.5 text-muted-foreground/50" />
                     <span className="text-[11px] text-muted-foreground/70 font-bold uppercase tracking-tight">Tools</span>
                   </div>
                   <div className="max-h-64 overflow-y-auto">
@@ -1110,13 +1122,13 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                         type="button"
                         onMouseDown={(e) => { e.preventDefault(); insertMention(tool.name); }}
                         className={cn(
-                          'w-full flex items-start gap-3 px-4 py-2.5 text-left transition-colors',
+                          'w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors',
                           i === mentionIndex ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/50 text-foreground/80',
                         )}
                       >
-                        <Wrench className="size-4 shrink-0 mt-0.5 text-muted-foreground/50" />
+                        <ToolIcon className="size-4 shrink-0 mt-0.5 text-muted-foreground/50" />
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold truncate">{tool.display_name}</p>
+                          <p className="text-xs font-semibold truncate">{tool.display_name}</p>
                           <p className="text-[11px] text-muted-foreground/60 font-mono">{tool.name}</p>
                         </div>
                       </button>
@@ -1131,7 +1143,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                 className="hidden"
                 onChange={handleFileSelect}
               />
-              <div className="rounded-2xl border border-border/80 bg-card shadow-md focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/5 transition-all duration-300 overflow-hidden">
+              <div className="rounded-xl border border-border/80 bg-card shadow-md focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/5 transition-all duration-300 overflow-hidden">
                 <SelectedFilePreviewList
                   files={selectedFiles}
                   onRemove={removeSelectedFile}
@@ -1147,7 +1159,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isStreaming || uploadingFiles}
-                    className="ml-3 mb-3 size-10 inline-flex items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+                    className="ml-3 mb-2.5 size-9 inline-flex items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
                     title="Attach files"
                   >
                     <Paperclip className="size-4" />
@@ -1157,19 +1169,19 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
-                    placeholder="Type a message… use @tool_name to invoke a tool"
+                    placeholder="Message… (@tool)"
                     disabled={isStreaming || uploadingFiles}
                     rows={1}
-                    className="flex-1 resize-none bg-transparent px-2 py-4 text-base text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
+                    className="flex-1 resize-none bg-transparent px-2 py-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
                   />
-                <div className="pr-3 pb-3 shrink-0">
+                <div className="pr-3 pb-2.5 shrink-0">
                   {isStreaming ? (
                     <Button
                       type="button"
                       size="icon"
                       variant="destructive"
                       onClick={stopStreaming}
-                      className="size-10 rounded-xl shadow-md"
+                      className="size-9 rounded-lg shadow-md"
                       title="Stop generating"
                     >
                       <Square className="size-4" />
@@ -1180,14 +1192,14 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                       size="icon"
                       disabled={uploadingFiles || (!input.trim() && selectedFiles.length === 0)}
                       className={cn(
-                        'size-10 rounded-xl transition-all duration-300 shadow-md',
+                        'size-9 rounded-lg transition-all duration-300 shadow-md',
                         input.trim() || selectedFiles.length > 0
                           ? 'bg-primary hover:bg-primary/90 shadow-primary/20'
                           : 'bg-muted text-muted-foreground opacity-50'
                       )}
                       title="Send message"
                     >
-                      {uploadingFiles ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                      {uploadingFiles ? <Loader2 className="size-4 animate-spin" /> : <SendIcon className="size-4" />}
                     </Button>
                   )}
                 </div>
@@ -1199,26 +1211,26 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
       </div>
 
       {/* ── Right Panel ── */}
-      <aside className="w-full lg:w-[400px] xl:w-[450px] border-t lg:border-t-0 border-border bg-card/50 backdrop-blur-sm flex flex-col overflow-hidden transition-all duration-300">
+      <aside className="w-full lg:w-[380px] xl:w-[420px] border-t lg:border-t-0 border-border bg-card/50 backdrop-blur-sm flex flex-col overflow-hidden transition-all duration-300">
         <Tabs defaultValue="runs" className="flex flex-col flex-1 min-h-0">
-          <div className="px-4 pt-3 border-b border-border shrink-0">
-            <TabsList className="w-full">
-              <TabsTrigger value="runs" className="flex-1 gap-1" title="Runs"><Play className="size-3" /><span className="hidden sm:inline text-xs">Runs</span></TabsTrigger>
-              <TabsTrigger value="context" className="flex-1 gap-1" title="Context"><Layers className="size-3" /><span className="hidden sm:inline text-xs">Context</span></TabsTrigger>
-              <TabsTrigger value="tasks" className="flex-1 gap-1" title="Tasks"><ListTodo className="size-3" /><span className="hidden sm:inline text-xs">Tasks</span></TabsTrigger>
-              <TabsTrigger value="results" className="flex-1 gap-1" title="Results"><FileOutput className="size-3" /><span className="hidden sm:inline text-xs">Results</span></TabsTrigger>
-              <TabsTrigger value="settings" className="flex-1 gap-1" title="Settings"><Settings className="size-3" /><span className="hidden sm:inline text-xs">Settings</span></TabsTrigger>
+          <div className="px-3 pt-2 border-b border-border shrink-0">
+            <TabsList className="w-full h-8">
+              <TabsTrigger value="runs" className="flex-1" title="Runs"><RunIcon className="size-3.5" /><span className="sr-only">Runs</span></TabsTrigger>
+              <TabsTrigger value="context" className="flex-1" title="Context"><ContextIcon className="size-3.5" /><span className="sr-only">Context</span></TabsTrigger>
+              <TabsTrigger value="tasks" className="flex-1" title="Tasks"><TaskIcon className="size-3.5" /><span className="sr-only">Tasks</span></TabsTrigger>
+              <TabsTrigger value="results" className="flex-1" title="Results"><ResultIcon className="size-3.5" /><span className="sr-only">Results</span></TabsTrigger>
+              <TabsTrigger value="settings" className="flex-1" title="Settings"><SettingsIcon className="size-3.5" /><span className="sr-only">Settings</span></TabsTrigger>
             </TabsList>
           </div>
 
-          <TabsContent value="runs" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center justify-between mb-3">
+          <TabsContent value="runs" className="flex-1 overflow-y-auto p-3 mt-0">
+            <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-1.5">
-                <Play className="size-3.5 text-muted-foreground" />
+                <RunIcon className="size-3.5 text-muted-foreground" />
                 <h2 className="text-xs font-semibold">Runs</h2>
               </div>
               <Button size="icon" className="size-6" onClick={startNewRun} title="New Run">
-                <Plus className="size-3" />
+                <NewIcon className="size-3" />
               </Button>
             </div>
             {runsLoading ? (
@@ -1239,20 +1251,20 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <Play className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+                <RunIcon className="mx-auto size-6 text-muted-foreground/20 mb-2" />
                 <p className="text-[10px] text-muted-foreground/50">No runs yet</p>
               </div>
             )}
           </TabsContent>
 
-          <TabsContent value="context" className="flex-1 overflow-hidden p-4 mt-0 flex flex-col">
+          <TabsContent value="context" className="flex-1 overflow-hidden p-3 mt-0 flex flex-col">
             <WorkspaceContextTree workspaceId={currentWorkspaceId} />
           </TabsContent>
 
-          <TabsContent value="tasks" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center justify-between mb-3">
+          <TabsContent value="tasks" className="flex-1 overflow-y-auto p-3 mt-0">
+            <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-1.5">
-                <ListTodo className="size-3.5 text-muted-foreground" />
+                <TaskIcon className="size-3.5 text-muted-foreground" />
                 <span className="text-xs font-semibold">Tasks</span>
                 {tasksData && (
                   <span className="text-[10px] text-muted-foreground/50 tabular-nums">({tasksData.total})</span>
@@ -1320,16 +1332,16 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
               </div>
             ) : (
               <div className="text-center py-10">
-                <ListTodo className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+                <TaskIcon className="mx-auto size-6 text-muted-foreground/20 mb-2" />
                 <p className="text-[10px] text-muted-foreground/50">No tasks yet</p>
               </div>
             )}
           </TabsContent>
 
-          <TabsContent value="results" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center justify-between mb-3">
+          <TabsContent value="results" className="flex-1 overflow-y-auto p-3 mt-0">
+            <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-1.5">
-                <FileOutput className="size-3.5 text-muted-foreground" />
+                <ResultIcon className="size-3.5 text-muted-foreground" />
                 <span className="text-xs font-semibold">Artifacts</span>
                 {artifactsData && (
                   <span className="text-[10px] text-muted-foreground/50 tabular-nums">({artifactsData.total})</span>
@@ -1361,16 +1373,16 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
               </div>
             ) : (
               <div className="text-center py-10">
-                <FileOutput className="mx-auto size-6 text-muted-foreground/20 mb-2" />
+                <ResultIcon className="mx-auto size-6 text-muted-foreground/20 mb-2" />
                 <p className="text-[10px] text-muted-foreground/50">No artifacts yet</p>
               </div>
             )}
           </TabsContent>
 
-          <TabsContent value="settings" className="flex-1 overflow-y-auto p-4 mt-0">
-            <div className="flex items-center gap-1.5 mb-4">
-              <Settings className="size-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold">Workspace Settings</span>
+          <TabsContent value="settings" className="flex-1 overflow-y-auto p-3 mt-0">
+            <div className="flex items-center gap-1.5 mb-3">
+              <SettingsIcon className="size-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold">Settings</span>
             </div>
 
             <div className="space-y-4">
@@ -1419,14 +1431,11 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
               </div>
 
               {/* Global Event */}
-              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Globe className="size-3.5 text-muted-foreground shrink-0" />
                   <div>
                     <p className="text-xs font-medium leading-none">Global Event</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Load history from all runs in workspace.
-                    </p>
                   </div>
                 </div>
                 <Checkbox
@@ -1444,7 +1453,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
               >
                 {settingsSaving
                   ? <><Loader2 className="size-3.5 animate-spin" />Saving…</>
-                  : <><Save className="size-3.5" />Save Settings</>}
+                  : <><SaveIcon className="size-3.5" />Save</>}
               </Button>
             </div>
           </TabsContent>

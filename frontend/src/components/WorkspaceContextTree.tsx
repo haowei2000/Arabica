@@ -1,15 +1,16 @@
 import { useState, useMemo } from 'react';
 import {
-  Wrench, Library, Sparkles, Brain, Clock,
   FolderOpen, Folder, FileText, Code2, File,
   ChevronRight, ChevronDown, Loader2, RefreshCw,
-  ChevronsDownUp, ChevronsUpDown, Layers, MessageSquare,
+  ChevronsDownUp, ChevronsUpDown,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useWorkspaceContexts } from '@/hooks/useWorkspaces';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import type { WorkspaceContext } from '@/types/workspace';
+import { APP_ICONS } from '@/constants/icons';
 
 // ─── Tree data model ───────────────────────────────────────────────────────────
 
@@ -34,13 +35,15 @@ type TreeEntry = { node: FolderNode; map: Map<string, TreeEntry> };
 
 const FOLDER_ORDER = ['tools', 'knowledge', 'skills', 'chat', 'memory', 'history'];
 
-const ROOT_FOLDER_META: Record<string, { label: string; color: string; icon: typeof Wrench }> = {
-  tools:     { label: 'Tools',     color: 'text-blue-500',   icon: Wrench   },
-  knowledge: { label: 'Knowledge', color: 'text-green-500',  icon: Library  },
-  skills:    { label: 'Skills',    color: 'text-purple-500', icon: Sparkles },
-  chat:      { label: 'Chat',      color: 'text-cyan-500',   icon: MessageSquare },
-  memory:    { label: 'Memory',    color: 'text-pink-500',   icon: Brain    },
-  history:   { label: 'History',   color: 'text-orange-500', icon: Clock    },
+const ContextIcon = APP_ICONS.context;
+
+const ROOT_FOLDER_META: Record<string, { label: string; color: string; icon: LucideIcon }> = {
+  tools:     { label: 'Tools',     color: 'text-blue-500',   icon: APP_ICONS.tool      },
+  knowledge: { label: 'Knowledge', color: 'text-green-500',  icon: APP_ICONS.knowledge },
+  skills:    { label: 'Skills',    color: 'text-purple-500', icon: APP_ICONS.skill     },
+  chat:      { label: 'Chat',      color: 'text-cyan-500',   icon: APP_ICONS.chat      },
+  memory:    { label: 'Memory',    color: 'text-pink-500',   icon: APP_ICONS.memory    },
+  history:   { label: 'History',   color: 'text-orange-500', icon: APP_ICONS.history   },
 };
 
 // ─── Tree builder ──────────────────────────────────────────────────────────────
@@ -307,7 +310,7 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
   // null = use per-node local state, true = all expanded, false = all collapsed
   const [forceOpen, setForceOpen] = useState<boolean | null>(null);
 
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data?.items]);
   const tree = useMemo(() => buildTree(items), [items]);
 
   const totalLeaves = useMemo(() => tree.reduce((s, n) => s + (n.kind === 'folder' ? countLeaves(n) : 1), 0), [tree]);
@@ -318,7 +321,7 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
       {/* Header */}
       <div className="flex items-center gap-1 shrink-0">
         <div className="flex items-center gap-1 flex-1 min-w-0" title="Workspace Context">
-          <Layers size={12} className="text-muted-foreground shrink-0" />
+          <ContextIcon size={12} className="text-muted-foreground shrink-0" />
           {data && totalLeaves > 0 && (
             <span className="text-[10px] text-muted-foreground bg-muted/60 px-1.5 rounded-full leading-5 tabular-nums">
               {totalLeaves}
@@ -358,8 +361,8 @@ export default function WorkspaceContextTree({ workspaceId }: { workspaceId: str
         </div>
       ) : tree.length === 0 ? (
         <div className="text-center py-10 text-muted-foreground">
-          <Layers size={20} className="mx-auto mb-2 text-muted-foreground/20" />
-          <p className="text-[10px] text-muted-foreground/50">No context loaded</p>
+          <ContextIcon size={20} className="mx-auto mb-2 text-muted-foreground/20" />
+          <p className="text-[10px] text-muted-foreground/50">No context</p>
         </div>
       ) : (
         <ScrollArea className="flex-1 -mx-1">

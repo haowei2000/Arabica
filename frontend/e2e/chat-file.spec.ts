@@ -197,7 +197,7 @@ test('chat file selection, preview, upload, send, and remote preview', async ({ 
   }, { workspaceId: WORKSPACE_ID });
 
   await page.goto('/app');
-  await expect(page.getByRole('heading', { name: 'Start a conversation' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'New chat' })).toBeVisible();
 
   await page.locator('input[type="file"]').setInputFiles({
     name: FILE_NAME,
