@@ -708,7 +708,9 @@ class Worker:
                 await asyncio.sleep(0.05)
         return None
 
-    async def _load_run_events(self, db: AsyncSession, run_id: str | None) -> list[Event]:
+    async def _load_run_events(
+        self, db: AsyncSession, run_id: str | None
+    ) -> list[Event]:
         """Load durable, active events for one run from PostgreSQL."""
         if not run_id:
             return []

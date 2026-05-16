@@ -62,4 +62,3 @@ class EventCommand:
             executor_code=decoded.get("executor_code") or None,
             created_at_ms=int(created_at_raw) if created_at_raw else None,
         )
-

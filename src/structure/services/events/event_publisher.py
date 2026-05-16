@@ -331,7 +331,9 @@ class EventPublisher:
         input_tokens: int = 0,
         output_tokens: int = 0,
     ) -> Event:
-        workspace_id_str = str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        workspace_id_str = (
+            str(workspace_id) if isinstance(workspace_id, UUID) else workspace_id
+        )
         run_id_str = str(run_id) if isinstance(run_id, UUID) else run_id
         app_id_str = str(app_id) if isinstance(app_id, UUID) else app_id
         user_id_str = str(user_id) if isinstance(user_id, UUID) else user_id
@@ -360,7 +362,9 @@ class EventPublisher:
 
     @staticmethod
     def _event_type_str(event_type: EventType | str) -> str:
-        return event_type.value if isinstance(event_type, EventType) else str(event_type)
+        return (
+            event_type.value if isinstance(event_type, EventType) else str(event_type)
+        )
 
     async def publish_batch(
         self,

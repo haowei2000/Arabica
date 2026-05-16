@@ -29,4 +29,3 @@ class WorkspaceContextReadModel(WorkspaceContextService):
     ) -> None:
         super().__init__(session, workspace_id, owner_id)
         self.context_version = context_version
-
