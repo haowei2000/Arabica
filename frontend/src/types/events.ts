@@ -1,3 +1,5 @@
+import type { ChatFileAttachment } from '@/types/chatFile';
+
 /**
  * Event types and payloads - mirrors backend EventPublisher format.
  *
@@ -134,7 +136,7 @@ export interface RunStateChangePayload {
 
 export interface UserMessagePayload {
   content: string;
-  attachments?: unknown[];
+  attachments?: ChatFileAttachment[];
 }
 
 // ============================================================================
@@ -244,6 +246,8 @@ export interface OutcomeState {
   outcome_name: string;
   summary?: string;
   details?: Record<string, unknown>;
+  artifact_id?: string;
+  download_url?: string;
 }
 
 // ============================================================================

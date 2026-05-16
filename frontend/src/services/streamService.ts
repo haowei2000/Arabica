@@ -1,11 +1,13 @@
 import { API_BASE_URL, API_ENDPOINTS } from '@/constants/api';
 import type { AgentPlanStepPayload, AgentQueryPayload, ToolCallPayload, ToolPendingPayload, ToolResultPayload, UsingContextPayload, PutOutcomePayload } from '@/types/events';
 import { useChatStore } from '@/stores/useChatStore';
+import type { ChatFileAttachment } from '@/types/chatFile';
 
 export interface StreamOptions {
   workspaceId: string;
   appId?: string;
   message: string;
+  attachments?: ChatFileAttachment[];
   forcedTools?: string[];
   onRunStart: (runId: string) => void;
   onChunk: (content: string) => void;
@@ -52,7 +54,7 @@ class StreamService {
   private lastEventId: string | null = null;
 
   async sendStreamingMessage(options: StreamOptions): Promise<void> {
-    const { workspaceId, appId, message, forcedTools, onError } = options;
+    const { workspaceId, appId, message, attachments, forcedTools, onError } = options;
     const token = localStorage.getItem('access_token');
 
     try {
@@ -70,6 +72,7 @@ class StreamService {
             app_id: appId,
             payload: {
               message: message,
+              ...(attachments && attachments.length > 0 ? { attachments } : {}),
               ...(forcedTools && forcedTools.length > 0 ? { forced_tools: forcedTools } : {}),
             },
           }),

@@ -3,7 +3,7 @@ import {
   Wrench, Library, Sparkles, Brain, Clock,
   FolderOpen, Folder, FileText, Code2, File,
   ChevronRight, ChevronDown, Loader2, RefreshCw,
-  ChevronsDownUp, ChevronsUpDown, Layers,
+  ChevronsDownUp, ChevronsUpDown, Layers, MessageSquare,
 } from 'lucide-react';
 import { useWorkspaceContexts } from '@/hooks/useWorkspaces';
 import { Button } from '@/components/ui/button';
@@ -32,12 +32,13 @@ type TreeEntry = { node: FolderNode; map: Map<string, TreeEntry> };
 
 // ─── Folder config ─────────────────────────────────────────────────────────────
 
-const FOLDER_ORDER = ['tools', 'knowledge', 'skills', 'memory', 'history'];
+const FOLDER_ORDER = ['tools', 'knowledge', 'skills', 'chat', 'memory', 'history'];
 
 const ROOT_FOLDER_META: Record<string, { label: string; color: string; icon: typeof Wrench }> = {
   tools:     { label: 'Tools',     color: 'text-blue-500',   icon: Wrench   },
   knowledge: { label: 'Knowledge', color: 'text-green-500',  icon: Library  },
   skills:    { label: 'Skills',    color: 'text-purple-500', icon: Sparkles },
+  chat:      { label: 'Chat',      color: 'text-cyan-500',   icon: MessageSquare },
   memory:    { label: 'Memory',    color: 'text-pink-500',   icon: Brain    },
   history:   { label: 'History',   color: 'text-orange-500', icon: Clock    },
 };

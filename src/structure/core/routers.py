@@ -49,6 +49,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
     from structure.routers.streaming import router as streaming_router
     from structure.routers.triggers import router as triggers_router
     from structure.routers.user_triggers import router as user_triggers_router
+    from structure.routers.workspaces.chat_files import router as chat_files_router
     from structure.routers.workspaces.workspace import router as workspace_router
 
     return [
@@ -69,6 +70,7 @@ def get_api_routers() -> list[tuple[APIRouter, str]]:
         (skills_router, "/api/agent"),
         # Workspace System (event-sourced)
         (workspace_router, "/api"),
+        (chat_files_router, "/api"),
         (triggers_router, "/api"),
         (user_triggers_router, "/api"),
         (runs_router, "/api"),

@@ -345,12 +345,12 @@ class EventReplayer:
             state["last_sequence"] = event.sequence
 
             if event.event_type == EventType.USER_MESSAGE:
+                payload = event.payload or {}
                 state["messages"].append(
                     {
                         "role": "user",
-                        "content": event.payload.get("content", "")
-                        if event.payload
-                        else "",
+                        "content": payload.get("content") or payload.get("message", ""),
+                        "attachments": payload.get("attachments") or [],
                         "timestamp": event.created_at.isoformat(),
                     }
                 )
@@ -387,7 +387,7 @@ class EventReplayer:
                             "success" if event.payload.get("success") else "error"
                         )
 
-            elif event.event_type == EventType.RUN_STATE_CHANGE:  # noqa: SIM102
+            elif event.event_type == EventType.RUN_STATE_CHANGE:
                 if event.payload:
                     state["status"] = event.payload.get("new_state", state["status"])
 

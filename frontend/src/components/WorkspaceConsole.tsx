@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle, Wrench } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Play, Layers, ListTodo, FileOutput, Plus, Send, Square, Bot, MessageSquare, Settings, Save, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle, Wrench, Paperclip } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
@@ -10,7 +10,7 @@ import { useWorkspaces, useUpdateWorkspace } from '@/hooks/useWorkspaces';
 import { useTemplates } from '@/hooks/useApps';
 import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
-import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard, QueryCard } from '@/components/AgentEvents';
+import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard, QueryCard, OutcomeCard } from '@/components/AgentEvents';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,12 +23,20 @@ import type { Event } from '@/types/event';
 import type { WorkspaceListResponse } from '@/types/workspace';
 
 import WorkspaceContextTree from '@/components/WorkspaceContextTree';
+import {
+  ChatAttachmentChips,
+  ChatFilePreviewDialog,
+  SelectedFilePreviewList,
+  type ChatFilePreviewTarget,
+} from '@/components/ChatFilePreview';
 import { useWorkspaceStream } from '@/hooks/useWorkspaceStream';
 import { useRunEventsStore } from '@/stores/useRunEventsStore';
 import { useRunEvents } from '@/hooks/useRunEvents';
 import { useTasks } from '@/hooks/useTasks';
 import { useArtifacts } from '@/hooks/useArtifacts';
 import { artifactService, type Artifact } from '@/services/artifactService';
+import { chatFileService } from '@/services/chatFileService';
+import type { ChatFileAttachment } from '@/types/chatFile';
 import { useQueryClient } from '@tanstack/react-query';
 
 import remarkGfm from 'remark-gfm';
@@ -545,10 +553,15 @@ type WorkspaceConsoleProps = {
 
 export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleProps) {
   const [input, setInput] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previewTarget, setPreviewTarget] = useState<ChatFilePreviewTarget | null>(null);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { currentWorkspaceId, currentWorkspaceAppId } = useWorkspaceStore();
   const {
@@ -561,6 +574,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
     activeToolCalls,
     planSteps,
     contextUsages,
+    outcomes,
     pendingApprovals,
     pendingQueries,
     streamingInputTokens,
@@ -753,7 +767,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, pendingApprovals, pendingQueries]);
+  }, [messages, streamingMessage, thinkingContent, activeToolCalls, planSteps, outcomes, pendingApprovals, pendingQueries]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -763,15 +777,70 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
     }
   }, [input]);
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setUploadError(null);
+    setSelectedFiles((current) => {
+      const seen = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+      const next = [...current];
+      for (const file of files) {
+        const key = `${file.name}:${file.size}:${file.lastModified}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          next.push(file);
+        }
+      }
+      return next;
+    });
+    e.target.value = '';
+  };
+
+  const removeSelectedFile = (target: File) => {
+    setSelectedFiles((current) =>
+      current.filter(
+        (file) =>
+          file.name !== target.name ||
+          file.size !== target.size ||
+          file.lastModified !== target.lastModified,
+      ),
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isStreaming || !currentWorkspaceId) return;
-    const message = input.trim();
+    if ((!input.trim() && selectedFiles.length === 0) || isStreaming || uploadingFiles || !currentWorkspaceId) return;
+    let message = input.trim();
     const forcedTools = [...message.matchAll(/@(\w+)/g)].map((m) => m[1]);
-    setInput('');
-    setMentionQuery(null);
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    await sendMessage(message, forcedTools.length > 0 ? forcedTools : undefined);
+    let attachments: ChatFileAttachment[] = [];
+
+    try {
+      setUploadError(null);
+      if (selectedFiles.length > 0) {
+        setUploadingFiles(true);
+        const uploaded = await chatFileService.uploadFiles(currentWorkspaceId, selectedFiles);
+        attachments = uploaded.items;
+        await queryClient.invalidateQueries({ queryKey: ['workspace-contexts', currentWorkspaceId] });
+      }
+
+      if (!message && attachments.length > 0) {
+        message = 'Please review the attached file(s).';
+      }
+
+      setInput('');
+      setSelectedFiles([]);
+      setMentionQuery(null);
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      await sendMessage(
+        message,
+        forcedTools.length > 0 ? forcedTools : undefined,
+        attachments.length > 0 ? attachments : undefined,
+      );
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'File upload failed');
+    } finally {
+      setUploadingFiles(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -836,6 +905,19 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                 {message.role === MessageRole.USER ? (
                   <div className="max-w-[85%] sm:max-w-2xl rounded-2xl rounded-br-md px-5 py-3 bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all duration-200">
                     <p className="text-sm sm:text-[15px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                    {message.attachments && (
+                      <ChatAttachmentChips
+                        attachments={message.attachments}
+                        compact
+                        onPreview={(attachment) =>
+                          setPreviewTarget({
+                            kind: 'remote',
+                            attachment,
+                            workspaceId: currentWorkspaceId,
+                          })
+                        }
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="max-w-[90%] sm:max-w-3xl w-full space-y-3">
@@ -860,6 +942,17 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     )}
                     {message.planSteps && message.planSteps.length > 0 && (
                       <PlanStepList steps={message.planSteps} />
+                    )}
+                    {message.outcomes && message.outcomes.length > 0 && (
+                      <div className="space-y-1.5">
+                        {message.outcomes.map((outcome, index) => (
+                          <OutcomeCard
+                            key={`${outcome.artifact_id ?? outcome.outcome_name}-${index}`}
+                            outcome={outcome}
+                            workspaceId={currentWorkspaceId}
+                          />
+                        ))}
+                      </div>
                     )}
                     {message.content && (
                       <div className="rounded-2xl rounded-bl-md px-5 py-4 bg-card border border-border/60 shadow-md hover:shadow-lg hover:border-border/80 transition-all duration-300">
@@ -908,6 +1001,17 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     </div>
                   )}
                   {planSteps.length > 0 && <PlanStepList steps={planSteps} />}
+                  {outcomes.length > 0 && (
+                    <div className="space-y-1.5">
+                      {outcomes.map((outcome, index) => (
+                        <OutcomeCard
+                          key={`${outcome.artifact_id ?? outcome.outcome_name}-${index}`}
+                          outcome={outcome}
+                          workspaceId={currentWorkspaceId}
+                        />
+                      ))}
+                    </div>
+                  )}
                   {pendingApprovals.map((pending) => (
                     <ApprovalCard key={pending.tool_id} pending={pending} onApprove={approveToolCall} />
                   ))}
@@ -1020,17 +1124,44 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                   </div>
                 </div>
               )}
-              <div className="flex items-end gap-3 rounded-2xl border border-border/80 bg-card shadow-md focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/5 transition-all duration-300">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a message… use @tool_name to invoke a tool"
-                  disabled={isStreaming}
-                  rows={1}
-                  className="flex-1 resize-none bg-transparent px-5 py-4 text-base text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+              <div className="rounded-2xl border border-border/80 bg-card shadow-md focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/5 transition-all duration-300 overflow-hidden">
+                <SelectedFilePreviewList
+                  files={selectedFiles}
+                  onRemove={removeSelectedFile}
+                  onPreview={(file) => setPreviewTarget({ kind: 'local', file })}
                 />
+                {uploadError && (
+                  <div className="mx-4 mt-3 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-300">
+                    {uploadError}
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isStreaming || uploadingFiles}
+                    className="ml-3 mb-3 size-10 inline-flex items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+                    title="Attach files"
+                  >
+                    <Paperclip className="size-4" />
+                  </button>
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a message… use @tool_name to invoke a tool"
+                    disabled={isStreaming || uploadingFiles}
+                    rows={1}
+                    className="flex-1 resize-none bg-transparent px-2 py-4 text-base text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
+                  />
                 <div className="pr-3 pb-3 shrink-0">
                   {isStreaming ? (
                     <Button
@@ -1047,18 +1178,19 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     <Button
                       type="submit"
                       size="icon"
-                      disabled={!input.trim()}
+                      disabled={uploadingFiles || (!input.trim() && selectedFiles.length === 0)}
                       className={cn(
                         'size-10 rounded-xl transition-all duration-300 shadow-md',
-                        input.trim()
+                        input.trim() || selectedFiles.length > 0
                           ? 'bg-primary hover:bg-primary/90 shadow-primary/20'
                           : 'bg-muted text-muted-foreground opacity-50'
                       )}
                       title="Send message"
                     >
-                      <Send className="size-4" />
+                      {uploadingFiles ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                     </Button>
                   )}
+                </div>
                 </div>
               </div>
             </form>
@@ -1319,6 +1451,10 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
         </Tabs>
       </aside>
     </div>
+    <ChatFilePreviewDialog
+      target={previewTarget}
+      onClose={() => setPreviewTarget(null)}
+    />
     </>
   );
 }

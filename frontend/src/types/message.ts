@@ -64,6 +64,7 @@ export interface SimpleMessage {
   id: string;
   role: MessageRoleType;
   content: string;
+  attachments?: import('@/types/chatFile').ChatFileAttachment[];
   timestamp: Date;
   isStreaming?: boolean;
   /** Reasoning traces captured from AGENT_THINKING (assistant only). */

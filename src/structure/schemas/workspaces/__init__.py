@@ -20,8 +20,16 @@ from structure.schemas.workspaces.workspace_context import (
     WorkspaceContextListResponse,
     WorkspaceContextResponse,
 )
+from structure.schemas.workspaces.chat_file import (
+    ChatFileAttachment,
+    ChatFileResponse,
+    ChatFileUploadResponse,
+)
 
 __all__ = [
+    "ChatFileAttachment",
+    "ChatFileResponse",
+    "ChatFileUploadResponse",
     "CopyContextsRequest",
     "CopyContextsResponse",
     "InvitationStatus",

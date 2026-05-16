@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, BookOpen, Package, MessageCircleQuestion } from 'lucide-react';
+import { ChevronDown, ChevronRight, BookOpen, Package, MessageCircleQuestion, Download, Loader2 } from 'lucide-react';
 import type { ToolCallState, ToolPendingState, AgentPlanStepPayload, StreamError, ContextUsageState, OutcomeState, AgentQueryState } from '@/types/events';
 import { ErrorCategory } from '@/types/events';
+import { artifactService } from '@/services/artifactService';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -230,15 +231,54 @@ export function ContextUsageCard({ usage }: { usage: ContextUsageState }) {
 
 // ── OutcomeCard ──────────────────────────────────────────────────────────────
 
-export function OutcomeCard({ outcome }: { outcome: OutcomeState }) {
+export function OutcomeCard({
+  outcome,
+  workspaceId,
+}: {
+  outcome: OutcomeState;
+  workspaceId?: string;
+}) {
   const [open, setOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const canDownload = !!workspaceId && !!outcome.artifact_id;
+
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!workspaceId || !outcome.artifact_id) return;
+    setDownloading(true);
+    try {
+      artifactService.downloadArtifact(
+        workspaceId,
+        outcome.artifact_id,
+        outcome.outcome_name,
+      );
+    } finally {
+      setTimeout(() => setDownloading(false), 1500);
+    }
+  };
+
   return (
     <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 overflow-hidden">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-left bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
-        <Package className="size-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-        <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200 flex-1 truncate">Produced {outcome.outcome_type}: {outcome.outcome_name}</span>
-        {open ? <ChevronDown className="size-4 text-emerald-400 shrink-0" /> : <ChevronRight className="size-4 text-emerald-400 shrink-0" />}
-      </button>
+      <div className="w-full flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
+        <button type="button" onClick={() => setOpen((v) => !v)} className="min-w-0 flex-1 flex items-center gap-2 text-left">
+          <Package className="size-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+          <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200 flex-1 truncate">Produced {outcome.outcome_type}: {outcome.outcome_name}</span>
+        </button>
+        {canDownload && (
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={downloading}
+            className="size-7 inline-flex items-center justify-center rounded-md text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 transition-colors"
+            title="Download artifact"
+          >
+            {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          </button>
+        )}
+        <button type="button" onClick={() => setOpen((v) => !v)} className="size-6 inline-flex items-center justify-center">
+          {open ? <ChevronDown className="size-4 text-emerald-400 shrink-0" /> : <ChevronRight className="size-4 text-emerald-400 shrink-0" />}
+        </button>
+      </div>
       {open && (
         <div className="px-3 py-2 space-y-2 border-t border-emerald-200 dark:border-emerald-800">
           {outcome.summary && <div><p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">Summary</p><p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">{outcome.summary}</p></div>}

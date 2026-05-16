@@ -5,6 +5,7 @@ import pytest
 
 from structure.plugins.executors.default.concrete import (
     DefaultExecutor,
+    _events_to_messages,
     _extract_context_tool_schemas,
 )
 from structure.schemas.events.event_payloads import EventType
@@ -241,6 +242,34 @@ def test_get_messages_and_tools_filters_forced_tools():
     assert tools_info == [_tool_schema("codex_echo_tool")]
 
 
+def test_user_message_attachments_render_as_context_paths_only():
+    messages = _events_to_messages(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={
+                    "message": "Analyze this file",
+                    "attachments": [
+                        {
+                            "id": "ctx-1",
+                            "name": "secret.txt",
+                            "path": "/chat/uploads/ctx-1/secret.txt",
+                            "content_type": "text/plain",
+                            "size_bytes": 12,
+                        }
+                    ],
+                },
+            )
+        ]
+    )
+
+    assert len(messages) == 1
+    assert "Analyze this file" in messages[0].content
+    assert "/chat/uploads/ctx-1/secret.txt" in messages[0].content
+    assert "Use read_context" in messages[0].content
+    assert "secret file body" not in messages[0].content
+
+
 def test_get_messages_and_tools_can_force_new_tool_after_schema_was_loaded():
     executor = DefaultExecutor(
         {
@@ -328,9 +357,7 @@ def test_get_messages_and_tools_loads_legacy_tool_schema_result():
         "read_context",
         "codex_echo_tool",
     ]
-    assert all(
-        "codex_echo_tool" not in str(message.content) for message in messages
-    )
+    assert all("codex_echo_tool" not in str(message.content) for message in messages)
 
 
 def test_extract_context_tool_schemas_accepts_leading_slash_path():

@@ -1,3 +1,5 @@
+import type { ChatFileAttachment } from '@/types/chatFile';
+
 export interface Run {
   id: string;
   workspace_id: string;
@@ -33,6 +35,7 @@ export interface RunStartRequest {
   app_id: string;
   payload: {
     message: string;
+    attachments?: ChatFileAttachment[];
   };
   user_id?: string | null;
   metadata?: Record<string, any> | null;
@@ -41,6 +44,7 @@ export interface RunStartRequest {
 export interface RunStateMessage {
   role: 'user' | 'assistant';
   content: string;
+  attachments?: ChatFileAttachment[];
   timestamp: string;
 }
 

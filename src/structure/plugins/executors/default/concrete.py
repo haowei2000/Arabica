@@ -158,6 +158,34 @@ def _requested_tool_names(raw_events: list[Event]) -> list[str] | None:
     return None
 
 
+def _format_attachment_context_block(attachments: Any) -> str:
+    """Render file attachments as context-path references for the LLM."""
+    if not isinstance(attachments, list):
+        return ""
+
+    lines: list[str] = []
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        name = item.get("name") or path.rsplit("/", 1)[-1]
+        content_type = item.get("content_type") or "unknown"
+        size_bytes = item.get("size_bytes")
+        size_hint = f", {size_bytes} bytes" if isinstance(size_bytes, int) else ""
+        lines.append(f"- {name}: {path} ({content_type}{size_hint})")
+
+    if not lines:
+        return ""
+
+    return (
+        "Attached files are available in structured workspace context. "
+        "Use read_context with these paths to inspect parsed content:\n"
+        + "\n".join(lines)
+    )
+
+
 SYSTEM_PROMPT_TEMPLATE = """\
 You are an intelligent AI assistant.
 workspace_id: {workspace_id}  run_id: {run_id}
@@ -247,8 +275,16 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
                 msg = " ".join(
                     p.get("text", "") if isinstance(p, dict) else str(p) for p in msg
                 )
-            if msg:
-                messages.append(ChatMessage(role="user", content=str(msg)))
+            attachment_block = _format_attachment_context_block(
+                payload.get("attachments")
+            )
+            content = str(msg) if msg else ""
+            if attachment_block:
+                content = (
+                    f"{content}\n\n{attachment_block}" if content else attachment_block
+                )
+            if content:
+                messages.append(ChatMessage(role="user", content=content))
 
         elif event_type == str(EventType.AGENT_MESSAGE):
             content = payload.get("content") or payload.get("message", "")

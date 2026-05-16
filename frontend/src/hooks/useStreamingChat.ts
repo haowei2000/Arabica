@@ -6,6 +6,7 @@ import { MessageRole } from '@/types/message';
 import { ErrorCategory } from '@/types/events';
 import type { StreamError } from '@/types/events';
 import type { WorkspaceListResponse } from '@/types/workspace';
+import type { ChatFileAttachment } from '@/types/chatFile';
 import { generateUUID } from '@/utils/uuid';
 
 function categorizeError(error: Error): StreamError {
@@ -24,7 +25,11 @@ function categorizeError(error: Error): StreamError {
 }
 
 export const useStreamingChat = (workspaceId: string, appId?: string | null) => {
-  const lastUserMessageRef = useRef<string>('');
+  const lastUserRequestRef = useRef<{
+    content: string;
+    attachments?: ChatFileAttachment[];
+    forcedTools?: string[];
+  } | null>(null);
   const optimisticRunIdsRef = useRef<Set<string>>(new Set());
   const queryClient = useQueryClient();
 
@@ -130,12 +135,16 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
   }, [queryClient]);
 
   const sendMessage = useCallback(
-    async (content: string, forcedTools?: string[]) => {
+    async (
+      content: string,
+      forcedTools?: string[],
+      attachments?: ChatFileAttachment[],
+    ) => {
       if (!workspaceId) {
         return;
       }
 
-      lastUserMessageRef.current = content;
+      lastUserRequestRef.current = { content, attachments, forcedTools };
 
       // Reset all streaming state
       setIsStreaming(true);
@@ -147,6 +156,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         id: generateUUID(),
         role: MessageRole.USER,
         content,
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
         timestamp: new Date(),
       });
 
@@ -154,6 +164,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
         workspaceId,
         appId: appId || undefined,
         message: content,
+        attachments,
         forcedTools,
 
         // ── run lifecycle ───────────────────────────────
@@ -187,6 +198,22 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
             error_message: event.error_message,
             execution_time_ms: event.execution_time_ms,
           });
+          const result = event.result as
+            | { success?: boolean; message?: string; data?: Record<string, unknown> }
+            | undefined;
+          const data = result?.data;
+          const artifactId = typeof data?.artifact_id === 'string' ? data.artifact_id : undefined;
+          if (event.tool_name === 'create_artifact' && event.success && artifactId) {
+            addOutcome({
+              outcome_type: typeof data?.artifact_type === 'string' ? data.artifact_type : 'file',
+              outcome_name: typeof data?.name === 'string' ? data.name : 'Artifact',
+              summary: result?.message,
+              details: data,
+              artifact_id: artifactId,
+              download_url: typeof data?.download_url === 'string' ? data.download_url : undefined,
+            });
+            queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] });
+          }
         },
 
         // ── plan steps ──────────────────────────────────
@@ -231,6 +258,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           clearStreamingState();
           setIsStreaming(false);
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] });
           queryClient.invalidateQueries({ queryKey: ['quota', 'me'] });
           invalidateWorkspaceQueries();
         },
@@ -243,6 +271,7 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
           setIsStreaming(false);
           setStreamError(categorizeError(error));
           queryClient.invalidateQueries({ queryKey: ['runs', workspaceId] });
+          queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] });
           queryClient.invalidateQueries({ queryKey: ['quota', 'me'] });
           invalidateWorkspaceQueries();
         },
@@ -304,8 +333,12 @@ export const useStreamingChat = (workspaceId: string, appId?: string | null) => 
   );
 
   const retryLastMessage = useCallback(() => {
-    if (lastUserMessageRef.current) {
-      sendMessage(lastUserMessageRef.current);
+    if (lastUserRequestRef.current) {
+      sendMessage(
+        lastUserRequestRef.current.content,
+        lastUserRequestRef.current.forcedTools,
+        lastUserRequestRef.current.attachments,
+      );
     }
   }, [sendMessage]);
 
