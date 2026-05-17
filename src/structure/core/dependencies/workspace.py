@@ -13,6 +13,7 @@ from structure.services.auth.quota_service import QuotaService
 from structure.services.events.event_consumer import EventConsumer, EventReplayer
 from structure.services.events.event_crud import EventCRUD
 from structure.services.events.event_publisher import EventPublisher
+from structure.services.runs.run_application_service import RunApplicationService
 from structure.services.runs.run_crud import RunCRUD
 from structure.services.runs.run_state_machine import RunStateMachine
 from structure.services.workspaces.member_crud import WorkspaceMemberCRUD
@@ -147,6 +148,23 @@ async def get_run_state_machine(
     return RunStateMachine(db, redis_client)
 
 
+async def get_run_application_service(
+    db: Annotated[AsyncSession, Depends(get_structure_db)],
+    workspace_crud: Annotated[WorkspaceCRUD, Depends(get_workspace_crud)],
+    run_crud: Annotated[RunCRUD, Depends(get_run_crud)],
+    event_publisher: Annotated[EventPublisher, Depends(get_event_publisher)],
+    quota_service: Annotated[QuotaService, Depends(get_quota_service)],
+) -> RunApplicationService:
+    """Dependency to get the run startup application service."""
+    return RunApplicationService(
+        db=db,
+        workspace_crud=workspace_crud,
+        run_crud=run_crud,
+        event_publisher=event_publisher,
+        quota_service=quota_service,
+    )
+
+
 # Type aliases for Annotated dependencies
 WorkspaceCRUDDep = Annotated[WorkspaceCRUD, Depends(get_workspace_crud)]
 WorkspaceMemberCRUDDep = Annotated[
@@ -159,3 +177,6 @@ EventPublisherDep = Annotated[EventPublisher, Depends(get_event_publisher)]
 EventConsumerDep = Annotated[EventConsumer, Depends(get_event_consumer)]
 EventReplayerDep = Annotated[EventReplayer, Depends(get_event_replayer)]
 RunStateMachineDep = Annotated[RunStateMachine, Depends(get_run_state_machine)]
+RunApplicationServiceDep = Annotated[
+    RunApplicationService, Depends(get_run_application_service)
+]

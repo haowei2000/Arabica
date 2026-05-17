@@ -102,6 +102,10 @@ class CreateArtifactTool(InnerTool):
                     "artifact_id": str(artifact_id),
                     "name": input_data.name,
                     "artifact_type": input_data.artifact_type,
+                    "download_url": (
+                        f"/api/workspaces/{input_data.workspace_id}/artifacts/"
+                        f"{artifact_id}/download"
+                    ),
                     "s3_key": s3_key,
                     "s3_url": s3_url,
                 },

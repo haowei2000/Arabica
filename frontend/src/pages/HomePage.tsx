@@ -1,16 +1,6 @@
 import { useState } from 'react';
-
-const ADJECTIVES = ['swift', 'bright', 'calm', 'clever', 'bold', 'sharp', 'keen', 'agile', 'vivid', 'crisp', 'brisk', 'lofty'];
-const NOUNS = ['falcon', 'river', 'cloud', 'spark', 'wave', 'peak', 'grove', 'forge', 'dawn', 'crest', 'prism', 'vault'];
-
-function randomAppCode() {
-  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  const num = Math.floor(Math.random() * 90) + 10;
-  return `${adj}-${noun}-${num}`;
-}
 import { useNavigate } from 'react-router-dom';
-import { Moon, Sun, Trash2, Bot, ExternalLink, Loader2, Layers, Library, Wrench, Brain, Sparkles, FolderKanban, Cpu, Zap } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { authService } from '@/services/authService';
 import { useChatStore } from '@/stores/useChatStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -26,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/utils/formatDate';
 import { ViewToggle, type ViewMode } from '@/components/ViewToggle';
 import { AccordionItem } from '@/components/AccordionItem';
+import { APP_ICONS } from '@/constants/icons';
 
 import KnowledgePage from './context/KnowledgePage';
 import ToolPage from './context/ToolPage';
@@ -38,6 +29,33 @@ type HomeTab = 'app' | 'trigger' | 'context' | 'models';
 
 interface HomePageProps {
   defaultTab?: HomeTab;
+}
+
+const ADJECTIVES = ['swift', 'bright', 'calm', 'clever', 'bold', 'sharp', 'keen', 'agile', 'vivid', 'crisp', 'brisk', 'lofty'];
+const NOUNS = ['falcon', 'river', 'cloud', 'spark', 'wave', 'peak', 'grove', 'forge', 'dawn', 'crest', 'prism', 'vault'];
+
+const AppIcon = APP_ICONS.app;
+const BrandIcon = APP_ICONS.brand;
+const ContextIcon = APP_ICONS.context;
+const DeleteIcon = APP_ICONS.delete;
+const KnowledgeIcon = APP_ICONS.knowledge;
+const MemoryIcon = APP_ICONS.memory;
+const ModelIcon = APP_ICONS.model;
+const NewIcon = APP_ICONS.new;
+const OpenIcon = APP_ICONS.open;
+const LogoutIcon = APP_ICONS.logout;
+const SkillIcon = APP_ICONS.skill;
+const ThemeDarkIcon = APP_ICONS.themeDark;
+const ThemeLightIcon = APP_ICONS.themeLight;
+const ToolIcon = APP_ICONS.tool;
+const TriggerIcon = APP_ICONS.trigger;
+const WorkspaceIcon = APP_ICONS.workspace;
+
+function randomAppCode() {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const num = Math.floor(Math.random() * 90) + 10;
+  return `${adj}-${noun}-${num}`;
 }
 
 export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
@@ -112,7 +130,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <Bot className="size-3.5 text-muted-foreground" />
+              <AppIcon className="size-3.5 text-muted-foreground" />
               <h2 className="text-sm font-semibold text-foreground">Apps</h2>
             </div>
             <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
@@ -121,44 +139,43 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
           </div>
           <div className="flex items-center gap-2">
             <ViewToggle mode={appViewMode} onToggle={(m) => { setAppViewMode(m); if (m !== 'drawer') setOpenAppId(null); }} />
-            <Button size="sm" onClick={() => { setShowCreateAppForm(true); setAppCode(randomAppCode()); }}>
-              + New App
+            <Button size="sm" className="gap-1.5" onClick={() => { setShowCreateAppForm(true); setAppCode(randomAppCode()); }}>
+              <NewIcon className="size-3.5" />New
             </Button>
           </div>
         </div>
 
         {apps.length > 0 ? appViewMode === 'card' ? (
           /* ── Card grid ── */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {apps.map((app) => (
               <div key={app.id}
-                className={cn('rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors cursor-pointer', currentAppId === app.id && 'ring-1 ring-primary/30')}
+                className={cn('rounded-lg border border-border bg-card p-3 flex flex-col gap-2 hover:bg-muted/20 transition-colors cursor-pointer', currentAppId === app.id && 'ring-1 ring-primary/30')}
                 onClick={() => handleOpenApp(app.id, app.app_code)}>
-                <div className="flex items-start gap-2.5">
+                <div className="flex items-start gap-2">
                   <span className={cn('size-2 rounded-full mt-1 shrink-0', app.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
                   <p className="text-sm font-semibold font-mono leading-snug flex-1 min-w-0 truncate">{app.app_code}</p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {app.executor_id && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/50 font-mono">
-                      {app.executor_id}
+                  {(app.executor_code || app.executor_id) && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">
+                      {app.executor_code || app.executor_id}
                     </span>
                   )}
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50 font-mono">
                     v{app.version}
                   </span>
                 </div>
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-auto">
-                  <span className={cn(app.enabled ? 'text-green-600' : '')}>{app.enabled ? 'enabled' : 'disabled'}</span>
+                <div className="flex items-center text-[10px] text-muted-foreground mt-auto">
                   <span className="ml-auto">{formatRelativeTime(app.created_at)}</span>
                 </div>
-                <div className="flex gap-2 pt-2 border-t border-border/40" onClick={(e) => e.stopPropagation()}>
-                  <Button size="sm" className="flex-1 gap-1.5" onClick={() => handleOpenApp(app.id, app.app_code)}>
-                    <ExternalLink className="size-3.5" />Start Chat
+                <div className="flex gap-1.5 pt-2 border-t border-border/40" onClick={(e) => e.stopPropagation()}>
+                  <Button size="sm" className="flex-1 gap-1.5 h-8" onClick={() => handleOpenApp(app.id, app.app_code)}>
+                    <OpenIcon className="size-3.5" />Open
                   </Button>
-                  <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                  <Button size="sm" variant="outline" className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
                     disabled={deleteAppMutation.isPending} onClick={(e) => handleDeleteApp(app.id, app.app_code, e)}>
-                    <Trash2 className="size-3.5" />
+                    <DeleteIcon className="size-3.5" />
                   </Button>
                 </div>
               </div>
@@ -171,7 +188,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
                 <span className={cn('size-2 rounded-full shrink-0', app.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
               );
               const executorChip = app.executor_code ? (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/50 shrink-0 font-mono">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 shrink-0 font-mono">
                   {app.executor_code}
                 </span>
               ) : null;
@@ -179,30 +196,18 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
               if (appViewMode === 'list') {
                 return (
                   <div key={app.id}
-                    className={cn('group relative flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors cursor-pointer', currentAppId === app.id && 'bg-muted/60')}
+                    className={cn('group relative flex items-center gap-2.5 px-3 py-2 hover:bg-muted/40 transition-colors cursor-pointer', currentAppId === app.id && 'bg-muted/60')}
+                    title={`${app.app_code} · ${app.enabled ? 'enabled' : 'disabled'} · ${formatRelativeTime(app.created_at)}`}
                     onClick={() => handleOpenApp(app.id, app.app_code)}>
                     {statusDot}
                     <span className="text-sm font-medium flex-1 min-w-0 truncate font-mono">{app.app_code}</span>
                     {executorChip}
                     <span className="text-[10px] text-muted-foreground/60 shrink-0 tabular-nums">v{app.version}</span>
-                    <ExternalLink className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors shrink-0" />
+                    <OpenIcon className="size-3.5 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors shrink-0" />
                     <button type="button" className="size-7 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 shrink-0"
                       onClick={(e) => handleDeleteApp(app.id, app.app_code, e)}>
-                      <Trash2 className="size-3.5 text-destructive/70" />
+                      <DeleteIcon className="size-3.5 text-destructive/70" />
                     </button>
-                    <div className="absolute right-2 top-full mt-1 z-50 w-64 rounded-xl border border-border bg-card shadow-lg shadow-black/10 p-3 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-[opacity,visibility] duration-150 pointer-events-none">
-                      <div className="space-y-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className={cn('size-1.5 rounded-full', app.enabled ? 'bg-green-500' : 'bg-muted-foreground/40')} />
-                          <span className="font-medium text-foreground">{app.enabled ? 'Enabled' : 'Disabled'}</span>
-                        </div>
-                        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-1.5 border-t border-border/50 text-muted-foreground">
-                          <span>Version</span><span className="text-foreground font-mono">v{app.version}</span>
-                          {app.executor_code && (<><span>Executor</span><span className="text-foreground font-mono truncate">{app.executor_code}</span></>)}
-                          <span>Created</span><span className="text-foreground">{formatRelativeTime(app.created_at)}</span>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 );
               }
@@ -221,29 +226,24 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
                     </>
                   }
                   detail={
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-                        <span className="text-muted-foreground">Status</span>
-                        <span className="flex items-center gap-1.5">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1.5 text-foreground">
                           <span className={cn('size-1.5 rounded-full', app.enabled ? 'bg-green-500' : 'bg-muted-foreground/30')} />
-                          {app.enabled ? 'Enabled' : 'Disabled'}
+                          {app.enabled ? 'On' : 'Off'}
                         </span>
-                        <span className="text-muted-foreground">Version</span>
                         <span className="font-mono">v{app.version}</span>
-                        {app.executor_code && (<><span className="text-muted-foreground">Executor</span><span className="font-mono">{app.executor_code}</span></>)}
-                        <span className="text-muted-foreground">Created</span>
+                        {app.executor_code && <span className="font-mono truncate max-w-[12rem]">{app.executor_code}</span>}
                         <span>{formatRelativeTime(app.created_at)}</span>
-                        <span className="text-muted-foreground">ID</span>
-                        <span className="font-mono text-[10px] text-muted-foreground truncate">{app.id}</span>
                       </div>
                       <div className="flex gap-2 pt-2 border-t border-border/40">
-                        <Button size="sm" className="flex-1 gap-1.5" onClick={() => handleOpenApp(app.id, app.app_code)}>
-                          <ExternalLink className="size-3.5" />Start Chat
+                        <Button size="sm" className="flex-1 gap-1.5 h-8" onClick={() => handleOpenApp(app.id, app.app_code)}>
+                          <OpenIcon className="size-3.5" />Open
                         </Button>
-                        <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                        <Button size="sm" variant="outline" className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
                           disabled={deleteAppMutation.isPending}
                           onClick={(e) => handleDeleteApp(app.id, app.app_code, e)}>
-                          <Trash2 className="size-3.5" />
+                          <DeleteIcon className="size-3.5" />
                         </Button>
                       </div>
                     </div>
@@ -253,11 +253,11 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
             })}
           </div>
         ) : (
-          <div className="text-center py-16 border border-dashed border-border rounded-xl">
-            <Bot className="mx-auto size-8 text-muted-foreground/30 mb-3" />
-            <p className="text-sm text-muted-foreground mb-3">No apps yet</p>
-            <Button size="sm" onClick={() => { setShowCreateAppForm(true); setAppCode(randomAppCode()); }}>
-              Create App
+          <div className="text-center py-12 border border-dashed border-border rounded-lg">
+            <AppIcon className="mx-auto size-7 text-muted-foreground/25 mb-2" />
+            <p className="text-xs text-muted-foreground mb-3">No apps</p>
+            <Button size="sm" className="gap-1.5" onClick={() => { setShowCreateAppForm(true); setAppCode(randomAppCode()); }}>
+              <NewIcon className="size-3.5" />New
             </Button>
           </div>
         )}
@@ -271,48 +271,55 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
         <div className="flex items-center justify-between max-w-[1600px] mx-auto">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-md shadow-primary-500/20">
-              <Bot className="size-4 text-white" />
+              <BrandIcon className="size-4 text-white" />
             </div>
-            <h1 className="text-base font-bold text-foreground tracking-tight">AI Agent Platform</h1>
+            <h1 className="text-base font-bold text-foreground tracking-tight">Structure</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => { resetChat(); navigate('/app'); }}
-              className="h-9 px-4 text-sm font-medium text-muted-foreground rounded-xl hover:bg-muted hover:text-foreground transition-all flex items-center gap-2"
+              className="h-9 rounded-xl text-muted-foreground hover:text-foreground"
               title="Open Workspaces"
             >
-              <FolderKanban className="size-4" />
+              <WorkspaceIcon className="size-4" />
               <span className="hidden sm:inline">Workspaces</span>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={toggleTheme}
-              className="size-9 flex items-center justify-center rounded-xl hover:bg-muted transition-all"
+              className="size-9 rounded-xl text-muted-foreground hover:text-foreground"
               title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
             >
               {theme === 'dark'
-                ? <Sun className="size-4.5 text-muted-foreground" />
-                : <Moon className="size-4.5 text-muted-foreground" />}
-            </button>
-            <button
+                ? <ThemeLightIcon className="size-4.5" />
+                : <ThemeDarkIcon className="size-4.5" />}
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={handleLogout}
-              className="h-9 px-4 text-sm font-medium text-muted-foreground rounded-xl hover:bg-muted hover:text-foreground transition-all"
+              className="size-9 rounded-xl text-muted-foreground hover:text-foreground"
+              title="Logout"
             >
-              Logout
-            </button>
+              <LogoutIcon className="size-4" />
+            </Button>
           </div>
         </div>
       </header>
 
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-8 py-8">
-        <Tabs defaultValue={defaultTab} className="space-y-6">
-          <TabsList className="h-10 w-full sm:w-auto p-1 bg-muted/50">
-            <TabsTrigger value="app" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Bot className="size-3.5" />App</TabsTrigger>
-            <TabsTrigger value="trigger" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Zap className="size-3.5" />Trigger</TabsTrigger>
-            <TabsTrigger value="context" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Layers className="size-3.5" />Context</TabsTrigger>
-            <TabsTrigger value="models" className="flex-1 sm:flex-none text-[11px] sm:text-sm px-1.5 sm:px-4 gap-1 sm:gap-2 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><Cpu className="size-3.5" />Models</TabsTrigger>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-5">
+        <Tabs defaultValue={defaultTab} className="space-y-4">
+          <TabsList className="h-9 w-full sm:w-auto p-1 bg-muted/50">
+            <TabsTrigger value="app" className="flex-1 sm:flex-none text-[11px] sm:text-xs px-1.5 sm:px-3 gap-1 sm:gap-1.5 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><AppIcon className="size-3.5" />App</TabsTrigger>
+            <TabsTrigger value="trigger" className="flex-1 sm:flex-none text-[11px] sm:text-xs px-1.5 sm:px-3 gap-1 sm:gap-1.5 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><TriggerIcon className="size-3.5" />Trigger</TabsTrigger>
+            <TabsTrigger value="context" className="flex-1 sm:flex-none text-[11px] sm:text-xs px-1.5 sm:px-3 gap-1 sm:gap-1.5 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><ContextIcon className="size-3.5" />Context</TabsTrigger>
+            <TabsTrigger value="models" className="flex-1 sm:flex-none text-[11px] sm:text-xs px-1.5 sm:px-3 gap-1 sm:gap-1.5 rounded-md data-[state=active]:bg-background data-[state=active]:shadow-sm"><ModelIcon className="size-3.5" />Models</TabsTrigger>
           </TabsList>
 
           <TabsContent value="app" className="mt-0 outline-none">
@@ -325,11 +332,11 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
 
           <TabsContent value="context" className="mt-0 outline-none">
             <Tabs defaultValue="knowledge">
-              <TabsList className="h-9 p-1 bg-muted/30 mb-6">
-                <TabsTrigger value="knowledge" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Library className="size-3.5" />Knowledge</TabsTrigger>
-                <TabsTrigger value="tool" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Wrench className="size-3.5" />Tool</TabsTrigger>
-                <TabsTrigger value="memory" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Brain className="size-3.5" />Memory</TabsTrigger>
-                <TabsTrigger value="skill" className="text-xs px-4 gap-2 rounded-md data-[state=active]:bg-background"><Sparkles className="size-3.5" />Skill</TabsTrigger>
+              <TabsList className="h-8 p-1 bg-muted/30 mb-4">
+                <TabsTrigger value="knowledge" className="text-xs px-3 gap-1.5 rounded-md data-[state=active]:bg-background"><KnowledgeIcon className="size-3.5" />Knowledge</TabsTrigger>
+                <TabsTrigger value="tool" className="text-xs px-3 gap-1.5 rounded-md data-[state=active]:bg-background"><ToolIcon className="size-3.5" />Tool</TabsTrigger>
+                <TabsTrigger value="memory" className="text-xs px-3 gap-1.5 rounded-md data-[state=active]:bg-background"><MemoryIcon className="size-3.5" />Memory</TabsTrigger>
+                <TabsTrigger value="skill" className="text-xs px-3 gap-1.5 rounded-md data-[state=active]:bg-background"><SkillIcon className="size-3.5" />Skill</TabsTrigger>
               </TabsList>
               <TabsContent value="knowledge" className="outline-none"><KnowledgePage /></TabsContent>
               <TabsContent value="tool" className="outline-none"><ToolPage /></TabsContent>
@@ -372,7 +379,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
                 </SelectTrigger>
                 <SelectContent>
                   {!templatesData ? (
-                    <SelectItem value="_loading" disabled>Loading...</SelectItem>
+                    <SelectItem value="_loading" disabled>Loading…</SelectItem>
                   ) : templatesData.length === 0 ? (
                     <SelectItem value="_none" disabled>No executors available</SelectItem>
                   ) : (
@@ -396,7 +403,7 @@ export default function HomePage({ defaultTab = 'app' }: HomePageProps) {
               Cancel
             </Button>
             <Button type="submit" form="create-app-form" disabled={createAppMutation.isPending}>
-              {createAppMutation.isPending ? 'Creating...' : 'Create'}
+              {createAppMutation.isPending ? 'Creating…' : 'Create'}
             </Button>
           </DialogFooter>
         </DialogContent>

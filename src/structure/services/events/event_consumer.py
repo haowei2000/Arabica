@@ -93,6 +93,7 @@ class EventConsumer:
                     for message_id, data in messages:
                         current_id = message_id
                         event = self._parse_event_data(data)
+                        event["stream_id"] = self._decode_stream_id(message_id)
                         yield event
 
                         # Stop streaming once the run reaches a terminal state so
@@ -166,6 +167,7 @@ class EventConsumer:
                     for message_id, data in messages:
                         current_id = message_id
                         event = self._parse_event_data(data)
+                        event["stream_id"] = self._decode_stream_id(message_id)
                         yield event
 
             except asyncio.CancelledError:
@@ -215,6 +217,11 @@ class EventConsumer:
                     decoded[key] = 0
 
         return decoded
+
+    @staticmethod
+    def _decode_stream_id(message_id: bytes | str) -> str:
+        """Return the Redis stream id used for exact SSE resume."""
+        return message_id.decode() if isinstance(message_id, bytes) else str(message_id)
 
 
 class EventReplayer:
@@ -345,12 +352,12 @@ class EventReplayer:
             state["last_sequence"] = event.sequence
 
             if event.event_type == EventType.USER_MESSAGE:
+                payload = event.payload or {}
                 state["messages"].append(
                     {
                         "role": "user",
-                        "content": event.payload.get("content", "")
-                        if event.payload
-                        else "",
+                        "content": payload.get("content") or payload.get("message", ""),
+                        "attachments": payload.get("attachments") or [],
                         "timestamp": event.created_at.isoformat(),
                     }
                 )
@@ -387,7 +394,7 @@ class EventReplayer:
                             "success" if event.payload.get("success") else "error"
                         )
 
-            elif event.event_type == EventType.RUN_STATE_CHANGE:  # noqa: SIM102
+            elif event.event_type == EventType.RUN_STATE_CHANGE:
                 if event.payload:
                     state["status"] = event.payload.get("new_state", state["status"])
 

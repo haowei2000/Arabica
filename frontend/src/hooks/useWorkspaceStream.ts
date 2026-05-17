@@ -70,8 +70,10 @@ export function useWorkspaceStream(workspaceId: string | null) {
             return;
           }
 
-          // Track sequence for reconnect resume
-          if (payload.sequence != null) {
+          // Track Redis stream id for exact reconnect resume.
+          if (typeof payload.stream_id === 'string') {
+            lastEventId = payload.stream_id;
+          } else if (payload.sequence != null) {
             lastEventId = String(payload.sequence);
           }
 

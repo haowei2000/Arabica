@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import WorkspaceCRUDDep
 from structure.extensions.database import get_structure_db
+from structure.extensions.storage.global_storage import get_global_s3_storage
+from structure.extensions.storage.s3_storage_backend import S3StorageBackend
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.runs.artifact import ArtifactListResponse, ArtifactResponse
 from structure.services.runs.artifact_crud import ArtifactCRUD
@@ -89,6 +91,7 @@ async def download_artifact(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     workspace_crud: WorkspaceCRUDDep,
     artifact_crud: ArtifactCRUDDep,
+    storage: Annotated[S3StorageBackend, Depends(get_global_s3_storage)],
 ):
     """Download artifact content as a file."""
     workspace = await workspace_crud.get_by_id_and_user(workspace_id, current_user.id)
@@ -105,19 +108,27 @@ async def download_artifact(
             detail=f"Artifact {artifact_id} not found",
         )
 
-    if artifact.s3_url:
+    if artifact.s3_key:
+        try:
+            content_bytes = storage.get_bytes(artifact.s3_key)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to download artifact file: {exc!s}",
+            ) from exc
+        content_type = artifact.content_type or "application/octet-stream"
+    elif artifact.s3_url:
         from fastapi.responses import RedirectResponse
 
         return RedirectResponse(url=artifact.s3_url)
-
-    if artifact.content is None:
+    elif artifact.content is not None:
+        content_bytes = artifact.content.encode("utf-8")
+        content_type = artifact.content_type or "text/plain; charset=utf-8"
+    else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Artifact has no downloadable content",
         )
-
-    content_bytes = artifact.content.encode("utf-8")
-    content_type = artifact.content_type or "text/plain; charset=utf-8"
 
     safe_name = artifact.name.replace('"', '\\"')
     return Response(

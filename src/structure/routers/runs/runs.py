@@ -5,20 +5,16 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
 
 from structure.config.factory import get_settings
 from structure.core.dependencies.auth import get_current_user
 from structure.core.dependencies.workspace import (
     EventPublisherDep,
-    QuotaServiceDep,
+    RunApplicationServiceDep,
     RunCRUDDep,
     RunStateMachineDep,
     WorkspaceCRUDDep,
 )
-from structure.core.enums.runs import TriggerType
-from structure.models.app import App
-from structure.models.executor.executor import ExecutorTemplate
 from structure.schemas.auth.user import UserResponse
 from structure.schemas.events.event_payloads import EventType, UserMessageEventSchema
 from structure.schemas.runs.run import (
@@ -29,6 +25,7 @@ from structure.schemas.runs.run import (
     RunStatus,
 )
 from structure.services.auth.quota_service import QuotaExceededError
+from structure.services.runs.run_application_service import WorkspaceAccessDeniedError
 
 _redis_cfg = get_settings().redis
 REDIS_RUN_LABEL = _redis_cfg.run_label
@@ -41,11 +38,7 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/runs", tags=["runs"])
 async def create_run(
     user_message_event: UserMessageEventSchema,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
-    workspace_crud: WorkspaceCRUDDep,
-    run_crud: RunCRUDDep,
-    event_publisher: EventPublisherDep,
-    state_machine: RunStateMachineDep,
-    quota_service: QuotaServiceDep,
+    run_application_service: RunApplicationServiceDep,
 ):
     """
     Create and start a new run with a user message.
@@ -62,74 +55,21 @@ async def create_run(
     Returns:
         Created run
     """
-    # Verify workspace access
-    workspace_id = user_message_event.workspace_id
-    workspace = await workspace_crud.get_by_id_and_user(workspace_id, current_user.id)
-    if not workspace:
+    try:
+        return await run_application_service.start_user_run(
+            user_message_event,
+            current_user,
+        )
+    except WorkspaceAccessDeniedError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workspace {workspace_id} not found or access denied",
-        )
-
-    try:
-        await quota_service.assert_can_start_run(current_user)
+            detail=str(exc),
+        ) from exc
     except QuotaExceededError as exc:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=str(exc),
         ) from exc
-
-    # Determine app_id (from request or workspace default)
-    app_id = user_message_event.app_id
-
-    # Create run (app_id is now optional)
-    run = await run_crud.create(
-        workspace_id=workspace_id,
-        app_id=app_id,
-        user_id=current_user.id,
-        trigger_type=TriggerType.USER,
-        auto_commit=False,
-    )
-
-    # Resolve executor_code:
-    #   1. app.executor_id → ExecutorTemplate.executor_code  (legacy)
-    #   2. workspace.executor_code  (new native config)
-    #   3. default "SimpleAgent"
-    executor_code = "SimpleAgent"
-    if app_id:
-        app_result = await state_machine.db.execute(select(App).where(App.id == app_id))
-        app_row = app_result.scalar_one_or_none()
-        if app_row and app_row.executor_id:
-            tmpl_result = await state_machine.db.execute(
-                select(ExecutorTemplate).where(
-                    ExecutorTemplate.id == app_row.executor_id
-                )
-            )
-            tmpl = tmpl_result.scalar_one_or_none()
-            if tmpl:
-                executor_code = tmpl.executor_code
-    else:
-        # Fall back to workspace's own executor_code
-        if workspace.executor_code:
-            executor_code = workspace.executor_code
-
-    # Preserve client-side routing hints such as forced_tools. UserMessage allows
-    # extra fields, and the executor can use them to narrow the tool set.
-    user_payload = user_message_event.payload.model_dump(exclude_none=True)
-
-    # Publish user message event (also triggers Worker via run_tasks stream)
-    await event_publisher.publish(
-        event_type=EventType.USER_MESSAGE,
-        workspace_id=workspace_id,
-        run_id=str(run.id),
-        app_id=str(app_id) if app_id else None,
-        user_id=str(current_user.id),
-        executor_code=executor_code,
-        payload=user_payload,
-        auto_commit=True,
-    )
-
-    return run
 
 
 @router.get("/{run_id}", response_model=RunResponse)

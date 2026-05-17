@@ -172,6 +172,8 @@ cython_debug/
 .Trashes
 
 /frontend/node_modules/
+/frontend/test-results/
+/frontend/playwright-report/
 /logs/
 /docker/*/data
 /.idea/*
