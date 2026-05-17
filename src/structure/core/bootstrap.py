@@ -466,9 +466,7 @@ class ApplicationBootstrap:
                     await session.flush()
                 else:
                     chat_model.name = f"Default OpenAI {chat_model_id}"
-                    chat_model.description = (
-                        "System default chat model for new users"
-                    )
+                    chat_model.description = "System default chat model for new users"
                     chat_model.base_url = base_url
                     chat_model.api_key_ref = api_key
                     chat_model.is_system = True
@@ -537,7 +535,9 @@ class ApplicationBootstrap:
                 embedding_model_id,
             )
         except Exception as e:
-            logger.error("System default LLM model seeding failed: %s", e, exc_info=True)
+            logger.error(
+                "System default LLM model seeding failed: %s", e, exc_info=True
+            )
 
     def get_redis_client(self):
         """Get Redis client (for Worker)"""
