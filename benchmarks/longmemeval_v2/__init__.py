@@ -8,6 +8,17 @@ dataset is integrated.
 """
 
 from benchmarks.longmemeval_v2.dataset import load_longmemeval_v2
+from benchmarks.longmemeval_v2.release import (
+    build_trajectory_offset_index,
+    load_longmemeval_v2_release,
+    read_trajectories_by_id,
+)
 from benchmarks.longmemeval_v2.scorer import longmemeval_v2_scorer
 
-__all__ = ["load_longmemeval_v2", "longmemeval_v2_scorer"]
+__all__ = [
+    "build_trajectory_offset_index",
+    "load_longmemeval_v2",
+    "load_longmemeval_v2_release",
+    "longmemeval_v2_scorer",
+    "read_trajectories_by_id",
+]
