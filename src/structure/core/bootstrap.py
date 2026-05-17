@@ -19,7 +19,7 @@ Version: v2.0.0
 from dataclasses import dataclass
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from structure.extensions.database import _engines, _ensure_registered, get_session
 from structure.extensions.logger import setup_logging
@@ -66,6 +66,9 @@ class BootstrapConfig:
 
     # Whether to seed default context paths in all workspaces (API only)
     init_context_paths: bool = False
+
+    # Whether to seed default system LLM models from environment settings (API only)
+    seed_default_llm_models: bool = False
 
     # Whether to discover inner tools from the filesystem (Plugin discovery)
     discover_inner_tools: bool = True
@@ -253,14 +256,18 @@ class ApplicationBootstrap:
             await self._create_admin_user()
 
         # Step 6: NEW: Unified registry initialization
+        if self.config.seed_default_llm_models:
+            await self._seed_default_llm_models()
+
+        # Step 7: NEW: Unified registry initialization
         if self.config.init_registries:
             await _initialize_registries(self.config)
 
-        # Step 7: Storage backend
+        # Step 8: Storage backend
         if self.config.init_storage:
             await self._init_storage_backend()
 
-        # Step 8: Seed default context paths in all workspaces (API only)
+        # Step 9: Seed default context paths in all workspaces (API only)
         if self.config.init_context_paths:
             await _initialize_default_context_paths()
 
@@ -404,6 +411,134 @@ class ApplicationBootstrap:
             logger.error(f"❌ Admin user creation failed: {e}")
             # Don't raise exception, allow app to continue
 
+    async def _seed_default_llm_models(self) -> None:
+        """Create or update system default LLM models from OPENAI__* settings."""
+        openai_settings = self.settings.openai
+        api_key = (openai_settings.api_key if openai_settings else "").strip()
+        if not api_key:
+            logger.info("Skipping system default LLM seed: OPENAI__API_KEY is not set")
+            return
+
+        base_url = (
+            (openai_settings.base_url if openai_settings else "")
+            or "https://api.openai.com/v1"
+        ).strip()
+        chat_model_id = (
+            (openai_settings.model if openai_settings else "") or "gpt-4.1-mini"
+        ).strip()
+        embedding_model_id = (
+            (openai_settings.embedding_model if openai_settings else "")
+            or "text-embedding-3-small"
+        ).strip()
+        embedding_dimension = (
+            openai_settings.embedding_dimension if openai_settings else 1536
+        )
+
+        try:
+            from structure.models.llm.chat_model import ChatModel
+            from structure.models.llm.embedding_model import EmbeddingModel
+
+            async with get_session("structure") as session:
+                chat_result = await session.execute(
+                    select(ChatModel).where(
+                        ChatModel.is_system.is_(True),
+                        ChatModel.provider == "openai",
+                        ChatModel.model_id == chat_model_id,
+                    )
+                )
+                chat_model = chat_result.scalar_one_or_none()
+                if chat_model is None:
+                    chat_model = ChatModel(
+                        name=f"Default OpenAI {chat_model_id}",
+                        description="System default chat model for new users",
+                        user_id=None,
+                        provider="openai",
+                        model_id=chat_model_id,
+                        base_url=base_url,
+                        api_key_ref=api_key,
+                        supports_function_call=True,
+                        supports_streaming=True,
+                        is_system=True,
+                        is_default=True,
+                        enabled=True,
+                    )
+                    session.add(chat_model)
+                    await session.flush()
+                else:
+                    chat_model.name = f"Default OpenAI {chat_model_id}"
+                    chat_model.description = "System default chat model for new users"
+                    chat_model.base_url = base_url
+                    chat_model.api_key_ref = api_key
+                    chat_model.is_system = True
+                    chat_model.is_default = True
+                    chat_model.enabled = True
+
+                await session.execute(
+                    update(ChatModel)
+                    .where(
+                        ChatModel.is_system.is_(True),
+                        ChatModel.id != chat_model.id,
+                    )
+                    .values(is_default=False)
+                )
+
+                embedding_result = await session.execute(
+                    select(EmbeddingModel).where(
+                        EmbeddingModel.is_system.is_(True),
+                        EmbeddingModel.provider == "openai",
+                        EmbeddingModel.model_id == embedding_model_id,
+                    )
+                )
+                embedding_model = embedding_result.scalar_one_or_none()
+                if embedding_model is None:
+                    embedding_model = EmbeddingModel(
+                        name=f"Default OpenAI {embedding_model_id}",
+                        description="System default embedding model for new users",
+                        user_id=None,
+                        provider="openai",
+                        model_id=embedding_model_id,
+                        base_url=base_url,
+                        api_key_ref=api_key,
+                        dimension=embedding_dimension,
+                        is_system=True,
+                        is_default=True,
+                        enabled=True,
+                    )
+                    session.add(embedding_model)
+                    await session.flush()
+                else:
+                    embedding_model.name = f"Default OpenAI {embedding_model_id}"
+                    embedding_model.description = (
+                        "System default embedding model for new users"
+                    )
+                    embedding_model.base_url = base_url
+                    embedding_model.api_key_ref = api_key
+                    embedding_model.dimension = embedding_dimension
+                    embedding_model.is_system = True
+                    embedding_model.is_default = True
+                    embedding_model.enabled = True
+
+                await session.execute(
+                    update(EmbeddingModel)
+                    .where(
+                        EmbeddingModel.is_system.is_(True),
+                        EmbeddingModel.id != embedding_model.id,
+                    )
+                    .values(is_default=False)
+                )
+
+                await session.commit()
+
+            logger.info(
+                "Seeded system default LLM models: chat=%s embedding=%s",
+                chat_model_id,
+                embedding_model_id,
+            )
+        except Exception as e:
+            logger.error(
+                "System default LLM model seeding failed: %s", e, exc_info=True
+            )
+
     def get_redis_client(self):
         """Get Redis client (for Worker)"""
         return self.redis_client
@@ -433,6 +568,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
         init_context_paths=True,  # Seed default context paths in all workspaces
+        seed_default_llm_models=True,
         discover_inner_tools=False,  # API connects to MCP server for tools
     )
 

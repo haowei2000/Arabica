@@ -102,6 +102,7 @@ class ChatModelCRUD:
         result = await self.db.execute(
             select(ChatModel)
             .where(ChatModel.is_default.is_(True), ChatModel.enabled.is_(True))
+            .order_by(ChatModel.is_system.desc(), ChatModel.created_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()

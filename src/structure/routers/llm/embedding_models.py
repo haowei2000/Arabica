@@ -106,6 +106,11 @@ async def update_embedding_model(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found"
         )
+    if obj.is_system and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot modify system models",
+        )
     if not obj.is_system and str(obj.user_id) != str(current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
