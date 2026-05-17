@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from structure.utils.schema_mixins import ResponseMixin
 
@@ -94,6 +94,12 @@ class EmbeddingModelResponse(ResponseMixin, BaseModel):
     enabled: bool
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def hide_system_api_key(self) -> "EmbeddingModelResponse":
+        if self.is_system and self.api_key_ref:
+            self.api_key_ref = "configured"
+        return self
 
 
 class EmbeddingModelListResponse(BaseModel):
