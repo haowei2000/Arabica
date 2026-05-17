@@ -131,6 +131,7 @@ export const useChatStore = create<ChatState>((set) => ({
         id: `${runId}-${index}`,
         role: msg.role as MessageRoleType,
         content: msg.content || '',
+        attachments: msg.attachments && msg.attachments.length > 0 ? msg.attachments : undefined,
         timestamp: new Date(msg.timestamp),
       }));
 

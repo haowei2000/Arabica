@@ -40,6 +40,7 @@ from collections.abc import AsyncGenerator
 import json
 import logging
 import re
+from time import perf_counter
 from typing import Any, ClassVar
 
 from structure.core.interfaces import (
@@ -158,6 +159,34 @@ def _requested_tool_names(raw_events: list[Event]) -> list[str] | None:
     return None
 
 
+def _format_attachment_context_block(attachments: Any) -> str:
+    """Render file attachments as context-path references for the LLM."""
+    if not isinstance(attachments, list):
+        return ""
+
+    lines: list[str] = []
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        name = item.get("name") or path.rsplit("/", 1)[-1]
+        content_type = item.get("content_type") or "unknown"
+        size_bytes = item.get("size_bytes")
+        size_hint = f", {size_bytes} bytes" if isinstance(size_bytes, int) else ""
+        lines.append(f"- {name}: {path} ({content_type}{size_hint})")
+
+    if not lines:
+        return ""
+
+    return (
+        "Attached files are available in structured workspace context. "
+        "Use read_context with these paths to inspect parsed content:\n"
+        + "\n".join(lines)
+    )
+
+
 SYSTEM_PROMPT = """\
 You are an intelligent AI assistant.
 
@@ -253,8 +282,16 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
                 msg = " ".join(
                     p.get("text", "") if isinstance(p, dict) else str(p) for p in msg
                 )
-            if msg:
-                messages.append(ChatMessage(role="user", content=str(msg)))
+            attachment_block = _format_attachment_context_block(
+                payload.get("attachments")
+            )
+            content = str(msg) if msg else ""
+            if attachment_block:
+                content = (
+                    f"{content}\n\n{attachment_block}" if content else attachment_block
+                )
+            if content:
+                messages.append(ChatMessage(role="user", content=content))
 
         elif event_type == str(EventType.AGENT_MESSAGE):
             content = payload.get("content") or payload.get("message", "")
@@ -1157,39 +1194,15 @@ class DefaultExecutor(Executor):
 
             async with get_session("structure") as db:
                 if global_scope and self.workspace_id:
-                    from uuid import UUID
-
-                    from structure.core.enums import EventType as ET
-
-                    # Only fetch conversation-relevant event types so the
-                    # limit is not consumed by noise events.
-                    conv_types = [
-                        str(ET.USER_MESSAGE),
-                        str(ET.AGENT_MESSAGE),
-                        str(ET.TOOL_RESULT),
-                        str(ET.TOOL_ERROR),
-                        str(ET.USER_FEEDBACK),
-                        str(ET.TOOL_CALL),
-                    ]
-                    # Fetch the most recent N workspace events (DESC), then
-                    # reverse so the final list is in chronological order.
-                    # Event.sequence is per-run, not workspace-global.
-                    stmt = (
-                        select(EventModel)
-                        .where(
-                            EventModel.workspace_id == UUID(self.workspace_id),
-                            EventModel.event_type.in_(conv_types),
-                            EventModel.is_archived.is_(False),
-                        )
-                        .order_by(
-                            EventModel.created_at.desc(),
-                            EventModel.sequence.desc(),
-                        )
-                        .limit(limit)
+                    from structure.services.events.conversation_window import (
+                        get_conversation_window,
                     )
-                    result = await db.execute(stmt)
-                    rows = list(result.scalars().all())
-                    rows.reverse()
+
+                    rows = await get_conversation_window(
+                        db,
+                        self.workspace_id,
+                        limit=limit,
+                    )
                 else:
                     if not self.run_id:
                         return []
@@ -1270,6 +1283,8 @@ class DefaultExecutor(Executor):
                 _iteration,
                 self.model_name,
             )
+            llm_call_started = perf_counter()
+            saw_first_token = False
             stream = self.strategy.call_llm_stream(
                 messages,
                 active_tools_info,
@@ -1286,6 +1301,15 @@ class DefaultExecutor(Executor):
                 token: str = item
                 if not token:
                     continue
+                if not saw_first_token:
+                    saw_first_token = True
+                    logger.info(
+                        "llm_first_token_ms=%s run=%s workspace=%s model=%s",
+                        int((perf_counter() - llm_call_started) * 1000),
+                        self.run_id,
+                        self.workspace_id,
+                        self.model_name,
+                    )
 
                 # --- thinking-block detection ---------------------
                 if in_thinking is None:

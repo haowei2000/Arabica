@@ -23,10 +23,12 @@ import os
 from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from structure.services.workspace_context.workspace_context_service import (
-    WorkspaceContextService,
+from structure.models.workspaces.workspace import Workspace
+from structure.services.workspace_context.workspace_context_read_model import (
+    WorkspaceContextReadModel,
 )
 
 if TYPE_CHECKING:
@@ -40,6 +42,7 @@ _CACHE_TTL = int(os.getenv("WORKSPACE_CONTEXT_CACHE_TTL", "300"))
 
 # Global cache: 200 workspaces (default), 5 minutes TTL
 _WORKSPACE_CONTEXT_CACHE = TTLCache(maxsize=_CACHE_MAXSIZE, ttl=_CACHE_TTL)
+_WORKSPACE_CONTEXT_VERSION_CACHE = TTLCache(maxsize=_CACHE_MAXSIZE, ttl=_CACHE_TTL)
 
 # Locks to prevent concurrent duplicate loads
 _CACHE_LOCKS: dict[str, asyncio.Lock] = {}
@@ -79,11 +82,84 @@ async def _is_workspace_dirty(workspace_id: str) -> bool:
         return False
 
 
+async def _get_redis_context_version(workspace_id: str) -> int | None:
+    if _shared_redis is None:
+        return None
+    try:
+        value = await _shared_redis.get(f"workspace_context_version:{workspace_id}")
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            value = value.decode()
+        return int(value)
+    except Exception:
+        return None
+
+
+async def _set_redis_context_version(workspace_id: str, version: int) -> None:
+    if _shared_redis is None:
+        return
+    try:
+        await _shared_redis.setex(
+            f"workspace_context_version:{workspace_id}",
+            _CACHE_TTL,
+            str(version),
+        )
+    except Exception:
+        return
+
+
+async def get_workspace_context_version(
+    session: AsyncSession,
+    workspace_id: str,
+    *,
+    force_reload: bool = False,
+) -> int:
+    """Return the current context version with a small local/Redis cache."""
+    if not force_reload and workspace_id in _WORKSPACE_CONTEXT_VERSION_CACHE:
+        return _WORKSPACE_CONTEXT_VERSION_CACHE[workspace_id]
+
+    if not force_reload:
+        redis_version = await _get_redis_context_version(workspace_id)
+        if redis_version is not None:
+            _WORKSPACE_CONTEXT_VERSION_CACHE[workspace_id] = redis_version
+            return redis_version
+
+    result = await session.execute(
+        select(Workspace.context_version).where(Workspace.id == workspace_id)
+    )
+    version = result.scalar_one_or_none() or 1
+    _WORKSPACE_CONTEXT_VERSION_CACHE[workspace_id] = version
+    await _set_redis_context_version(workspace_id, version)
+    return version
+
+
+async def bump_workspace_context_version(
+    session: AsyncSession,
+    workspace_id: str,
+) -> int:
+    """Increment a workspace context version after a context write."""
+    await session.execute(
+        update(Workspace)
+        .where(Workspace.id == workspace_id)
+        .values(context_version=Workspace.context_version + 1)
+    )
+    await session.flush()
+    result = await session.execute(
+        select(Workspace.context_version).where(Workspace.id == workspace_id)
+    )
+    version = result.scalar_one_or_none() or 1
+    invalidate_workspace_context_cache(workspace_id)
+    _WORKSPACE_CONTEXT_VERSION_CACHE[workspace_id] = version
+    await _set_redis_context_version(workspace_id, version)
+    return version
+
+
 async def get_cached_workspace_context(
     session: AsyncSession,
     workspace_id: str,
     force_reload: bool = False,
-) -> WorkspaceContextService:
+) -> WorkspaceContextReadModel:
     """Get or load WorkspaceContextService with global caching.
 
     Args:
@@ -106,35 +182,65 @@ async def get_cached_workspace_context(
             session, workspace_id, force_reload=True
         )
     """
-    # Check Redis dirty flag — set by Celery workers after modifying WorkspaceContext.
-    # Use getdel so only the first reader triggers the reload (atomic clear + check).
-    if not force_reload and workspace_id in _WORKSPACE_CONTEXT_CACHE:
-        if await _is_workspace_dirty(workspace_id):
-            logger.debug(
-                f"WorkspaceContext dirty flag detected, reloading: {workspace_id}"
-            )
-            force_reload = True
-        else:
-            logger.debug(f"WorkspaceContext cache hit: {workspace_id}")
-            return _WORKSPACE_CONTEXT_CACHE[workspace_id]
+    dirty = False
+    if (
+        not force_reload
+        and workspace_id in _WORKSPACE_CONTEXT_VERSION_CACHE
+        and await _is_workspace_dirty(workspace_id)
+    ):
+        logger.debug(f"WorkspaceContext dirty flag detected, reloading: {workspace_id}")
+        _WORKSPACE_CONTEXT_VERSION_CACHE.pop(workspace_id, None)
+        force_reload = True
+        dirty = True
+
+    version = await get_workspace_context_version(
+        session,
+        workspace_id,
+        force_reload=force_reload,
+    )
+    cache_key = f"{workspace_id}:{version}"
+
+    # Check versioned cache. Cache hits do not query the DB unless a dirty flag
+    # forced a version refresh above.
+    if not force_reload and not dirty and cache_key in _WORKSPACE_CONTEXT_CACHE:
+        logger.debug(
+            "WorkspaceContext cache hit: workspace=%s version=%s context_cache_hit=true",
+            workspace_id,
+            version,
+        )
+        return _WORKSPACE_CONTEXT_CACHE[cache_key]
 
     # Ensure lock exists
-    if workspace_id not in _CACHE_LOCKS:
-        _CACHE_LOCKS[workspace_id] = asyncio.Lock()
+    if cache_key not in _CACHE_LOCKS:
+        _CACHE_LOCKS[cache_key] = asyncio.Lock()
 
-    async with _CACHE_LOCKS[workspace_id]:
+    async with _CACHE_LOCKS[cache_key]:
         # Double-check after acquiring lock
-        if not force_reload and workspace_id in _WORKSPACE_CONTEXT_CACHE:
-            logger.debug(f"WorkspaceContext cache hit (after lock): {workspace_id}")
-            return _WORKSPACE_CONTEXT_CACHE[workspace_id]
+        if not force_reload and cache_key in _WORKSPACE_CONTEXT_CACHE:
+            logger.debug(
+                "WorkspaceContext cache hit after lock: workspace=%s version=%s "
+                "context_cache_hit=true",
+                workspace_id,
+                version,
+            )
+            return _WORKSPACE_CONTEXT_CACHE[cache_key]
 
         # Load from database
-        logger.debug(f"WorkspaceContext cache miss, loading: {workspace_id}")
-        service = WorkspaceContextService(session, workspace_id)
+        logger.debug(
+            "WorkspaceContext cache miss, loading: workspace=%s version=%s "
+            "context_cache_hit=false",
+            workspace_id,
+            version,
+        )
+        service = WorkspaceContextReadModel(
+            session,
+            workspace_id,
+            context_version=version,
+        )
         await service.load()
 
         # Store in cache
-        _WORKSPACE_CONTEXT_CACHE[workspace_id] = service
+        _WORKSPACE_CONTEXT_CACHE[cache_key] = service
 
         return service
 
@@ -148,14 +254,18 @@ def invalidate_workspace_context_cache(workspace_id: str):
     Args:
         workspace_id: Workspace ID to invalidate
     """
-    if workspace_id in _WORKSPACE_CONTEXT_CACHE:
-        del _WORKSPACE_CONTEXT_CACHE[workspace_id]
-        logger.info(f"Invalidated WorkspaceContext cache: {workspace_id}")
+    prefix = f"{workspace_id}:"
+    for key in list(_WORKSPACE_CONTEXT_CACHE.keys()):
+        if str(key).startswith(prefix):
+            del _WORKSPACE_CONTEXT_CACHE[key]
+    _WORKSPACE_CONTEXT_VERSION_CACHE.pop(workspace_id, None)
+    logger.info(f"Invalidated WorkspaceContext cache: {workspace_id}")
 
 
 def clear_workspace_context_cache():
     """Clear all cached workspace contexts."""
     _WORKSPACE_CONTEXT_CACHE.clear()
+    _WORKSPACE_CONTEXT_VERSION_CACHE.clear()
     logger.info("Cleared all WorkspaceContext cache")
 
 

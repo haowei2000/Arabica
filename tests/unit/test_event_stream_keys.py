@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from structure.core.enums.events import EventType
+from structure.services.events.event_commands import executor_command_stream_name
 from structure.services.events.event_publisher import EventPublisher
-from structure.services.events.event_worker import Worker
 
 
 class _FakePipeline:
@@ -70,15 +70,5 @@ async def test_event_publisher_uses_workspace_label_for_workspace_stream():
     assert all("re.compile" not in stream for stream in streams)
 
 
-@pytest.mark.asyncio
-async def test_worker_loads_events_from_workspace_label_stream():
-    redis = _FakeRedis()
-    worker = Worker.__new__(Worker)
-    worker.redis = redis
-
-    events = await Worker._load_workspace_events(worker, "workspace-1")
-
-    assert events == []
-    assert redis.xrange_calls == [
-        {"stream": "workspace:workspace-1:events", "count": 2000}
-    ]
+def test_worker_uses_executor_command_stream_for_commands():
+    assert executor_command_stream_name("workspace-1") == "executor:workspace-1:commands"

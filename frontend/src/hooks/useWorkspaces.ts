@@ -4,6 +4,9 @@ import { apiClient } from '@/services/api';
 import { API_ENDPOINTS } from '@/constants/api';
 import type { WorkspaceCreate, WorkspaceUpdate, WorkspaceContextConfig } from '@/types/workspace';
 
+const WORKSPACE_LIST_STALE_MS = 30_000;
+const WORKSPACE_CONTEXT_STALE_MS = 60_000;
+
 export const useWorkspaces = (params?: {
   page?: number;
   page_size?: number;
@@ -13,6 +16,7 @@ export const useWorkspaces = (params?: {
   return useQuery({
     queryKey: ['workspaces', params],
     queryFn: () => workspaceService.listWorkspaces(params),
+    staleTime: WORKSPACE_LIST_STALE_MS,
   });
 };
 
@@ -43,6 +47,7 @@ export const useWorkspaceContexts = (workspaceId: string, params?: { page?: numb
     queryKey: ['workspace-contexts', workspaceId, params],
     queryFn: () => workspaceService.listWorkspaceContexts(workspaceId, params),
     enabled: !!workspaceId,
+    staleTime: WORKSPACE_CONTEXT_STALE_MS,
   });
 };
 
@@ -98,5 +103,6 @@ export const useUserContexts = (params?: { context_type?: string; page?: number;
   return useQuery({
     queryKey: ['user-contexts', params],
     queryFn: () => apiClient.get(API_ENDPOINTS.CONTEXT.LIST, { params }),
+    staleTime: WORKSPACE_CONTEXT_STALE_MS,
   });
 };

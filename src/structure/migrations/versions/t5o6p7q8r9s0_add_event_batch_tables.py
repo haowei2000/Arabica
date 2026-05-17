@@ -1,7 +1,7 @@
 """add event batch tables
 
-Revision ID: s4n5o6p7q8r9
-Revises: r3m4n5o6p7q8
+Revision ID: t5o6p7q8r9s0
+Revises: s4n5o6p7q8r9
 Create Date: 2026-05-17 00:00:00.000000
 
 """
@@ -12,8 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = "s4n5o6p7q8r9"
-down_revision: str | Sequence[str] | None = "r3m4n5o6p7q8"
+revision: str = "t5o6p7q8r9s0"
+down_revision: str | Sequence[str] | None = "s4n5o6p7q8r9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

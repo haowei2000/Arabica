@@ -22,10 +22,23 @@ class BaseEventSchema(BaseModel):
     executor_code: str | None = Field(None, description="执行器代码")
 
 
+class ChatFileAttachment(BaseModel):
+    """Structured context reference for a file attached to a chat message."""
+
+    id: str = Field(..., description="WorkspaceContext ID")
+    name: str = Field(..., description="File name")
+    path: str = Field(..., description="Structured context path")
+    content_type: str | None = Field(None, description="MIME type")
+    size_bytes: int | None = Field(None, description="File size in bytes")
+    download_url: str | None = Field(None, description="Authenticated download URL")
+    parse_status: str | None = Field(None, description="parsed/skipped/failed")
+
+
 class UserMessage(BaseModel):
     """Payload for user.message events."""
 
     message: str = Field(..., description="用户消息")
+    attachments: list[ChatFileAttachment] | None = Field(None, description="附件")
 
     model_config = {"extra": "allow"}
 

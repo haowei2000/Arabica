@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import logging
+from time import perf_counter
 from uuid import UUID
 
 import redis.asyncio as redis_async
@@ -40,20 +41,12 @@ from structure.models.workspaces.workspace import Workspace
 from structure.registries.core import ExecutorRegistry
 from structure.registries.dynamic_loader import DynamicToolLoader
 from structure.registries.tool_service import RegistryToolCaller, RegistryToolProvider
-from structure.services.events.event_codec import (
-    RE_CODE_ARTIFACT,
-    RE_CODE_FORWARD,
-    RE_CODE_NOOP,
-    RE_CODE_SKIP_SRC,
-    RE_CODE_TASK,
-    RE_CODE_WORKSPACE,
-    RE_TERMINAL,
-    RE_USER_MSG,
-    encode,
-    encode_sequence,
+from structure.services.events.event_commands import (
+    REDIS_CONSUMER_GROUP,
+    EventCommand,
+    executor_command_stream_name,
 )
 from structure.services.events.event_publisher import (
-    REDIS_STREAM_EVENTS_SUFFIX,
     EventPublisher,
 )
 from structure.services.events.handlers import (
@@ -61,6 +54,11 @@ from structure.services.events.handlers import (
     handle_run_cancellation,
     handle_task_event,
     handle_tool_call,
+)
+from structure.services.events.run_event_router import (
+    RunEventRouter,
+    RunExecutionSnapshot,
+    RunRouteAction,
 )
 from structure.services.executor.runtime import ExecutorInstanceManager
 from structure.services.runs.run_state_machine import RunStateMachine
@@ -71,14 +69,8 @@ from structure.utils.workspace_context_cache import set_shared_redis_client
 logger = logging.getLogger(__name__)
 
 _redis_cfg = get_settings().redis
-REDIS_CONSUMER_GROUP = _redis_cfg.consumer_group
-REDIS_EXECUTOR_LABEL = _redis_cfg.executor_label
 REDIS_RUN_LABEL = _redis_cfg.run_label
-REDIS_WORKSPACE_LABEL = _redis_cfg.workspace_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
-
-# Event type codec (encode/decode + routing patterns) lives in event_codec.py.
-# All routing decisions use the imported names directly.
 
 
 @dataclass(slots=True)
@@ -118,6 +110,9 @@ class Worker:
         # Per-run locks: serialise concurrent process_event calls on the same executor.
         # Safe to share across tasks because asyncio is single-threaded.
         self._executor_locks: dict[UUID, asyncio.Lock] = {}
+        self._dispatch_semaphore = asyncio.Semaphore(
+            get_settings().redis.worker_max_concurrent_events
+        )
 
         self._stuck_detector_task: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
@@ -125,14 +120,14 @@ class Worker:
         # ── Startup-initialized tool services (stateless / reusable) ──
         self._tool_caller = RegistryToolCaller()
         self._default_tool_provider = RegistryToolProvider()
+        self._router = RunEventRouter()
         # Cache for deserialized template base configs, keyed by executor_code.
         self._base_config_cache: dict[str, dict] = {}
 
         # ── Run-level event buffers ──
-        # During a run, events are held in memory and only broadcast to Redis
-        # for real-time SSE.  The full history is written to PostgreSQL in one
-        # atomic commit when the run completes or fails.
-        # Keyed by run_id string.
+        # Compatibility state for older handler hooks. Durable semantic events
+        # now write through immediately in EventPublisher; this buffer should
+        # stay empty except for legacy callers that still pass a flush callback.
         self._run_event_buffers: dict[str, list[Event]] = {}
         # Tracks the current max sequence for each buffered run so that
         # subsequent per-dispatch publishers don't re-query a stale DB value.
@@ -157,32 +152,11 @@ class Worker:
         # per call.
         set_shared_redis_client(redis_client)
 
-    @staticmethod
-    def _parse_redis_event(event_data: dict[bytes, bytes]) -> Event:
-        """Parse Redis stream event data into a transient Event instance."""
-        return Event.from_redis_fields(event_data)
-
     # ── Run-level event buffer helpers ──────────────────────────────────────
 
     def _get_run_buffer(self, run_id: str) -> list[Event] | None:
         """Return the active in-memory buffer for a run, or None if not buffering."""
         return self._run_event_buffers.get(run_id)
-
-    def _start_run_buffer(self, run_id: str, initial_seq: int) -> None:
-        """Begin buffering events for *run_id* in memory.
-
-        Args:
-            run_id: String run ID.
-            initial_seq: The sequence number that was last committed to DB for
-                this run (obtained from the current publisher's counter after
-                ``state_machine.start()``).  Subsequent publishers look this up
-                via ``_run_seq_cursors`` to avoid re-querying a stale DB.
-        """
-        self._run_event_buffers[run_id] = []
-        self._run_seq_cursors[run_id] = initial_seq
-        logger.debug(
-            f"Started event buffer for run {run_id} (initial_seq={initial_seq})"
-        )
 
     def _pop_run_buffer(self, run_id: str) -> list[Event]:
         """Remove and return all buffered events for *run_id*; cleans up cursor."""
@@ -324,13 +298,11 @@ class Worker:
                 logger.error(f"Stuck run detector error: {e}", exc_info=True)
 
     async def start(self, workspace_id: str):
-        """Start consuming messages from the workspace stream using consumer groups."""
-        stream_name = (
-            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
-        )
+        """Start consuming executor commands using consumer groups."""
+        stream_name = executor_command_stream_name(workspace_id)
         await self._ensure_consumer_group(stream_name)
         logger.info(
-            f"Worker '{self.consumer_name}' listening on workspace stream: {stream_name}"
+            f"Worker '{self.consumer_name}' listening on executor command stream: {stream_name}"
         )
 
         self._stuck_detector_task = asyncio.create_task(self._stuck_run_detector_loop())
@@ -353,7 +325,7 @@ class Worker:
                     # Each event gets its own task + DB session so that long-running
                     # LLM calls for one run don't block event processing for others.
                     task = asyncio.create_task(
-                        self._dispatch(stream_name, event_id, event_data),
+                        self._dispatch_limited(stream_name, event_id, event_data),
                         name=f"event-{self.consumer_name}-{event_id}",
                     )
                     self._tasks.add(task)
@@ -366,35 +338,46 @@ class Worker:
             except Exception as e:
                 logger.error(f"Worker stream read error: {e}", exc_info=True)
                 await asyncio.sleep(1)
-                logger.error(f"Worker stream read error: {e}", exc_info=True)
-                await asyncio.sleep(1)
+
+    async def _dispatch_limited(
+        self, stream_name: str, event_id: bytes, event_data: dict
+    ) -> None:
+        """Process an event under the worker-level concurrency cap."""
+        async with self._dispatch_semaphore:
+            await self._dispatch(stream_name, event_id, event_data)
 
     async def _dispatch(
         self, stream_name: str, event_id: bytes, event_data: dict
     ) -> None:
-        """Process one Redis stream message in an isolated DB session.
+        """Process one executor command in an isolated DB session.
 
-        Workspace events are loaded from Redis once before opening the DB session and
-        reused throughout the entire handling chain (seq computation, executor
-        forwarding) to avoid repeated round-trips.  xack is sent only on
-        success; failed messages re-enter the pending queue for retry.
+        Commands contain only a durable event id. The worker reloads the event
+        and current run history from PostgreSQL, so semantic history survives a
+        worker crash/restart. xack is sent after successful handling.
         """
         parsed_event: Event | None = None
         try:
-            parsed_event = self._parse_redis_event(event_data)
-            workspace_id = parsed_event.workspace_id or ""
-            if not workspace_id:
-                # Try to extract from stream name if not in event payload
-                parts = stream_name.split(":")
-                if len(parts) >= 2:
-                    workspace_id = parts[1]
+            command = EventCommand.from_redis_fields(event_data)
+            if command.created_at_ms is not None:
+                from structure.services.events.event_commands import (
+                    command_created_at_ms,
+                )
 
-            # Load all workspace events from Redis before opening the DB session.
-            workspace_events: list[Event] = []
-            if workspace_id:
-                workspace_events = await self._load_workspace_events(workspace_id)
+                logger.info(
+                    "command_queue_lag_ms=%s workspace=%s run=%s event=%s",
+                    command_created_at_ms() - command.created_at_ms,
+                    command.workspace_id,
+                    command.run_id,
+                    command.event_id,
+                )
 
             async with get_session("structure") as db:
+                parsed_event = await self._load_event_for_command(db, command)
+                if parsed_event is None:
+                    raise ValueError(f"Command event not found: {command.event_id}")
+                if command.executor_code and not parsed_event.executor_code:
+                    parsed_event.executor_code = command.executor_code
+
                 publisher = EventPublisher(
                     db,
                     self.redis,
@@ -403,7 +386,8 @@ class Worker:
                 )
                 state_machine = RunStateMachine(db, self.redis, publisher)
                 ctx = _Ctx(db=db, publisher=publisher, state_machine=state_machine)
-                await self.handle_event(parsed_event, ctx, workspace_events)
+                run_events = await self._load_run_events(db, str(parsed_event.run_id))
+                await self.handle_event(parsed_event, ctx, run_events)
 
             await self.redis.xack(stream_name, REDIS_CONSUMER_GROUP, event_id)
         except Exception as e:
@@ -626,15 +610,8 @@ class Worker:
             )
 
             self.runtime.attach(run_id, executor)
-            await ctx.state_machine.start(run_id, auto_commit=True)
-
-            # Start buffering *after* the RUN_STATE_CHANGE event has been
-            # committed to DB by state_machine.start().  All subsequent events
-            # (agent tokens, tool calls, etc.) will be held in memory and only
-            # broadcast to Redis until the run completes or fails.
-            run_id_str = str(run_id)
-            initial_seq = ctx.publisher._seq_counters.get(run_id_str, 0)
-            self._start_run_buffer(run_id_str, initial_seq)
+            if run.status == "pending":
+                await ctx.state_machine.start(run_id, auto_commit=True)
 
             return executor
 
@@ -651,35 +628,23 @@ class Worker:
             return None
 
     async def handle_event(
-        self, event: Event, ctx: _Ctx, workspace_events: list[Event]
+        self, event: Event, ctx: _Ctx, run_events: list[Event]
     ) -> None:
-        """Route events using the workspace's history for dispatch decisions.
-
-        seq ends with "b" → TO_EXECUTOR        → _handle_to_executor
-        seq ends with "0" → USER_MESSAGE       → run triggers + forward
-        seq ends with "5" → TOOL_CALL          → handle_tool_call
-        seq ends with [6789a] + has user msg   → forward to executor
-        terminal in seq   → skip (run finished)
-        otherwise         → skip (stale / unrecognised)
-        """
+        """Route events using an explicit durable run snapshot."""
         ctx.db.expire_all()
 
         try:
-            code = encode(event.event_type)
-
-            # ── Infrastructure: no seq needed ────────────────────────────────
-            if RE_CODE_NOOP.match(code):
-                return
-            if code == "4":
+            event_type = str(event.event_type)
+            if event_type == str(EventType.RUN_CANCELLED):
                 await handle_run_cancellation(event, self.runtime)
                 return
-            if RE_CODE_TASK.match(code):
+            if event_type.startswith("task."):
                 await handle_task_event(event)
                 return
-            if RE_CODE_ARTIFACT.match(code):
+            if event_type.startswith("artifact."):
                 await handle_artifact_event(event)
                 return
-            if RE_CODE_WORKSPACE.match(code):
+            if event_type.startswith("workspace."):
                 return
 
             run_id = event.run_id
@@ -687,59 +652,56 @@ class Worker:
                 logger.debug("Event %s has no run_id, skipping", event.event_type)
                 return
 
-            # Skip trigger-sourced tool events (already executed by trigger processor).
-            if (event.payload or {}).get(
-                "_source"
-            ) == "trigger" and RE_CODE_SKIP_SRC.match(code):
+            run_status = await self._load_run_status(ctx.db, str(run_id))
+            snapshot = RunExecutionSnapshot.from_events(
+                run_events,
+                run_status=run_status,
+            )
+            action = self._router.route(event, snapshot)
+            logger.debug(
+                "handle_event: run=%s event=%s action=%s snapshot=%s",
+                run_id,
+                event.event_type,
+                action,
+                snapshot,
+            )
+
+            if action == RunRouteAction.IGNORE:
                 return
 
             await self._assign_event_to_context_batch_if_persisted(event, ctx)
 
-            # Filter events for the current run to decide on routing
-            run_events = [e for e in workspace_events if str(e.run_id) == str(run_id)]
+            if action == RunRouteAction.EXECUTE_TOOL:
+                run_tool_caller = self._run_tool_callers.get(str(run_id))
+                await handle_tool_call(
+                    event,
+                    ctx.db,
+                    ctx.publisher,
+                    ctx.state_machine,
+                    tool_caller=run_tool_caller or self._tool_caller,
+                    flush_run_buffer=self._flush_buffer_to_db,
+                )
+                return
 
-            # Derive seq from pre-loaded events (no Redis call).
-            seq = encode_sequence((str(e.event_type),) for e in run_events)
-            logger.debug("handle_event: run=%s seq=%r", run_id, seq)
-
-            match seq:
-                case s if RE_TERMINAL.search(s):
-                    logger.debug(
-                        "Skipping %s for run %s: terminal (%s)",
-                        event.event_type,
-                        run_id,
-                        s,
-                    )
-
-                case s if s.endswith("b"):
-                    # Pass current-run events only — the executor recomputes sequence internally
-                    await self._handle_to_executor(event, run_events, ctx)
-
-                case s if s.endswith("0"):
+            if action == RunRouteAction.CALL_EXECUTOR:
+                if event_type == str(EventType.USER_MESSAGE):
                     await self._run_triggers(event, ctx)
-                    await self._publish_to_executor_event(event, ctx)
+                    run_events = await self._load_run_events(ctx.db, str(run_id))
+                await self._handle_to_executor(event, run_events, ctx)
+                return
 
-                case s if s.endswith("5"):
-                    run_tool_caller = self._run_tool_callers.get(str(run_id))
-                    await handle_tool_call(
-                        event,
-                        ctx.db,
-                        ctx.publisher,
-                        ctx.state_machine,
-                        tool_caller=run_tool_caller or self._tool_caller,
-                        flush_run_buffer=self._flush_buffer_to_db,
-                    )
+            if action == RunRouteAction.COMPLETE_RUN:
+                run_uuid = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
+                await ctx.state_machine.complete(run_uuid, auto_commit=True)
+                return
 
-                case s if RE_CODE_FORWARD.match(s[-1]) and RE_USER_MSG.search(s):
-                    await self._publish_to_executor_event(event, ctx)
-
-                case _:
-                    logger.debug(
-                        "No handler for event=%s run=%s seq=%s",
-                        event.event_type,
-                        run_id,
-                        seq,
-                    )
+            if action == RunRouteAction.FAIL_RUN:
+                run_uuid = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
+                await ctx.state_machine.fail(
+                    run_uuid,
+                    error=(event.payload or {}).get("error"),
+                    auto_commit=True,
+                )
 
         except Exception as e:
             logger.error(
@@ -774,43 +736,45 @@ class Worker:
                     with contextlib.suppress(Exception):
                         await self._safe_fail_run(run_id, str(e))
 
-    async def _publish_to_executor_event(self, event: Event, ctx: _Ctx) -> None:
-        """Publish a TO_EXECUTOR routing event to trigger executor dispatch.
-
-        Carries only the executor_code so _get_or_create_executor can
-        resolve the correct executor class for new runs.
-        """
-        await ctx.publisher.publish(
-            event_type=EventType.TO_EXECUTOR,
-            workspace_id=str(event.workspace_id),
-            run_id=str(event.run_id) if event.run_id else None,
-            payload={"_original_executor_code": event.executor_code},
-            auto_commit=False,
-        )
-        logger.debug(
-            "Published TO_EXECUTOR for original=%s run=%s",
-            event.event_type,
-            event.run_id,
-        )
-
-    async def _load_workspace_events(
-        self, workspace_id: str, count: int = 2000
-    ) -> list[Event]:
-        """Load events for *workspace_id* from the Redis workspace stream."""
-        workspace_stream = (
-            f"{REDIS_WORKSPACE_LABEL}:{workspace_id}:{REDIS_STREAM_EVENTS_SUFFIX}"
-        )
-        try:
-            messages = await self.redis.xrange(workspace_stream, count=count)
-        except Exception as e:
-            logger.warning(
-                "_load_workspace_events: redis error for workspace %s: %s",
-                workspace_id,
-                e,
+    async def _load_event_for_command(
+        self,
+        db: AsyncSession,
+        command: EventCommand,
+    ) -> Event | None:
+        """Load the durable event referenced by a worker command."""
+        # A short retry shields the worker from any caller that enqueues just
+        # before the DB commit becomes visible.
+        for attempt in range(3):
+            result = await db.execute(
+                select(Event).where(Event.id == UUID(command.event_id))
             )
-            return []
+            event = result.scalar_one_or_none()
+            if event is not None:
+                return event
+            if attempt < 2:
+                await asyncio.sleep(0.05)
+        return None
 
-        return [Event.from_redis_fields(fields) for _, fields in messages]
+    async def _load_run_events(
+        self, db: AsyncSession, run_id: str | None
+    ) -> list[Event]:
+        """Load durable, active events for one run from PostgreSQL."""
+        if not run_id:
+            return []
+        result = await db.execute(
+            select(Event)
+            .where(
+                Event.run_id == UUID(str(run_id)),
+                Event.is_archived.is_(False),
+            )
+            .order_by(Event.sequence.asc(), Event.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def _load_run_status(self, db: AsyncSession, run_id: str) -> str | None:
+        """Load the current persisted run status for routing."""
+        result = await db.execute(select(Run.status).where(Run.id == UUID(run_id)))
+        return result.scalar_one_or_none()
 
     async def _handle_to_executor(
         self, envelope: Event, workspace_events: list[Event], ctx: _Ctx
@@ -937,9 +901,16 @@ class Worker:
         if not envelope.run_id:
             return None, "", False
 
+        executor_wait_start = perf_counter()
         executor = await self._get_or_create_executor(envelope, ctx)
         if not executor:
             return None, "", False
+        logger.info(
+            "executor_wait_ms=%s run=%s workspace=%s",
+            int((perf_counter() - executor_wait_start) * 1000),
+            envelope.run_id,
+            envelope.workspace_id,
+        )
 
         run_id = (
             envelope.run_id
@@ -1016,9 +987,9 @@ class Worker:
     ) -> None:
         """Publish an executor-emitted Event via this task's EventPublisher.
 
-        Uses auto_commit=False — all events in one executor iteration are
-        flushed immediately (for Redis broadcast) and committed in a single
-        batch by _forward_to_executor after the iteration completes.
+        Durable executor events commit immediately so semantic history is
+        recoverable if the worker crashes mid-run. Token events are realtime
+        only and are not written to PostgreSQL.
         """
         try:
             await ctx.publisher.publish(
@@ -1028,7 +999,7 @@ class Worker:
                 payload=event.payload,
                 input_tokens=event.input_tokens,
                 output_tokens=event.output_tokens,
-                auto_commit=False,
+                auto_commit=True,
             )
         except Exception as e:
             logger.error(f"Error publishing agent event for run {run_id}: {e}")
