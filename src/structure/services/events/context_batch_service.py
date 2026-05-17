@@ -65,7 +65,9 @@ class ContextLoadPlan:
 
     @property
     def has_batches(self) -> bool:
-        return bool(self.key_contents or self.load_all_events or self.skipped_batch_count)
+        return bool(
+            self.key_contents or self.load_all_events or self.skipped_batch_count
+        )
 
 
 def _event_type_value(event_type: str | EventType) -> str:
@@ -182,8 +184,12 @@ class ContextBatchService:
         batch.sequence_end = max(event.sequence for event in events)
         batch.event_count = len(events)
         batch.event_type_counts = dict(sorted(type_counts.items()))
-        batch.input_tokens = sum(max(int(event.input_tokens or 0), 0) for event in events)
-        batch.output_tokens = sum(max(int(event.output_tokens or 0), 0) for event in events)
+        batch.input_tokens = sum(
+            max(int(event.input_tokens or 0), 0) for event in events
+        )
+        batch.output_tokens = sum(
+            max(int(event.output_tokens or 0), 0) for event in events
+        )
         batch.key_content = self._build_key_content(batch, events)
         batch.key_hash = _json_hash(batch.key_content)
         batch.updated_at = datetime.now(UTC)
@@ -210,7 +216,9 @@ class ContextBatchService:
             str(EventType.TOOL_ERROR),
             str(EventType.TOOL_CLIENT_REQUEST),
         }:
-            tool_id = payload.get("tool_id") or payload.get("id") or payload.get("tool_name")
+            tool_id = (
+                payload.get("tool_id") or payload.get("id") or payload.get("tool_name")
+            )
             return ContextBatchKey(
                 context_key=f"run:{run_id}:tool:{tool_id or event.sequence}",
                 context_kind="tool",
@@ -354,7 +362,9 @@ class ContextBatchService:
         load_all_events = await self._load_events_for_batches(load_all_batch_ids)
 
         seen_ids = {str(event.id) for event in load_all_events}
-        for event in sorted(current_events or [], key=lambda e: (e.sequence or 0, str(e.id))):
+        for event in sorted(
+            current_events or [], key=lambda e: (e.sequence or 0, str(e.id))
+        ):
             if str(event.id) not in seen_ids:
                 load_all_events.append(event)
                 seen_ids.add(str(event.id))
@@ -456,7 +466,13 @@ class ContextBatchService:
     def _build_key_content(self, batch: EventBatch, events: Sequence[Event]) -> str:
         summary = self._summary_for_batch(batch, events)
         event_type_counts = json.dumps(
-            dict(sorted(Counter(_event_type_value(event.event_type) for event in events).items())),
+            dict(
+                sorted(
+                    Counter(
+                        _event_type_value(event.event_type) for event in events
+                    ).items()
+                )
+            ),
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -482,12 +498,15 @@ class ContextBatchService:
                 if _event_type_value(event.event_type) == str(EventType.USER_MESSAGE)
             ]
             assistant_messages = [
-                (event.payload or {}).get("content") or (event.payload or {}).get("message")
+                (event.payload or {}).get("content")
+                or (event.payload or {}).get("message")
                 for event in events
                 if _event_type_value(event.event_type) == str(EventType.AGENT_MESSAGE)
             ]
             user = _trim(next((msg for msg in user_messages if msg), ""))
-            assistant = _trim(next((msg for msg in reversed(assistant_messages) if msg), ""))
+            assistant = _trim(
+                next((msg for msg in reversed(assistant_messages) if msg), "")
+            )
             return f"user={user}; assistant={assistant}".strip()
 
         if batch.context_kind == "context":
@@ -503,7 +522,9 @@ class ContextBatchService:
             )
             return f"tool_names={','.join(tool_names)}"
 
-        return f"{batch.context_kind} events {batch.sequence_start}-{batch.sequence_end}"
+        return (
+            f"{batch.context_kind} events {batch.sequence_start}-{batch.sequence_end}"
+        )
 
 
 async def rebuild_batches_for_events(

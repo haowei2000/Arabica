@@ -764,9 +764,7 @@ class DefaultExecutor(Executor):
             ),
         )
 
-    def _insert_runtime_context(
-        self, messages: list[ChatMessage]
-    ) -> list[ChatMessage]:
+    def _insert_runtime_context(self, messages: list[ChatMessage]) -> list[ChatMessage]:
         """Keep the stable system prompt first and place dynamic IDs near the tail.
 
         The usual user-message path keeps the latest user message last while moving

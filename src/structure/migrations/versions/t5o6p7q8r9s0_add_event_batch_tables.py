@@ -76,18 +76,32 @@ def upgrade() -> None:
                 server_default=sa.text("0"),
             ),
             sa.Column("key_content", sa.Text(), nullable=False, server_default=""),
-            sa.Column("key_hash", sa.String(length=64), nullable=False, server_default=""),
-            sa.Column("summary_context_id", postgresql.UUID(as_uuid=True), nullable=True),
-            sa.Column("archive_context_id", postgresql.UUID(as_uuid=True), nullable=True),
+            sa.Column(
+                "key_hash", sa.String(length=64), nullable=False, server_default=""
+            ),
+            sa.Column(
+                "summary_context_id", postgresql.UUID(as_uuid=True), nullable=True
+            ),
+            sa.Column(
+                "archive_context_id", postgresql.UUID(as_uuid=True), nullable=True
+            ),
             sa.Column("meta", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-            sa.ForeignKeyConstraint(["archive_context_id"], ["context.id"], ondelete="SET NULL"),
+            sa.ForeignKeyConstraint(
+                ["archive_context_id"], ["context.id"], ondelete="SET NULL"
+            ),
             sa.ForeignKeyConstraint(["run_id"], ["run.id"], ondelete="CASCADE"),
-            sa.ForeignKeyConstraint(["summary_context_id"], ["context.id"], ondelete="SET NULL"),
-            sa.ForeignKeyConstraint(["workspace_id"], ["workspace.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(
+                ["summary_context_id"], ["context.id"], ondelete="SET NULL"
+            ),
+            sa.ForeignKeyConstraint(
+                ["workspace_id"], ["workspace.id"], ondelete="CASCADE"
+            ),
             sa.PrimaryKeyConstraint("id"),
-            sa.UniqueConstraint("workspace_id", "context_key", name="uq_event_batch_context"),
+            sa.UniqueConstraint(
+                "workspace_id", "context_key", name="uq_event_batch_context"
+            ),
         )
 
     if "event_batch_item" not in existing_tables:
@@ -97,7 +111,9 @@ def upgrade() -> None:
             sa.Column("event_id", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("sequence", sa.Integer(), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-            sa.ForeignKeyConstraint(["batch_id"], ["event_batch.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(
+                ["batch_id"], ["event_batch.id"], ondelete="CASCADE"
+            ),
             sa.ForeignKeyConstraint(["event_id"], ["event.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("batch_id", "event_id"),
             sa.UniqueConstraint("event_id", name="uq_event_batch_item_event"),

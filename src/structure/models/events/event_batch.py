@@ -38,7 +38,9 @@ class EventBatch(Base):
 
     __tablename__ = "event_batch"
 
-    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
     workspace_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("workspace.id", ondelete="CASCADE"),
