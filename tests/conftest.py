@@ -30,7 +30,7 @@ os.environ["REDIS__PORT"] = "6379"
 os.environ["REDIS__DB"] = "1"
 os.environ["AUTH__JWT_SECRET_KEY"] = "test-secret-key-for-unit-tests"
 os.environ["AUTH__ADMIN_USERNAME"] = "admin"
-os.environ["AUTH__ADMIN_PASSWORD"] = "admin123"
+os.environ["AUTH__ADMIN_PASSWORD"] = "test-admin-password"
 os.environ["RUSTFS__HOST"] = "localhost"
 os.environ["RUSTFS__PORT"] = "9000"
 os.environ["RUSTFS__ACCESS_KEY"] = "test_key"
@@ -55,8 +55,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 def mock_database_connections():
     """全局数据库连接 mock - 避免测试时连接真实数据库"""
     with (
-        patch("structure.extensions.database.create_async_engine") as mock_create_engine,
-        patch("structure.extensions.database._ensure_registered") as mock_ensure_registered,
+        patch(
+            "structure.extensions.database.create_async_engine"
+        ) as mock_create_engine,
+        patch(
+            "structure.extensions.database._ensure_registered"
+        ) as mock_ensure_registered,
     ):
         mock_engine = MagicMock()
         mock_create_engine.return_value = mock_engine
@@ -165,7 +169,8 @@ def mock_get_llm(mock_llm):
 def mock_create_agent(mock_agent):
     """Mock create_agent 函数"""
     with patch(
-        "structure.services.nl2sql.select_indicator.create_agent", return_value=mock_agent
+        "structure.services.nl2sql.select_indicator.create_agent",
+        return_value=mock_agent,
     ) as mock:
         yield mock
 

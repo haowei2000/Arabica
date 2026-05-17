@@ -35,17 +35,17 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from structure.models.executor.agent_task import AgentTask
-from structure.models.executor.conversation import Conversation
-from structure.models.executor.event import Event
-from structure.models.executor.message import Message
-from structure.models.executor.run import Run
-from structure.models.executor.workspace import Workspace
-from structure.models.executor.workspace_member import WorkspaceMember
+from sqlalchemy import func, select  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+from structure.models.executor.agent_task import AgentTask  # noqa: E402
+from structure.models.executor.conversation import Conversation  # noqa: E402
+from structure.models.executor.event import Event  # noqa: E402
+from structure.models.executor.message import Message  # noqa: E402
+from structure.models.executor.run import Run  # noqa: E402
+from structure.models.executor.workspace import Workspace  # noqa: E402
+from structure.models.executor.workspace_member import WorkspaceMember  # noqa: E402
 
-from structure.extensions.database import get_session
+from structure.extensions.database import get_session  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

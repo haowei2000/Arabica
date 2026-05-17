@@ -17,7 +17,7 @@ import urllib.request
 API_URL = os.getenv("API_URL", "http://app:8000").rstrip("/")
 MCP_URL = os.getenv("MCP_URL", "http://mcp-server:9000").rstrip("/")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 WAIT_TIMEOUT = int(os.getenv("WAIT_TIMEOUT", "120"))
 MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "sse")
 MCP_SSE_PATH = os.getenv("MCP_SSE_PATH", "/mcp")
@@ -57,6 +57,10 @@ def wait_for_http(url: str, label: str, timeout: int = WAIT_TIMEOUT):
 
 def login() -> str:
     """Login as admin and return the access token."""
+    if not ADMIN_PASSWORD:
+        print("[init] ERROR: ADMIN_PASSWORD is required", file=sys.stderr)
+        sys.exit(1)
+
     form = urllib.parse.urlencode(
         {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD}
     ).encode()

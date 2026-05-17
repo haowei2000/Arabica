@@ -8,3 +8,6 @@
 
 ## 部署
 - [Worker设置](worker_setup.md)
+
+## 发布
+- [开源发布检查清单](OPEN_SOURCE_RELEASE.md)

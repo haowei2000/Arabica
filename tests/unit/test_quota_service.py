@@ -97,6 +97,7 @@ async def test_ensure_user_quota_tops_up_existing_user_to_default():
     assert ledger.delta_tokens == 75_000
     assert ledger.balance_after == 90_000
 
+
 @pytest.mark.asyncio
 async def test_consume_run_tokens_records_usage():
     db = AsyncMock()

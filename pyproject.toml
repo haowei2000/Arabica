@@ -8,14 +8,19 @@ version = "5.5.0"
 description = "Backend service for structure platform"
 readme = "README.md"
 requires-python = ">=3.12"
-authors = [{ name = "Epichust", email = "" }]
-keywords = ["structure", "service", "api"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Structure contributors" }]
+maintainers = [{ name = "Structure maintainers" }]
+keywords = ["ai-agents", "orchestration", "event-sourcing", "fastapi", "llm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
 ]
 
@@ -82,6 +87,12 @@ dependencies = [
     "boto3-stubs~=1.42.36",
     "markitdown[all]>=0.1.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/haowei2000/Structure"
+Documentation = "https://github.com/haowei2000/Structure/tree/main/docs"
+Repository = "https://github.com/haowei2000/Structure"
+Issues = "https://github.com/haowei2000/Structure/issues"
 
 [dependency-groups]
 dev = [

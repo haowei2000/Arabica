@@ -71,4 +71,6 @@ async def test_event_publisher_uses_workspace_label_for_workspace_stream():
 
 
 def test_worker_uses_executor_command_stream_for_commands():
-    assert executor_command_stream_name("workspace-1") == "executor:workspace-1:commands"
+    assert (
+        executor_command_stream_name("workspace-1") == "executor:workspace-1:commands"
+    )

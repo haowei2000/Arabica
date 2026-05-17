@@ -265,7 +265,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1...
 # 1. 登录获取 token
 curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
+  -d "username=admin&password=<admin-password>"
 
 # 2. 使用 token 访问受保护端点
 curl -X GET http://localhost:8000/api/test-auth/protected \
@@ -280,7 +280,7 @@ import requests
 # 登录
 response = requests.post(
     "http://localhost:8000/api/auth/login",
-    data={"username": "admin", "password": "admin123"}
+    data={"username": "admin", "password": "<admin-password>"}
 )
 tokens = response.json()
 access_token = tokens["access_token"]
@@ -305,7 +305,7 @@ const loginResponse = await fetch('http://localhost:8000/api/auth/login', {
   },
   body: new URLSearchParams({
     username: 'admin',
-    password: 'admin123'
+    password: '<admin-password>'
   })
 });
 const { access_token } = await loginResponse.json();

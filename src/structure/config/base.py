@@ -29,7 +29,7 @@ class AppSettings(BaseSettings):
         extra="allow",
     )
 
-    app_name: str = "Modular FastAPI App"
+    app_name: str = "Structure"
     DEBUG: bool = False
     mcp_http_enable: bool = False
     mcp_sse_enable: bool = False

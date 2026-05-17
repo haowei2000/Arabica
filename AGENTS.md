@@ -55,7 +55,7 @@ Structure Service is a production-ready backend for running intelligent AI agent
 ## Project Structure
 
 ```
-agent_chat/
+Structure/
 ├── src/structure/                    # Backend source code
 │   ├── app.py                    # FastAPI application factory
 │   ├── worker_cli.py             # Worker process entry point
@@ -129,7 +129,7 @@ uv sync
 cd frontend && npm install
 
 # 3. Set up environment
-cd src && uv run sync-env    # Generates .env from .env.example
+uv run sync-env    # Generates .env from .env.example
 
 # 4. Run database migrations
 make db-upgrade

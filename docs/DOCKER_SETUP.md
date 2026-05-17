@@ -7,8 +7,8 @@ This guide explains how to set up and run the Structure service using Docker Com
 The Docker Compose setup includes the following services:
 - `structure-app`: Main FastAPI application
 - `postgres`: PostgreSQL database for primary data storage
-- `mysql`: MySQL database for additional data storage
 - `redis`: Redis cache and session storage
+- `rustfs`: S3-compatible object storage
 - `ollama`: Local LLM service
 - `redis-commander`: Redis management UI (optional)
 
@@ -34,9 +34,9 @@ The Docker Compose setup includes the following services:
 
    Pay special attention to:
    - `AUTH__JWT_SECRET_KEY`: Change this to a strong, random secret key
-   - `POSTGRES_PASSWORD`: Set a secure PostgreSQL password
-   - `MYSQL_PASSWORD`: Set a secure MySQL password
-   - `REDIS_PASSWORD`: Set a secure Redis password
+   - `POSTGRES__PASSWORD`: Set a secure PostgreSQL password
+   - `REDIS__PASSWORD`: Set a secure Redis password
+   - `RUSTFS__ACCESS_KEY` / `RUSTFS__SECRET_KEY`: Set secure object storage credentials
    - `DASHSCOPE_API_KEY`: If using DashScope AI services
 
 ### 2. Initialize Databases (Optional)
@@ -44,25 +44,27 @@ The Docker Compose setup includes the following services:
 If you want to run custom initialization scripts:
 
 1. Create a `init-postgres.sql` file for PostgreSQL initialization
-2. Create a `init-mysql.sql` file for MySQL initialization
+2. Keep custom initialization files out of version control if they contain data
+   or credentials.
 
 ### 3. Start the Services
 
 Start all services in the background:
 ```bash
-docker-compose up -d
+docker compose -p structure -f docker/docker-compose.yml \
+  --env-file .env --env-file performance.env --profile all up -d
 ```
 
 To see the logs in real-time:
 ```bash
-docker-compose logs -f
+docker compose -p structure -f docker/docker-compose.yml logs -f
 ```
 
 ### 4. Check Service Status
 
 Check if all services are running properly:
 ```bash
-docker-compose ps
+docker compose -p structure -f docker/docker-compose.yml ps
 ```
 
 ### 5. Access the Services
@@ -70,8 +72,8 @@ docker-compose ps
 - **Main Application**: `http://localhost:8000`
 - **MCP Service**: `http://localhost:9000`
 - **PostgreSQL**: `localhost:5432` (internal: `postgres:5432`)
-- **MySQL**: `localhost:3306` (internal: `mysql:3306`)
 - **Redis**: `localhost:6379` (internal: `redis:6379`)
+- **RustFS**: `http://localhost:9000` (console: `http://localhost:9001`)
 - **Ollama**: `http://localhost:11434`
 - **Redis Commander**: `http://localhost:8081`
 
@@ -80,44 +82,44 @@ docker-compose ps
 ### View Logs
 ```bash
 # View all services logs
-docker-compose logs
+docker compose -p structure -f docker/docker-compose.yml logs
 
 # View specific service logs
-docker-compose logs structure-app
+docker compose -p structure -f docker/docker-compose.yml logs backend
 
 # Follow logs in real-time
-docker-compose logs -f structure-app
+docker compose -p structure -f docker/docker-compose.yml logs -f backend
 ```
 
 ### Execute Commands in Containers
 ```bash
 # Execute a command in the main app container
-docker-compose exec structure-app bash
+docker compose -p structure -f docker/docker-compose.yml exec backend bash
 
 # Execute database migrations (if applicable)
-docker-compose exec structure-app python -m alembic upgrade head
+docker compose -p structure -f docker/docker-compose.yml exec backend alembic upgrade head
 ```
 
 ### Stop Services
 ```bash
 # Stop all services
-docker-compose down
+docker compose -p structure -f docker/docker-compose.yml down
 
 # Stop and remove volumes (WARNING: This will delete all data)
-docker-compose down -v
+docker compose -p structure -f docker/docker-compose.yml down -v
 ```
 
 ### Scale Services
 ```bash
 # Scale the main application to 2 instances
-docker-compose up -d --scale structure-app=2
+docker compose -p structure -f docker/docker-compose.yml up -d --scale backend=2
 ```
 
 ## Configuration Details
 
 ### Services Configuration
 
-- **structure-app**: Built from the Dockerfile in the `docker/` directory, with health checks and resource limits
+- **backend**: Built from the Dockerfile in the `docker/` directory, with health checks and resource limits
 - **postgres**: PostgreSQL 15 with health checks and persistent volume
 - **mysql**: MySQL 8.0 with health checks and persistent volume
 - **redis**: Redis 7 with authentication and persistence

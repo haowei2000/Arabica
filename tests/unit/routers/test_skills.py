@@ -128,7 +128,9 @@ class TestGetSkill:
 class TestUpdateSkill:
     # update_skill uses Depends(get_skill_crud) — handled by fixture
     def test_update_success(self, client):
-        with patch("structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task:
+        with patch(
+            "structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts"
+        ) as mock_task:
             mock_task.delay = MagicMock()
             resp = client.put(
                 f"{BASE}/{SKILL_ID}",
@@ -145,7 +147,9 @@ class TestUpdateSkill:
 class TestDeleteSkill:
     # delete_skill uses Depends(get_skill_crud) — handled by fixture
     def test_delete_success(self, client):
-        with patch("structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts") as mock_task:
+        with patch(
+            "structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts"
+        ) as mock_task:
             mock_task.delay = MagicMock()
             resp = client.delete(f"{BASE}/{SKILL_ID}")
         assert resp.status_code == 204
@@ -194,7 +198,9 @@ class TestProcessSkill:
         skill = make_skill()
         with (
             patch("structure.routers.context.skills.SkillCRUD") as MockCRUD,
-            patch("structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts") as mock_task,
+            patch(
+                "structure.celery_worker.tasks.context_sync_tasks.sync_skill_to_contexts"
+            ) as mock_task,
         ):
             MockCRUD.return_value.get_by_id = AsyncMock(return_value=skill)
             mock_task.delay = MagicMock()

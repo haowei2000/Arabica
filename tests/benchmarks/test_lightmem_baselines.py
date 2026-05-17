@@ -34,9 +34,7 @@ def test_lightmem_catalog_tracks_reported_and_membase_baselines():
         for spec in MEMORY_BASELINE_CATALOG
         if spec.status == "reported-by-lightmem"
     }
-    assert {"FullText", "NaiveRAG", "A-MEM", "MemoryOS", "Mem0"}.issubset(
-        reported
-    )
+    assert {"FullText", "NaiveRAG", "A-MEM", "MemoryOS", "Mem0"}.issubset(reported)
 
 
 @pytest.mark.unit
@@ -92,4 +90,3 @@ def test_report_script_can_check_paper_table():
         check=True,
         cwd=REPO_ROOT,
     )
-

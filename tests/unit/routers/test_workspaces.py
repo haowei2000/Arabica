@@ -245,16 +245,12 @@ class TestWorkspaceMembers:
         assert isinstance(resp.json(), list)
 
     def test_remove_member_success(self, client):
-        resp = client.delete(
-            f"/api/workspaces/{WORKSPACE_ID}/members/{USER_ID}"
-        )
+        resp = client.delete(f"/api/workspaces/{WORKSPACE_ID}/members/{USER_ID}")
         assert resp.status_code == 204
 
     def test_remove_member_not_found(self, client, mock_member_crud):
         mock_member_crud.remove_member.return_value = False
-        resp = client.delete(
-            f"/api/workspaces/{WORKSPACE_ID}/members/{uuid4()}"
-        )
+        resp = client.delete(f"/api/workspaces/{WORKSPACE_ID}/members/{uuid4()}")
         assert resp.status_code == 404
 
 
