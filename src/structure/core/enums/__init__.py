@@ -8,7 +8,11 @@ This design prevents circular import issues.
 """
 
 from structure.core.enums.context import ContextType
-from structure.core.enums.events import EventType
+from structure.core.enums.events import (
+    ContextBatchLoadState,
+    ContextBatchState,
+    EventType,
+)
 from structure.core.enums.files import InputFormat, OutputFormat
 from structure.core.enums.runs import RunStatus, TriggerType
 from structure.core.enums.tools import AllowedToolType
@@ -22,9 +26,11 @@ from structure.core.enums.workspaces import (
 __all__ = [
     # Tools
     "AllowedToolType",
+    # Events
+    "ContextBatchLoadState",
+    "ContextBatchState",
     # Context
     "ContextType",
-    # Events
     "EventType",
     # Files
     "InputFormat",

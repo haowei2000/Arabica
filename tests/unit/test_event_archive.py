@@ -13,7 +13,9 @@ from structure.services.events.event_archive import (
     select_archive_candidates,
 )
 from structure.services.events.event_gc import (
+    CONTEXT_BATCH_GC_STRATEGY,
     DEFAULT_EVENT_GC_STRATEGY,
+    BatchAwareEventGCStrategy,
     EventCountTTLStrategy,
     EventGCStrategyRegistry,
     register_event_gc_strategy,
@@ -178,6 +180,38 @@ def test_event_gc_strategy_registry_accepts_plugins():
 def test_event_gc_strategy_registry_reports_unknown_strategy():
     with pytest.raises(ValueError, match="Unknown event GC strategy"):
         EventGCStrategyRegistry.get("missing_event_gc_strategy")
+
+
+def test_batch_aware_event_gc_archives_whole_load_key_batches():
+    batch_id = uuid4()
+    events = [
+        _event(EventType.USER_MESSAGE, 1),
+        _event(EventType.AGENT_MESSAGE, 2),
+        _event(EventType.AGENT_TOKEN, 3),
+    ]
+    for event in events[:2]:
+        event.batch_id = batch_id
+        event.batch_context_key = "run:batch:turn:1"
+        event.batch_load_state = "load_key"
+    events[2].batch_id = uuid4()
+    events[2].batch_context_key = "run:batch:transient:0"
+    events[2].batch_load_state = "load_all"
+
+    candidates = EventArchiveService.select_candidates(
+        events,
+        scope="run",
+        strategy=CONTEXT_BATCH_GC_STRATEGY,
+        strategy_config={"keep_last_floor": 0},
+        keep_last=None,
+        include_pinned=False,
+        event_types=None,
+    )
+
+    assert isinstance(
+        EventGCStrategyRegistry.get(CONTEXT_BATCH_GC_STRATEGY),
+        BatchAwareEventGCStrategy,
+    )
+    assert [event.sequence for event in candidates] == [1, 2]
 
 
 def test_event_archive_splits_context_chunks_by_event_count():

@@ -17,6 +17,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from structure.core.enums import EventType
 
 DEFAULT_EVENT_GC_STRATEGY = "event_count_ttl"
+CONTEXT_BATCH_GC_STRATEGY = "context_batch_load"
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,9 @@ DEFAULT_DECAY_RULES: dict[str, dict[str, int]] = {
 class _EventLike:
     event_type: str | EventType
     sequence: int
+    batch_id: Any | None
+    batch_context_key: str | None
+    batch_load_state: str | None
 
 
 @runtime_checkable
@@ -304,6 +308,52 @@ class EventCountTTLStrategy:
         return {id(event) for event in events[-keep_last_floor:]}
 
 
+@register_event_gc_strategy
+class BatchAwareEventGCStrategy:
+    """Archive complete batches whose load state no longer needs full events."""
+
+    name: ClassVar[str] = CONTEXT_BATCH_GC_STRATEGY
+
+    def select_candidates(
+        self,
+        events: Sequence[_EventLike],
+        *,
+        scope: str,
+        config: Mapping[str, Any] | None = None,
+    ) -> list[_EventLike]:
+        cfg = dict(config or {})
+        archive_load_states = set(
+            cfg.get("archive_load_states") or ["load_key", "no_load"]
+        )
+        keep_last_floor = int(
+            cfg.get(
+                "keep_last_floor",
+                500 if scope == "workspace" else 100,
+            )
+        )
+        protected = EventCountTTLStrategy._protected_recent_events(
+            events,
+            keep_last_floor,
+        )
+
+        groups: dict[Any, list[_EventLike]] = {}
+        for event in events:
+            batch_id = getattr(event, "batch_id", None)
+            if batch_id is None:
+                continue
+            groups.setdefault(batch_id, []).append(event)
+
+        selected_ids: set[int] = set()
+        for batch_events in groups.values():
+            if any(id(event) in protected for event in batch_events):
+                continue
+            load_state = getattr(batch_events[0], "batch_load_state", None)
+            if load_state in archive_load_states:
+                selected_ids.update(id(event) for event in batch_events)
+
+        return [event for event in events if id(event) in selected_ids]
+
+
 @dataclass
 class EventGarbageCollector:
     """Compatibility wrapper around a registered event GC strategy."""
@@ -341,9 +391,11 @@ class EventGarbageCollector:
 
 
 __all__ = [
+    "CONTEXT_BATCH_GC_STRATEGY",
     "DEFAULT_DECAY_RULES",
     "DEFAULT_EVENT_GC_STRATEGY",
     "DEFAULT_POLICY",
+    "BatchAwareEventGCStrategy",
     "EventCountTTLStrategy",
     "EventGCStrategy",
     "EventGCStrategyRegistry",

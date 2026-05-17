@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.core.enums import EventType
 from structure.core.enums.context import ContextScope, ContextType
+from structure.core.enums.events import ContextBatchState
 from structure.models.context.context import Context
 from structure.models.events.event import Event
+from structure.models.events.event_batch import EventBatch, EventBatchItem
 from structure.services.events.event_gc import (
     DEFAULT_EVENT_GC_STRATEGY,
     EventGCStrategyRegistry,
@@ -38,6 +40,9 @@ class EventArchiveCandidate:
     run_id: UUID | None
     sequence: int
     created_at: datetime | None
+    batch_id: UUID | None = None
+    batch_context_key: str | None = None
+    batch_load_state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -349,7 +354,12 @@ class EventArchiveService:
                 Event.run_id,
                 Event.sequence,
                 Event.created_at,
+                EventBatch.id,
+                EventBatch.context_key,
+                EventBatch.load_state,
             )
+            .outerjoin(EventBatchItem, EventBatchItem.event_id == Event.id)
+            .outerjoin(EventBatch, EventBatch.id == EventBatchItem.batch_id)
             .where(
                 Event.run_id == run_id,
                 Event.is_archived.is_(False),
@@ -364,6 +374,9 @@ class EventArchiveService:
                 run_id=row_run_id,
                 sequence=sequence,
                 created_at=created_at,
+                batch_id=batch_id,
+                batch_context_key=batch_context_key,
+                batch_load_state=batch_load_state,
             )
             for (
                 event_id,
@@ -372,6 +385,9 @@ class EventArchiveService:
                 row_run_id,
                 sequence,
                 created_at,
+                batch_id,
+                batch_context_key,
+                batch_load_state,
             ) in result.all()
         ]
 
@@ -387,7 +403,12 @@ class EventArchiveService:
                 Event.run_id,
                 Event.sequence,
                 Event.created_at,
+                EventBatch.id,
+                EventBatch.context_key,
+                EventBatch.load_state,
             )
+            .outerjoin(EventBatchItem, EventBatchItem.event_id == Event.id)
+            .outerjoin(EventBatch, EventBatch.id == EventBatchItem.batch_id)
             .where(and_(*conditions))
             .order_by(Event.created_at.asc(), Event.sequence.asc())
         )
@@ -399,6 +420,9 @@ class EventArchiveService:
                 run_id=row_run_id,
                 sequence=sequence,
                 created_at=created_at,
+                batch_id=batch_id,
+                batch_context_key=batch_context_key,
+                batch_load_state=batch_load_state,
             )
             for (
                 event_id,
@@ -407,6 +431,9 @@ class EventArchiveService:
                 row_run_id,
                 sequence,
                 created_at,
+                batch_id,
+                batch_context_key,
+                batch_load_state,
             ) in result.all()
         ]
 
@@ -497,6 +524,7 @@ class EventArchiveService:
         first = events[0]
         last = events[-1]
         type_counts = Counter(_event_type_value(event.event_type) for event in events)
+        batch_meta = await self._batch_meta_for_events([event.id for event in events])
         lines = [
             "# Event Archive",
             "",
@@ -540,6 +568,8 @@ class EventArchiveService:
                 "run_id": str(run_id) if run_id else None,
                 "event_count": len(events),
                 "event_types": dict(type_counts),
+                "batch_ids": batch_meta["batch_ids"],
+                "batch_context_keys": batch_meta["batch_context_keys"],
                 "first_event_id": str(first.id),
                 "last_event_id": str(last.id),
                 "first_sequence": first.sequence,
@@ -575,6 +605,61 @@ class EventArchiveService:
                 .execution_options(synchronize_session=False)
             )
             await self.db.execute(stmt)
+            batch_ids = await self._fully_covered_batch_ids(chunk)
+            if batch_ids:
+                await self.db.execute(
+                    update(EventBatch)
+                    .where(EventBatch.id.in_(batch_ids))
+                    .values(
+                        state=ContextBatchState.ARCHIVED.value,
+                        archive_context_id=archive_context.id,
+                        updated_at=archived_at,
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+
+    async def _fully_covered_batch_ids(self, event_ids: Sequence[UUID]) -> list[UUID]:
+        if not event_ids:
+            return []
+        event_id_set = set(event_ids)
+        touched = await self.db.execute(
+            select(EventBatchItem.batch_id)
+            .where(EventBatchItem.event_id.in_(event_ids))
+            .distinct()
+        )
+        touched_batch_ids = [batch_id for (batch_id,) in touched.all()]
+        if not touched_batch_ids:
+            return []
+
+        result = await self.db.execute(
+            select(EventBatchItem.batch_id, EventBatchItem.event_id).where(
+                EventBatchItem.batch_id.in_(touched_batch_ids)
+            )
+        )
+        batch_event_ids: dict[UUID, set[UUID]] = {}
+        for batch_id, event_id in result.all():
+            batch_event_ids.setdefault(batch_id, set()).add(event_id)
+        return [
+            batch_id
+            for batch_id, batch_events in batch_event_ids.items()
+            if batch_events.issubset(event_id_set)
+        ]
+
+    async def _batch_meta_for_events(self, event_ids: Sequence[UUID]) -> dict[str, Any]:
+        if not event_ids:
+            return {"batch_ids": [], "batch_context_keys": []}
+        result = await self.db.execute(
+            select(EventBatch.id, EventBatch.context_key)
+            .join(EventBatchItem, EventBatchItem.batch_id == EventBatch.id)
+            .where(EventBatchItem.event_id.in_(event_ids))
+            .distinct()
+            .order_by(EventBatch.context_key.asc())
+        )
+        rows = result.all()
+        return {
+            "batch_ids": [str(batch_id) for batch_id, _ in rows],
+            "batch_context_keys": [context_key for _, context_key in rows],
+        }
 
     @staticmethod
     def _split_event_chunks(

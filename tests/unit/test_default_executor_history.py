@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from structure.frameworks.tool_calling import ChatMessage, PromptCallingStrategy
 from structure.plugins.executors.default.concrete import (
     DefaultExecutor,
     _extract_context_tool_schemas,
@@ -51,6 +52,84 @@ def _tool_schema(name: str):
             "parameters": {"type": "object", "properties": {}},
         },
     }
+
+
+def test_system_prompt_head_is_stable_and_runtime_context_is_tail_loaded():
+    workspace_id = "00000000-0000-0000-0000-000000000001"
+    run_id = "00000000-0000-0000-0000-000000000002"
+    executor = DefaultExecutor(
+        {
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+
+    messages, _ = executor.get_messages_and_tools(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={"message": "hello"},
+            )
+        ]
+    )
+
+    assert messages[0].role == "system"
+    assert f"workspace_id: {workspace_id}" not in messages[0].content
+    assert f"run_id: {run_id}" not in messages[0].content
+    assert messages[1].role == "system"
+    assert f"workspace_id: {workspace_id}" in messages[1].content
+    assert f"run_id: {run_id}" in messages[1].content
+    assert messages[-1].role == "user"
+    assert messages[-1].content == "hello"
+
+
+def test_prompt_calling_keeps_tools_prompt_out_of_stable_system_head():
+    api_messages = PromptCallingStrategy._inject_tools_prompt(
+        [
+            ChatMessage(role="system", content="stable head"),
+            ChatMessage(role="user", content="hello"),
+        ],
+        "dynamic tools",
+    )
+
+    assert api_messages == [
+        {"role": "system", "content": "stable head"},
+        {"role": "system", "content": "dynamic tools"},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+def test_batch_plan_keeps_key_summaries_before_full_tail_events():
+    workspace_id = "00000000-0000-0000-0000-000000000001"
+    run_id = "00000000-0000-0000-0000-000000000002"
+    executor = DefaultExecutor(
+        {
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "api_key": "test-key",
+            "base_url": "http://example.test/v1",
+        }
+    )
+
+    messages, _ = executor.get_messages_and_tools_from_batch_plan(
+        key_contents=["batch_key=run:old:turn:1\nsummary=old turn"],
+        load_all_events=[
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={"message": "current question"},
+            )
+        ],
+    )
+
+    assert messages[0].role == "system"
+    assert messages[1].role == "system"
+    assert "batch_key=run:old:turn:1" in messages[1].content
+    assert messages[2].role == "system"
+    assert f"run_id: {run_id}" in messages[2].content
+    assert messages[-1].role == "user"
+    assert messages[-1].content == "current question"
 
 
 @pytest.mark.asyncio
