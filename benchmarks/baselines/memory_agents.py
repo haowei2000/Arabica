@@ -23,9 +23,11 @@ from benchmarks.longmemeval_v2.release import (
     read_trajectories_by_id,
     trajectory_to_text,
 )
+from benchmarks.longmemeval_v2.scorer import extract_evidence_ids
 
 _WORDY_PUNCT = re.compile(r"[^0-9a-z一-鿿\s]+")
 _WHITESPACE = re.compile(r"\s+")
+LME_V2_MAX_STATES_PER_TRAJECTORY = 8
 
 
 def _normalise(text: str) -> str:
@@ -82,6 +84,7 @@ def _session_chunk_records(case: BenchmarkCase) -> list[tuple[str, str]]:
 
 def _trajectory_chunk_records(case: BenchmarkCase) -> list[tuple[str, str]]:
     chunks: list[tuple[str, str]] = []
+    question = str(case.inputs.get("question") or "")
     for index, trajectory in enumerate(case.inputs.get("trajectories") or [], start=1):
         if isinstance(trajectory, dict):
             chunk_id = str(
@@ -89,7 +92,16 @@ def _trajectory_chunk_records(case: BenchmarkCase) -> list[tuple[str, str]]:
                 or trajectory.get("trajectory_id")
                 or f"trajectory-{index}"
             )
-            chunks.append((chunk_id, trajectory_to_text(trajectory)))
+            chunks.append(
+                (
+                    chunk_id,
+                    trajectory_to_text(
+                        trajectory,
+                        question=question,
+                        max_states=LME_V2_MAX_STATES_PER_TRAJECTORY,
+                    ),
+                )
+            )
     trajectory_ids = case.inputs.get("trajectory_ids") or []
     store_path = case.inputs.get("trajectory_store_path")
     if trajectory_ids and store_path:
@@ -101,8 +113,14 @@ def _trajectory_chunk_records(case: BenchmarkCase) -> list[tuple[str, str]]:
         )
         chunks.extend(
             (
-                str(record.get("id") or record.get("trajectory_id") or f"trajectory-{i}"),
-                trajectory_to_text(record),
+                str(
+                    record.get("id") or record.get("trajectory_id") or f"trajectory-{i}"
+                ),
+                trajectory_to_text(
+                    record,
+                    question=question,
+                    max_states=LME_V2_MAX_STATES_PER_TRAJECTORY,
+                ),
             )
             for i, record in enumerate(records, start=1)
         )
@@ -117,7 +135,9 @@ def case_chunk_records(case: BenchmarkCase) -> list[tuple[str, str]]:
     return _trajectory_chunk_records(case)
 
 
-def _reference_in_context(reference: object, chunks: list[tuple[str, str]]) -> str | None:
+def _reference_in_context(
+    reference: object, chunks: list[tuple[str, str]]
+) -> str | None:
     context = _normalise("\n".join(text for _, text in chunks))
     for candidate in _reference_strings(reference):
         normalised = _normalise(candidate)
@@ -147,9 +167,14 @@ def select_lexical_chunks(
 def evidence_from_selected_context(
     case: BenchmarkCase,
     selected: list[tuple[str, str]],
+    response: object | None = None,
 ) -> EvidenceRecord:
     """Classify whether selected context visibly supports the score claim."""
     selected_ids = {chunk_id for chunk_id, _ in selected}
+    selected_evidence_ids = set(selected_ids)
+    for _, text in selected:
+        selected_evidence_ids.update(extract_evidence_ids(text))
+
     evidence_ids: list[str] = []
     if isinstance(case.reference, dict):
         raw = case.reference.get("evidence_ids") or case.reference.get("citations")
@@ -167,7 +192,8 @@ def evidence_from_selected_context(
         matched = [
             item
             for item in evidence_ids
-            if item in selected_ids or item.split(":", maxsplit=1)[0] in selected_ids
+            if item in selected_evidence_ids
+            or item.split(":", maxsplit=1)[0] in selected_ids
         ]
         status = "pass" if matched else "unknown"
         return EvidenceRecord(
@@ -178,6 +204,35 @@ def evidence_from_selected_context(
                 if matched
                 else "gold evidence ids were not selected"
             ),
+        )
+
+    response_evidence_ids = extract_evidence_ids(response)
+    if response_evidence_ids:
+        matched = [
+            item
+            for item in response_evidence_ids
+            if item in selected_evidence_ids
+            or item.split(":", maxsplit=1)[0] in selected_ids
+        ]
+        return EvidenceRecord(
+            status="pass" if matched else "unknown",
+            artifacts=tuple(matched),
+            notes=(
+                "model cited evidence ids present in selected context"
+                if matched
+                else "model cited evidence ids that were not in selected context"
+            ),
+        )
+
+    has_release_eval = (
+        isinstance(case.reference, dict)
+        and case.reference.get("eval_function") is not None
+    )
+    if has_release_eval:
+        return EvidenceRecord(
+            status="unknown",
+            artifacts=tuple(chunk_id for chunk_id, _ in selected),
+            notes="release row has no gold evidence ids and the response did not cite state ids",
         )
 
     found = _reference_in_context(case.reference, selected)

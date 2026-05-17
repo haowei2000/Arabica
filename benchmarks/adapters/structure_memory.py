@@ -88,7 +88,9 @@ class StructureMemoryBenchmarkAgent:
             task_id=case.task_id,
             inputs={
                 "question": case.inputs.get("question"),
-                "sessions": [[{"role": chunk_id, "content": text}] for chunk_id, text in selected],
+                "sessions": [
+                    [{"role": chunk_id, "content": text}] for chunk_id, text in selected
+                ],
             },
             reference=case.reference,
             ability=case.ability,
@@ -99,7 +101,11 @@ class StructureMemoryBenchmarkAgent:
             task_id=result.task_id,
             response=result.response,
             cost=result.cost,
-            evidence=evidence_from_selected_context(case, selected),
+            evidence=evidence_from_selected_context(
+                case,
+                selected,
+                response=result.response,
+            ),
             metadata={
                 **result.metadata,
                 "adapter": "StructureMemoryBenchmarkAgent",

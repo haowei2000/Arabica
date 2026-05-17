@@ -36,7 +36,11 @@ def _choice_content(response: object) -> str:
     if not choices:
         return ""
     first = choices[0]
-    message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
+    message = (
+        first.get("message")
+        if isinstance(first, dict)
+        else getattr(first, "message", None)
+    )
     if isinstance(message, dict):
         return str(message.get("content") or "")
     return str(getattr(message, "content", "") or "")
@@ -77,9 +81,7 @@ class LLMBenchmarkAgent:
         case: BenchmarkCase,
         selected: list[tuple[str, str]],
     ) -> list[dict[str, str]]:
-        context = "\n\n".join(
-            f"[{chunk_id}]\n{text}" for chunk_id, text in selected
-        )
+        context = "\n\n".join(f"[{chunk_id}]\n{text}" for chunk_id, text in selected)
         if len(context) > self.max_context_chars:
             context = context[-self.max_context_chars :]
 
@@ -89,7 +91,7 @@ class LLMBenchmarkAgent:
         )
         answer_instruction = (
             "Return JSON with keys answer and evidence_ids. Use evidence_ids from "
-            "the bracketed context ids when possible."
+            "the bracketed context ids or evidence_id labels when possible."
             if wants_evidence
             else "Return a concise answer, not an explanation."
         )
@@ -97,14 +99,14 @@ class LLMBenchmarkAgent:
             {
                 "role": "system",
                 "content": (
-                    "You are evaluating long-term conversational memory. "
-                    "Answer the user's question using only the provided sessions. "
+                    "You are evaluating long-term memory. "
+                    "Answer the user's question using only the provided context. "
                     + answer_instruction
                 ),
             },
             {
                 "role": "user",
-                "content": f"Sessions:\n{context}\n\nQuestion:\n{question}\n\nAnswer:",
+                "content": f"Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:",
             },
         ]
 
@@ -140,7 +142,7 @@ class LLMBenchmarkAgent:
                 latency_seconds=latency,
                 usd_cost=usd_cost,
             ),
-            evidence=evidence_from_selected_context(case, selected),
+            evidence=evidence_from_selected_context(case, selected, response=content),
             metadata={
                 "model": self.model,
                 "base_url": self.base_url,

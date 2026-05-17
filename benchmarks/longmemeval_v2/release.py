@@ -9,9 +9,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
+import unicodedata
 
 from benchmarks.core.types import BenchmarkCase
+
+_WORDY_PUNCT = re.compile(r"[^0-9a-z一-鿿\s]+")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _normalise(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text).lower()
+    text = _WORDY_PUNCT.sub(" ", text)
+    return _WHITESPACE.sub(" ", text).strip()
+
+
+def _tokens(text: str) -> set[str]:
+    return {token for token in _normalise(text).split() if len(token) > 2}
 
 
 def build_trajectory_offset_index(
@@ -20,7 +35,9 @@ def build_trajectory_offset_index(
 ) -> Path:
     """Create a byte-offset index for ``trajectories.jsonl``."""
     trajectories = Path(trajectories_path)
-    index = Path(index_path) if index_path else trajectories.with_suffix(".offsets.json")
+    index = (
+        Path(index_path) if index_path else trajectories.with_suffix(".offsets.json")
+    )
 
     offsets: dict[str, int] = {}
     with trajectories.open("rb") as handle:
@@ -55,7 +72,9 @@ def read_trajectories_by_id(
 ) -> list[dict[str, Any]]:
     """Read selected trajectory records using a precomputed offset index."""
     trajectories = Path(trajectories_path)
-    index = Path(index_path) if index_path else trajectories.with_suffix(".offsets.json")
+    index = (
+        Path(index_path) if index_path else trajectories.with_suffix(".offsets.json")
+    )
     if not index.exists():
         build_trajectory_offset_index(trajectories, index)
 
@@ -71,7 +90,124 @@ def read_trajectories_by_id(
     return records
 
 
-def trajectory_to_text(record: dict[str, Any], *, max_state_chars: int = 2000) -> str:
+def trajectory_evidence_id(trajectory_id: str, state: dict[str, Any]) -> str:
+    """Return a stable citation id for one trajectory state."""
+    state_index = state.get("state_index", state.get("step", ""))
+    if state_index == "":
+        state_index = "unknown"
+    return f"{trajectory_id}:s{state_index}"
+
+
+def trajectory_state_to_text(
+    record: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    max_state_chars: int = 2000,
+) -> str:
+    """Render one trajectory state with citation and screenshot metadata."""
+    trajectory_id = str(record.get("id") or record.get("trajectory_id") or "unknown")
+    state_index = state.get("state_index", state.get("step", ""))
+    action = state.get("action")
+    thought = state.get("thought")
+    observation = (
+        state.get("accessibility_tree")
+        or state.get("observation")
+        or state.get("text")
+        or ""
+    )
+    screenshot = state.get("screenshot")
+    url = state.get("url")
+    parts = [
+        f"evidence_id: {trajectory_evidence_id(trajectory_id, state)}",
+        f"state: {state_index}",
+    ]
+    if url:
+        parts.append(f"url: {url}")
+    if screenshot:
+        parts.append(f"screenshot: {screenshot}")
+    if action:
+        parts.append(f"action: {action}")
+    if thought:
+        parts.append(f"thought: {thought}")
+    if observation:
+        parts.append(f"observation: {str(observation)[:max_state_chars]}")
+    return "\n".join(parts)
+
+
+def _state_relevance(question: str, state: dict[str, Any]) -> int:
+    query_tokens = _tokens(question)
+    if not query_tokens:
+        return 0
+    haystack = " ".join(
+        str(state.get(key) or "")
+        for key in (
+            "url",
+            "action",
+            "thought",
+            "accessibility_tree",
+            "observation",
+            "text",
+        )
+    )
+    return len(query_tokens & _tokens(haystack))
+
+
+def extract_trajectory_evidence(
+    record: dict[str, Any],
+    *,
+    question: str = "",
+    max_states: int = 8,
+    max_state_chars: int = 2000,
+) -> list[tuple[str, str]]:
+    """Return compact state-level evidence snippets for a trajectory.
+
+    The helper ranks states by lexical overlap with the question and keeps the
+    selected snippets in original trajectory order.  It is intentionally
+    deterministic so fixed benchmark samples remain reproducible.
+    """
+    trajectory_id = str(record.get("id") or record.get("trajectory_id") or "unknown")
+    states = record.get("states") or record.get("events") or []
+    if not isinstance(states, list):
+        return []
+
+    dict_states = [state for state in states if isinstance(state, dict)]
+    if max_states > 0 and len(dict_states) > max_states:
+        ranked = [
+            (_state_relevance(question, state), -index, index, state)
+            for index, state in enumerate(dict_states)
+        ]
+        ranked.sort(reverse=True)
+        selected_indices = {
+            index for score, _, index, _ in ranked[:max_states] if score > 0
+        }
+        if not selected_indices:
+            selected_indices = set(range(max_states))
+        dict_states = [
+            state
+            for index, state in enumerate(dict_states)
+            if index in selected_indices
+        ]
+
+    return [
+        (
+            trajectory_evidence_id(trajectory_id, state),
+            trajectory_state_to_text(
+                record,
+                state,
+                max_state_chars=max_state_chars,
+            ),
+        )
+        for state in dict_states
+    ]
+
+
+def trajectory_to_text(
+    record: dict[str, Any],
+    *,
+    max_state_chars: int = 2000,
+    question: str = "",
+    max_states: int | None = None,
+) -> str:
     """Render a trajectory into text suitable for retrieval and reader prompts."""
     trajectory_id = str(record.get("id") or record.get("trajectory_id") or "unknown")
     parts = [
@@ -83,28 +219,24 @@ def trajectory_to_text(record: dict[str, Any], *, max_state_chars: int = 2000) -
     ]
     states = record.get("states") or record.get("events") or []
     if isinstance(states, list):
-        for state in states:
+        if max_states is not None:
+            evidence_records = extract_trajectory_evidence(
+                record,
+                question=question,
+                max_states=max_states,
+                max_state_chars=max_state_chars,
+            )
+            parts.extend(text for _, text in evidence_records)
+            return "\n".join(part for part in parts if part)
+
+        for index, state in enumerate(states):
             if not isinstance(state, dict):
                 parts.append(str(state)[:max_state_chars])
                 continue
-            state_index = state.get("state_index", state.get("step", ""))
-            action = state.get("action")
-            thought = state.get("thought")
-            observation = (
-                state.get("accessibility_tree")
-                or state.get("observation")
-                or state.get("text")
-                or ""
-            )
+            if "state_index" not in state and "step" not in state:
+                state = {**state, "state_index": index}
             parts.append(
-                "\n".join(
-                    [
-                        f"state: {state_index}",
-                        f"action: {action}",
-                        f"thought: {thought}",
-                        f"observation: {str(observation)[:max_state_chars]}",
-                    ]
-                )
+                trajectory_state_to_text(record, state, max_state_chars=max_state_chars)
             )
     return "\n".join(part for part in parts if part)
 

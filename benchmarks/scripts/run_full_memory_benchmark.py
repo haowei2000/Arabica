@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Callable, Sequence
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
+import random
 
 from benchmarks.adapters import StructureMemoryBenchmarkAgent
 from benchmarks.baselines import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMBenchmarkAgent
@@ -92,6 +95,66 @@ def _make_agent(
     raise ValueError(f"unsupported method: {method}")
 
 
+def sample_cases(
+    cases: Sequence[BenchmarkCase],
+    *,
+    sample_mode: str = "prefix",
+    sample_seed: str = "structure-memory-benchmark-v1",
+    max_cases: int | None = None,
+    sample_percent: float | None = None,
+) -> tuple[list[BenchmarkCase], dict[str, object]]:
+    """Apply deterministic benchmark sampling.
+
+    ``prefix`` preserves the legacy behavior, ``hash`` gives a stable fixed
+    sample independent of dataset order changes, and ``random`` gives a seeded
+    pseudo-random sample.  Both non-prefix modes preserve dataset order after
+    selecting cases so output diffs remain easy to read.
+    """
+    total = len(cases)
+    if sample_percent is not None and not 0 < sample_percent <= 100:
+        raise ValueError("--sample-percent must be in (0, 100]")
+    if max_cases is not None and max_cases < 1:
+        raise ValueError("--max-cases must be positive")
+
+    if sample_percent is None:
+        target = total if max_cases is None else min(max_cases, total)
+    else:
+        target = min(max(1, math.ceil(total * sample_percent / 100)), total)
+        if max_cases is not None:
+            target = min(target, max_cases)
+
+    if target >= total:
+        sampled = list(cases)
+    elif sample_mode == "prefix":
+        sampled = list(cases[:target])
+    elif sample_mode == "random":
+        rng = random.Random(f"{sample_seed}:{total}:{target}")
+        indices = sorted(rng.sample(range(total), target))
+        sampled = [cases[index] for index in indices]
+    elif sample_mode == "hash":
+        ranked = sorted(
+            enumerate(cases),
+            key=lambda item: hashlib.sha256(
+                f"{sample_seed}:{item[1].task_id}".encode()
+            ).hexdigest(),
+        )
+        indices = sorted(index for index, _ in ranked[:target])
+        sampled = [cases[index] for index in indices]
+    else:
+        raise ValueError(f"unsupported sample mode: {sample_mode}")
+
+    effective_percent = (len(sampled) / total * 100) if total else 0.0
+    return sampled, {
+        "sample_mode": sample_mode,
+        "sample_seed": sample_seed,
+        "sample_percent_requested": sample_percent,
+        "sample_percent_effective": effective_percent,
+        "sample_size": len(sampled),
+        "source_cases": total,
+        "max_cases": max_cases,
+    }
+
+
 def _report_dict(
     report: BenchmarkReport,
     *,
@@ -99,6 +162,7 @@ def _report_dict(
     reader_model: str,
     reader_base_url: str,
     judge: str,
+    sample_info: dict[str, object],
 ) -> dict[str, object]:
     data = report.to_dict()
     data.update(
@@ -107,6 +171,7 @@ def _report_dict(
             "reader_model": reader_model,
             "reader_base_url": reader_base_url,
             "judge": judge,
+            "sample": sample_info,
             "per_case": [
                 {
                     "task_id": task_id,
@@ -135,20 +200,27 @@ async def run_suite(
     top_k: int,
     temperature: float,
     max_cases: int | None,
+    sample_mode: str,
+    sample_seed: str,
+    sample_percent: float | None,
     max_context_chars: int,
     input_cost_per_mtok: float,
     output_cost_per_mtok: float,
     output_dir: Path,
-) -> list[tuple[str, BenchmarkReport]]:
+) -> tuple[list[tuple[str, BenchmarkReport]], dict[str, object]]:
     dataset_path, loader, scorer = _benchmark_config(benchmark, data_dir)
     if not dataset_path.exists():
         raise FileNotFoundError(
             f"{dataset_path} does not exist. Run prepare_full_datasets.py first."
         )
 
-    cases = loader(dataset_path)
-    if max_cases is not None:
-        cases = cases[:max_cases]
+    cases, sample_info = sample_cases(
+        loader(dataset_path),
+        sample_mode=sample_mode,
+        sample_seed=sample_seed,
+        max_cases=max_cases,
+        sample_percent=sample_percent,
+    )
 
     reports: list[tuple[str, BenchmarkReport]] = []
     for method in methods:
@@ -194,23 +266,28 @@ async def run_suite(
             on_case=on_case,
         )
         reports.append((method, await runner.run(cases)))
-    return reports
+    return reports, sample_info
 
 
 def render_markdown(rows: list[dict[str, object]]) -> str:
     lines = [
-        "| Benchmark | Method | Cases | Accuracy | Evidence | Mean tokens | Total tokens | Mean latency (s) | Cost |",
+        "| Benchmark | Method | Sample | Accuracy | Evidence | Mean tokens | Total tokens | Mean latency (s) | Cost |",
         "|---|---|---:|---:|---|---:|---:|---:|---:|",
     ]
     for row in rows:
         evidence = row.get("evidence_summary", {})
+        sample = row.get("sample", {})
+        sample_label = (
+            f"{sample.get('sample_size')}/{sample.get('source_cases')} "
+            f"({float(sample.get('sample_percent_effective', 0.0)):.2f}%)"
+        )
         lines.append(
             "| "
             + " | ".join(
                 [
                     str(row["benchmark"]),
                     str(row["method"]),
-                    str(row["n_cases"]),
+                    sample_label,
                     f"{float(row['overall_score']):.4f}",
                     json.dumps(evidence, sort_keys=True),
                     str(row["mean_cost"]["tokens_total"]),
@@ -252,10 +329,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-url",
         default=os.getenv("BENCHMARK_LLM_BASE_URL", DEFAULT_BASE_URL),
     )
-    parser.add_argument("--model", default=os.getenv("BENCHMARK_LLM_MODEL", DEFAULT_MODEL))
+    parser.add_argument(
+        "--model", default=os.getenv("BENCHMARK_LLM_MODEL", DEFAULT_MODEL)
+    )
     parser.add_argument("--top-k", type=int, default=6)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-cases", type=int)
+    parser.add_argument(
+        "--sample-mode",
+        choices=("prefix", "hash", "random"),
+        default="prefix",
+    )
+    parser.add_argument(
+        "--sample-seed",
+        default="structure-memory-benchmark-v1",
+        help="Stable seed used by hash/random sampling.",
+    )
+    parser.add_argument(
+        "--sample-percent",
+        type=float,
+        help="Evaluate this percentage of the benchmark before applying --max-cases cap.",
+    )
     parser.add_argument("--max-context-chars", type=int, default=120_000)
     parser.add_argument("--input-cost-per-mtok", type=float, default=0.0)
     parser.add_argument("--output-cost-per-mtok", type=float, default=0.0)
@@ -271,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"missing API key: export {args.api_key_env}=...")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    reports = asyncio.run(
+    reports, sample_info = asyncio.run(
         run_suite(
             benchmark=args.benchmark,
             data_dir=args.data_dir,
@@ -282,6 +376,9 @@ def main(argv: list[str] | None = None) -> int:
             top_k=args.top_k,
             temperature=args.temperature,
             max_cases=args.max_cases,
+            sample_mode=args.sample_mode,
+            sample_seed=args.sample_seed,
+            sample_percent=args.sample_percent,
             max_context_chars=args.max_context_chars,
             input_cost_per_mtok=args.input_cost_per_mtok,
             output_cost_per_mtok=args.output_cost_per_mtok,
@@ -295,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
             method=method,
             reader_model=args.model,
             reader_base_url=args.base_url,
-            judge="deterministic-normalized-match",
+            judge="benchmark-specific-deterministic-scorer",
+            sample_info=sample_info,
         )
         for method, report in reports
     ]

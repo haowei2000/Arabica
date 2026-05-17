@@ -23,13 +23,48 @@ The oracle `EchoAgent` should score `overall_score == 1.0` over the fixture.
 
 ## Full Dataset Integration Notes
 
-Before running the full benchmark, inspect the upstream release schema and map:
+The public release is loaded from:
 
-- trajectory ids and event ids
-- screenshots or multimodal artifacts
-- evidence annotations
-- latency metrics or LAFS frontier fields
-- split names and license constraints
+- `questions.jsonl` for question, answer, and `eval_function`
+- `haystacks/lme_v2_{small,medium}.json` for per-question trajectory ids
+- `trajectories.jsonl` for lazy byte-offset trajectory reads
+
+The scorer now recognises the release evaluator strings observed locally:
+
+- `norm_phrase_set_match`
+- `norm_phrase_set_match_ordered`
+- `mc_choice_match`
+- `mc_choice_set_match`
+- `llm_abstention_checker`
+- `llm_gotchas_checker`
+
+The first four are deterministic. The two `llm_*` evaluator names are routed
+through the official function selector but fall back to normalized answer
+containment until a separate judge model is wired.
+
+Trajectory rendering assigns stable state citations such as
+`<trajectory_id>:s<state_index>`, includes screenshot paths when present, and
+keeps the most question-relevant states per trajectory in the reader context.
+
+Sampling is configured in the full runner:
+
+```bash
+uv run python -m benchmarks.scripts.run_full_memory_benchmark \
+  --benchmark longmemeval-v2-small \
+  --sample-percent 10 \
+  --sample-mode hash \
+  --sample-seed 2026-05-18
+```
+
+`prefix` preserves legacy first-N behavior, `hash` gives a stable fixed sample,
+and `random` gives a seeded random sample.
+
+Remaining full-reproduction work:
+
+- connect an LLM judge for `llm_abstention_checker` and `llm_gotchas_checker`
+- download and pass screenshot files to a vision-capable reader
+- compare against any official latency frontier metric if released
 
 The local scorer is deterministic and suitable for CI. A full reproduction may
-need the official judge, evidence checker, or latency frontier metric.
+need the official judge, vision reader, evidence checker, or latency frontier
+metric.
