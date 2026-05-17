@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def setup_environment():
     """设置环境变量"""
     os.environ.setdefault("ENV", "development")
-    os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
-    os.environ.setdefault("POSTGRES__PORT", "5435")
+    os.environ.setdefault("POSTGRES__HOST", "127.0.0.1")
+    os.environ.setdefault("POSTGRES__PORT", "5432")
     os.environ.setdefault("POSTGRES__USERNAME", "postgres")
-    os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
+    os.environ.setdefault("POSTGRES__PASSWORD", "change-me-postgres-password")
     os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
     print("环境变量已设置")
 
@@ -100,11 +100,13 @@ def main():
     setup_environment()
 
     # API基础URL
-    base_url = "http://localhost:8001"
+    base_url = "http://localhost:8000"
 
     # 用户凭据
     username = "admin"
-    password = "admin123"
+    password = os.getenv("ADMIN_PASSWORD", "")
+    if not password:
+        raise RuntimeError("ADMIN_PASSWORD must be set")
 
     try:
         # 1. 登录获取访问令牌

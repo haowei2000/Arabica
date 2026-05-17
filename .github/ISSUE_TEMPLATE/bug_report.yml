@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible problem in Structure.
+title: "fix: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction Steps
+      description: Include commands, requests, or UI steps.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or Commit
+      placeholder: "v5.5.0 or commit SHA"
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, Node, database, Redis, deployment mode.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      render: shell

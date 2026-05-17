@@ -7,8 +7,6 @@ wiring check for each benchmark's scorer.
 
 import asyncio
 
-import pytest
-
 from benchmarks.baselines import EchoAgent
 from benchmarks.core import (
     BenchmarkCase,
@@ -17,6 +15,7 @@ from benchmarks.core import (
     aggregate,
 )
 from benchmarks.core.types import BenchmarkResult
+import pytest
 
 
 @pytest.mark.unit

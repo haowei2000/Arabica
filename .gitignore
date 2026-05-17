@@ -181,6 +181,13 @@ cython_debug/
 .claude
 /src/nul
 /docker/rustfs
+.output.txt
+.run/
+.zed/
+.ai/mcp/*.json
+
+# Local test environment files
+/tests/.env.*
 
 # Integration test artifacts
 /tests/artifacts/*

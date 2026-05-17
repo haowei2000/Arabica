@@ -135,9 +135,9 @@ setup_logging()
 
 # 2. 创建 FastAPI 应用
 app = FastAPI(
-    title="Epichust Python API",
-    description="FastAPI backend for AI agent system",
-    version="1.0.0",
+    title="Structure API",
+    description="FastAPI backend for event-sourced AI agent orchestration",
+    version="5.5.0",
     lifespan=lifespan,
     docs_url="/docs" if DEBUG else None,  # 生产环境禁用文档
 )

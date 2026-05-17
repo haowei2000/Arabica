@@ -39,9 +39,7 @@ class _FakeClient:
 @pytest.mark.unit
 def test_llm_agent_can_run_with_fake_openai_compatible_client():
     cases = load_longmemeval(FIXTURE)
-    temporal_case = next(
-        case for case in cases if case.ability == "temporal-reasoning"
-    )
+    temporal_case = next(case for case in cases if case.ability == "temporal-reasoning")
     agent = LLMBenchmarkAgent(
         model="fake-model",
         api_key="unused",
@@ -109,4 +107,3 @@ def test_llm_runner_json_renderer_is_machine_readable():
     payload = json.loads(render_json(report))
     assert payload["benchmark"] == "longmemeval:llm-fake"
     assert payload["per_case"][0]["tokens_total"] == 127
-

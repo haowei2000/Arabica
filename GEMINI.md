@@ -43,7 +43,7 @@ The project is structured as a monorepo containing both the backend service and 
 
 2. **Environment Setup**:
    ```bash
-   cd src && uv run sync-env  # Generates .env from .env.example
+   uv run sync-env  # Generates .env from .env.example
    ```
 
 3. **Database Migrations**:

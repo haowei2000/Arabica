@@ -364,6 +364,11 @@ class ApplicationBootstrap:
                     return
 
                 # Create admin user
+                if not self.settings.auth.admin_password:
+                    raise RuntimeError(
+                        "AUTH__ADMIN_PASSWORD must be set before creating the admin user"
+                    )
+
                 logger.info(f"   Creating admin user: {admin_username}")
                 hashed_password = hash_password(self.settings.auth.admin_password)
 

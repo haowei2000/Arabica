@@ -67,7 +67,6 @@ server: {
 
 ```bash
 # 终端 1: 启动后端
-cd src
 uv run structure-api
 
 # 终端 2: 启动前端
@@ -209,7 +208,7 @@ services:
 
 ```bash
 # 终端 1: 后端
-cd src && uv run structure-api
+uv run structure-api
 
 # 终端 2: 前端
 cd frontend && npm run dev

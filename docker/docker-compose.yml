@@ -45,7 +45,7 @@ services:
       APP_PORT: 8000
       STRUCTURE_APP_PORT: 8000
       APP_HOST: 0.0.0.0
-      APP_NAME: ${APP_NAME:-Modular FastAPI App}
+      APP_NAME: ${APP_NAME:-Structure}
       DEBUG: ${DEBUG:-false}
       ENV: ${ENV:-production}
       START_MCP: ${START_MCP:-true}
@@ -55,20 +55,20 @@ services:
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:?Set POSTGRES__PASSWORD in .env}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       REDIS__HOST: redis
       REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
+      REDIS__PASSWORD: ${REDIS__PASSWORD:?Set REDIS__PASSWORD in .env}
       REDIS__DB: ${REDIS__DB:-1}
       REDIS__USERNAME: ${REDIS__USERNAME:-}
-      AUTH__JWT_SECRET_KEY: ${AUTH__JWT_SECRET_KEY:-your-super-secret-jwt-key-here-change-in-production}
+      AUTH__JWT_SECRET_KEY: ${AUTH__JWT_SECRET_KEY:?Set AUTH__JWT_SECRET_KEY in .env}
       AUTH__JWT_ALGORITHM: ${AUTH__JWT_ALGORITHM:-HS256}
       AUTH__ACCESS_TOKEN_EXPIRE_MINUTES: ${AUTH__ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       AUTH__REFRESH_TOKEN_EXPIRE_DAYS: ${AUTH__REFRESH_TOKEN_EXPIRE_DAYS:-7}
       AUTH__ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
-      AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-123456}
+      AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:?Set AUTH__ADMIN_PASSWORD in .env}
       OLLAMA__HOST: ollama
       OLLAMA__PORT: 11434
       OLLAMA__PROTOCOL: http
@@ -106,7 +106,7 @@ services:
       MCP_URL: http://backend:9000
       MCP_SSE_PATH: /mcp
       ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:-123456}
+      ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:?Set AUTH__ADMIN_PASSWORD in .env}
       WAIT_TIMEOUT: "120"
     depends_on:
       backend:
@@ -139,13 +139,13 @@ services:
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:?Set POSTGRES__PASSWORD in .env}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
       REDIS__HOST: redis
       REDIS__PORT: 6379
-      REDIS__PASSWORD: ${REDIS__PASSWORD:-123456}
+      REDIS__PASSWORD: ${REDIS__PASSWORD:?Set REDIS__PASSWORD in .env}
       REDIS__DB: ${REDIS__DB:-1}
     depends_on:
       postgres:
@@ -189,7 +189,7 @@ services:
       POSTGRES__HOST: postgres
       POSTGRES__PORT: 5432
       POSTGRES__USERNAME: ${POSTGRES__USERNAME:-postgres}
-      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:-123456}
+      POSTGRES__PASSWORD: ${POSTGRES__PASSWORD:?Set POSTGRES__PASSWORD in .env}
       POSTGRES__STRUCTURE_DBNAME: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES__DRIVER: postgresql+asyncpg
       # Redis Configuration
@@ -279,7 +279,7 @@ services:
       <<: *common-env
       POSTGRES_DB: ${POSTGRES__STRUCTURE_DBNAME:-structure}
       POSTGRES_USER: ${POSTGRES__USERNAME:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:-123456}
+      POSTGRES_PASSWORD: ${POSTGRES__PASSWORD:?Set POSTGRES__PASSWORD in .env}
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USERNAME:-postgres} -d ${POSTGRES__STRUCTURE_DBNAME:-structure}"]
@@ -310,8 +310,8 @@ services:
     env_file:
       - ../.env
     environment:
-      RUSTFS_ACCESS_KEY: ${RUSTFS__ACCESS_KEY:-rustfsadmin}
-      RUSTFS_SECRET_KEY: ${RUSTFS__SECRET_KEY:-rustfsadmin}
+      RUSTFS_ACCESS_KEY: ${RUSTFS__ACCESS_KEY:?Set RUSTFS__ACCESS_KEY in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS__SECRET_KEY:?Set RUSTFS__SECRET_KEY in .env}
       RUSTFS_CONSOLE_ENABLE: ${RUSTFS_CONSOLE_ENABLE:-true}
     user: "0:0"
     volumes:
@@ -334,6 +334,8 @@ services:
       - /usr/local/etc/redis/redis.conf
       - --maxmemory
       - ${REDIS_MAXMEMORY:-100mb}
+      - --requirepass
+      - ${REDIS__PASSWORD:?Set REDIS__PASSWORD in .env}
     ports:
       - "${EXPOSE_PORT_REDIS:-6379}:6379"
     volumes:
@@ -343,7 +345,7 @@ services:
       <<: *common-env
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-123456}", "--no-auth-warning", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:?Set REDIS__PASSWORD in .env}", "--no-auth-warning", "ping"]
       start_period: 10s
     restart: unless-stopped
     logging: *default-logging
@@ -404,9 +406,9 @@ services:
       - "${REDIS_COMMANDER_PORT:-8081}:8081"
     environment:
       <<: *common-env
-      REDIS_HOSTS: local:redis:6379:0:${REDIS__PASSWORD:-123456}
+      REDIS_HOSTS: local:redis:6379:0:${REDIS__PASSWORD:?Set REDIS__PASSWORD in .env}
       HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
-      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-123456}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:?Set REDIS_COMMANDER_PASSWORD in .env}
     depends_on:
       redis:
         condition: service_healthy

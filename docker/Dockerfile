@@ -1,6 +1,6 @@
 #!/usr/bin/env docker
 # syntax=docker/dockerfile:1.4
-# Optimized Multi-stage Dockerfile for AI630 Project
+# Optimized multi-stage Dockerfile for Structure
 # Supports both amd64 and arm64 architectures
 # Optimized for build cache and image size
 
@@ -158,8 +158,9 @@ EXPOSE 8000 9000
 ENTRYPOINT ["./docker/docker-entrypoint.sh"]
 
 # Labels for metadata
-LABEL maintainer="wanghaowei" \
-      org.opencontainers.image.title="AI630 Service" \
-      org.opencontainers.image.description="FastAPI backend for AI agent system" \
-      org.opencontainers.image.vendor="艾普工华(武汉)有限责任公司" \
-      org.opencontainers.image.version="2.0.0"
+LABEL org.opencontainers.image.title="Structure Service" \
+      org.opencontainers.image.description="FastAPI backend for event-sourced AI agent orchestration" \
+      org.opencontainers.image.vendor="Structure contributors" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/haowei2000/Structure" \
+      org.opencontainers.image.version="5.5.0"

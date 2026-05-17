@@ -1,6 +1,6 @@
-# AI Agent Orchestration Platform
+# Structure
 
-> **v1.0.0** · Enterprise-grade, event-sourced, async-first AI agent platform built with FastAPI + Python 3.12.
+> **v5.5.0** · Enterprise-grade, event-sourced, async-first AI agent platform built with FastAPI + Python 3.12.
 
 Structure is a production-ready backend for running intelligent AI agents at scale. It provides a complete orchestration layer — from LLM interaction and tool execution to real-time streaming and distributed worker coordination — all built on an immutable event-sourcing foundation.
 
@@ -21,6 +21,7 @@ Structure is a production-ready backend for running intelligent AI agents at sca
 - [Development](#development)
 - [Deployment](#deployment)
 - [Commit Conventions](#commit-conventions)
+- [License](#license)
 
 ---
 
@@ -416,14 +417,13 @@ data: {"event_type": "AGENT_MESSAGE", "payload": {"content": "Hello, how can I h
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
-cd agent_chat
+git clone https://github.com/haowei2000/Structure.git
+cd Structure
 
 # 2. Install dependencies
 uv sync
 
 # 3. Set up environment
-cd src
 uv run sync-env    # generates .env from .env.example
 
 # 4. Run database migrations
@@ -443,7 +443,9 @@ make start-all
 ### Docker
 
 ```bash
-docker compose -p structure up -d
+uv run sync-env
+docker compose -p structure -f docker/docker-compose.yml \
+  --env-file .env --env-file performance.env --profile all up -d
 ```
 
 ---
@@ -456,14 +458,15 @@ Key configuration sections:
 
 | Section | Variables | Description |
 |---|---|---|
-| **Database** | `DATABASE_URL` | PostgreSQL connection string |
-| **Redis** | `REDIS_URL` | Redis connection string |
+| **Database** | `POSTGRES__*` | PostgreSQL host, port, database, and credentials |
+| **Redis** | `REDIS__*` | Redis host, port, database, and credentials |
 | **DashScope** | `DASHSCOPE_API_KEY` | Alibaba Tongyi API key |
-| **OpenAI** | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | OpenAI-compatible endpoint |
-| **Ollama** | `OLLAMA_BASE_URL` | Local Ollama server URL |
-| **Storage** | `S3_*` | S3-compatible storage credentials |
+| **OpenAI** | `OPENAI__API_KEY`, `OPENAI__BASE_URL` | OpenAI-compatible endpoint |
+| **Ollama** | `OLLAMA__*` | Local Ollama server settings |
+| **Storage** | `RUSTFS__*` | S3-compatible storage credentials |
 
-See `src/.env.example` for the full list.
+See `.env.example` for the full list. Replace every `change-me-*` value before
+deploying a shared or public instance.
 
 ---
 
@@ -480,10 +483,10 @@ uv add --dev <package>     # add a dev dependency
 ### Running Tests
 
 ```bash
-pytest                          # all tests
-pytest -m unit                  # unit tests only
-pytest -m integration           # integration tests only
-pytest --cov=src/structure          # with coverage report
+uv run pytest                          # all tests
+uv run pytest -m unit                  # unit tests only
+uv run pytest -m integration           # integration tests only
+uv run pytest --cov=src/structure      # with coverage report
 ```
 
 Coverage threshold: **60%**
@@ -518,10 +521,11 @@ uv run structure-mcp      # MCP service (port 9000)
 git pull --rebase
 
 # Generate .env
-cd src && uv run sync-env
+uv run sync-env
 
 # Start all services
-docker compose -p structure up -d
+docker compose -p structure -f docker/docker-compose.yml \
+  --env-file .env --env-file performance.env --profile all up -d
 ```
 
 ### Scaling Workers
@@ -570,6 +574,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - [ ] No duplicate environment variables
 - [ ] No secrets committed (`.env`, credentials)
 - [ ] Git cache clean: `git ls-files -i -c --exclude-standard`
+- [ ] Current-tree secret scan clean: `scripts/open_source_audit.sh --current-tree-only`
 
 ---
 
@@ -609,4 +614,4 @@ docs/                         # Additional documentation
 
 ## License
 
-See `LICENSE` for details.
+Licensed under the Apache License, Version 2.0. See `LICENSE` and `NOTICE`.

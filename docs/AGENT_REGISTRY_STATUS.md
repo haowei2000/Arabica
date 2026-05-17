@@ -127,17 +127,17 @@ async def lifespan(app: FastAPI):
 
 ```bash
 # PostgreSQL
-POSTGRES__HOST=10.1.2.111
-POSTGRES__PORT=5435
+POSTGRES__HOST=127.0.0.1
+POSTGRES__PORT=5432
 POSTGRES__USERNAME=postgres
-POSTGRES__PASSWORD=difyai123456
-POSTGRES__STRUCTURE_DBNAME=structure_agent  # ← 注意是 structure_agent
+POSTGRES__PASSWORD=change-me-postgres-password
+POSTGRES__STRUCTURE_DBNAME=structure
 
 # MySQL
 MYSQL__HOST=61.183.71.118
 MYSQL__PORT=9220
 MYSQL__USERNAME=root
-MYSQL__PASSWORD=123456
+MYSQL__PASSWORD=change-me-mysql-password
 MYSQL__DBNAME=unimax55_5509_710
 ```
 

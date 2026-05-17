@@ -12,6 +12,7 @@ from structure.routers.context.tools.tools import MCPImportRequest, import_from_
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("import_inner_tools")
 
+
 async def main():
     # 1. Initialize API bootstrap to get DB and settings
     bootstrap = await bootstrap_api()
@@ -31,7 +32,9 @@ async def main():
             )
             admin_user = result.scalar_one_or_none()
             if not admin_user:
-                logger.error("Admin user not found. Please run sync-env and start-api first.")
+                logger.error(
+                    "Admin user not found. Please run sync-env and start-api first."
+                )
                 return
 
             # Prepare import request
@@ -39,7 +42,7 @@ async def main():
             from structure.registries.mcp_loader import probe_mcp_server
 
             logger.info("Probing MCP server...")
-            raw_tools = await probe_mcp_server(mcp_url) # FastMCP probe takes URL
+            raw_tools = await probe_mcp_server(mcp_url)  # FastMCP probe takes URL
 
             if not raw_tools:
                 logger.warning("No tools found on MCP server.")
@@ -50,22 +53,18 @@ async def main():
             tool_names = [t["name"] for t in raw_tools]
 
             request = MCPImportRequest(
-                transport="sse",
-                url=mcp_url,
-                tool_names=tool_names,
-                is_public=True
+                transport="sse", url=mcp_url, tool_names=tool_names, is_public=True
             )
 
             # Use the existing router logic (or call it directly)
             # We need a mock user response for the Depends
             from structure.schemas.auth.user import UserResponse
+
             current_user = UserResponse.model_validate(admin_user)
 
             # Note: import_from_mcp returns MCPImportResponse, not successes/failures list directly
             response = await import_from_mcp(
-                body=request,
-                current_user=current_user,
-                db=session
+                body=request, current_user=current_user, db=session
             )
 
             # MCPImportResponse has imported, skipped, failed (all lists of strings)
@@ -84,6 +83,7 @@ async def main():
 
     finally:
         await bootstrap.cleanup()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

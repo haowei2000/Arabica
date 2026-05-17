@@ -55,7 +55,9 @@ async def create_admin_user():
             print("📝 Creating admin user...")
 
             # Hash the password
-            admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+            admin_password = os.getenv("ADMIN_PASSWORD", "")
+            if not admin_password:
+                raise RuntimeError("ADMIN_PASSWORD must be set")
             hashed_password = hash_password(admin_password)
 
             # Create the admin user
@@ -75,7 +77,7 @@ async def create_admin_user():
 
             print("✅ Admin user created successfully!")
             print("   Username: admin")
-            print(f"   Password: {admin_password}")
+            print("   Password: set from ADMIN_PASSWORD")
             print(f"   Email: {admin_user.email}")
             print(f"   Role: {admin_user.role}")
             return True

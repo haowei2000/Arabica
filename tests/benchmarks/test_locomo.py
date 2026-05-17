@@ -67,4 +67,3 @@ def test_memory_baselines_find_fixture_evidence():
         report = asyncio.run(runner.run(cases))
         assert report.overall_score == pytest.approx(1.0)
         assert report.mean_cost.tokens_total > 0
-

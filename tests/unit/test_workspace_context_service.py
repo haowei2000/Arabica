@@ -44,7 +44,10 @@ async def test_get_prefers_workspace_context_rows_for_same_path():
     service._workspace_contexts = [  # type: ignore[list-item]
         _FakeContext(
             path="memory/integration/fact",
-            payload={"content": "project codename is ORION", "content_type": "text/plain"},
+            payload={
+                "content": "project codename is ORION",
+                "content_type": "text/plain",
+            },
         )
     ]
 

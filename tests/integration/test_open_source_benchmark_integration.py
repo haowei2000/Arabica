@@ -144,5 +144,7 @@ def test_open_source_agent_benchmark_integration_policy_is_explicit():
     assert modes_by_name["terminal-bench"] == "distilled_db_trace"
     assert modes_by_name["swe-bench"] == "external_opt_in"
     assert modes_by_name["webarena-osworld"] == "external_opt_in"
-    assert all(target.upstream_url.startswith("https://") for target in OPEN_SOURCE_BENCHMARK_TARGETS)
-
+    assert all(
+        target.upstream_url.startswith("https://")
+        for target in OPEN_SOURCE_BENCHMARK_TARGETS
+    )

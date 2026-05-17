@@ -675,10 +675,7 @@ class TestIntegration:
         ]
 
         # Convert to dict first to exclude sensitive fields
-        user_dicts = [
-            model_to_dict(user, exclude={"password_hash"})
-            for user in users
-        ]
+        user_dicts = [model_to_dict(user, exclude={"password_hash"}) for user in users]
 
         # Then validate as schemas
         responses = [UserResponse.model_validate(d) for d in user_dicts]

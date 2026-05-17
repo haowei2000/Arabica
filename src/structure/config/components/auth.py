@@ -14,15 +14,15 @@ class AuthConfig(BaseModel):
         description="管理员用户名，默认为admin",
     )
     admin_password: str = Field(
-        default="admin123",
-        description="管理员密码，默认为admin123",
+        default="",
+        description="管理员密码；生产环境必须通过环境变量显式设置",
     )
     admin_email: str = Field(
         default="admin@example.com",
         description="管理员邮箱，默认为空",
     )
     jwt_secret_key: str = Field(
-        default="your-super-secret-jwt-key-here-change-in-production",
+        default="",
         description="用于JWT令牌签名的密钥，生产环境中必须更换为安全的密钥",
     )
 
