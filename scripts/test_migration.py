@@ -1,10 +1,11 @@
 """Test script to verify ContextLayer integration and migration."""
 
 import asyncio
+from pathlib import Path
 import sys
 from uuid import uuid4
 
-sys.path.insert(0, "/Users/wanghaowei/PycharmProjects/agent_chat/src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 async def test_framework():
@@ -23,29 +24,27 @@ async def test_framework():
     store = ContextStore("Test Workspace", "Testing ContextLayer")
 
     # Add schema nodes
-    store.schema("workspace_123",
-        glance="Workspace 123",
-        aggregator=count_aggregator
-    )
+    store.schema("workspace_123", glance="Workspace 123", aggregator=count_aggregator)
 
-    store.schema("workspace_123/tools",
-        glance="Available Tools",
-        aggregator=count_aggregator
+    store.schema(
+        "workspace_123/tools", glance="Available Tools", aggregator=count_aggregator
     )
 
     # Add data nodes
-    store.set("workspace_123/tools/web_search",
+    store.set(
+        "workspace_123/tools/web_search",
         glance="Web Search Tool — ✅ Available",
         overview={"provider": "DuckDuckGo", "rate_limit": "100/hour"},
         detail={"description": "Search the web", "parameters": {...}},
-        tags=["tool", "search", "web"]
+        tags=["tool", "search", "web"],
     )
 
-    store.set("workspace_123/tools/code_executor",
+    store.set(
+        "workspace_123/tools/code_executor",
         glance="Code Executor — ✅ Available",
         overview={"languages": ["python", "javascript"], "timeout": "30s"},
         detail={"description": "Execute code safely"},
-        tags=["tool", "code", "executor"]
+        tags=["tool", "code", "executor"],
     )
 
     # Test queries
@@ -84,7 +83,7 @@ async def test_models():
             summary="This is a test tool for migration verification",
             content="Full tool content here...",
             tags=["test", "tool"],
-            importance=50
+            importance=50,
         )
 
         session.add(test_ctx)
@@ -140,7 +139,7 @@ async def test_service():
             id=workspace_id,
             name="Test Workspace",
             description="Test workspace for migration",
-            owner_id=uuid4()
+            owner_id=uuid4(),
         )
         session.add(test_workspace)
         await session.commit()
@@ -160,7 +159,7 @@ async def test_service():
             detail={"params": {}},
             tags=["tool", "search"],
             name="Web Search Tool",
-            content_type="application/json"
+            content_type="application/json",
         )
 
         await service.set(
@@ -170,7 +169,7 @@ async def test_service():
             detail={"precision": "double"},
             tags=["tool", "math"],
             name="Calculator Tool",
-            content_type="application/json"
+            content_type="application/json",
         )
 
         print("\n✓ Added 2 contexts to database")
@@ -223,6 +222,7 @@ async def main():
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

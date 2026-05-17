@@ -1,5 +1,5 @@
-REGISTRY="10.1.2.111:9443"
-BASE="${REGISTRY}/ai/python-fastapi"
+REGISTRY="${REGISTRY:-ghcr.io/your-org}"
+BASE="${BASE:-${REGISTRY}/structure/backend}"
 DATE_TAG="$(date +%F)"
 
 docker buildx build \

@@ -24,6 +24,7 @@ def verify_protocol_imports():
             is_registry,
             is_tool,
         )
+
         print("   ✓ All protocols imported successfully")
         return True
     except ImportError as e:
@@ -74,7 +75,7 @@ def verify_tool_protocol():
                 description="A test tool",
             )
 
-            async def execute(self, input_data):
+            async def execute(self, _input_data):
                 return ToolOutputSchema(success=True, message="Test successful")
 
         tool = TestTool()
@@ -109,6 +110,7 @@ def verify_tool_protocol():
     except Exception as e:
         print(f"   ✗ Failed to verify ToolProtocol: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -135,7 +137,9 @@ def verify_registry_protocol():
         # Test ExecutorRegistry
         executor_registry = ExecutorRegistry()
         if not isinstance(executor_registry, RegistryProtocol):
-            print("   ✗ ExecutorRegistry does not satisfy RegistryProtocol (isinstance)")
+            print(
+                "   ✗ ExecutorRegistry does not satisfy RegistryProtocol (isinstance)"
+            )
             return False
         print("   ✓ ExecutorRegistry satisfies RegistryProtocol (isinstance)")
 
@@ -143,6 +147,7 @@ def verify_registry_protocol():
     except Exception as e:
         print(f"   ✗ Failed to verify RegistryProtocol: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -173,6 +178,7 @@ def verify_type_checkers():
     except Exception as e:
         print(f"   ✗ Failed to verify type checkers: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -197,6 +203,7 @@ def verify_direct_imports():
             register_tool,
         )
         from structure.registries.manager import RegistryManager, get_registry
+
         print("   ✓ All source modules importable directly")
         return True
     except ImportError as e:
@@ -227,6 +234,7 @@ def main():
         except Exception as e:
             print(f"\n✗ Unexpected error in {check.__name__}: {e}")
             import traceback
+
             traceback.print_exc()
             results.append(False)
 

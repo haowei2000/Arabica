@@ -162,7 +162,9 @@ def test_load_policy_sets_recent_turns_and_transients():
     )
 
     assert (
-        ContextBatchService._desired_load_state(old_turn, {recent_turn.id}, current_run_id)
+        ContextBatchService._desired_load_state(
+            old_turn, {recent_turn.id}, current_run_id
+        )
         == ContextBatchLoadState.LOAD_KEY
     )
     assert (

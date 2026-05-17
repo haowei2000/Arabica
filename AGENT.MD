@@ -837,8 +837,8 @@ Frontend commands:
 
 Production site:
 
-- URL: `https://www.structure.chat`
-- Server IP: `46.225.119.90`
+- Configure the deployment URL and server inventory outside the public
+  repository.
 
 After any change is merged into `main`, run the integration testing workflow
 from `docs/integration_testing.md` against the production website. The run must

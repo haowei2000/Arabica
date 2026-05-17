@@ -65,7 +65,9 @@ async def test_start_user_run_uses_workspace_executor_fallback():
     quota.assert_can_start_run.assert_awaited_once()
     run_crud.create.assert_awaited_once()
     publisher.publish_durable.assert_awaited_once()
-    assert publisher.publish_durable.await_args.kwargs["executor_code"] == "WorkspaceAgent"
+    assert (
+        publisher.publish_durable.await_args.kwargs["executor_code"] == "WorkspaceAgent"
+    )
 
 
 @pytest.mark.asyncio

@@ -20,14 +20,14 @@
 
 ```bash
 # PostgreSQL数据库配置
-export POSTGRES__HOST=10.1.2.111
-export POSTGRES__PORT=5435
+export POSTGRES__HOST=127.0.0.1
+export POSTGRES__PORT=5432
 export POSTGRES__USERNAME=postgres
-export POSTGRES__PASSWORD=difyai123456
+export POSTGRES__PASSWORD=change-me-postgres-password
 export POSTGRES__STRUCTURE_DBNAME=structure
 
 # 可选：自定义管理员用户设置
-export ADMIN_PASSWORD=admin123
+export ADMIN_PASSWORD=change-me-admin-password
 export ADMIN_EMAIL=admin@example.com
 ```
 
@@ -50,10 +50,10 @@ from alembic import context
 
 # 设置环境变量
 os.environ.setdefault("ENV", "development")
-os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
-os.environ.setdefault("POSTGRES__PORT", "5435")
+os.environ.setdefault("POSTGRES__HOST", "127.0.0.1")
+os.environ.setdefault("POSTGRES__PORT", "5432")
 os.environ.setdefault("POSTGRES__USERNAME", "postgres")
-os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
+os.environ.setdefault("POSTGRES__PASSWORD", "change-me-postgres-password")
 os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
 
 # 尝试从项目配置获取数据库URL
@@ -76,7 +76,7 @@ except Exception as e:
 if not db_url:
     db_url = (
         f"postgresql+psycopg2://"
-        f"{quote_plus(os.environ.get('POSTGRES__USERNAME', 'postgres'))}:{quote_plus(os.environ.get('POSTGRES__PASSWORD', '123456'))}@"
+        f"{quote_plus(os.environ.get('POSTGRES__USERNAME', 'postgres'))}:{quote_plus(os.environ.get('POSTGRES__PASSWORD', 'change-me-postgres-password'))}@"
         f"{os.environ.get('POSTGRES__HOST', 'localhost')}:{os.environ.get('POSTGRES__PORT', '5432')}/{os.environ.get('POSTGRES__STRUCTURE_DBNAME', 'structure')}"
     )
 
@@ -116,10 +116,10 @@ from alembic import context
 
 # 设置环境变量
 os.environ.setdefault("ENV", "development")
-os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
-os.environ.setdefault("POSTGRES__PORT", "5435")
+os.environ.setdefault("POSTGRES__HOST", "127.0.0.1")
+os.environ.setdefault("POSTGRES__PORT", "5432")
 os.environ.setdefault("POSTGRES__USERNAME", "postgres")
-os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
+os.environ.setdefault("POSTGRES__PASSWORD", "change-me-postgres-password")
 os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
 
 # 导入模型
@@ -322,7 +322,7 @@ def upgrade() -> None:
     # 如果管理员用户不存在，则创建
     if not admin_row and tenant_id:
         # 从环境变量获取管理员密码或使用默认值
-        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+        admin_password = os.getenv("ADMIN_PASSWORD", "change-me-admin-password")
         admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
 
         # 使用bcrypt哈希密码（与应用程序中相同）
@@ -381,7 +381,7 @@ alembic upgrade head
 要验证默认管理员用户是否已成功创建，请运行以下SQL查询：
 
 ```bash
-export PGPASSWORD=difyai123456 && psql -h 10.1.2.111 -p 5435 -U postgres -d structure -c "SELECT u.username, u.email, u.role, u.is_superuser, t.name as tenant_name FROM auth_user u JOIN auth_tenant t ON u.tenant_id = t.id WHERE u.username = 'admin';"
+export PGPASSWORD=change-me-postgres-password && psql -h 127.0.0.1 -p 5432 -U postgres -d structure -c "SELECT u.username, u.email, u.role, u.is_superuser, t.name as tenant_name FROM auth_user u JOIN auth_tenant t ON u.tenant_id = t.id WHERE u.username = 'admin';"
 ```
 
 预期输出：
@@ -407,7 +407,7 @@ export PGPASSWORD=difyai123456 && psql -h 10.1.2.111 -p 5435 -U postgres -d stru
 
 您可以通过设置以下环境变量来自定义管理员用户：
 
-- `ADMIN_PASSWORD`：管理员密码（默认：admin123）
+- `ADMIN_PASSWORD`：管理员密码（请在环境变量中设置强密码）
 - `ADMIN_EMAIL`：管理员邮箱（默认：admin@example.com）
 
 ## 故障排除
@@ -439,7 +439,7 @@ alembic stamp head
 
 1. 点击右上角的"Authorize"按钮
 2. 输入用户名：`admin`
-3. 输入密码：`admin123`
+3. 输入你通过 `ADMIN_PASSWORD` 设置的密码
 4. 点击"Authorize"完成登录
 
 登录后，您可以访问所有受保护的API端点。

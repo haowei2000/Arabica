@@ -1,4 +1,4 @@
-# Makefile for AI630 Project
+# Makefile for Structure
 # 提供便捷的开发和测试命令
 
 .PHONY: help test test-unit test-integration test-slow test-coverage test-fast test-verbose test-failed clean install install-dev lint lint-fix format format-check check db-migrate db-upgrade db-rollback db-downgrade db-reset db-revision db-revision-empty db-current db-history db-heads db-branches db-stamp db-status run run-mcp dev dev-mcp docker-build docker-build-cache docker-build-multi docker-build-push docker-build-context-service docker-up docker-up-infra docker-down docker-logs docker-restart docker-shell docker-status docker-stats docker-size docker-inspect-layers docker-clean docker-prune-all docker-build-dev docker-scan docker-info docker-test-build env-sync ci pre-commit quick-test full-test shell deps-update deps-tree info
@@ -14,7 +14,7 @@ RED := \033[0;31m
 NC := \033[0m # No Color
 
 help: ## 显示帮助信息
-	@echo "$(BLUE)AI630 项目 - 可用命令:$(NC)"
+	@echo "$(BLUE)Structure 项目 - 可用命令:$(NC)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
@@ -126,19 +126,19 @@ db-status: ## 显示迁移状态
 # ============================================================================
 
 start-api: ## 启动 API 服务 (端口 8000)
-	cd src && uv run structure-api
+	uv run structure-api
 
 start-worker: ## 启动 Worker 服务
-	cd src && uv run structure-worker
+	uv run structure-worker
 
 start-celery: ## 启动 Celery Worker
-	cd src && uv run structure-celery worker --concurrency=4 --loglevel=info
+	uv run structure-celery worker --concurrency=4 --loglevel=info
 
 start-celery-beat: ## 启动 Celery Beat 调度器
-	cd src && uv run structure-celery beat --loglevel=info
+	uv run structure-celery beat --loglevel=info
 
 start-mcp: ## 启动 MCP 服务 (端口 9000)
-	cd src && uv run structure-mcp
+	uv run structure-mcp
 
 start-frontend: ## 启动前端开发服务器
 	cd frontend && npm run dev
@@ -150,14 +150,14 @@ start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
 	@# 先运行数据库迁移
 	uv run alembic upgrade head
 	@# 启动后端服务
-	cd src && uv run structure-api & \
-	cd src && uv run structure-worker & \
-	cd src && uv run structure-celery worker --concurrency=4 --loglevel=info & \
+	uv run structure-api & \
+	uv run structure-worker & \
+	uv run structure-celery worker --concurrency=4 --loglevel=info & \
 	cd frontend && npm run dev & \
 	wait
 
 resync-tools: ## 重新同步所有工具到 Context/WorkspaceContext 表
-	cd src && uv run python -c "from structure.celery_worker.tasks.context_sync_tasks import resync_all_tools_to_contexts; resync_all_tools_to_contexts()"
+	uv run python -c "from structure.celery_worker.tasks.context_sync_tasks import resync_all_tools_to_contexts; resync_all_tools_to_contexts()"
 
 reset-admin-password: ## Sync admin password from docker/.env into the running database
 	@PASSWORD=$$(grep '^AUTH__ADMIN_PASSWORD=' docker/.env | cut -d= -f2); \

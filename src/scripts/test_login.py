@@ -16,10 +16,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def setup_environment():
     """设置环境变量"""
     os.environ.setdefault("ENV", "development")
-    os.environ.setdefault("POSTGRES__HOST", "10.1.2.111")
-    os.environ.setdefault("POSTGRES__PORT", "5435")
+    os.environ.setdefault("POSTGRES__HOST", "127.0.0.1")
+    os.environ.setdefault("POSTGRES__PORT", "5432")
     os.environ.setdefault("POSTGRES__USERNAME", "postgres")
-    os.environ.setdefault("POSTGRES__PASSWORD", "difyai123456")
+    os.environ.setdefault("POSTGRES__PASSWORD", "change-me-postgres-password")
     os.environ.setdefault("POSTGRES__STRUCTURE_DBNAME", "structure")
     print("环境变量已设置")
 
@@ -98,11 +98,11 @@ def main():
     if user_exists:
         print("\n=== 登录信息 ===")
         print("用户名: admin")
-        print("密码: admin123")
+        print("密码: 使用 AUTH__ADMIN_PASSWORD/ADMIN_PASSWORD 中配置的值")
         print("\n使用以下命令登录:")
         print('curl -X POST "http://localhost:8000/api/auth/login" \\')
         print('  -H "Content-Type: application/json" \\')
-        print('  -d \'{"username": "admin", "password": "admin123"}\'')
+        print('  -d \'{"username": "admin", "password": "<admin-password>"}\'')
         return 0
     print("无法创建或找到管理员用户")
     return 1

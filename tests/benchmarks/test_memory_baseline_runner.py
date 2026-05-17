@@ -52,4 +52,3 @@ def test_memory_baseline_runner_outputs_longmemeval_markdown():
     )
     assert "| longmemeval:FullText |" in completed.stdout
     assert "| longmemeval:NaiveRAG |" in completed.stdout
-

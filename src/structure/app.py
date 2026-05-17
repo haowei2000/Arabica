@@ -33,9 +33,9 @@ settings = get_settings()
 
 # ==================== Create FastAPI Application ====================
 app = FastAPI(
-    title="Epichust Python API",
-    description="FastAPI backend for AI agent system with conversation and input management",
-    version="1.0.0",
+    title="Structure API",
+    description="FastAPI backend for event-sourced AI agent orchestration",
+    version="5.5.0",
     debug=settings.DEBUG,
     lifespan=lifespan,
     # docs_url="/docs" if settings.DEBUG else None,  # Disable docs in production  # noqa: ERA001
@@ -58,8 +58,8 @@ register_routers(app)
 async def root():
     """Root endpoint with API information."""
     return {
-        "input": "Epichust API is Running",
-        "version": "1.0.0",
+        "message": "Structure API is running",
+        "version": "5.5.0",
         "docs": "/docs" if settings.DEBUG else "disabled",
         "redoc": "/redoc" if settings.DEBUG else "disabled",
         "health": "/health",

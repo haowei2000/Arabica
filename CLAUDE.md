@@ -204,7 +204,7 @@ uv add --dev <package>
 ### Environment Setup
 ```bash
 # Create .env file from template
-cd src && uv run sync-env
+uv run sync-env
 ```
 
 ## Common Commands
@@ -782,7 +782,7 @@ Tests use `@pytest.mark.unit`; match the existing marker set in `pyproject.toml`
 - `README.md` - Project overview and quick start
 
 ### Configuration Examples
-- `src/.env.example` - Environment variables template
+- `.env.example` - Environment variables template
 - `alembic.ini` - Database migration configuration
 - `pyproject.toml` - Dependencies and project metadata
 

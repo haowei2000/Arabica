@@ -12,15 +12,6 @@
     - 配置文件自动从项目根目录的 src/.env 加载
     - 不需要在各个服务中重复调用 load_dotenv()
 
-作者: wanghaowei
-创建日期: 11/10/25
-最后修改: 2025/12/31
-修改人员: haowei
-版本: v2.0.0
-
-公司名称: 艾普工华(武汉)有限责任公司
-版权信息: © 2025 艾普工华(武汉)有限责任公司. 保留所有权利.
-
 使用示例:
     from structure.config.factory import get_settings
     settings = get_settings()

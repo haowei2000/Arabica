@@ -89,7 +89,9 @@ def mock_db():
 
 
 @pytest.fixture()
-def client(mock_event_crud, mock_workspace_crud, mock_run_crud, mock_db, patch_bootstrap):
+def client(
+    mock_event_crud, mock_workspace_crud, mock_run_crud, mock_db, patch_bootstrap
+):
     user = make_user()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_structure_db] = lambda: mock_db
@@ -147,9 +149,10 @@ class TestListByWorkspace:
         resp = client.get(f"{BASE}/workspace/{WORKSPACE_ID}/list?include_archived=true")
 
         assert resp.status_code == 200
-        assert mock_event_crud.list_by_workspace.call_args.kwargs[
-            "include_archived"
-        ] is True
+        assert (
+            mock_event_crud.list_by_workspace.call_args.kwargs["include_archived"]
+            is True
+        )
 
 
 # ── GET /api/events/run/{run_id}/list ────────────────────────────

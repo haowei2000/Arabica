@@ -33,6 +33,9 @@ frontend/build
 # IDEs and Editors
 .idea/
 .vscode/
+.run/
+.zed/
+.ai/mcp/*.json
 *.swp
 *.swo
 .DS_Store

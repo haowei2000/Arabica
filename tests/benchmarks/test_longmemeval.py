@@ -8,14 +8,19 @@ reference or the scorer's normalisation became too strict.
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from benchmarks.baselines import EchoAgent
 from benchmarks.core import BenchmarkRunner
 from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
 from benchmarks.longmemeval.scorer import _normalise
+import pytest
 
-FIXTURE = Path(__file__).parent.parent.parent / "benchmarks" / "longmemeval" / "fixtures" / "sample.json"
+FIXTURE = (
+    Path(__file__).parent.parent.parent
+    / "benchmarks"
+    / "longmemeval"
+    / "fixtures"
+    / "sample.json"
+)
 
 
 @pytest.mark.unit

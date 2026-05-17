@@ -1,10 +1,11 @@
 """Test script for skill management feature."""
 
 import asyncio
+from pathlib import Path
 import sys
 from uuid import uuid4
 
-sys.path.insert(0, "/Users/wanghaowei/PycharmProjects/agent_chat/src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 async def test_skill_feature():
@@ -162,18 +163,14 @@ def process_data(data: dict) -> dict:
         assert total == 2
 
         # List with tag filter
-        _python_skills, python_total = await crud.list(
-            user_id=user_id, tags=["python"]
-        )
+        _python_skills, python_total = await crud.list(user_id=user_id, tags=["python"])
         print(f"  ✓ Filtered by 'python' tag: {python_total} found")
         assert python_total == 1
 
         # Test 7: Search Skills
         print("\n7. Testing Search")
         print("-" * 70)
-        results, count = await crud.search(
-            user_id=user_id, query_text="best practices"
-        )
+        results, count = await crud.search(user_id=user_id, query_text="best practices")
         print(f"  ✓ Search results for 'best practices': {count} found")
         for r in results:
             print(f"    - {r.meta.get('name')}")

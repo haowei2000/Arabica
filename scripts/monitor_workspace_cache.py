@@ -41,17 +41,21 @@ def print_cache_stats():
         print("=" * 70)
         print("WorkspaceContext Cache Statistics")
         print("=" * 70)
-        print(f"Cache Size:        {stats['size']:>6} / {stats['maxsize']:<6} workspaces")
+        print(
+            f"Cache Size:        {stats['size']:>6} / {stats['maxsize']:<6} workspaces"
+        )
         print(f"Usage:             {stats['usage_percent']:>6.2f}%")
         print(f"TTL:               {stats['ttl']:>6} seconds")
-        print(f"Memory (est):      {format_bytes(stats['estimated_memory_mb'] * 1024 * 1024)}")
+        print(
+            f"Memory (est):      {format_bytes(stats['estimated_memory_mb'] * 1024 * 1024)}"
+        )
         print()
 
-        if stats['size'] > 0:
+        if stats["size"] > 0:
             print(f"Cached Workspaces ({stats['size']}):")
-            for i, ws_id in enumerate(stats['workspaces'][:10], 1):
+            for i, ws_id in enumerate(stats["workspaces"][:10], 1):
                 print(f"  {i:>2}. {ws_id}")
-            if len(stats['workspaces']) > 10:
+            if len(stats["workspaces"]) > 10:
                 print(f"  ... and {len(stats['workspaces']) - 10} more")
         else:
             print("No workspaces currently cached")

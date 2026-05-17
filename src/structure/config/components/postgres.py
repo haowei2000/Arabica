@@ -22,7 +22,7 @@ class PostgresConfig(BaseModel):
         description="PostgreSQL user",
     )
     password: str = Field(
-        default="123456",
+        default="",
         description="PostgreSQL password",
     )
 

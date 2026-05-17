@@ -826,9 +826,7 @@ async def _collect_task_metrics(
                 int(event.input_tokens or 0) + int(event.output_tokens or 0)
                 for event in events
             ),
-            cached_tokens=cached_tokens
-            if task.name == "calculator_followup"
-            else 0,
+            cached_tokens=cached_tokens if task.name == "calculator_followup" else 0,
             completion_event_count=len(events),
         )
     return metrics

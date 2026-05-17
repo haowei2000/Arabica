@@ -158,7 +158,9 @@ class TestDeleteTool:
 
         with (
             patch("structure.routers.context.tools.tools.ToolCRUD") as MockCRUD,
-            patch("structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts") as mock_task,
+            patch(
+                "structure.celery_worker.tasks.context_sync_tasks.delete_resource_contexts"
+            ) as mock_task,
         ):
             crud = MockCRUD.return_value
             crud.get_tool_by_id = AsyncMock(return_value=tool)
