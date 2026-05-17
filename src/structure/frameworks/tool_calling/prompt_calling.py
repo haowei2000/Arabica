@@ -301,14 +301,21 @@ class PromptCallingStrategy(ToolCallingStrategy):
     def _inject_tools_prompt(
         messages: list[ChatMessage], tools_prompt: str
     ) -> list[dict[str, Any]]:
-        """Build API message dicts, injecting tools_prompt into the system message."""
+        """Build API message dicts with tools_prompt as a separate system message.
+
+        Keeping the first system message byte-stable improves provider-side
+        prefix/KV cache reuse.  The tool list can vary independently after that
+        stable head.
+        """
         result: list[dict[str, Any]] = []
         system_injected = False
         for msg in messages:
             d = msg.to_openai_dict()
             if msg.role == "system" and not system_injected and tools_prompt:
-                d["content"] = (d.get("content") or "") + "\n\n" + tools_prompt
+                result.append(d)
+                result.append({"role": "system", "content": tools_prompt})
                 system_injected = True
+                continue
             result.append(d)
 
         # If there was no system message, prepend one with the tools prompt.

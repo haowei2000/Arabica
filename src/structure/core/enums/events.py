@@ -3,6 +3,22 @@
 from enum import StrEnum
 
 
+class ContextBatchLoadState(StrEnum):
+    """How much of an event batch should be loaded into LLM context."""
+
+    LOAD_ALL = "load_all"
+    LOAD_KEY = "load_key"
+    NO_LOAD = "no_load"
+
+
+class ContextBatchState(StrEnum):
+    """Lifecycle state for context event batches."""
+
+    ACTIVE = "active"
+    COMPACTED = "compacted"
+    ARCHIVED = "archived"
+
+
 class EventType(StrEnum):
     """Enumeration of all event types in the system.
 

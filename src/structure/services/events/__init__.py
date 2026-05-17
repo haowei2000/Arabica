@@ -1,12 +1,18 @@
 # structure/services/events/__init__.py
 """Event services package."""
 
+from structure.services.events.context_batch_service import (
+    ContextBatchService,
+    ContextLoadPlan,
+)
 from structure.services.events.event_archive import EventArchiveService
 from structure.services.events.event_consumer import EventConsumer, EventReplayer
 from structure.services.events.event_crud import EventCRUD
 from structure.services.events.event_gc import (
+    CONTEXT_BATCH_GC_STRATEGY,
     DEFAULT_EVENT_GC_STRATEGY,
     DEFAULT_POLICY,
+    BatchAwareEventGCStrategy,
     EventCountTTLStrategy,
     EventGarbageCollector,
     EventGCStrategyRegistry,
@@ -16,8 +22,12 @@ from structure.services.events.event_gc import (
 from structure.services.events.event_publisher import EventPublisher
 
 __all__ = [
+    "CONTEXT_BATCH_GC_STRATEGY",
     "DEFAULT_EVENT_GC_STRATEGY",
     "DEFAULT_POLICY",
+    "BatchAwareEventGCStrategy",
+    "ContextBatchService",
+    "ContextLoadPlan",
     "EventArchiveService",
     "EventCRUD",
     "EventConsumer",

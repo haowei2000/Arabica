@@ -124,4 +124,3 @@ async def test_resolve_executor_defaults_when_no_app_or_workspace_executor():
     )
 
     assert executor_code == DEFAULT_EXECUTOR_CODE
-

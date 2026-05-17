@@ -175,9 +175,54 @@ class Worker:
         buffered = self._pop_run_buffer(run_id)
         if buffered:
             db.add_all(buffered)
+            await db.flush()
+            await self._assign_events_to_context_batches(
+                buffered,
+                db,
+                apply_policy=False,
+            )
             logger.debug(
                 f"Flushed {len(buffered)} buffered events to DB for run {run_id}"
             )
+
+    async def _assign_events_to_context_batches(
+        self,
+        events: list[Event],
+        db: AsyncSession,
+        *,
+        apply_policy: bool,
+    ) -> None:
+        """Best-effort batch indexing for persisted events."""
+        if not events:
+            return
+        try:
+            from structure.services.events.context_batch_service import (
+                ContextBatchService,
+            )
+
+            await ContextBatchService(db).assign_events_to_batches(
+                events,
+                apply_policy=apply_policy,
+            )
+        except Exception as exc:
+            logger.debug("Context batch assignment skipped: %s", exc)
+
+    async def _assign_event_to_context_batch_if_persisted(
+        self,
+        event: Event,
+        ctx: _Ctx,
+    ) -> None:
+        """Batch-index an event only when it is already persisted in Postgres."""
+        if not event.id:
+            return
+        if event.run_id and str(event.run_id) in self._run_event_buffers:
+            return
+        apply_policy = str(event.event_type) == EventType.USER_MESSAGE
+        await self._assign_events_to_context_batches(
+            [event],
+            ctx.db,
+            apply_policy=apply_policy,
+        )
 
     async def _run_triggers(self, event: Event, ctx: _Ctx) -> None:
         """Execute workspace triggers for the event and publish their tool call events.
@@ -624,6 +669,8 @@ class Worker:
             if action == RunRouteAction.IGNORE:
                 return
 
+            await self._assign_event_to_context_batch_if_persisted(event, ctx)
+
             if action == RunRouteAction.EXECUTE_TOOL:
                 run_tool_caller = self._run_tool_callers.get(str(run_id))
                 await handle_tool_call(
@@ -794,6 +841,12 @@ class Worker:
                     to_exec_event.output_tokens = total_output
 
                 ctx.db.add_all(buffered)
+                await ctx.db.flush()
+                await self._assign_events_to_context_batches(
+                    buffered,
+                    ctx.db,
+                    apply_policy=True,
+                )
 
             # Write token totals into Run in the same transaction.
             if total_input or total_output:
