@@ -14,6 +14,7 @@ benchmarks/
 ├── baselines/         # EchoAgent + LightMem/MemBase reference baselines
 ├── scripts/           # Export/check scripts for benchmark artifacts
 ├── longmemeval/       # P0 adapter: loader + scorer + synthetic fixture
+├── longmemeval_v2/    # P1 spike: memory-system loader + evidence scorer
 ├── locomo/            # P0 adapter: loader + scorer + synthetic fixture
 ├── helmet/            # P1 stub
 ├── taubench/          # P1 stub
@@ -29,6 +30,7 @@ couple the platform's import graph to dataset-specific parsers.
 | Benchmark | Priority | Adapter | Dataset | Scorer | Notes |
 |-----------|:--:|:--:|:--:|:--:|---|
 | LongMemEval | P0 | ✓ | fixture + upstream JSON | exact/substring | reference adapter |
+| LongMemEval-V2 | P1 | spike | synthetic fixture | answer/evidence blend | Insert/Query memory-system shape |
 | LoCoMo      | P0 | ✓ | fixture + upstream JSON/JSONL | exact/F1 | multi-session memory |
 | LightMem/MemBase baselines | P0 | ✓ | reported LoCoMo table | source-table check | FullText, NaiveRAG, A-MEM, MemoryOS, Mem0, LangMem/EverMemOS catalog |
 | HELMET      | P1 | stub | — | — | application long-context |
@@ -56,6 +58,9 @@ python -m benchmarks.scripts.lightmem_baseline_report \
 # Run deterministic FullText/NaiveRAG memory baseline smoke tests.
 python -m benchmarks.scripts.run_memory_baselines --benchmark locomo
 python -m benchmarks.scripts.run_memory_baselines --benchmark longmemeval
+
+# Run the LongMemEval-V2 adapter spike over its synthetic memory fixture.
+pytest tests/benchmarks/test_longmemeval_v2.py -m unit
 
 # Run a real LLM smoke test through an OpenAI-compatible endpoint.
 # Do not commit the key; keep it in the shell environment.

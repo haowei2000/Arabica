@@ -12,6 +12,7 @@ from benchmarks.core import (
     BenchmarkCase,
     BenchmarkRunner,
     CostLedger,
+    EvidenceRecord,
     aggregate,
 )
 from benchmarks.core.types import BenchmarkResult
@@ -67,6 +68,52 @@ def test_aggregate_raises_on_unknown_task_id():
     result = BenchmarkResult(task_id="unknown", response="x", cost=CostLedger())
     with pytest.raises(KeyError, match="unknown"):
         aggregate("t", [case], [result], scorer=lambda r, p: 1.0)
+
+
+@pytest.mark.unit
+def test_aggregate_reports_evidence_summary_and_score_bounds():
+    cases = [
+        BenchmarkCase(task_id="a", inputs={}, reference="yes", ability="qa"),
+        BenchmarkCase(task_id="b", inputs={}, reference="yes", ability="qa"),
+        BenchmarkCase(task_id="c", inputs={}, reference="yes", ability="qa"),
+    ]
+    results = [
+        BenchmarkResult(
+            task_id="a",
+            response="yes",
+            cost=CostLedger(steps=1),
+            evidence=EvidenceRecord(status="pass", artifacts=("artifact://a",)),
+        ),
+        BenchmarkResult(
+            task_id="b",
+            response="yes",
+            cost=CostLedger(steps=1),
+            evidence=EvidenceRecord(status="unknown", notes="missing screenshot"),
+        ),
+        BenchmarkResult(
+            task_id="c",
+            response="no",
+            cost=CostLedger(steps=1),
+            evidence=EvidenceRecord(status="fail"),
+        ),
+    ]
+
+    report = aggregate(
+        "t",
+        cases,
+        results,
+        scorer=lambda r, p: 1.0 if r == p else 0.0,
+    )
+
+    assert report.overall_score == pytest.approx(2 / 3)
+    assert report.evidence_summary == {"pass": 1, "unknown": 1, "fail": 1}
+    assert report.score_bounds == pytest.approx((1 / 3, 2 / 3))
+    assert report.to_dict()["evidence_summary"] == {
+        "pass": 1,
+        "unknown": 1,
+        "fail": 1,
+    }
+    assert report.to_dict()["score_bounds"] == pytest.approx((0.3333, 0.6667))
 
 
 @pytest.mark.unit

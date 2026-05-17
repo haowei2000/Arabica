@@ -1,0 +1,95 @@
+[
+  {
+    "question_id": "lme-v2-smoke-001",
+    "project_id": "crm-migration",
+    "question_type": "environment-experience",
+    "question": "Which CRM did the team select after the vendor review?",
+    "answer": "Northstar CRM",
+    "evidence_ids": ["traj-001:e3"],
+    "modality": ["text"],
+    "trajectories": [
+      {
+        "trajectory_id": "traj-001",
+        "events": [
+          {
+            "event_id": "e1",
+            "actor": "user",
+            "content": "Compare AtlasCRM and Northstar CRM for audit logging."
+          },
+          {
+            "event_id": "e2",
+            "actor": "agent",
+            "content": "AtlasCRM has cheaper storage but weak event replay."
+          },
+          {
+            "event_id": "e3",
+            "actor": "user",
+            "content": "Decision: choose Northstar CRM because immutable audit export is required."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "question_id": "lme-v2-smoke-002",
+    "project_id": "agent-observability",
+    "question_type": "cross-trajectory",
+    "question": "Which span kind was chosen for retrieval traces?",
+    "answer": "retrieval",
+    "evidence_ids": ["traj-002:e2", "traj-003:e1"],
+    "modality": ["text"],
+    "trajectories": [
+      {
+        "trajectory_id": "traj-002",
+        "events": [
+          {
+            "event_id": "e1",
+            "actor": "agent",
+            "content": "Planner span captures task decomposition."
+          },
+          {
+            "event_id": "e2",
+            "actor": "agent",
+            "content": "Retriever calls should be traced with span kind retrieval."
+          }
+        ]
+      },
+      {
+        "trajectory_id": "traj-003",
+        "events": [
+          {
+            "event_id": "e1",
+            "actor": "user",
+            "content": "Keep retrieval span attributes separate from tool execution spans."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "question_id": "lme-v2-smoke-003",
+    "project_id": "security-review",
+    "question_type": "safety-evidence",
+    "question": "Which sink should malicious skill fixtures use?",
+    "answer": ["inert local sink", "inert sink"],
+    "evidence_ids": ["traj-004:e2"],
+    "modality": ["text"],
+    "trajectories": [
+      {
+        "trajectory_id": "traj-004",
+        "events": [
+          {
+            "event_id": "e1",
+            "actor": "agent",
+            "content": "Do not use real network or file deletion side effects in security fixtures."
+          },
+          {
+            "event_id": "e2",
+            "actor": "user",
+            "content": "Use an inert local sink so attack paths are observable without causing damage."
+          }
+        ]
+      }
+    ]
+  }
+]

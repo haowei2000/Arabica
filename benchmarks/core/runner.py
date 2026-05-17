@@ -9,9 +9,9 @@ so results are comparable regardless of concurrency tuning.
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+import logging
 
 from benchmarks.core.metrics import BenchmarkReport, Scorer, aggregate
 from benchmarks.core.types import AgentProtocol, BenchmarkCase, BenchmarkResult
