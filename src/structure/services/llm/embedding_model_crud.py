@@ -117,6 +117,7 @@ class EmbeddingModelCRUD:
             .where(
                 EmbeddingModel.is_default.is_(True), EmbeddingModel.enabled.is_(True)
             )
+            .order_by(EmbeddingModel.is_system.desc(), EmbeddingModel.created_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
