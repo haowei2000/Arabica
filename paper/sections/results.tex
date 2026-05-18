@@ -45,6 +45,20 @@ baseline registry.
 
 \input{tables/lightmem_locomo_baselines}
 
+\subsection{Hot-Research Benchmark Coverage}
+
+The automated research scan identified LongMemEval-V2
+\citep{wu2026longmemevalv2} and evidence-supported benchmark bounds
+\citep{gao2026evidencebounds} as immediately actionable benchmark
+gaps. We therefore added a fixture-level LongMemEval-V2 adapter that
+preserves the benchmark's Insert/Query memory-system shape and scores
+both answer correctness and supporting evidence identifiers. The new
+coverage is reported in Table~\ref{tab:hot-research-coverage}; these
+numbers are oracle fixture checks used to validate harness wiring, not
+claims about full-dataset performance.
+
+\input{tables/hot_research_benchmark_coverage}
+
 \subsection{Ablation Study}
 
 We ablate the five design components of the layer --- path addressing,
