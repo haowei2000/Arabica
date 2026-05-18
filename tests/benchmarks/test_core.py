@@ -21,12 +21,31 @@ import pytest
 
 @pytest.mark.unit
 def test_cost_ledger_addition_is_elementwise():
-    a = CostLedger(tokens_prompt=10, tokens_completion=5, steps=1, tool_calls=2)
-    b = CostLedger(tokens_prompt=3, tokens_completion=7, steps=4, latency_seconds=0.25)
+    a = CostLedger(
+        tokens_prompt=10,
+        tokens_completion=5,
+        tokens_cached=2,
+        cache_creation_tokens=3,
+        cache_read_tokens=4,
+        steps=1,
+        tool_calls=2,
+    )
+    b = CostLedger(
+        tokens_prompt=3,
+        tokens_completion=7,
+        tokens_cached=5,
+        cache_creation_tokens=6,
+        cache_read_tokens=7,
+        steps=4,
+        latency_seconds=0.25,
+    )
     total = a + b
     assert total.tokens_prompt == 13
     assert total.tokens_completion == 12
     assert total.tokens_total == 25
+    assert total.tokens_cached == 7
+    assert total.cache_creation_tokens == 9
+    assert total.cache_read_tokens == 11
     assert total.steps == 5
     assert total.tool_calls == 2
     assert total.latency_seconds == pytest.approx(0.25)
@@ -60,6 +79,74 @@ def test_aggregate_pairs_by_task_id_and_computes_per_ability():
     assert report.per_ability_score["single-session"] == pytest.approx(1.0)
     assert report.per_ability_score["multi-session"] == pytest.approx(0.0)
     assert report.total_cost.steps == 3
+
+
+@pytest.mark.unit
+def test_aggregate_reports_efficiency_and_complexity_diagnostics():
+    cases = [
+        BenchmarkCase(task_id="a", inputs={}, reference="yes"),
+        BenchmarkCase(task_id="b", inputs={}, reference="yes"),
+    ]
+    results = [
+        BenchmarkResult(
+            task_id="a",
+            response="yes",
+            cost=CostLedger(
+                tokens_prompt=90,
+                tokens_completion=10,
+                tokens_cached=20,
+                latency_seconds=4.0,
+            ),
+            metadata={
+                "turn_count": 20,
+                "available_context_tokens": 10_000,
+                "selected_context_tokens": 1_000,
+                "context_compression_ratio": 0.1,
+                "available_chunks": 10,
+                "selected_chunks": 2,
+            },
+        ),
+        BenchmarkResult(
+            task_id="b",
+            response="no",
+            cost=CostLedger(
+                tokens_prompt=45,
+                tokens_completion=5,
+                latency_seconds=2.0,
+            ),
+            metadata={
+                "turn_count": 0,
+                "trajectory_count": 100,
+                "available_context_tokens": 80_000,
+                "selected_context_tokens": 8_000,
+                "context_compression_ratio": 0.1,
+                "available_chunks": 100,
+                "selected_chunks": 6,
+            },
+        ),
+    ]
+
+    report = aggregate(
+        "t",
+        cases,
+        results,
+        scorer=lambda r, p: 1.0 if r == p else 0.0,
+    )
+
+    summary = report.diagnostic_summary
+    assert summary["tokens_per_scored_point"] == pytest.approx(150.0)
+    assert summary["latency_seconds_per_scored_point"] == pytest.approx(6.0)
+    assert summary["mean_selected_chunks"] == pytest.approx(4.0)
+    assert summary["kv_cache"]["tokens_cached"] == 20
+    assert summary["kv_cache"]["reported_cases"] == 1
+    assert summary["accuracy_by_context_tokens_bucket"]["4k-16k"] == {
+        "n": 1,
+        "accuracy": 1.0,
+    }
+    assert summary["accuracy_by_context_tokens_bucket"]["64k-128k"] == {
+        "n": 1,
+        "accuracy": 0.0,
+    }
 
 
 @pytest.mark.unit

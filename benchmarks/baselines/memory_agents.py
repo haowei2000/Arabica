@@ -40,7 +40,7 @@ def _tokens(text: str) -> set[str]:
     return {token for token in _normalise(text).split() if len(token) > 2}
 
 
-def _approx_token_count(text: str) -> int:
+def approx_token_count(text: str) -> int:
     return max(1, len(text.split()))
 
 
@@ -133,6 +133,80 @@ def case_chunk_records(case: BenchmarkCase) -> list[tuple[str, str]]:
     if chunks:
         return chunks
     return _trajectory_chunk_records(case)
+
+
+def _session_profile(case: BenchmarkCase) -> dict[str, int]:
+    sessions = case.inputs.get("sessions") or []
+    if not isinstance(sessions, list):
+        return {"session_count": 0, "turn_count": 0}
+    turn_count = 0
+    for session in sessions:
+        if isinstance(session, list):
+            turn_count += len(session)
+        elif session:
+            turn_count += 1
+    return {"session_count": len(sessions), "turn_count": turn_count}
+
+
+def _trajectory_profile(case: BenchmarkCase) -> dict[str, int | None]:
+    inline_trajectories = case.inputs.get("trajectories") or []
+    trajectory_ids = case.inputs.get("trajectory_ids") or []
+    trajectory_count = 0
+    state_count: int | None = 0
+
+    if isinstance(inline_trajectories, list) and inline_trajectories:
+        trajectory_count = len(inline_trajectories)
+        for trajectory in inline_trajectories:
+            if not isinstance(trajectory, dict):
+                continue
+            states = trajectory.get("states") or trajectory.get("events") or []
+            if isinstance(states, list):
+                state_count = (state_count or 0) + len(states)
+    elif isinstance(trajectory_ids, list) and trajectory_ids:
+        trajectory_count = len(trajectory_ids)
+        state_count = None
+    else:
+        raw_count = case.metadata.get("trajectory_count")
+        trajectory_count = int(raw_count or 0)
+        state_count = None if trajectory_count else 0
+
+    return {"trajectory_count": trajectory_count, "state_count": state_count}
+
+
+def context_profile(
+    case: BenchmarkCase,
+    chunks: list[tuple[str, str]],
+    selected: list[tuple[str, str]],
+) -> dict[str, float | int | None]:
+    """Summarise input size and selected context for benchmark reports."""
+    available_text = "\n".join(text for _, text in chunks)
+    selected_text = "\n".join(text for _, text in selected)
+    available_tokens = approx_token_count(available_text) if available_text else 0
+    selected_tokens = approx_token_count(selected_text) if selected_text else 0
+    available_state_citations = {
+        evidence_id for _, text in chunks for evidence_id in extract_evidence_ids(text)
+    }
+    selected_state_citations = {
+        evidence_id
+        for _, text in selected
+        for evidence_id in extract_evidence_ids(text)
+    }
+    profile: dict[str, float | int | None] = {
+        **_session_profile(case),
+        **_trajectory_profile(case),
+        "available_chunks": len(chunks),
+        "selected_chunks": len(selected),
+        "available_context_chars": len(available_text),
+        "selected_context_chars": len(selected_text),
+        "available_context_tokens": available_tokens,
+        "selected_context_tokens": selected_tokens,
+        "context_compression_ratio": (
+            selected_tokens / available_tokens if available_tokens else None
+        ),
+        "available_state_citations": len(available_state_citations),
+        "selected_state_citations": len(selected_state_citations),
+    }
+    return profile
 
 
 def _reference_in_context(
@@ -272,14 +346,13 @@ class RetrievalOracleBaseline:
             task_id=case.task_id,
             response=answer,
             cost=CostLedger(
-                tokens_prompt=_approx_token_count(prompt),
-                tokens_completion=_approx_token_count(answer),
+                tokens_prompt=approx_token_count(prompt),
+                tokens_completion=approx_token_count(answer),
                 steps=1,
             ),
             metadata={
                 "baseline": self.name,
-                "selected_chunks": len(selected),
-                "available_chunks": len(chunks),
+                **context_profile(case, chunks, selected),
                 "oracle_if_retrieved": True,
             },
             evidence=evidence_from_selected_context(case, selected),

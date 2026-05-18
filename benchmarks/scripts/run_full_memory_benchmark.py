@@ -13,7 +13,12 @@ from pathlib import Path
 import random
 
 from benchmarks.adapters import StructureMemoryBenchmarkAgent
-from benchmarks.baselines import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMBenchmarkAgent
+from benchmarks.baselines import (
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    LLMBenchmarkAgent,
+    external_baseline_comparison,
+)
 from benchmarks.core import BenchmarkCase, BenchmarkReport, BenchmarkRunner
 from benchmarks.locomo import load_locomo, locomo_qa_scorer
 from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
@@ -165,6 +170,7 @@ def _report_dict(
     sample_info: dict[str, object],
 ) -> dict[str, object]:
     data = report.to_dict()
+    total_tokens = report.total_cost.tokens_total
     data.update(
         {
             "method": method,
@@ -172,6 +178,13 @@ def _report_dict(
             "reader_base_url": reader_base_url,
             "judge": judge,
             "sample": sample_info,
+            "external_baseline_comparison": external_baseline_comparison(
+                benchmark=report.benchmark.split(":", maxsplit=1)[0],
+                score=report.overall_score,
+                latency_seconds=report.total_cost.latency_seconds,
+                total_tokens=total_tokens,
+            ),
+            "metric_definitions": metric_definitions(),
             "per_case": [
                 {
                     "task_id": task_id,
@@ -184,9 +197,37 @@ def _report_dict(
                 }
                 for task_id, score, cost in report.per_case
             ],
+            "per_case_diagnostics": report.per_case_diagnostics,
         }
     )
     return data
+
+
+def metric_definitions() -> dict[str, str]:
+    """Human-readable definitions for metrics emitted by this runner."""
+    return {
+        "accuracy": "Mean scorer output in [0, 1]; higher is better.",
+        "sample": "Evaluated cases over source cases; sampled runs are not leaderboard claims.",
+        "evidence": "pass means selected context or cited artifacts support the answer; unknown means support could not be verified.",
+        "tokens_prompt": "Reader input tokens returned by the OpenAI-compatible API.",
+        "tokens_completion": "Reader output tokens returned by the API.",
+        "tokens_total": "Prompt plus completion tokens; lower is better at similar accuracy.",
+        "tokens_cached": "Provider-reported cached prompt/KV tokens when exposed; zero may mean unreported.",
+        "cache_creation_tokens": "Provider-reported tokens written into prompt/KV cache when exposed.",
+        "cache_read_tokens": "Provider-reported prompt/KV cache-hit tokens when exposed.",
+        "latency_seconds": "Wall-clock seconds for the model call path; lower is better at similar accuracy.",
+        "tokens_per_scored_point": "Total tokens divided by sum of per-case scores; lower is better.",
+        "latency_seconds_per_scored_point": "Total latency divided by sum of per-case scores; lower is better.",
+        "turn_count": "Number of dialogue turns in session-style benchmark inputs.",
+        "trajectory_count": "Number of LME-V2 trajectories attached to a case.",
+        "state_count": "Known inline trajectory state count; lazy full-release LME-V2 cases may be unknown.",
+        "available_chunks": "Memory chunks available before retrieval.",
+        "selected_chunks": "Memory chunks selected for the reader prompt.",
+        "available_context_tokens": "Approximate whitespace token count across all available chunks.",
+        "selected_context_tokens": "Approximate whitespace token count across selected chunks.",
+        "context_compression_ratio": "Selected context tokens divided by available context tokens; lower means stronger compression.",
+        "external_baseline_comparison": "Source-linked paper/project reference rows for calibration, not proof of leaderboard comparability.",
+    }
 
 
 async def run_suite(
@@ -271,15 +312,26 @@ async def run_suite(
 
 def render_markdown(rows: list[dict[str, object]]) -> str:
     lines = [
-        "| Benchmark | Method | Sample | Accuracy | Evidence | Mean tokens | Total tokens | Mean latency (s) | Cost |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|",
+        "| Benchmark | Method | Sample | Accuracy | Evidence | Mean tokens | Total tokens | Sel/Avail chunks | Ctx compression | Tok/score | Lat/score | KV cached | Mean latency (s) | Cost |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         evidence = row.get("evidence_summary", {})
         sample = row.get("sample", {})
+        mean_cost = row["mean_cost"]
+        total_cost = row["total_cost"]
+        diagnostics = row.get("diagnostic_summary", {})
+        selected_chunks = diagnostics.get("mean_selected_chunks")
+        available_chunks = diagnostics.get("mean_available_chunks")
+        kv_cache = diagnostics.get("kv_cache", {})
         sample_label = (
             f"{sample.get('sample_size')}/{sample.get('source_cases')} "
             f"({float(sample.get('sample_percent_effective', 0.0)):.2f}%)"
+        )
+        chunk_label = (
+            f"{float(selected_chunks):.1f}/{float(available_chunks):.1f}"
+            if selected_chunks is not None and available_chunks is not None
+            else "-"
         )
         lines.append(
             "| "
@@ -290,15 +342,74 @@ def render_markdown(rows: list[dict[str, object]]) -> str:
                     sample_label,
                     f"{float(row['overall_score']):.4f}",
                     json.dumps(evidence, sort_keys=True),
-                    str(row["mean_cost"]["tokens_total"]),
-                    str(row["total_cost"]["tokens_total"]),
-                    f"{float(row['mean_cost']['latency_seconds']):.3f}",
-                    f"{float(row['total_cost']['usd_cost']):.6f}",
+                    str(mean_cost["tokens_prompt"] + mean_cost["tokens_completion"]),
+                    str(total_cost["tokens_prompt"] + total_cost["tokens_completion"]),
+                    chunk_label,
+                    _format_optional_float(
+                        diagnostics.get("mean_context_compression_ratio"),
+                        digits=3,
+                    ),
+                    _format_optional_float(
+                        diagnostics.get("tokens_per_scored_point"),
+                        digits=1,
+                    ),
+                    _format_optional_float(
+                        diagnostics.get("latency_seconds_per_scored_point"),
+                        digits=3,
+                    ),
+                    str(kv_cache.get("tokens_cached", 0)),
+                    f"{float(mean_cost['latency_seconds']):.3f}",
+                    f"{float(total_cost['usd_cost']):.6f}",
                 ]
             )
             + " |"
         )
+
+    external_rows: list[dict[str, object]] = []
+    seen: set[tuple[str, str, float]] = set()
+    for row in rows:
+        benchmark = str(row["benchmark"]).split(":", maxsplit=1)[0]
+        for baseline in row.get("external_baseline_comparison", []):
+            key = (benchmark, str(baseline["method"]), float(baseline["score"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            external_rows.append({"benchmark": benchmark, **baseline})
+    if external_rows:
+        lines.extend(
+            [
+                "",
+                "External paper/project baselines (calibration only):",
+                "",
+                "| Benchmark | External method | Metric | Score | Local delta | Source | Notes |",
+                "|---|---|---|---:|---:|---|---|",
+            ]
+        )
+        for row in external_rows:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(row["benchmark"]),
+                        str(row["method"]),
+                        str(row["metric_name"]),
+                        f"{float(row['score']):.4f}",
+                        _format_optional_float(row.get("score_delta_vs_local")),
+                        f"[{row['source_title']}]({row['source_url']})",
+                        str(row.get("comparability", "")),
+                    ]
+                )
+                + " |"
+            )
     return "\n".join(lines)
+
+
+def _format_optional_float(value: object, *, digits: int = 4) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, (int, float)):
+        return f"{float(value):.{digits}f}"
+    return str(value)
 
 
 def build_parser() -> argparse.ArgumentParser:

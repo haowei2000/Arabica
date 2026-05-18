@@ -16,6 +16,7 @@ from uuid import NAMESPACE_URL, uuid5
 from benchmarks.baselines.llm_agent import LLMBenchmarkAgent
 from benchmarks.baselines.memory_agents import (
     case_chunk_records,
+    context_profile,
     evidence_from_selected_context,
     select_lexical_chunks,
 )
@@ -109,8 +110,7 @@ class StructureMemoryBenchmarkAgent:
             metadata={
                 **result.metadata,
                 "adapter": "StructureMemoryBenchmarkAgent",
-                "selected_chunks": len(selected),
-                "available_chunks": len(chunks),
+                **context_profile(case, chunks, selected),
                 "context_data_root": str(self.data_root),
             },
         )

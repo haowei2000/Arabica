@@ -1,7 +1,11 @@
 """Tests for full memory benchmark runner utilities."""
 
 from benchmarks.core import BenchmarkCase
-from benchmarks.scripts.run_full_memory_benchmark import sample_cases
+from benchmarks.scripts.run_full_memory_benchmark import (
+    metric_definitions,
+    render_markdown,
+    sample_cases,
+)
 import pytest
 
 
@@ -59,3 +63,64 @@ def test_sample_cases_supports_seeded_random_and_max_case_cap():
     assert [case.task_id for case in sampled] == sorted(
         case.task_id for case in sampled
     )
+
+
+@pytest.mark.unit
+def test_markdown_report_includes_efficiency_metrics_and_external_baselines():
+    rendered = render_markdown(
+        [
+            {
+                "benchmark": "longmemeval-v2-small:StructureMemory:fake",
+                "method": "StructureMemory",
+                "sample": {
+                    "sample_size": 46,
+                    "source_cases": 451,
+                    "sample_percent_effective": 10.2,
+                },
+                "overall_score": 0.05,
+                "evidence_summary": {"unknown": 46},
+                "mean_cost": {
+                    "tokens_prompt": 100,
+                    "tokens_completion": 10,
+                    "latency_seconds": 1.25,
+                },
+                "total_cost": {
+                    "tokens_prompt": 4600,
+                    "tokens_completion": 460,
+                    "usd_cost": 0.0,
+                },
+                "diagnostic_summary": {
+                    "mean_selected_chunks": 6,
+                    "mean_available_chunks": 100,
+                    "mean_context_compression_ratio": 0.06,
+                    "tokens_per_scored_point": 2200.0,
+                    "latency_seconds_per_scored_point": 25.0,
+                    "kv_cache": {"tokens_cached": 0},
+                },
+                "external_baseline_comparison": [
+                    {
+                        "method": "AgentRunbook-C",
+                        "score": 0.749,
+                        "metric_name": "accuracy",
+                        "source_title": "LongMemEval-V2 project leaderboard",
+                        "source_url": "https://xiaowu0162.github.io/longmemeval-v2/",
+                        "score_delta_vs_local": -0.699,
+                        "comparability": "calibration-only",
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert "Tok/score" in rendered
+    assert "KV cached" in rendered
+    assert "AgentRunbook-C" in rendered
+    assert "External paper/project baselines" in rendered
+
+
+@pytest.mark.unit
+def test_metric_definitions_document_cache_and_complexity_fields():
+    definitions = metric_definitions()
+    assert "tokens_cached" in definitions
+    assert "turn_count" in definitions
+    assert "external_baseline_comparison" in definitions

@@ -71,6 +71,16 @@ python -m benchmarks.scripts.run_llm_benchmark \
   --max-cases 4 \
   --format json
 
+# Run sampled full-memory evaluation with extended efficiency metrics.
+python -m benchmarks.scripts.run_full_memory_benchmark \
+  --benchmark longmemeval-v2-small \
+  --methods FullText NaiveRAG StructureMemory \
+  --sample-percent 10 \
+  --sample-mode hash \
+  --sample-seed 2026-05-18 \
+  --format json \
+  --output benchmark_runs/lme-v2-small-10pct.json
+
 # Score a fixture run end-to-end from Python:
 python -c "
 import asyncio
@@ -94,6 +104,27 @@ The oracle run is the sanity check: it should produce
 Structure-backed agent into `BenchmarkRunner(agent=...)` and replaces
 the fixture with the real LongMemEval dataset; see
 `benchmarks/longmemeval/README.md`.
+
+## Full-memory report metrics
+
+`benchmarks.scripts.run_full_memory_benchmark` emits both headline scores and
+diagnostics:
+
+- accuracy, evidence pass/fail/unknown, score bounds
+- prompt/completion/total tokens, latency, and optional USD cost
+- `tokens_per_scored_point` and `latency_seconds_per_scored_point`
+- dialogue `turn_count`, LME-V2 `trajectory_count`, and known `state_count`
+- available/selected chunks, available/selected context tokens, and context
+  compression ratio
+- provider-reported KV-cache fields: `tokens_cached`,
+  `cache_creation_tokens`, and `cache_read_tokens`
+- accuracy buckets by context-token size, turn count, and trajectory count
+- source-linked external baseline rows for calibration, including the
+  LightMem/MemBase LoCoMo table and LongMemEval-V2 AgentRunbook-C rows
+
+KV-cache counters depend on the OpenAI-compatible provider exposing cache
+usage in the response. A zero value can mean either no cache hit or no reported
+cache telemetry.
 
 ## Adding a new benchmark
 

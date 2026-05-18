@@ -55,6 +55,9 @@ class CostLedger:
 
     tokens_prompt: int = 0
     tokens_completion: int = 0
+    tokens_cached: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
     steps: int = 0
     tool_calls: int = 0
     latency_seconds: float = 0.0
@@ -68,6 +71,10 @@ class CostLedger:
         return CostLedger(
             tokens_prompt=self.tokens_prompt + other.tokens_prompt,
             tokens_completion=self.tokens_completion + other.tokens_completion,
+            tokens_cached=self.tokens_cached + other.tokens_cached,
+            cache_creation_tokens=self.cache_creation_tokens
+            + other.cache_creation_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             steps=self.steps + other.steps,
             tool_calls=self.tool_calls + other.tool_calls,
             latency_seconds=self.latency_seconds + other.latency_seconds,
