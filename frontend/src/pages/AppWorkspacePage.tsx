@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '@/services/authService';
 import { useUIStore } from '@/stores/useUIStore';
@@ -42,6 +42,7 @@ export default function AppWorkspacePage() {
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
   const [historyOpen, setHistoryOpen] = useState(true);
   const [runCountOverrides, setRunCountOverrides] = useState<Record<string, number>>({});
+  const defaultWorkspaceCreateRequested = useRef(false);
 
   const navigate = useNavigate();
   const { clearCurrentApp } = useAppStore();
@@ -66,15 +67,25 @@ export default function AppWorkspacePage() {
   useEffect(() => {
     if (workspacesLoading) return;
     const workspaces = workspacesData?.items ?? [];
-    if (workspaces.length === 0 && !createWorkspaceMutation.isPending) {
+    if (
+      workspaces.length === 0 &&
+      !createWorkspaceMutation.isPending &&
+      !defaultWorkspaceCreateRequested.current
+    ) {
+      defaultWorkspaceCreateRequested.current = true;
       // Silently create a default workspace and auto-select it
       createWorkspaceMutation.mutateAsync({ name: 'Default' })
         .then((ws) => setCurrentWorkspace(ws.id, ws.name, ws.app_id))
-        .catch(() => {});
+        .catch(() => {
+          defaultWorkspaceCreateRequested.current = false;
+        });
     } else if (!currentWorkspaceId && workspaces.length > 0) {
+      defaultWorkspaceCreateRequested.current = false;
       // Auto-select first workspace
       const first = workspaces[0];
       setCurrentWorkspace(first.id, first.name, first.app_id);
+    } else if (workspaces.length > 0) {
+      defaultWorkspaceCreateRequested.current = false;
     }
   }, [workspacesLoading, workspacesData, createWorkspaceMutation, currentWorkspaceId, setCurrentWorkspace]);
 

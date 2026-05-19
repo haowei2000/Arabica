@@ -1169,6 +1169,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    aria-label="Message composer"
                     placeholder="Message… (@tool)"
                     disabled={isStreaming || uploadingFiles}
                     rows={1}
