@@ -28,6 +28,29 @@ from structure.services.runs.run_state_machine import RunStateMachine
 logger = logging.getLogger(__name__)
 
 
+def _inject_runtime_arguments(
+    arguments: Any,
+    *,
+    workspace_id: str,
+    run_id: str,
+) -> Any:
+    """Inject runtime IDs into normal and MCP-wrapper tool arguments."""
+    if not isinstance(arguments, dict):
+        return arguments
+
+    injected = dict(arguments)
+    wrapped_arguments = injected.get("arguments")
+    if isinstance(wrapped_arguments, dict):
+        wrapped_arguments = dict(wrapped_arguments)
+        wrapped_arguments.setdefault("workspace_id", workspace_id)
+        wrapped_arguments.setdefault("run_id", run_id)
+        injected["arguments"] = wrapped_arguments
+
+    injected.setdefault("workspace_id", workspace_id)
+    injected.setdefault("run_id", run_id)
+    return injected
+
+
 async def handle_tool_call(
     event: Event,
     db: AsyncSession,
@@ -78,6 +101,12 @@ async def handle_tool_call(
         if not run:
             logger.error(f"Run {run_id} not found for tool execution")
             return
+
+        arguments = _inject_runtime_arguments(
+            arguments,
+            workspace_id=str(run.workspace_id),
+            run_id=str(run_id),
+        )
 
         # Check if tool requires approval (HITL)
         if await _tool_requires_approval(db, run, tool_name):

@@ -50,6 +50,7 @@ from structure.core.interfaces import (
 from structure.frameworks.tool_calling import (
     ChatMessage,
     FunctionCallingStrategy,
+    LLMReasoningChunk,
     LLMResponse,
     OpenAIFunction,
     OpenAIFunctionParameters,
@@ -109,6 +110,31 @@ def _normalise_tool_names(value: Any) -> list[str] | None:
         return None
     names = [str(name).strip() for name in value if str(name).strip()]
     return list(dict.fromkeys(names)) or None
+
+
+def _normalise_model_request_options(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Collect OpenAI-compatible per-request model options from executor config."""
+    options: dict[str, Any] = {}
+
+    for raw_key in ("model_request_options", "request_options"):
+        raw_options = config.get(raw_key)
+        if isinstance(raw_options, dict):
+            options.update(raw_options)
+
+    for key in (
+        "reasoning_effort",
+        "extra_body",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+    ):
+        value = config.get(key)
+        if value is not None:
+            options[key] = value
+
+    return options or None
 
 
 def _parse_tool_names_from_message(text: str) -> list[str] | None:
@@ -255,8 +281,42 @@ def _strip_orphaned_tool_messages(messages: list[ChatMessage]) -> list[ChatMessa
                 break
         if not required_ids.issubset(responded_ids):
             result[i] = ChatMessage(role="assistant", content=msg.content or "")
+            for j in range(i + 1, len(result)):
+                later = result[j]
+                if later.role == "tool" and later.tool_call_id in required_ids:
+                    result[j] = ChatMessage(role="user", content=later.content or "")
+                elif later.role in ("user", "assistant"):
+                    break
 
     return result
+
+
+def _unresolved_tool_call_ids(raw_events: list[Event]) -> set[str]:
+    """Return tool call IDs from the latest assistant turn still awaiting results."""
+    unresolved: set[str] = set()
+    for event in raw_events:
+        payload = event.payload or {}
+        event_type = event.event_type
+
+        if event_type == str(EventType.USER_MESSAGE):
+            unresolved = set()
+        elif event_type == str(EventType.AGENT_MESSAGE):
+            tool_calls = payload.get("tool_calls") or []
+            unresolved = {
+                str(tool_call["id"])
+                for tool_call in tool_calls
+                if isinstance(tool_call, dict) and tool_call.get("id")
+            }
+        elif event_type in (
+            str(EventType.TOOL_RESULT),
+            str(EventType.TOOL_ERROR),
+            str(EventType.USER_FEEDBACK),
+        ):
+            tool_id = payload.get("tool_id")
+            if tool_id:
+                unresolved.discard(str(tool_id))
+
+    return unresolved
 
 
 def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
@@ -295,6 +355,7 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
 
         elif event_type == str(EventType.AGENT_MESSAGE):
             content = payload.get("content") or payload.get("message", "")
+            reasoning_content = payload.get("reasoning_content")
             tc_data = payload.get("tool_calls") or []
             if tc_data:
                 import uuid as _uuid
@@ -317,7 +378,14 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
                     last_tc_id_map[tc["name"]] = assigned_id
                 messages.append(
                     ChatMessage(
-                        role="assistant", content=content or "", tool_calls=tool_calls
+                        role="assistant",
+                        content=content or "",
+                        tool_calls=tool_calls,
+                        reasoning_content=(
+                            str(reasoning_content)
+                            if reasoning_content is not None
+                            else None
+                        ),
                     )
                 )
             else:
@@ -675,6 +743,7 @@ class DefaultExecutor(Executor):
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")
+        self._model_request_options = _normalise_model_request_options(config)
         self.bootstrap_tool_names = config.get(
             "bootstrap_tool_names",
             ["list_context", "read_context"],
@@ -1038,6 +1107,8 @@ class DefaultExecutor(Executor):
                     ):
                         yield event
                     return
+            except WaitingForTool:
+                raise
             except Exception as batch_err:
                 logger.warning(
                     "_on_user_message: batch load plan failed for run %s: %s",
@@ -1100,9 +1171,19 @@ class DefaultExecutor(Executor):
 
         Uses the full event history so the LLM sees the complete chain of
         user messages, agent replies, and all resolved tool calls/results.
-        Unresolved TOOL_CALL references are stripped by _strip_orphaned_tool_messages.
+        Parallel tool calls resume only after every result in the latest
+        assistant turn has arrived.
         """
+        payload = events[-1].payload or {}
+        self._pending_tool_ids.discard(payload.get("tool_id", ""))
+
         raw_events = filter_events_for_user_msg(events)
+        unresolved_tool_ids = _unresolved_tool_call_ids(raw_events)
+        if unresolved_tool_ids:
+            self._pending_tool_ids = unresolved_tool_ids
+            return
+        self._pending_tool_ids.clear()
+
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -1117,10 +1198,14 @@ class DefaultExecutor(Executor):
         """
         payload = events[-1].payload or {}
         self._pending_tool_ids.discard(payload.get("tool_id", ""))
-        if self._pending_tool_ids:
-            return  # Still waiting for other parallel tool results
 
         raw_events = filter_events_for_user_msg(events)
+        unresolved_tool_ids = _unresolved_tool_call_ids(raw_events)
+        if unresolved_tool_ids:
+            self._pending_tool_ids = unresolved_tool_ids
+            return  # Still waiting for other parallel tool results
+        self._pending_tool_ids.clear()
+
         messages, tools_info = self.get_messages_and_tools(raw_events)
         async for event in self._agentic_loop(messages, tools_info=tools_info):
             yield event
@@ -1267,6 +1352,7 @@ class DefaultExecutor(Executor):
             # ── per-iteration state ──────────────────────────────
             response_buf = ""
             think_buf = ""
+            reasoning_buf = ""
             in_thinking: bool | None = None
             llm_response: LLMResponse | None = None
 
@@ -1290,10 +1376,27 @@ class DefaultExecutor(Executor):
                 api_key=self._api_key,
                 base_url=self._base_url,
                 client=self._llm_client,
+                request_options=self._model_request_options,
             )
             async for item in stream:
                 if isinstance(item, LLMResponse):
                     llm_response = item
+                    continue
+
+                if isinstance(item, LLMReasoningChunk):
+                    if not item.content:
+                        continue
+                    if not saw_first_token:
+                        saw_first_token = True
+                        logger.info(
+                            "llm_first_token_ms=%s run=%s workspace=%s model=%s",
+                            int((perf_counter() - llm_call_started) * 1000),
+                            self.run_id,
+                            self.workspace_id,
+                            self.model_name,
+                        )
+                    reasoning_buf += item.content
+                    yield self._emit_thinking(item.content)
                     continue
 
                 token: str = item
@@ -1322,6 +1425,7 @@ class DefaultExecutor(Executor):
                         think_buf = think_buf.split(_THINK_TAG, 1)[1]
                         if _THINK_CLOSE in think_buf:
                             content, rest = think_buf.split(_THINK_CLOSE, 1)
+                            reasoning_buf += content
                             yield self._emit_thinking(content)
                             in_thinking = False
                             think_buf = ""
@@ -1334,6 +1438,7 @@ class DefaultExecutor(Executor):
                     think_buf += token
                     if _THINK_CLOSE in think_buf:
                         content, rest = think_buf.split(_THINK_CLOSE, 1)
+                        reasoning_buf += content
                         yield self._emit_thinking(content)
                         in_thinking = False
                         think_buf = ""
@@ -1352,6 +1457,7 @@ class DefaultExecutor(Executor):
                 yield self._emit_token(think_buf)
                 think_buf = ""
             elif in_thinking is True and think_buf:
+                reasoning_buf += think_buf
                 yield self._emit_thinking(think_buf)
                 think_buf = ""
 
@@ -1363,11 +1469,13 @@ class DefaultExecutor(Executor):
             self._accumulate_tokens(
                 llm_response.input_tokens, llm_response.output_tokens
             )
+            reasoning_content = llm_response.reasoning_content or reasoning_buf or None
 
             ai_message = ChatMessage(
                 role="assistant",
                 content=llm_response.content or "",
                 tool_calls=llm_response.tool_calls or None,
+                reasoning_content=reasoning_content,
             )
             messages.append(ai_message)
 
@@ -1376,6 +1484,7 @@ class DefaultExecutor(Executor):
                 yield self._emit_message(
                     llm_response.content or response_buf,
                     context_breakdown=ctx_breakdown,
+                    reasoning_content=reasoning_content,
                 )
                 break
             else:
@@ -1386,16 +1495,19 @@ class DefaultExecutor(Executor):
                 # Also emit AGENT_MESSAGE with tool_calls so that
                 # _load_last_exchange() can reconstruct proper tool_call_id
                 # linkage when resuming with function-calling format.
+                message_payload = {
+                    "content": content,
+                    "tool_calls": [
+                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                        for tc in llm_response.tool_calls
+                    ],
+                    "_ctx": ctx_breakdown,
+                }
+                if reasoning_content is not None:
+                    message_payload["reasoning_content"] = reasoning_content
                 yield self._make_event(
                     EventType.AGENT_MESSAGE,
-                    {
-                        "content": content,
-                        "tool_calls": [
-                            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                            for tc in llm_response.tool_calls
-                        ],
-                        "_ctx": ctx_breakdown,
-                    },
+                    message_payload,
                 )
                 async for e in self._emit_tool_calls(llm_response.tool_calls):
                     yield e
@@ -1429,6 +1541,14 @@ class DefaultExecutor(Executor):
             # Most workspace-scoped tools require workspace_id / run_id but the
             # LLM only produces the task-specific arguments.
             args = dict(tc.arguments)
+            wrapped_args = args.get("arguments")
+            if isinstance(wrapped_args, dict):
+                wrapped_args = dict(wrapped_args)
+                if self.workspace_id and "workspace_id" not in wrapped_args:
+                    wrapped_args["workspace_id"] = self.workspace_id
+                if self.run_id and "run_id" not in wrapped_args:
+                    wrapped_args["run_id"] = self.run_id
+                args["arguments"] = wrapped_args
             if self.workspace_id and "workspace_id" not in args:
                 args["workspace_id"] = self.workspace_id
             if self.run_id and "run_id" not in args:
