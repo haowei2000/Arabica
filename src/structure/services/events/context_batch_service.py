@@ -23,6 +23,8 @@ from structure.models.events.event import Event
 from structure.models.events.event_batch import EventBatch, EventBatchItem
 
 DEFAULT_BATCH_MISC_BUCKET_SIZE = 50
+BATCH_INDEX_EXCERPT_LIMIT = 800
+BATCH_INDEX_TOTAL_LIMIT = 2400
 CONTEXT_TOOL_NAMES = {
     "create_context",
     "delete_context",
@@ -87,6 +89,98 @@ def _json_hash(text: str) -> str:
 def _trim(value: Any, limit: int = 180) -> str:
     text = value if isinstance(value, str) else str(value)
     return text[:limit] + "..." if len(text) > limit else text
+
+
+def _json_compact(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _payload_text_for_index(event: Event) -> str:
+    event_type = _event_type_value(event.event_type)
+    payload = event.payload or {}
+
+    if event_type == str(EventType.USER_MESSAGE):
+        return _json_compact(payload.get("message", ""))
+
+    if event_type == str(EventType.AGENT_MESSAGE):
+        content = payload.get("content") or payload.get("message") or ""
+        tool_calls = payload.get("tool_calls") or []
+        if tool_calls:
+            tool_index = _json_compact(
+                [
+                    {
+                        "id": call.get("id"),
+                        "name": call.get("name"),
+                        "arguments": call.get("arguments", {}),
+                    }
+                    for call in tool_calls
+                    if isinstance(call, dict)
+                ]
+            )
+            return f"{_json_compact(content)} tool_calls={tool_index}".strip()
+        return _json_compact(content)
+
+    if event_type == str(EventType.TOOL_CALL):
+        return _json_compact(
+            {
+                "tool_name": payload.get("tool_name"),
+                "tool_id": payload.get("tool_id"),
+                "arguments": payload.get("arguments", {}),
+            }
+        )
+
+    if event_type == str(EventType.TOOL_RESULT):
+        return _json_compact(
+            {
+                "tool_name": payload.get("tool_name"),
+                "tool_id": payload.get("tool_id"),
+                "result": payload.get("result"),
+                "success": payload.get("success"),
+            }
+        )
+
+    if event_type == str(EventType.TOOL_ERROR):
+        return _json_compact(
+            {
+                "tool_name": payload.get("tool_name"),
+                "tool_id": payload.get("tool_id"),
+                "error": payload.get("error_message") or payload.get("error"),
+            }
+        )
+
+    if event_type == str(EventType.USER_FEEDBACK):
+        return _json_compact(payload.get("feedback") or payload.get("message") or "")
+
+    return _json_compact(payload)
+
+
+def _indexed_summary_for_batch(
+    batch: EventBatch,
+    events: Sequence[Event],
+    *,
+    excerpt_limit: int = BATCH_INDEX_EXCERPT_LIMIT,
+    total_limit: int = BATCH_INDEX_TOTAL_LIMIT,
+) -> str:
+    lines: list[str] = []
+    remaining = total_limit
+
+    for event in sorted(events, key=lambda e: (e.sequence or 0, str(e.id))):
+        event_type = _event_type_value(event.event_type)
+        text = _payload_text_for_index(event)
+        excerpt = _trim(text, excerpt_limit)
+        line = f"[seq={event.sequence} type={event_type}] {excerpt}"
+        if len(line) > remaining:
+            if remaining > 80:
+                lines.append(line[: remaining - 30] + "... [batch index truncated]")
+            break
+        lines.append(line)
+        remaining -= len(line) + 1
+
+    if not lines:
+        return f"{batch.context_kind} events {batch.sequence_start}-{batch.sequence_end}"
+    return "\n".join(lines)
 
 
 class ContextBatchService:
@@ -491,36 +585,11 @@ class ContextBatchService:
 
     @staticmethod
     def _summary_for_batch(batch: EventBatch, events: Sequence[Event]) -> str:
-        if batch.context_kind == "turn":
-            user_messages = [
-                (event.payload or {}).get("message")
-                for event in events
-                if _event_type_value(event.event_type) == str(EventType.USER_MESSAGE)
-            ]
-            assistant_messages = [
-                (event.payload or {}).get("content")
-                or (event.payload or {}).get("message")
-                for event in events
-                if _event_type_value(event.event_type) == str(EventType.AGENT_MESSAGE)
-            ]
-            user = _trim(next((msg for msg in user_messages if msg), ""))
-            assistant = _trim(
-                next((msg for msg in reversed(assistant_messages) if msg), "")
-            )
-            return f"user={user}; assistant={assistant}".strip()
+        if batch.context_kind in {"turn", "tool"}:
+            return _indexed_summary_for_batch(batch, events)
 
         if batch.context_kind == "context":
             return f"context_path={batch.context_key.rsplit(':', 1)[-1]}"
-
-        if batch.context_kind == "tool":
-            tool_names = sorted(
-                {
-                    str((event.payload or {}).get("tool_name"))
-                    for event in events
-                    if (event.payload or {}).get("tool_name")
-                }
-            )
-            return f"tool_names={','.join(tool_names)}"
 
         return (
             f"{batch.context_kind} events {batch.sequence_start}-{batch.sequence_end}"
