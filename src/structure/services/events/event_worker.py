@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.config.factory import get_settings
+from structure.core.constants.llm import MASKED_API_KEY_REF
 from structure.core.enums import EventType
 from structure.core.interfaces.protocols import ExecutorProtocol
 from structure.extensions.database import get_session
@@ -573,7 +574,10 @@ class Worker:
                         app_config = {}
                     app_config["model_provider"] = chat_model.provider
                     app_config["model_name"] = chat_model.model_id
-                    if chat_model.api_key_ref:
+                    if (
+                        chat_model.api_key_ref
+                        and chat_model.api_key_ref != MASKED_API_KEY_REF
+                    ):
                         app_config["api_key"] = chat_model.api_key_ref
                     if chat_model.base_url:
                         app_config["base_url"] = chat_model.base_url

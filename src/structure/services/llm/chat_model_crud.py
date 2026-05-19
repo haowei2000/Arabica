@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from structure.core.constants.llm import MASKED_API_KEY_REF
 from structure.models.llm.chat_model import ChatModel
 from structure.schemas.llm.chat_model import ChatModelCreate, ChatModelUpdate
 
@@ -24,7 +25,10 @@ class ChatModelCRUD:
         auto_commit: bool = True,
     ) -> ChatModel:
         """Create a new chat model configuration."""
-        obj = ChatModel(**data.model_dump(), user_id=str(user_id))
+        create_data = data.model_dump()
+        if create_data.get("is_default") is True:
+            await self._clear_default_models()
+        obj = ChatModel(**create_data, user_id=str(user_id))
         self.db.add(obj)
         if auto_commit:
             await self.db.commit()
@@ -49,6 +53,10 @@ class ChatModelCRUD:
         if not obj:
             return None
         update_data = data.model_dump(exclude_unset=True)
+        if obj.is_system and update_data.get("api_key_ref") == MASKED_API_KEY_REF:
+            update_data.pop("api_key_ref")
+        if update_data.get("is_default") is True:
+            await self._clear_default_models(exclude_id=model_id)
         for field, value in update_data.items():
             setattr(obj, field, value)
         if auto_commit:
@@ -105,6 +113,12 @@ class ChatModelCRUD:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def _clear_default_models(self, exclude_id: str | UUID | None = None) -> None:
+        stmt = update(ChatModel).where(ChatModel.is_default.is_(True))
+        if exclude_id is not None:
+            stmt = stmt.where(ChatModel.id != exclude_id)
+        await self.db.execute(stmt.values(is_default=False))
 
     async def search(
         self,

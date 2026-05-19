@@ -67,6 +67,9 @@ class BootstrapConfig:
     # Whether to seed default context paths in all workspaces (API only)
     init_context_paths: bool = False
 
+    # Whether to seed default LLM model configuration from environment variables.
+    seed_default_llm_models: bool = False
+
     # Whether to discover inner tools from the filesystem (Plugin discovery)
     discover_inner_tools: bool = True
 
@@ -205,6 +208,53 @@ async def _initialize_default_context_paths() -> None:
         logger.error("Default context path seeding failed: %s", e, exc_info=True)
 
 
+async def _seed_default_llm_models() -> None:
+    """Ensure a fresh deployment can use the env-configured default chat model."""
+    from structure.config.factory import get_settings
+    from structure.services.llm.env_model_seed import (
+        ensure_openai_default_chat_model,
+        get_enabled_default_chat_model,
+        has_usable_chat_credentials,
+    )
+
+    settings = get_settings()
+    openai_config = settings.openai
+    if not openai_config or not openai_config.api_key:
+        try:
+            async with get_session("structure") as session:
+                chat_model = await get_enabled_default_chat_model(session)
+            if has_usable_chat_credentials(chat_model):
+                logger.info(
+                    "Default chat model already configured; env seeding skipped."
+                )
+            else:
+                logger.warning(
+                    "OPENAI__API_KEY is empty and no usable default chat model "
+                    "exists. New users can receive free quota, but runs need "
+                    "a default LLM model."
+                )
+        except Exception as e:
+            logger.error("Default LLM model health check failed: %s", e, exc_info=True)
+        return
+
+    try:
+        async with get_session("structure") as session:
+            chat_model = await ensure_openai_default_chat_model(
+                session,
+                openai_config,
+            )
+            await session.commit()
+
+        if chat_model:
+            logger.info(
+                "Default chat model ready from env: %s (%s)",
+                chat_model.name,
+                chat_model.model_id,
+            )
+    except Exception as e:
+        logger.error("Default LLM model seeding failed: %s", e, exc_info=True)
+
+
 class ApplicationBootstrap:
     """Application Initialization Manager (v2)"""
 
@@ -256,11 +306,15 @@ class ApplicationBootstrap:
         if self.config.init_registries:
             await _initialize_registries(self.config)
 
-        # Step 7: Storage backend
+        # Step 7: Seed default LLM models from environment configuration.
+        if self.config.seed_default_llm_models:
+            await _seed_default_llm_models()
+
+        # Step 8: Storage backend
         if self.config.init_storage:
             await self._init_storage_backend()
 
-        # Step 8: Seed default context paths in all workspaces (API only)
+        # Step 9: Seed default context paths in all workspaces (API only)
         if self.config.init_context_paths:
             await _initialize_default_context_paths()
 
@@ -433,6 +487,7 @@ def get_api_bootstrap_config() -> BootstrapConfig:
         init_registries=True,  # ⭐ NEW: Unified registry init
         init_storage=True,
         init_context_paths=True,  # Seed default context paths in all workspaces
+        seed_default_llm_models=True,
         discover_inner_tools=False,  # API connects to MCP server for tools
     )
 

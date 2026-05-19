@@ -1151,7 +1151,9 @@ class DefaultExecutor(Executor):
         if not api_key or not base_url:
             raise ValueError(
                 "No LLM model configured. Please add a default chat model "
-                "with an API key and base URL in the LLM Models settings page."
+                "with an API key and base URL in the LLM Models settings page, "
+                "or set OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL "
+                "in .env and restart the API service."
             )
         return api_key, base_url
 

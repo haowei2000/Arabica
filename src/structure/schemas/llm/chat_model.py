@@ -3,8 +3,9 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
+from structure.core.constants.llm import MASKED_API_KEY_REF
 from structure.utils.schema_mixins import ResponseMixin
 
 
@@ -109,6 +110,13 @@ class ChatModelResponse(ResponseMixin, BaseModel):
     enabled: bool
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
+
+    @field_serializer("api_key_ref")
+    def serialize_api_key_ref(self, value: str | None) -> str | None:
+        """Mask system model keys in API responses."""
+        if self.is_system and value:
+            return MASKED_API_KEY_REF
+        return value
 
 
 class ChatModelListResponse(BaseModel):

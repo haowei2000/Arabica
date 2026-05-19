@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from structure.core.constants.llm import MASKED_API_KEY_REF
 from structure.models.llm.embedding_model import EmbeddingModel
 from structure.schemas.llm.embedding_model import (
     EmbeddingModelCreate,
@@ -55,6 +56,8 @@ class EmbeddingModelCRUD:
         if not obj:
             return None
         update_data = data.model_dump(exclude_unset=True)
+        if obj.is_system and update_data.get("api_key_ref") == MASKED_API_KEY_REF:
+            update_data.pop("api_key_ref")
         if update_data.get("is_default") is True:
             await self._clear_default_models(exclude_id=model_id)
         for field, value in update_data.items():
