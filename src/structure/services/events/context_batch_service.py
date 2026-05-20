@@ -179,7 +179,9 @@ def _indexed_summary_for_batch(
         remaining -= len(line) + 1
 
     if not lines:
-        return f"{batch.context_kind} events {batch.sequence_start}-{batch.sequence_end}"
+        return (
+            f"{batch.context_kind} events {batch.sequence_start}-{batch.sequence_end}"
+        )
     return "\n".join(lines)
 
 
