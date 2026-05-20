@@ -187,3 +187,44 @@ def test_load_policy_sets_recent_turns_and_transients():
         ContextBatchService._desired_load_state(tool, {recent_turn.id}, current_run_id)
         == ContextBatchLoadState.LOAD_ALL
     )
+
+
+def test_turn_batch_index_preserves_exact_facts_beyond_short_summary_limit():
+    workspace_id = uuid4()
+    run_id = uuid4()
+    batch = EventBatch(
+        id=uuid4(),
+        workspace_id=workspace_id,
+        run_id=run_id,
+        context_key=f"run:{run_id}:turn:1",
+        context_kind="turn",
+        sequence_start=1,
+        sequence_end=2,
+    )
+    long_prefix = "background note " + ("filler " * 35)
+    user_message = (
+        f"{long_prefix} release city Suzhou, risk color cobalt, "
+        "control number 5827."
+    )
+    events = [
+        _event(
+            EventType.USER_MESSAGE,
+            1,
+            {"message": user_message},
+            run_id=run_id,
+        ),
+        _event(
+            EventType.AGENT_MESSAGE,
+            2,
+            {"content": "Stored Suzhou, cobalt, and control number 5827."},
+            run_id=run_id,
+        ),
+    ]
+
+    summary = ContextBatchService._summary_for_batch(batch, events)
+
+    assert "release city Suzhou" in summary
+    assert "risk color cobalt" in summary
+    assert "control number 5827" in summary
+    assert "[seq=1 type=user.message]" in summary
+    assert "[seq=2 type=agent.message]" in summary
