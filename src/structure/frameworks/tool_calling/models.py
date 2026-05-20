@@ -71,6 +71,7 @@ class LLMResponse:
         raw: Raw API response object for debugging.
         input_tokens: Number of prompt tokens consumed.
         output_tokens: Number of completion tokens generated.
+        cached_tokens: Number of provider-side cached prompt tokens, if reported.
     """
 
     content: str
@@ -79,6 +80,7 @@ class LLMResponse:
     raw: Any = None
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
 
 
 @dataclass
