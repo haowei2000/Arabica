@@ -99,6 +99,12 @@ async def lifespan(app: FastMCP):  # noqa: ARG001
 
         # 使用统一的初始化流程
         bootstrap = await bootstrap_mcp()
+        if bootstrap.redis_client:
+            from structure.utils.workspace_context_cache import (
+                set_shared_redis_client,
+            )
+
+            set_shared_redis_client(bootstrap.redis_client)
         logger.info("✅ MCP startup complete")
         yield
     except Exception as e:

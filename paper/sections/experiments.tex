@@ -37,7 +37,11 @@ fidelity} we probe synthetic retrieval with RULER~\citep{hsieh2024ruler},
 application-shaped long context with HELMET~\citep{yen2025helmet} and
 LOFT~\citep{lee2024loft}, and multi-session conversational memory with
 LoCoMo~\citep{maharana2024locomo} and
-LongMemEval~\citep{wu2025longmemeval}. Running the full grid is not
+LongMemEval~\citep{wu2025longmemeval}. The hot-research benchmark
+extension also adds a fixture-level LongMemEval-V2 adapter
+\citep{wu2026longmemevalv2} to track the newer Insert/Query
+memory-system formulation over agent environment trajectories.
+Running the full grid is not
 strictly required for the main claim; we identify a \emph{core} subset
 (Table~\ref{tab:datasets}) and treat the remainder as an extended
 battery reported in the appendix.
@@ -60,6 +64,7 @@ battery reported in the appendix.
         \midrule
         LoCoMo \citep{maharana2024locomo}        & Multi-session memory & QA / summarisation & tokens \\
         LongMemEval \citep{wu2025longmemeval}    & Long-term memory     & per-ability accuracy & tokens \\
+        LongMemEval-V2 \citep{wu2026longmemevalv2} & Agent experience memory & answer + evidence & latency \\
         RULER \citep{hsieh2024ruler}             & Effective context    & retrieval acc.  & tokens \\
         \bottomrule
     \end{tabular}

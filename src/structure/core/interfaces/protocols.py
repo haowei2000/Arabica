@@ -378,7 +378,13 @@ class ExecutorProtocol(RegistrableProtocol, Protocol):
         """Emit a streaming token event (AGENT_TOKEN)."""
         ...
 
-    def _emit_message(self, content: str) -> Any:
+    def _emit_message(
+        self,
+        content: str,
+        *,
+        context_breakdown: dict[str, Any] | None = None,
+        reasoning_content: str | None = None,
+    ) -> Any:
         """Emit a complete message event (AGENT_MESSAGE)."""
         ...
 

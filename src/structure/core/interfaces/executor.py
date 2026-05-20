@@ -376,10 +376,16 @@ class Executor(ABC, ExecutorProtocol):
         return event
 
     def _emit_message(
-        self, content: str, *, context_breakdown: dict[str, Any] | None = None
+        self,
+        content: str,
+        *,
+        context_breakdown: dict[str, Any] | None = None,
+        reasoning_content: str | None = None,
     ) -> Event:
         """Emit a complete message event (AGENT_MESSAGE)."""
         payload: dict[str, Any] = {"content": content}
+        if reasoning_content is not None:
+            payload["reasoning_content"] = reasoning_content
         if context_breakdown is not None:
             payload["_ctx"] = context_breakdown
         return self._make_event(EventType.AGENT_MESSAGE, payload)

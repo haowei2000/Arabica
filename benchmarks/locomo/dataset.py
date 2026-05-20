@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from benchmarks.core.types import BenchmarkCase
 
 SESSION_FIELDS = ("sessions", "haystack_sessions", "conversation", "dialogue")
 QA_FIELDS = ("qas", "qa", "question_answering", "questions")
-ANSWER_FIELDS = ("answer", "answers", "reference", "gold")
+ANSWER_FIELDS = ("answer", "answers", "reference", "gold", "adversarial_answer")
+SESSION_KEY = re.compile(r"^session_(\d+)$")
 
 
 def _read_json_or_jsonl(path: Path) -> Any:
@@ -40,6 +42,31 @@ def _normalise_turn(raw: Any) -> dict[str, str]:
 def _normalise_sessions(raw: Any) -> list[list[dict[str, str]]]:
     if raw is None:
         return []
+    if isinstance(raw, dict):
+        sessions: list[list[dict[str, str]]] = []
+        keys = sorted(
+            (
+                (int(match.group(1)), key)
+                for key in raw
+                if (match := SESSION_KEY.match(key))
+            ),
+            key=lambda item: item[0],
+        )
+        for _, key in keys:
+            value = raw.get(key)
+            if isinstance(value, list):
+                turns = [_normalise_turn(turn) for turn in value]
+                date_value = raw.get(f"{key}_date_time")
+                if date_value:
+                    turns.insert(
+                        0,
+                        {
+                            "role": "metadata",
+                            "content": f"session date: {date_value}",
+                        },
+                    )
+                sessions.append(turns)
+        return sessions
     if not isinstance(raw, list):
         raise ValueError("LoCoMo sessions/conversation field must be a list")
     if not raw:
@@ -148,4 +175,3 @@ def load_locomo(path: str | Path) -> list[BenchmarkCase]:
             raise ValueError(f"{path}: LoCoMo entry {index} must be a dict")
         cases.extend(_expand_conversation(entry, index))
     return cases
-

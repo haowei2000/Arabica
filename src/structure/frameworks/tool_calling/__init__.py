@@ -7,6 +7,7 @@ the LLM and how tool calls are parsed from its responses.
 from structure.frameworks.tool_calling.function_calling import FunctionCallingStrategy
 from structure.frameworks.tool_calling.models import (
     ChatMessage,
+    LLMReasoningChunk,
     LLMResponse,
     OpenAIFunction,
     OpenAIFunctionParameters,
@@ -19,6 +20,7 @@ from structure.frameworks.tool_calling.strategy import ToolCallingStrategy
 __all__ = [
     "ChatMessage",
     "FunctionCallingStrategy",
+    "LLMReasoningChunk",
     "LLMResponse",
     "OpenAIFunction",
     "OpenAIFunctionParameters",

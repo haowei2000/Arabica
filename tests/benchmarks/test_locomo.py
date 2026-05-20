@@ -35,6 +35,41 @@ def test_loader_expands_conversation_qa_pairs():
 
 
 @pytest.mark.unit
+def test_loader_supports_upstream_session_dict_and_adversarial_answer(tmp_path):
+    dataset = tmp_path / "locomo.json"
+    dataset.write_text(
+        """
+        [
+          {
+            "sample_id": "conv-x",
+            "conversation": {
+              "session_1_date_time": "1:56 pm on 8 May, 2023",
+              "session_1": [
+                {"speaker": "A", "text": "I went to a LGBTQ support group yesterday."}
+              ]
+            },
+            "qa": [
+              {
+                "question": "When did Caroline go to the LGBTQ support group?",
+                "adversarial_answer": "7 May 2023",
+                "evidence": ["D1:1"],
+                "category": 5
+              }
+            ]
+          }
+        ]
+        """,
+        encoding="utf-8",
+    )
+
+    [case] = load_locomo(dataset)
+    assert case.reference == "7 May 2023"
+    assert case.ability == "5"
+    assert case.metadata["evidence"] == ["D1:1"]
+    assert case.inputs["sessions"][0][0]["content"] == "session date: 1:56 pm on 8 May, 2023"
+
+
+@pytest.mark.unit
 def test_locomo_scorer_exact_substring_and_token_f1():
     assert locomo_qa_scorer("Lantern", "The current codename is Lantern.") == 1.0
     assert locomo_qa_scorer(["bread flour"], "bread flour works best") == 1.0

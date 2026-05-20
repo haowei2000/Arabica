@@ -7,6 +7,11 @@
 """
 
 from benchmarks.baselines.echo_agent import EchoAgent
+from benchmarks.baselines.external_paper_reference import (
+    ExternalBenchmarkBaseline,
+    external_baseline_comparison,
+    iter_external_baselines,
+)
 from benchmarks.baselines.lightmem_reference import (
     LIGHTMEM_LOCOMO_OVERVIEW,
     MEMORY_BASELINE_CATALOG,
@@ -32,11 +37,14 @@ __all__ = [
     "LIGHTMEM_LOCOMO_OVERVIEW",
     "MEMORY_BASELINE_CATALOG",
     "EchoAgent",
+    "ExternalBenchmarkBaseline",
     "LLMBenchmarkAgent",
     "LightMemLoCoMoOverview",
     "MemoryBaselineSpec",
     "RetrievalOracleBaseline",
+    "external_baseline_comparison",
     "iter_baseline_catalog",
+    "iter_external_baselines",
     "iter_locomo_overview",
     "locomo_overview_dicts",
     "make_memory_baseline",

@@ -15,6 +15,10 @@ from benchmarks.baselines import EchoAgent
 from benchmarks.core import BenchmarkCase, BenchmarkRunner
 from benchmarks.locomo import load_locomo, locomo_qa_scorer
 from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
+from benchmarks.longmemeval_v2 import (
+    load_longmemeval_v2,
+    longmemeval_v2_scorer,
+)
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -49,6 +53,16 @@ OPEN_SOURCE_BENCHMARK_TARGETS = (
         fixture_path=REPO_ROOT / "benchmarks/locomo/fixtures/sample.json",
         loader=load_locomo,
         scorer=locomo_qa_scorer,
+        expected_cases=3,
+        mode="local_fixture",
+    ),
+    OpenSourceBenchmarkTarget(
+        name="longmemeval-v2",
+        upstream_url="https://xiaowu0162.github.io/longmemeval-v2/",
+        fixture_path=REPO_ROOT
+        / "benchmarks/longmemeval_v2/fixtures/sample.json",
+        loader=load_longmemeval_v2,
+        scorer=longmemeval_v2_scorer,
         expected_cases=3,
         mode="local_fixture",
     ),
@@ -139,6 +153,7 @@ def test_open_source_agent_benchmark_integration_policy_is_explicit():
 
     assert modes_by_name["longmemeval"] == "local_fixture"
     assert modes_by_name["locomo"] == "local_fixture"
+    assert modes_by_name["longmemeval-v2"] == "local_fixture"
     assert modes_by_name["tau-bench"] == "distilled_db_trace"
     assert modes_by_name["bfcl"] == "distilled_db_trace"
     assert modes_by_name["terminal-bench"] == "distilled_db_trace"
