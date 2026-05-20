@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Archive, ChevronRight, Brain, Loader2, Play, Trash2, ChevronDown } from 'lucide-react';
+import { Archive, ChevronRight, Brain, Loader2, Play, ChevronDown } from 'lucide-react';
 import { useWorkspaces, useWorkspaceRuns, useRunEvents } from '@/hooks/useMemory';
-import { useDeleteWorkspace } from '@/hooks/useWorkspaces';
 import { useMemories } from '@/hooks/useEntityContext';
 import { eventService } from '@/services/eventService';
 import type { EventArchiveResponse } from '@/types/event';
@@ -44,13 +43,12 @@ export default function MemoryPage() {
   const [archiveResult, setArchiveResult] = useState<EventArchiveResponse | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
 
-  const [showShortMemories, setShowShortMemories] = useState(false);
+  const [showShortMemories, setShowShortMemories] = useState(true);
   const queryClient = useQueryClient();
   const { data: workspaceData, isLoading: workspacesLoading } = useWorkspaces({ page_size: 50 });
   const { data: memoriesData } = useMemories({ page_size: 50 });
   const { data: runsData } = useWorkspaceRuns(selectedWorkspace, expandedWorkspaces.has(selectedWorkspace || '') || viewMode === 'drawer');
   const { data: eventsData } = useRunEvents(selectedRun, expandedRuns.has(selectedRun || '') || (viewMode === 'drawer' && !!selectedRun));
-  const deleteWorkspaceMutation = useDeleteWorkspace();
   const archiveRunMutation = useMutation({
     mutationFn: ({ runId, dryRun }: { runId: string; dryRun: boolean }) =>
       eventService.archiveRun(runId, {
@@ -120,21 +118,6 @@ export default function MemoryPage() {
     archiveRunMutation.mutate({ runId: selectedRun, dryRun });
   };
 
-  const handleDeleteWorkspace = async (e: React.MouseEvent, workspaceId: string, name: string) => {
-    e.stopPropagation();
-    if (!confirm(`Are you sure you want to delete workspace "${name}" and all its runs and events? This action cannot be undone.`)) return;
-    try {
-      await deleteWorkspaceMutation.mutateAsync(workspaceId);
-      // Clean up local state
-      if (selectedWorkspace === workspaceId) setSelectedWorkspace(null);
-      if (selectedRun) setSelectedRun(null);
-      expandedWorkspaces.delete(workspaceId);
-      setExpandedWorkspaces(new Set(expandedWorkspaces));
-    } catch (error) {
-      alert('Failed to delete workspace. Please try again.');
-    }
-  };
-
   if (workspacesLoading) {
     return <div className="flex items-center justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
   }
@@ -169,21 +152,21 @@ export default function MemoryPage() {
             <h2 className="text-sm font-semibold">Memory</h2>
           </div>
           <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
-            {workspaces.length}
+            {memoriesData?.total ?? 0}
           </span>
         </div>
-        <ViewToggle mode={viewMode} onToggle={handleModeToggle} />
       </div>
 
       {filterBar}
 
       {/* Short Memories section */}
-      {memoriesData && memoriesData.total > 0 && (
+      {memoriesData && (
         <div className="mb-4 rounded-xl border border-border bg-card overflow-hidden">
           <button
             type="button"
             className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-muted/40 transition-colors text-left"
             onClick={() => setShowShortMemories((v) => !v)}
+            aria-expanded={showShortMemories}
           >
             <Brain className="size-3.5 text-muted-foreground shrink-0" />
             <span className="text-xs font-medium">Short Memories</span>
@@ -192,39 +175,45 @@ export default function MemoryPage() {
           </button>
           {showShortMemories && (
             <div className="divide-y divide-border/50 border-t border-border/50">
-              {memoriesData.items.map((mem) => (
-                <div key={mem.id} className="px-4 py-2.5 space-y-1">
-                  <p className="text-xs text-foreground/80 leading-relaxed">{mem.glance ?? mem.content.slice(0, 120)}</p>
-                  {mem.path && <p className="text-[10px] font-mono text-muted-foreground/60">{mem.path}</p>}
-                </div>
-              ))}
+              {memoriesData.total === 0 ? (
+                <p className="px-4 py-3 text-xs text-muted-foreground/60">No memories yet</p>
+              ) : (
+                memoriesData.items.map((mem) => (
+                  <div key={mem.id} className="px-4 py-2.5 space-y-1">
+                    <p className="text-xs text-foreground/80 leading-relaxed">{mem.glance ?? mem.content.slice(0, 120)}</p>
+                    {mem.path && <p className="text-[10px] font-mono text-muted-foreground/60">{mem.path}</p>}
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
       )}
 
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Play className="size-3.5 text-muted-foreground" />
+          <h3 className="text-xs font-semibold">Run History</h3>
+          <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2 py-0.5 tabular-nums">
+            {workspaces.length}
+          </span>
+        </div>
+        <ViewToggle mode={viewMode} onToggle={handleModeToggle} />
+      </div>
+
       {workspaces.length === 0 ? (
         <div className="text-center py-16 border border-dashed border-border rounded-xl">
           <Brain className="mx-auto size-8 text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground">No workspaces yet</p>
+          <p className="text-sm text-muted-foreground">No run history yet</p>
         </div>
       ) : viewMode === 'card' ? (
         // ── Card grid ─────────────────────────────────────────────────────────
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {workspaces.map((workspace) => (
             <div key={workspace.id} className="rounded-xl border border-border bg-card p-4 flex flex-col gap-2.5 hover:bg-muted/20 transition-colors group relative">
-              <button
-                type="button"
-                onClick={(e) => handleDeleteWorkspace(e, workspace.id, workspace.name)}
-                disabled={deleteWorkspaceMutation.isPending}
-                className="absolute top-2 right-2 p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
-                title="Delete workspace"
-              >
-                <Trash2 className="size-3" />
-              </button>
               <div className="flex items-start gap-2.5">
                 <span className={cn('size-2 rounded-full mt-1 shrink-0', statusDot(workspace.status))} />
-                <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate pr-6">{workspace.name}</p>
+                <p className="text-sm font-semibold leading-snug flex-1 min-w-0 truncate">{workspace.name}</p>
               </div>
               {workspace.description && <p className="text-xs text-muted-foreground line-clamp-2">{workspace.description}</p>}
               <div className="flex flex-wrap gap-1.5">
@@ -247,9 +236,9 @@ export default function MemoryPage() {
             const workspaceRuns = isExpanded ? runs : [];
             return (
               <div key={workspace.id} className="group relative">
-                <div role="button" tabIndex={0} onClick={() => toggleWorkspace(workspace.id)}
-                  onKeyDown={(e) => e.key === 'Enter' && toggleWorkspace(workspace.id)}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors cursor-pointer">
+                <button type="button" onClick={() => toggleWorkspace(workspace.id)}
+                  aria-expanded={isExpanded}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left">
                   <span className={cn('size-2 rounded-full shrink-0', statusDot(workspace.status))} />
                   <ChevronRight className={cn('size-3 text-muted-foreground/50 transition-transform shrink-0', isExpanded && 'rotate-90')} />
                   <span className="text-sm font-medium flex-1 min-w-0 truncate">{workspace.name}</span>
@@ -258,16 +247,7 @@ export default function MemoryPage() {
                   )}
                   <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/60 tabular-nums shrink-0"><Play className="size-2.5" />{workspace.run_count}</span>
                   <span className="text-[10px] text-muted-foreground/50 shrink-0">{formatRelativeTime(workspace.created_at)}</span>
-                  <button
-                    type="button"
-                    onClick={(e) => handleDeleteWorkspace(e, workspace.id, workspace.name)}
-                    disabled={deleteWorkspaceMutation.isPending}
-                    className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
-                    title="Delete workspace"
-                  >
-                    <Trash2 className="size-3" />
-                  </button>
-                </div>
+                </button>
 
                 {isExpanded && (
                   <div className="bg-muted/20 border-t border-border/50">
@@ -339,26 +319,16 @@ export default function MemoryPage() {
               <ScrollArea className="flex-1">
                 {workspaces.map((ws) => (
                   <div key={ws.id} className="group relative">
-                    <div role="button" tabIndex={0} onClick={() => selectWorkspace(ws.id)}
-                      onKeyDown={(e) => e.key === 'Enter' && selectWorkspace(ws.id)}
+                    <button type="button" onClick={() => selectWorkspace(ws.id)}
                       className={cn(
                         'w-full flex items-center gap-2 px-3 py-2.5 cursor-pointer',
-                        'border-b border-border/30 last:border-0 hover:bg-muted/40 transition-colors',
+                        'border-b border-border/30 last:border-0 hover:bg-muted/40 transition-colors text-left',
                         selectedWorkspace === ws.id && 'bg-primary/8 border-l-2 border-l-primary'
                       )}>
                       <span className={cn('size-1.5 rounded-full shrink-0', statusDot(ws.status))} />
                       <span className="text-xs font-medium flex-1 min-w-0 truncate">{ws.name}</span>
-                      <button
-                        type="button"
-                        onClick={(e) => handleDeleteWorkspace(e, ws.id, ws.name)}
-                        disabled={deleteWorkspaceMutation.isPending}
-                        className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 z-10"
-                        title="Delete workspace"
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
                       <ChevronRight className="size-3 text-muted-foreground/40 shrink-0" />
-                    </div>
+                    </button>
                   </div>
                 ))}
               </ScrollArea>

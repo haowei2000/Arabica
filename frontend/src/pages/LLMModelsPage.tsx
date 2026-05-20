@@ -649,7 +649,10 @@ function ChatModelsTab() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
           <Input
             className="pl-8 h-8 text-xs"
-            placeholder="Search models..."
+            aria-label="Search chat models"
+            name="chat-model-search"
+            autoComplete="off"
+            placeholder="Search models…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -690,8 +693,11 @@ function ChatModelsTab() {
                 <tr key={m.id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <button 
+                      <button
+                        type="button"
                         onClick={() => handleToggleDefault(m)}
+                        aria-label={m.is_default ? `${m.name} is the default chat model` : `Set ${m.name} as default chat model`}
+                        title={m.is_default ? 'Default chat model' : 'Set as default chat model'}
                         className={cn("transition-colors", m.is_default ? "text-yellow-500 hover:text-yellow-600" : "text-muted-foreground/20 hover:text-yellow-500/50")}
                       >
                         <Star className={cn("size-3.5", m.is_default && "fill-yellow-500")} />
@@ -797,7 +803,10 @@ function EmbeddingModelsTab() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
           <Input
             className="pl-8 h-8 text-xs"
-            placeholder="Search models..."
+            aria-label="Search embedding models"
+            name="embedding-model-search"
+            autoComplete="off"
+            placeholder="Search models…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -839,8 +848,11 @@ function EmbeddingModelsTab() {
                 <tr key={m.id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <button 
+                      <button
+                        type="button"
                         onClick={() => handleToggleDefault(m)}
+                        aria-label={m.is_default ? `${m.name} is the default embedding model` : `Set ${m.name} as default embedding model`}
+                        title={m.is_default ? 'Default embedding model' : 'Set as default embedding model'}
                         className={cn("transition-colors", m.is_default ? "text-yellow-500 hover:text-yellow-600" : "text-muted-foreground/20 hover:text-yellow-500/50")}
                       >
                         <Star className={cn("size-3.5", m.is_default && "fill-yellow-500")} />

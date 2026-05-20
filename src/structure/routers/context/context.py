@@ -28,6 +28,12 @@ router = APIRouter(prefix="/context", tags=["context"])
 
 
 @router.post(
+    "",
+    response_model=ContextResponse,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+@router.post(
     "/create",
     response_model=ContextResponse,
     status_code=status.HTTP_201_CREATED,

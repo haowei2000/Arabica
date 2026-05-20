@@ -120,7 +120,7 @@ export default function LoginPage() {
           {/* Logo and title */}
           <div className="flex flex-col items-center mb-8">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/30 mb-4">
-              <img src="/icon.png" alt="Structure" className="size-9 object-contain" />
+              <img src="/icon.png" alt="Structure" width={36} height={36} className="size-9 object-contain" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">Structure</h1>
             <p className="text-sm text-muted-foreground mt-1">
