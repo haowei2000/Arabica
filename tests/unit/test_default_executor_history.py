@@ -398,6 +398,100 @@ def test_agent_tool_call_replay_preserves_reasoning_content():
     assert messages[2].tool_call_id == "call-1"
 
 
+def test_events_to_messages_compacts_large_tool_call_arguments_for_replay():
+    large_content = "A" * 5_000
+
+    messages = _events_to_messages(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={"message": "Create the artifact"},
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.AGENT_MESSAGE),
+                payload={
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-create",
+                            "name": "create_artifact",
+                            "arguments": {
+                                "path": "/artifacts/report.md",
+                                "content": large_content,
+                            },
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.TOOL_RESULT),
+                payload={
+                    "tool_id": "call-create",
+                    "tool_name": "create_artifact",
+                    "result": {"artifact_id": "artifact-1"},
+                },
+            ),
+        ],
+        tool_argument_max_chars=80,
+    )
+
+    arguments = messages[1].tool_calls[0].arguments
+    serialized = json.dumps(arguments)
+    assert arguments["content_history_replay_compacted"] is True
+    assert arguments["content_original_chars"] == len(large_content)
+    assert len(arguments["content"]) < 220
+    assert large_content not in serialized
+
+
+def test_events_to_messages_compacts_large_tool_results_for_replay():
+    large_content = "Document body\n" + ("B" * 5_000)
+
+    messages = _events_to_messages(
+        [
+            SimpleNamespace(
+                event_type=str(EventType.USER_MESSAGE),
+                payload={"message": "Read the document"},
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.AGENT_MESSAGE),
+                payload={
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-read",
+                            "name": "read_context",
+                            "arguments": {"path": "/knowledge/source.md"},
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                event_type=str(EventType.TOOL_RESULT),
+                payload={
+                    "tool_id": "call-read",
+                    "tool_name": "read_context",
+                    "result": {
+                        "data": {
+                            "path": "/knowledge/source.md",
+                            "content": large_content,
+                            "glance": "Source document",
+                        }
+                    },
+                },
+            ),
+        ],
+        tool_result_max_chars=96,
+    )
+
+    payload = json.loads(messages[2].content)
+    data = payload["data"]
+    assert data["content_history_replay_compacted"] is True
+    assert data["content_original_chars"] == len(large_content)
+    assert data["path"] == "/knowledge/source.md"
+    assert len(data["content"]) < 260
+    assert large_content not in messages[2].content
+
+
 def test_unresolved_tool_call_ids_tracks_parallel_tool_results():
     raw_events = [
         SimpleNamespace(

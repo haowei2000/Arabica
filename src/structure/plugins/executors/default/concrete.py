@@ -37,6 +37,7 @@ Streaming event map:
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+import hashlib
 import json
 import logging
 import re
@@ -237,6 +238,105 @@ _THINK_TAG = "<think>"
 _THINK_TAG_LEN = len(_THINK_TAG)  # 7
 _THINK_CLOSE = "</think>"
 
+_DEFAULT_TOOL_ARGUMENT_REPLAY_MAX_CHARS = 1_200
+_DEFAULT_TOOL_RESULT_REPLAY_MAX_CHARS = 2_400
+_REPLAY_COMPACT_TEXT_FIELDS = frozenset(
+    {
+        "body",
+        "code",
+        "content",
+        "csv",
+        "data",
+        "document",
+        "html",
+        "json",
+        "markdown",
+        "output",
+        "result",
+        "text",
+    }
+)
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
+
+def _coerce_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _compact_large_replay_text(value: str, *, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    omitted = len(value) - max_chars
+    return (
+        value[:max_chars].rstrip()
+        + "\n\n"
+        + "[history replay compacted: "
+        + f"omitted_chars={omitted}; "
+        + f"original_chars={len(value)}; "
+        + f"sha256={digest}]"
+    )
+
+
+def _should_compact_replay_field(field_name: str | None, value: str) -> bool:
+    if not field_name:
+        return False
+    return field_name.lower() in _REPLAY_COMPACT_TEXT_FIELDS and bool(value)
+
+
+def _compact_replay_payload(value: Any, *, max_text_chars: int) -> Any:
+    """Shrink large tool payload text before sending history back to the LLM.
+
+    The persisted event payload stays unchanged.  This only affects replayed
+    ChatMessage content so long document/artifact bodies do not dominate the
+    next request while still leaving a preview and digest for reference.
+    """
+    if isinstance(value, dict):
+        compacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_str = str(key)
+            if isinstance(item, str) and _should_compact_replay_field(
+                key_str,
+                item,
+            ):
+                compacted[key] = _compact_large_replay_text(
+                    item,
+                    max_chars=max_text_chars,
+                )
+                if len(item) > max_text_chars:
+                    digest = hashlib.sha256(item.encode("utf-8")).hexdigest()[:16]
+                    compacted[f"{key_str}_history_replay_compacted"] = True
+                    compacted[f"{key_str}_original_chars"] = len(item)
+                    compacted[f"{key_str}_sha256"] = digest
+                continue
+            compacted[key] = _compact_replay_payload(
+                item,
+                max_text_chars=max_text_chars,
+            )
+        return compacted
+
+    if isinstance(value, list):
+        return [
+            _compact_replay_payload(item, max_text_chars=max_text_chars)
+            for item in value
+        ]
+
+    return value
+
 
 def _strip_orphaned_tool_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
     """Fix malformed tool call sequences in both directions.
@@ -319,7 +419,13 @@ def _unresolved_tool_call_ids(raw_events: list[Event]) -> set[str]:
     return unresolved
 
 
-def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
+def _events_to_messages(
+    raw_events: list[Event],
+    *,
+    compact_replay: bool = True,
+    tool_argument_max_chars: int = _DEFAULT_TOOL_ARGUMENT_REPLAY_MAX_CHARS,
+    tool_result_max_chars: int = _DEFAULT_TOOL_RESULT_REPLAY_MAX_CHARS,
+) -> list[ChatMessage]:
     """Convert raw event dicts to a full LLM-ready ChatMessage list.
 
     Mapping rules (FunctionCallingStrategy — native tool_calls / tool roles):
@@ -369,7 +475,14 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
                         ToolCallRequest(
                             id=assigned_id,
                             name=tc["name"],
-                            arguments=tc.get("arguments", {}),
+                            arguments=(
+                                _compact_replay_payload(
+                                    tc.get("arguments", {}),
+                                    max_text_chars=tool_argument_max_chars,
+                                )
+                                if compact_replay
+                                else tc.get("arguments", {})
+                            ),
                         )
                     )
                     # Map original stored id AND tool name → assigned id
@@ -400,6 +513,11 @@ def _events_to_messages(raw_events: list[Event]) -> list[ChatMessage]:
                 last_tc_id_map.get(raw_id) or last_tc_id_map.get(tool_name) or raw_id
             )
             result_data = payload.get("result")
+            if compact_replay:
+                result_data = _compact_replay_payload(
+                    result_data,
+                    max_text_chars=tool_result_max_chars,
+                )
             result_str = json.dumps(result_data, ensure_ascii=False, default=str)
             messages.append(
                 ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id)
@@ -743,6 +861,18 @@ class DefaultExecutor(Executor):
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")
+        self.compact_history_replay = _coerce_bool(
+            config.get("compact_history_replay"),
+            True,
+        )
+        self.history_tool_argument_max_chars = _coerce_positive_int(
+            config.get("history_tool_argument_max_chars"),
+            _DEFAULT_TOOL_ARGUMENT_REPLAY_MAX_CHARS,
+        )
+        self.history_tool_result_max_chars = _coerce_positive_int(
+            config.get("history_tool_result_max_chars"),
+            _DEFAULT_TOOL_RESULT_REPLAY_MAX_CHARS,
+        )
         self._model_request_options = _normalise_model_request_options(config)
         self.bootstrap_tool_names = config.get(
             "bootstrap_tool_names",
@@ -849,6 +979,14 @@ class DefaultExecutor(Executor):
             if messages[idx].role == "user":
                 return [*messages[:idx], runtime_msg, *messages[idx:]]
         return [*messages, runtime_msg]
+
+    def _events_to_messages(self, raw_events: list[Event]) -> list[ChatMessage]:
+        return _events_to_messages(
+            raw_events,
+            compact_replay=self.compact_history_replay,
+            tool_argument_max_chars=self.history_tool_argument_max_chars,
+            tool_result_max_chars=self.history_tool_result_max_chars,
+        )
 
     # ── abstract method ───────────────────────────────────────────
 
@@ -1001,7 +1139,7 @@ class DefaultExecutor(Executor):
         messages: list[ChatMessage] = [
             ChatMessage(role="system", content=self.system_prompt)
         ]
-        messages.extend(_events_to_messages(conv_events))
+        messages.extend(self._events_to_messages(conv_events))
         messages = self._insert_runtime_context(messages)
         return messages, tools_info
 
@@ -1044,7 +1182,7 @@ class DefaultExecutor(Executor):
             )
             for content in key_contents
         )
-        messages.extend(_events_to_messages(conv_events))
+        messages.extend(self._events_to_messages(conv_events))
         messages = self._insert_runtime_context(messages)
         return messages, tools_info
 

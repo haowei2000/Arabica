@@ -18,6 +18,7 @@ from structure.core.enums import EventType
 
 DEFAULT_EVENT_GC_STRATEGY = "event_count_ttl"
 CONTEXT_BATCH_GC_STRATEGY = "context_batch_load"
+AGGRESSIVE_ACTIVE_MEMORY_GC_STRATEGY = "aggressive_active_memory"
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,54 @@ DEFAULT_DECAY_RULES: dict[str, dict[str, int]] = {
         str(EventType.TOOL_ERROR): 3,
     },
     str(EventType.USING_CONTEXT): {"*": 2},
+}
+
+
+AGGRESSIVE_ACTIVE_MEMORY_CONFIG: dict[str, Any] = {
+    "default_ttl_events": 4,
+    "ttl_overrides": {
+        str(EventType.AGENT_TOKEN): {"ttl_events": 0},
+        str(EventType.AGENT_HEARTBEAT): {"ttl_events": 0},
+        str(EventType.AGENT_THINKING): {"ttl_events": 0},
+        str(EventType.AGENT_PLAN_STEP): {"ttl_events": 1},
+        str(EventType.AGENT_QUERY): {"ttl_events": 1},
+        str(EventType.TOOL_PENDING): {"ttl_events": 0},
+        str(EventType.TOOL_CLIENT_REQUEST): {"ttl_events": 1},
+        str(EventType.TOOL_CALL): {"ttl_events": 1},
+        str(EventType.TOOL_RESULT): {"ttl_events": 1},
+        str(EventType.TOOL_ERROR): {"ttl_events": 4},
+        str(EventType.USING_CONTEXT): {"ttl_events": 0},
+        str(EventType.CONTEXT_RATED): {"ttl_events": 2},
+        str(EventType.RUN_STATE_CHANGE): {"ttl_events": 2},
+        str(EventType.TASK_CREATE): {"ttl_events": 4},
+        str(EventType.TASK_UPDATE): {"ttl_events": 3},
+        str(EventType.TASK_DELETE): {"ttl_events": 3},
+        str(EventType.TASK_ASSIGN): {"ttl_events": 3},
+        str(EventType.SYSTEM_NOTIFICATION): {"ttl_events": 2},
+    },
+    "decay_rules": {
+        str(EventType.AGENT_TOKEN): {"*": 8},
+        str(EventType.AGENT_HEARTBEAT): {"*": 8},
+        str(EventType.AGENT_THINKING): {
+            "*": 2,
+            str(EventType.AGENT_MESSAGE): 4,
+            str(EventType.TOOL_CALL): 3,
+        },
+        str(EventType.TOOL_CALL): {
+            str(EventType.TOOL_RESULT): 5,
+            str(EventType.TOOL_ERROR): 5,
+        },
+        str(EventType.TOOL_PENDING): {
+            str(EventType.TOOL_RESULT): 5,
+            str(EventType.TOOL_ERROR): 5,
+        },
+        str(EventType.TOOL_RESULT): {
+            str(EventType.AGENT_MESSAGE): 2,
+            str(EventType.USER_MESSAGE): 2,
+        },
+        str(EventType.USING_CONTEXT): {"*": 3},
+        str(EventType.RUN_STATE_CHANGE): {"*": 2},
+    },
 }
 
 
@@ -184,6 +233,29 @@ def _merge_decay_rules(config: Mapping[str, Any]) -> dict[str, dict[str, int]]:
         merged.setdefault(old_key, {})
         for newer_event_type, cost in dict(rules).items():
             merged[old_key][str(newer_event_type)] = max(0, int(cost))
+    return merged
+
+
+def _deep_merge_config(
+    base: Mapping[str, Any],
+    override: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(base)
+    for key, value in (override or {}).items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            nested = dict(current)
+            for nested_key, nested_value in value.items():
+                existing = nested.get(nested_key)
+                if isinstance(existing, Mapping) and isinstance(nested_value, Mapping):
+                    leaf = dict(existing)
+                    leaf.update(dict(nested_value))
+                    nested[nested_key] = leaf
+                else:
+                    nested[nested_key] = nested_value
+            merged[key] = nested
+        else:
+            merged[key] = value
     return merged
 
 
@@ -309,6 +381,31 @@ class EventCountTTLStrategy:
 
 
 @register_event_gc_strategy
+class AggressiveActiveMemoryGCStrategy:
+    """Lower-retention preset for runs that prioritize prompt-token economy."""
+
+    name: ClassVar[str] = AGGRESSIVE_ACTIVE_MEMORY_GC_STRATEGY
+
+    def select_candidates(
+        self,
+        events: Sequence[_EventLike],
+        *,
+        scope: str,
+        config: Mapping[str, Any] | None = None,
+    ) -> list[_EventLike]:
+        merged_config = _deep_merge_config(AGGRESSIVE_ACTIVE_MEMORY_CONFIG, config)
+        merged_config.setdefault(
+            "keep_last_floor",
+            120 if scope == "workspace" else 30,
+        )
+        return EventCountTTLStrategy().select_candidates(
+            events,
+            scope=scope,
+            config=merged_config,
+        )
+
+
+@register_event_gc_strategy
 class BatchAwareEventGCStrategy:
     """Archive complete batches whose load state no longer needs full events."""
 
@@ -391,10 +488,13 @@ class EventGarbageCollector:
 
 
 __all__ = [
+    "AGGRESSIVE_ACTIVE_MEMORY_CONFIG",
+    "AGGRESSIVE_ACTIVE_MEMORY_GC_STRATEGY",
     "CONTEXT_BATCH_GC_STRATEGY",
     "DEFAULT_DECAY_RULES",
     "DEFAULT_EVENT_GC_STRATEGY",
     "DEFAULT_POLICY",
+    "AggressiveActiveMemoryGCStrategy",
     "BatchAwareEventGCStrategy",
     "EventCountTTLStrategy",
     "EventGCStrategy",
