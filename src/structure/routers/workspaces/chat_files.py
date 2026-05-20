@@ -179,20 +179,6 @@ async def upload_chat_files(
         )
         file_hash = await asyncio.to_thread(_stream_sha256, upload_file.file)
 
-        upload_file.file.seek(0)
-        await asyncio.to_thread(
-            storage.put_file,
-            key=object_key,
-            file=upload_file.file,
-            content_type=content_type,
-            metadata={
-                "workspace_id": workspace_id,
-                "context_id": str(context_id),
-                "original_name": original_name,
-                "sha256": file_hash,
-            },
-        )
-
         content: str | None = None
         parse_status = "skipped"
         parse_error: str | None = None
@@ -217,6 +203,20 @@ async def upload_chat_files(
                     workspace_id,
                     exc,
                 )
+
+        upload_file.file.seek(0)
+        await asyncio.to_thread(
+            storage.put_file,
+            key=object_key,
+            file=upload_file.file,
+            content_type=content_type,
+            metadata={
+                "workspace_id": workspace_id,
+                "context_id": str(context_id),
+                "original_name": original_name,
+                "sha256": file_hash,
+            },
+        )
 
         path = f"/chat/uploads/{context_id}/{original_name}"
         now = datetime.now(UTC)

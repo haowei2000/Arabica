@@ -13,8 +13,10 @@ from structure.services.events.event_archive import (
     select_archive_candidates,
 )
 from structure.services.events.event_gc import (
+    AGGRESSIVE_ACTIVE_MEMORY_GC_STRATEGY,
     CONTEXT_BATCH_GC_STRATEGY,
     DEFAULT_EVENT_GC_STRATEGY,
+    AggressiveActiveMemoryGCStrategy,
     BatchAwareEventGCStrategy,
     EventCountTTLStrategy,
     EventGCStrategyRegistry,
@@ -180,6 +182,39 @@ def test_event_gc_strategy_registry_accepts_plugins():
 def test_event_gc_strategy_registry_reports_unknown_strategy():
     with pytest.raises(ValueError, match="Unknown event GC strategy"):
         EventGCStrategyRegistry.get("missing_event_gc_strategy")
+
+
+def test_aggressive_active_memory_gc_expires_tool_results_earlier():
+    events = [
+        _event(EventType.TOOL_RESULT, 1),
+        _event(EventType.USER_MESSAGE, 2),
+    ]
+
+    default_candidates = EventArchiveService.select_candidates(
+        events,
+        scope="run",
+        strategy=DEFAULT_EVENT_GC_STRATEGY,
+        strategy_config={},
+        keep_last=0,
+        include_pinned=False,
+        event_types=None,
+    )
+    aggressive_candidates = EventArchiveService.select_candidates(
+        events,
+        scope="run",
+        strategy=AGGRESSIVE_ACTIVE_MEMORY_GC_STRATEGY,
+        strategy_config={},
+        keep_last=0,
+        include_pinned=False,
+        event_types=None,
+    )
+
+    assert isinstance(
+        EventGCStrategyRegistry.get(AGGRESSIVE_ACTIVE_MEMORY_GC_STRATEGY),
+        AggressiveActiveMemoryGCStrategy,
+    )
+    assert default_candidates == []
+    assert [event.sequence for event in aggressive_candidates] == [1]
 
 
 def test_batch_aware_event_gc_archives_whole_load_key_batches():

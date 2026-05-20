@@ -82,6 +82,7 @@ class MemoryStorage:
 
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, str | None, dict | None]] = {}
+        self.close_after_put = False
 
     def put_bytes(
         self,
@@ -112,6 +113,8 @@ class MemoryStorage:
         file.seek(0)
         self.objects[key] = (file.read(), content_type, metadata)
         file.seek(position)
+        if self.close_after_put:
+            file.close()
         return self.stat(key)
 
     def get_bytes(self, key: str) -> bytes:
@@ -348,3 +351,30 @@ async def test_chat_file_upload_context_read_and_download_round_trip(
     assert download_resp.status_code == 200
     assert download_resp.content == file_bytes
     assert download_resp.headers["content-type"].startswith("text/plain")
+
+
+async def test_chat_file_upload_parses_before_storage_closes_stream(
+    chat_file_client: tuple[httpx.AsyncClient, MemoryStorage, UUID, UUID],
+    chat_file_sessionmaker: async_sessionmaker[AsyncSession],
+):
+    client, storage, _user_id, workspace_id = chat_file_client
+    storage.close_after_put = True
+    file_bytes = b"stream closes after upload\ncontent must already be parsed"
+
+    upload_resp = await client.post(
+        f"/api/workspaces/{workspace_id}/chat-files",
+        files=[("files[]", ("closing-storage-note.txt", file_bytes, "text/plain"))],
+    )
+
+    assert upload_resp.status_code == 201
+    uploaded = upload_resp.json()["items"][0]
+    assert uploaded["parse_status"] == "parsed"
+
+    async with chat_file_sessionmaker() as session:
+        row = await session.scalar(
+            select(WorkspaceContext).where(WorkspaceContext.id == UUID(uploaded["id"]))
+        )
+        assert row is not None
+        assert row.content is not None
+        assert "content must already be parsed" in row.content
+        assert row.meta["parse_error"] is None

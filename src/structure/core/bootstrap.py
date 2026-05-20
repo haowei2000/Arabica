@@ -631,7 +631,8 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
     """
     MCP service initialization configuration
 
-    Needs database for tool discovery and Redis for cache-backed inner tools.
+    Needs database for tool discovery, Redis for cache-backed inner tools,
+    and storage for artifact/file tools exposed through MCP.
     """
     return BootstrapConfig(
         init_logging=True,
@@ -640,7 +641,7 @@ def get_mcp_bootstrap_config() -> BootstrapConfig:
         create_tables=False,
         create_admin_user=False,
         init_registries=True,  # Need registries to discover tools
-        init_storage=False,
+        init_storage=True,
     )
 
 

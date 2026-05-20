@@ -16,11 +16,15 @@ from openai import AsyncOpenAI
 
 from structure.frameworks.tool_calling.models import (
     ChatMessage,
+    LLMReasoningChunk,
     LLMResponse,
     ToolCallRequest,
 )
 from structure.frameworks.tool_calling.prompt_template import build_tools_system_prompt
-from structure.frameworks.tool_calling.strategy import ToolCallingStrategy
+from structure.frameworks.tool_calling.strategy import (
+    ToolCallingStrategy,
+    apply_openai_request_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -334,15 +338,19 @@ class PromptCallingStrategy(ToolCallingStrategy):
         model: str,
         api_key: str,
         base_url: str,
+        request_options: dict[str, Any] | None = None,
     ) -> LLMResponse:
         client = self._build_client(api_key, base_url)
         api_messages = self._inject_tools_prompt(messages, tools_info or "")
 
-        response = await client.chat.completions.create(
-            model=model, messages=api_messages
-        )
+        kwargs: dict[str, Any] = {"model": model, "messages": api_messages}
+        apply_openai_request_options(kwargs, request_options)
+
+        response = await client.chat.completions.create(**kwargs)
         choice = response.choices[0]
-        raw_content = choice.message.content or ""
+        msg = choice.message
+        raw_content = msg.content or ""
+        reasoning_content = getattr(msg, "reasoning_content", None)
 
         tool_calls = _parse_tool_calls_from_text(raw_content)
         clean_content = (
@@ -353,6 +361,7 @@ class PromptCallingStrategy(ToolCallingStrategy):
         return LLMResponse(
             content=clean_content,
             tool_calls=tool_calls,
+            reasoning_content=reasoning_content,
             raw=response,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
@@ -369,19 +378,24 @@ class PromptCallingStrategy(ToolCallingStrategy):
         api_key: str,
         base_url: str,
         client: AsyncOpenAI | None = None,
-    ) -> AsyncGenerator[str | LLMResponse, None]:
+        request_options: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[str | LLMReasoningChunk | LLMResponse, None]:
         if client is None:
             client = self._build_client(api_key, base_url)
         api_messages = self._inject_tools_prompt(messages, tools_info or "")
 
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=api_messages,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": api_messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        apply_openai_request_options(kwargs, request_options)
+
+        stream = await client.chat.completions.create(**kwargs)
 
         full_content = ""
+        reasoning_buf = ""
         # Buffer for detecting <tool_call> tags at the end of the stream.
         # We hold back text once we see a potential opening '<'.
         hold_buf = ""
@@ -399,7 +413,13 @@ class PromptCallingStrategy(ToolCallingStrategy):
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
-            token = delta.content or ""
+
+            reasoning_content = getattr(delta, "reasoning_content", None)
+            if reasoning_content:
+                reasoning_buf += reasoning_content
+                yield LLMReasoningChunk(reasoning_content)
+
+            token = getattr(delta, "content", None) or ""
             if not token:
                 continue
 
@@ -466,6 +486,7 @@ class PromptCallingStrategy(ToolCallingStrategy):
         yield LLMResponse(
             content=clean_content,
             tool_calls=tool_calls,
+            reasoning_content=reasoning_buf or None,
             raw=None,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

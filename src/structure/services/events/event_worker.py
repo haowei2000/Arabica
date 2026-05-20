@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from structure.config.factory import get_settings
 from structure.core.enums import EventType
+from structure.core.enums.runs import RunStatus
 from structure.core.interfaces.protocols import ExecutorProtocol
 from structure.extensions.database import get_session
 from structure.models.app import App
@@ -71,6 +72,15 @@ logger = logging.getLogger(__name__)
 _redis_cfg = get_settings().redis
 REDIS_RUN_LABEL = _redis_cfg.run_label
 REDIS_RUN_RESUME_APPROVAL_SUFFIX = _redis_cfg.run_resume_approval_suffix
+_TERMINAL_RUN_STATUSES = {
+    RunStatus.FINISHED.value,
+    RunStatus.FAILED.value,
+    RunStatus.CANCELLED.value,
+}
+
+
+def _is_terminal_run_status(status: object) -> bool:
+    return str(status) in _TERMINAL_RUN_STATUSES
 
 
 @dataclass(slots=True)
@@ -577,6 +587,12 @@ class Worker:
                         app_config["api_key"] = chat_model.api_key_ref
                     if chat_model.base_url:
                         app_config["base_url"] = chat_model.base_url
+                    if isinstance(chat_model.config, dict) and chat_model.config:
+                        existing_options = app_config.get("model_request_options")
+                        model_request_options = dict(chat_model.config)
+                        if isinstance(existing_options, dict):
+                            model_request_options.update(existing_options)
+                        app_config["model_request_options"] = model_request_options
                     logger.info(
                         "_create_executor_for_run: using ChatModel '%s' (%s/%s) for run %s",
                         chat_model.name,
@@ -631,8 +647,6 @@ class Worker:
         self, event: Event, ctx: _Ctx, run_events: list[Event]
     ) -> None:
         """Route events using an explicit durable run snapshot."""
-        ctx.db.expire_all()
-
         try:
             event_type = str(event.event_type)
             if event_type == str(EventType.RUN_CANCELLED):
@@ -791,6 +805,49 @@ class Worker:
         if not run_id:
             return
         run_id_uuid = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
+        run_id_str = str(run_id_uuid)
+
+        lock = self._executor_locks.setdefault(run_id_uuid, asyncio.Lock())
+        cleanup_lock = False
+
+        try:
+            async with lock:
+                cleanup_lock_ref = {"value": False}
+                await self._handle_to_executor_locked(
+                    envelope,
+                    workspace_events,
+                    ctx,
+                    run_id_uuid,
+                    run_id_str,
+                    cleanup_lock_ref,
+                )
+                cleanup_lock = cleanup_lock_ref["value"]
+        finally:
+            if cleanup_lock and self._executor_locks.get(run_id_uuid) is lock:
+                self._executor_locks.pop(run_id_uuid, None)
+
+    async def _handle_to_executor_locked(
+        self,
+        envelope: Event,
+        workspace_events: list[Event],
+        ctx: _Ctx,
+        run_id_uuid: UUID,
+        run_id_str: str,
+        cleanup_lock_ref: dict[str, bool],
+    ) -> None:
+        """Forward a run while the per-run executor lock is held."""
+        run_status = await self._load_run_status(ctx.db, run_id_str)
+        if _is_terminal_run_status(run_status):
+            logger.info(
+                "_handle_to_executor: run %s already terminal (%s), skipping",
+                run_id_uuid,
+                run_status,
+            )
+            self._run_tool_callers.pop(run_id_str, None)
+            self.runtime.release(run_id_uuid)
+            ctx.publisher.release_sequence_counter(run_id_str)
+            cleanup_lock_ref["value"] = True
+            return
 
         # Forward all events to the executor — it will filter based on global_event config.
         # We still strip TO_EXECUTOR routing events to avoid noise.
@@ -810,6 +867,7 @@ class Worker:
             envelope, events, ctx
         )
         if run_id is None:
+            cleanup_lock_ref["value"] = True
             return
 
         if not has_pending_tools:
@@ -875,13 +933,21 @@ class Worker:
                 )
 
             # ── Finalize run ─────────────────────────────────────────────────
-            logger.info("_handle_to_executor: completing run %s", run_id)
-            try:
-                await ctx.state_machine.complete(run_id, auto_commit=True)
-            except Exception as complete_err:
-                logger.error(f"Failed to complete run {run_id}: {complete_err}")
+            run_status = await self._load_run_status(ctx.db, run_id_str)
+            if not _is_terminal_run_status(run_status):
+                logger.info("_handle_to_executor: completing run %s", run_id)
+                try:
+                    await ctx.state_machine.complete(run_id, auto_commit=True)
+                except Exception as complete_err:
+                    logger.error(f"Failed to complete run {run_id}: {complete_err}")
+            else:
+                logger.info(
+                    "_handle_to_executor: run %s already terminal (%s), not completing",
+                    run_id,
+                    run_status,
+                )
 
-            self._executor_locks.pop(run_id, None)
+            cleanup_lock_ref["value"] = True
             self._run_tool_callers.pop(run_id_str, None)
             self.runtime.release(run_id)
             ctx.publisher.release_sequence_counter(run_id_str)
@@ -920,27 +986,23 @@ class Worker:
         run_id_str = str(run_id)
         workspace_id = str(envelope.workspace_id)
 
-        if run_id not in self._executor_locks:
-            self._executor_locks[run_id] = asyncio.Lock()
-
         run_done = False
-        async with self._executor_locks[run_id]:
-            logger.info(
-                "_forward_to_executor: starting process_events for run %s (%d events)",
-                run_id,
-                len(events),
-            )
-            async for output_event in executor.process_events(events):
-                if str(output_event.event_type) == EventType.RUN_COMPLETED:
-                    # Internal completion signal from the executor — not published.
-                    run_done = True
-                    continue
-                await self._publish_event(output_event, run_id, workspace_id, ctx)
-            logger.info(
-                "_forward_to_executor: process_events complete for run %s (done=%s)",
-                run_id,
-                run_done,
-            )
+        logger.info(
+            "_forward_to_executor: starting process_events for run %s (%d events)",
+            run_id,
+            len(events),
+        )
+        async for output_event in executor.process_events(events):
+            if str(output_event.event_type) == EventType.RUN_COMPLETED:
+                # Internal completion signal from the executor — not published.
+                run_done = True
+                continue
+            await self._publish_event(output_event, run_id, workspace_id, ctx)
+        logger.info(
+            "_forward_to_executor: process_events complete for run %s (done=%s)",
+            run_id,
+            run_done,
+        )
 
         has_pending_tools = not run_done
         return run_id, run_id_str, has_pending_tools
