@@ -9,7 +9,6 @@ from structure.schemas.llm.chat_llm import ChatLLM
 
 _SYSTEM_PROMPT = """\
 You are an expert AI assistant capable of complex, multi-step problem solving.
-workspace_id: {workspace_id}  run_id: {run_id}
 
 ## Resources
 - knowledge/  — reference documents and facts
@@ -45,7 +44,4 @@ class ComplexExecutor(DefaultExecutor):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.system_prompt = _SYSTEM_PROMPT.format(
-            workspace_id=self.workspace_id,
-            run_id=self.run_id,
-        )
+        self.system_prompt = _SYSTEM_PROMPT

@@ -61,7 +61,11 @@ async def test_streaming_reasoning_content_and_request_options_are_preserved():
         id="call-1",
         function=SimpleNamespace(name="search_context", arguments='{"query":"x"}'),
     )
-    usage = SimpleNamespace(prompt_tokens=11, completion_tokens=22)
+    usage = SimpleNamespace(
+        prompt_tokens=11,
+        completion_tokens=22,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=5),
+    )
     stream = _FakeAsyncStream(
         [
             _chunk(reasoning="I should search. "),
@@ -99,6 +103,7 @@ async def test_streaming_reasoning_content_and_request_options_are_preserved():
     assert response.reasoning_content == "I should search. "
     assert response.input_tokens == 11
     assert response.output_tokens == 22
+    assert response.cached_tokens == 5
     assert response.tool_calls[0].id == "call-1"
     assert response.tool_calls[0].name == "search_context"
     assert response.tool_calls[0].arguments == {"query": "x"}

@@ -65,6 +65,11 @@ from structure.schemas.app import AppConfig
 from structure.schemas.context.tools.execution import ReadContextResult
 from structure.schemas.events.event_payloads import EventType
 from structure.schemas.llm.chat_llm import ChatLLM
+from structure.services.llm import (
+    ContextBudgetManager,
+    TokenizerService,
+    stable_tools_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -882,6 +887,17 @@ class DefaultExecutor(Executor):
         # ── Dependency-injected abstractions ─────────────────────
         # ── LLM connection info ──────────────────────────────────
         self._api_key, self._base_url = self._resolve_llm_config()
+        self.tokenizer_service = config.get("tokenizer_service") or TokenizerService()
+        self.context_budget_manager = config.get(
+            "context_budget_manager"
+        ) or ContextBudgetManager(
+            model=self.model_name,
+            tokenizer=self.tokenizer_service,
+            context_window=config.get("context_window"),
+            reserved_output_tokens=config.get("reserved_output_tokens"),
+            max_input_tokens=config.get("max_input_tokens")
+            or config.get("token_budget_max_input"),
+        )
 
         # ── Tool calling strategy ────────────────────────────────
         # Default: OpenAI-compatible native function calling.
@@ -950,6 +966,13 @@ class DefaultExecutor(Executor):
         if tools_info is None:
             return bootstrap
         return self._merge_tools_info(bootstrap, tools_info)
+
+    def _prepare_llm_request(
+        self,
+        messages: list[ChatMessage],
+        active_tools_info: Any,
+    ):
+        return self.context_budget_manager.prepare(messages, active_tools_info)
 
     def _runtime_context_message(self) -> ChatMessage | None:
         """Return dynamic run metadata as a non-head message for prefix-cache stability."""
@@ -1462,7 +1485,7 @@ class DefaultExecutor(Executor):
         ``tools_info`` overrides ``self.tools_info`` when provided, allowing
         callers that parsed tool names from message XML to pass a filtered set.
         """
-        active_tools_info = self._resolve_active_tools_info(tools_info)
+        active_tools_info = stable_tools_info(self._resolve_active_tools_info(tools_info))
 
         # Emit a USING_CONTEXT event on the first iteration so the frontend
         # can display which tools are loaded into the LLM request.
@@ -1496,20 +1519,33 @@ class DefaultExecutor(Executor):
 
             # Snapshot the context makeup before the LLM call so we can
             # attribute input-token cost to its sources in the emitted event.
-            ctx_breakdown = None
+            budget_result = self._prepare_llm_request(messages, active_tools_info)
+            request_messages = budget_result.messages
+            request_tools_info = budget_result.tools_info
+            ctx_breakdown = budget_result.context_breakdown()
 
             # ── stream LLM response tokens ───────────────────────
             logger.info(
-                "_agentic_loop: run=%s iteration=%d calling LLM model=%s",
+                "_agentic_loop: run=%s iteration=%d calling LLM model=%s "
+                "estimated_input_tokens=%s token_budget=%s "
+                "token_count_cache_hit=%s prompt_prefix_hash=%s tools_hash=%s "
+                "trimmed_message_count=%s trim_reason=%s",
                 self.run_id,
                 _iteration,
                 self.model_name,
+                budget_result.estimated_input_tokens,
+                budget_result.token_budget,
+                budget_result.token_count_cache_hit,
+                budget_result.prompt_prefix_hash,
+                budget_result.tools_hash,
+                budget_result.trimmed_message_count,
+                budget_result.trim_reason,
             )
             llm_call_started = perf_counter()
             saw_first_token = False
             stream = self.strategy.call_llm_stream(
-                messages,
-                active_tools_info,
+                request_messages,
+                request_tools_info,
                 model=self.model_name,
                 api_key=self._api_key,
                 base_url=self._base_url,
@@ -1608,6 +1644,28 @@ class DefaultExecutor(Executor):
                 llm_response.input_tokens, llm_response.output_tokens
             )
             reasoning_content = llm_response.reasoning_content or reasoning_buf or None
+            ctx_breakdown.update(
+                {
+                    "actual_input_tokens": llm_response.input_tokens,
+                    "actual_output_tokens": llm_response.output_tokens,
+                    "cached_tokens": llm_response.cached_tokens,
+                }
+            )
+            logger.info(
+                "llm_usage run=%s workspace=%s model=%s "
+                "estimated_input_tokens=%s actual_input_tokens=%s "
+                "actual_output_tokens=%s cached_tokens=%s "
+                "prompt_prefix_hash=%s tools_hash=%s",
+                self.run_id,
+                self.workspace_id,
+                self.model_name,
+                budget_result.estimated_input_tokens,
+                llm_response.input_tokens,
+                llm_response.output_tokens,
+                llm_response.cached_tokens,
+                budget_result.prompt_prefix_hash,
+                budget_result.tools_hash,
+            )
 
             ai_message = ChatMessage(
                 role="assistant",

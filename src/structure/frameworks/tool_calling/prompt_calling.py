@@ -28,6 +28,29 @@ from structure.frameworks.tool_calling.strategy import (
 
 logger = logging.getLogger(__name__)
 
+
+def _tool_class_name(tool_class: type) -> str:
+    metadata = getattr(tool_class, "METADATA", None)
+    return str(getattr(metadata, "name", None) or getattr(tool_class, "name", ""))
+
+
+def _cached_tokens_from_usage(usage: Any) -> int:
+    if usage is None:
+        return 0
+    details = getattr(usage, "prompt_tokens_details", None) or getattr(
+        usage, "input_tokens_details", None
+    )
+    if details is None:
+        return 0
+    if isinstance(details, dict):
+        return int(details.get("cached_tokens") or details.get("cache_read") or 0)
+    return int(
+        getattr(details, "cached_tokens", None)
+        or getattr(details, "cache_read", None)
+        or 0
+    )
+
+
 # Primary: <tool_call>...</tool_call> blocks (the only accepted format).
 _TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*(.*?)\s*</tool_call>",
@@ -288,7 +311,7 @@ class PromptCallingStrategy(ToolCallingStrategy):
         """Return a text block describing all tools for the system prompt."""
         if not tool_classes:
             return ""
-        return build_tools_system_prompt(tool_classes)
+        return build_tools_system_prompt(sorted(tool_classes, key=_tool_class_name))
 
     # -- helpers -------------------------------------------------------------
 
@@ -365,6 +388,7 @@ class PromptCallingStrategy(ToolCallingStrategy):
             raw=response,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
+            cached_tokens=_cached_tokens_from_usage(usage),
         )
 
     # -- call_llm_stream (streaming) ----------------------------------------
@@ -403,12 +427,14 @@ class PromptCallingStrategy(ToolCallingStrategy):
         in_tool_block = False
         input_tokens: int = 0
         output_tokens: int = 0
+        cached_tokens: int = 0
 
         async for chunk in stream:
             # Usage arrives in the final chunk (choices may be empty).
             if chunk.usage:
                 input_tokens = chunk.usage.prompt_tokens or 0
                 output_tokens = chunk.usage.completion_tokens or 0
+                cached_tokens = _cached_tokens_from_usage(chunk.usage)
 
             if not chunk.choices:
                 continue
@@ -490,4 +516,5 @@ class PromptCallingStrategy(ToolCallingStrategy):
             raw=None,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
         )

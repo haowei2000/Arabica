@@ -26,6 +26,28 @@ from structure.frameworks.tool_calling.strategy import (
 logger = logging.getLogger(__name__)
 
 
+def _tool_class_name(tool_class: type) -> str:
+    metadata = getattr(tool_class, "METADATA", None)
+    return str(getattr(metadata, "name", None) or getattr(tool_class, "name", ""))
+
+
+def _cached_tokens_from_usage(usage: Any) -> int:
+    if usage is None:
+        return 0
+    details = getattr(usage, "prompt_tokens_details", None) or getattr(
+        usage, "input_tokens_details", None
+    )
+    if details is None:
+        return 0
+    if isinstance(details, dict):
+        return int(details.get("cached_tokens") or details.get("cache_read") or 0)
+    return int(
+        getattr(details, "cached_tokens", None)
+        or getattr(details, "cache_read", None)
+        or 0
+    )
+
+
 class FunctionCallingStrategy(ToolCallingStrategy):
     """Uses the OpenAI ``tools`` parameter for native function calling."""
 
@@ -38,7 +60,7 @@ class FunctionCallingStrategy(ToolCallingStrategy):
         correct ``{"type": "function", "function": {...}}`` format.
         """
         schemas: list[dict[str, Any]] = []
-        for tc in tool_classes:
+        for tc in sorted(tool_classes, key=_tool_class_name):
             try:
                 schemas.append(tc.get_json_schema())
             except Exception:
@@ -117,6 +139,7 @@ class FunctionCallingStrategy(ToolCallingStrategy):
             raw=response,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
+            cached_tokens=_cached_tokens_from_usage(usage),
         )
 
     # -- call_llm_stream (streaming) ----------------------------------------
@@ -154,12 +177,14 @@ class FunctionCallingStrategy(ToolCallingStrategy):
         tc_buffers: dict[int, dict[str, Any]] = {}
         input_tokens: int = 0
         output_tokens: int = 0
+        cached_tokens: int = 0
 
         async for chunk in stream:
             # Usage arrives in the final chunk (choices may be empty).
             if chunk.usage:
                 input_tokens = chunk.usage.prompt_tokens or 0
                 output_tokens = chunk.usage.completion_tokens or 0
+                cached_tokens = _cached_tokens_from_usage(chunk.usage)
 
             if not chunk.choices:
                 continue
@@ -221,4 +246,5 @@ class FunctionCallingStrategy(ToolCallingStrategy):
             raw=None,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
         )
