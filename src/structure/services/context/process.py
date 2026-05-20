@@ -63,12 +63,7 @@ async def copy_contexts_to_workspace(
     new_entries: list[WorkspaceContext] = []
 
     for ctx in contexts:
-        # Build the virtual path
-        target_path = ctx.path
-        if path_prefix and target_path:
-            target_path = f"{path_prefix.rstrip('/')}/{target_path.lstrip('/')}"
-        elif path_prefix:
-            target_path = path_prefix
+        target_path = _join_path_prefix(path_prefix, ctx.path)
 
         # Preserve source metadata that doesn't map 1:1
         source_meta: dict = {
@@ -183,6 +178,26 @@ def _derive_name(ctx: Context) -> str:
         return first_line[:120] if first_line else f"context-{ctx.id}"
 
     return f"context-{ctx.id}"
+
+
+def _join_path_prefix(path_prefix: str | None, source_path: str | None) -> str | None:
+    """Join a workspace path prefix without duplicating overlapping segments."""
+    if not path_prefix:
+        return source_path
+
+    prefix_parts = [part for part in path_prefix.strip("/").split("/") if part]
+    source_parts = [part for part in (source_path or "").strip("/").split("/") if part]
+
+    if not prefix_parts:
+        return f"/{'/'.join(source_parts)}" if source_parts else None
+    if not source_parts:
+        return f"/{'/'.join(prefix_parts)}"
+    if source_parts[: len(prefix_parts)] == prefix_parts:
+        return f"/{'/'.join(source_parts)}"
+    if source_parts[0] == prefix_parts[-1]:
+        source_parts = source_parts[1:]
+
+    return f"/{'/'.join([*prefix_parts, *source_parts])}"
 
 
 def _guess_content_type(ctx: Context) -> str | None:

@@ -15,7 +15,9 @@ Experiments section compares.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
+
+EvidenceStatus = Literal["pass", "fail", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,9 @@ class CostLedger:
 
     tokens_prompt: int = 0
     tokens_completion: int = 0
+    tokens_cached: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
     steps: int = 0
     tool_calls: int = 0
     latency_seconds: float = 0.0
@@ -66,11 +71,31 @@ class CostLedger:
         return CostLedger(
             tokens_prompt=self.tokens_prompt + other.tokens_prompt,
             tokens_completion=self.tokens_completion + other.tokens_completion,
+            tokens_cached=self.tokens_cached + other.tokens_cached,
+            cache_creation_tokens=self.cache_creation_tokens
+            + other.cache_creation_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             steps=self.steps + other.steps,
             tool_calls=self.tool_calls + other.tool_calls,
             latency_seconds=self.latency_seconds + other.latency_seconds,
             usd_cost=self.usd_cost + other.usd_cost,
         )
+
+
+@dataclass(frozen=True)
+class EvidenceRecord:
+    """Optional audit metadata for benchmark results.
+
+    Interactive agent benchmarks often need more than a scalar score:
+    downstream readers need to know whether the score is backed by
+    artifacts, whether the evidence is missing, and whether the score
+    should be treated as a bound rather than a point estimate.
+    """
+
+    status: EvidenceStatus
+    artifacts: tuple[str, ...] = ()
+    notes: str | None = None
+    score_bounds: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +105,7 @@ class BenchmarkResult:
     task_id: str
     response: Any
     cost: CostLedger
+    evidence: EvidenceRecord | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

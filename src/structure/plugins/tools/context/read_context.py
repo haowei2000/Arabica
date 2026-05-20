@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from structure.core.interfaces.tool import (
     InnerTool,
@@ -22,9 +22,20 @@ class ReadContextTool(InnerTool):
 
     class InputSchema(ToolInputSchema):
         workspace_id: str = Field(description="Workspace ID")
-        path: str = Field(
-            description="Context path (e.g., 'tools/web_search' or 'knowledge/python_guide')"
+        path: str | None = Field(
+            default=None,
+            description="Context path (e.g., 'tools/web_search' or 'knowledge/python_guide')",
         )
+        paths: list[str] | None = Field(
+            default=None,
+            description="Optional multiple context paths to read in one call",
+        )
+
+        @model_validator(mode="after")
+        def validate_path_input(self) -> "ReadContextTool.InputSchema":
+            if self.path or self.paths:
+                return self
+            raise ValueError("Either path or paths is required")
 
     @staticmethod
     def _normalise_path(path: str) -> str:
@@ -118,45 +129,80 @@ class ReadContextTool(InnerTool):
 
         return None
 
+    async def _read_one(self, workspace_id, path: str) -> ToolOutputSchema:
+        from structure.services.context.client import context_service_client
+
+        db_result = await self._read_workspace_context(workspace_id, path)
+        if db_result is not None:
+            return db_result
+
+        ctx_data = await context_service_client.get_context(
+            workspace_id=workspace_id, path=path
+        )
+
+        if ctx_data is None:
+            return ToolOutputSchema(
+                success=False,
+                message=f"Context not found at path: {path}",
+                data={"path": path, "exists": False},
+            )
+
+        return ToolOutputSchema(
+            success=True,
+            message=f"Retrieved context: {path}",
+            data={
+                "path": path,
+                "content": ctx_data.get("content"),
+                "content_type": ctx_data.get("content_type"),
+                "glance": ctx_data.get("glance"),
+            },
+        )
+
     async def execute(self, input_data: InputSchema) -> ToolOutputSchema:
         from uuid import UUID
 
-        from structure.services.context.client import context_service_client
-
         try:
             workspace_id = UUID(input_data.workspace_id)
-            db_result = await self._read_workspace_context(
-                workspace_id, input_data.path
-            )
-            if db_result is not None:
-                return db_result
 
-            ctx_data = await context_service_client.get_context(
-                workspace_id=workspace_id, path=input_data.path
-            )
+            if input_data.paths:
+                items: list[dict[str, Any]] = []
+                messages: list[str] = []
+                success = True
+                for path in input_data.paths:
+                    result = await self._read_one(workspace_id, path)
+                    success = success and result.success
+                    messages.append(result.message or result.error or path)
+                    items.append(
+                        {
+                            "path": path,
+                            "success": result.success,
+                            "message": result.message,
+                            "error": result.error,
+                            "data": result.data,
+                        }
+                    )
 
-            if ctx_data is None:
+                content = "\n\n".join(
+                    f"## {item['path']}\n{((item.get('data') or {}).get('content') or '')}"
+                    for item in items
+                )
                 return ToolOutputSchema(
-                    success=False,
-                    message=f"Context not found at path: {input_data.path}",
-                    data={"path": input_data.path, "exists": False},
+                    success=success,
+                    message=f"Read {len(items)} context path(s)",
+                    data={
+                        "items": items,
+                        "content": content,
+                        "messages": messages,
+                    },
                 )
 
-            return ToolOutputSchema(
-                success=True,
-                message=f"Retrieved context: {input_data.path}",
-                data={
-                    "path": input_data.path,
-                    "content": ctx_data.get("content"),
-                    "content_type": ctx_data.get("content_type"),
-                    "glance": ctx_data.get("glance"),
-                },
-            )
+            return await self._read_one(workspace_id, input_data.path or "")
 
         except Exception as e:
+            path_data: str | list[str] | None = input_data.paths or input_data.path
             return ToolOutputSchema(
                 success=False,
                 message=f"Failed to read context: {e!s}",
                 error=str(e),
-                data={"path": input_data.path},
+                data={"path": path_data},
             )

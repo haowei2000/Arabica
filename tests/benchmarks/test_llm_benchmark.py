@@ -27,7 +27,11 @@ class _FakeCompletions:
             answer = "unknown"
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=answer))],
-            usage=SimpleNamespace(prompt_tokens=123, completion_tokens=4),
+            usage=SimpleNamespace(
+                prompt_tokens=123,
+                completion_tokens=4,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=12),
+            ),
         )
 
 
@@ -49,6 +53,10 @@ def test_llm_agent_can_run_with_fake_openai_compatible_client():
     assert result.response == "8"
     assert result.cost.tokens_prompt == 123
     assert result.cost.tokens_completion == 4
+    assert result.cost.tokens_cached == 12
+    assert result.cost.cache_read_tokens == 12
+    assert result.metadata["available_chunks"] >= result.metadata["selected_chunks"]
+    assert "available_context_tokens" in result.metadata
 
 
 @pytest.mark.unit

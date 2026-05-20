@@ -11,7 +11,7 @@ neither is available.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 import json
 import os
@@ -670,7 +670,7 @@ def _render_prompt(messages) -> str:
                     "content": message.content,
                     "tool_call_id": getattr(message, "tool_call_id", None),
                     "tool_calls": [
-                        call.model_dump(mode="json", exclude_none=True)
+                        _tool_call_to_dict(call)
                         for call in (getattr(message, "tool_calls", None) or [])
                     ],
                 },
@@ -680,6 +680,18 @@ def _render_prompt(messages) -> str:
             )
         )
     return "\n".join(rendered)
+
+
+def _tool_call_to_dict(call) -> dict:
+    if hasattr(call, "model_dump"):
+        return call.model_dump(mode="json", exclude_none=True)
+    if hasattr(call, "__dataclass_fields__"):
+        return asdict(call)
+    return {
+        "id": getattr(call, "id", None),
+        "name": getattr(call, "name", None),
+        "arguments": getattr(call, "arguments", {}),
+    }
 
 
 def _estimated_token_count(text: str) -> int:

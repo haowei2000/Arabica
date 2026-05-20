@@ -7,6 +7,7 @@ from benchmarks.core.types import (
     BenchmarkCase,
     BenchmarkResult,
     CostLedger,
+    EvidenceRecord,
 )
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "BenchmarkResult",
     "BenchmarkRunner",
     "CostLedger",
+    "EvidenceRecord",
     "aggregate",
 ]

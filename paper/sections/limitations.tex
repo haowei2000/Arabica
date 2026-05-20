@@ -44,7 +44,10 @@ maturing. Task success is often graded heuristically, token counts
 depend on tokenizer choice, and wall-clock latency reflects our
 specific infrastructure. We report all three anyway, and release
 configurations so that replications can recompute on their own
-tokenizers and hardware.
+tokenizers and hardware. The hot-research LongMemEval-V2 result is a
+fixture-level harness check rather than a full benchmark result; it
+should not be interpreted as evidence of improved full-dataset
+accuracy until the upstream split and evaluator are run.
 
 \paragraph{Rating signal is agent-generated.} Source ratings are
 produced by the same agent that consumes them, which introduces a
