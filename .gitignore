@@ -175,6 +175,7 @@ cython_debug/
 /frontend/test-results/
 /frontend/playwright-report/
 /logs/
+/.structure/
 /benchmark_runs/
 /benchmarks/data/
 /docker/*/data

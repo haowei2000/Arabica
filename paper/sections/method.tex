@@ -276,3 +276,36 @@ semantic-plus-prefix \texttt{query}, and \texttt{rate} for source
 evaluation. A per-worker in-memory cache,
 invalidated through a Redis dirty flag, reduces warm path lookups
 from roughly $500$\,ms to under $10$\,ms.
+
+To keep the paper claim aligned with the released implementation, the
+repository contains a canonical core manifest at
+\path{core/structure_core.json}. The manifest names the paper-level
+primitives above (path addressing, disclosure, audit events, source
+evaluation, event-level GC, and reproducible evidence) and maps each to
+the three operational surfaces used in the artifact: the service-backed
+web application, the local desktop workbench, and the scriptable
+CLI/TUI. The web application imports the manifest as a read-only
+contract while preserving its API-backed runtime; the desktop app and
+CLI/TUI consume the same manifest through the Rust local-core crate.
+The manifest additionally contains a capability matrix: each capability
+is linked to a paper primitive and records, for every surface, whether
+the implementation is native to that surface, service-backed, or
+read-only, together with the concrete entrypoint and evidence used to
+verify it. This makes the intended asymmetry explicit: CLI/TUI,
+desktop, and web do not expose identical workflows, but they preserve
+the same conceptual contracts for context addressing, event replay, and
+reproducible evidence. The same manifest also names the benchmark
+report evidence schema (\texttt{benchmark-report-v1}), keeping
+service-backed benchmark adapters and embedded local benchmark runs
+aligned on cost, per-case, diagnostic, and evidence fields. For the
+local artifact, the Rust runtime can export a single evidence bundle
+(\texttt{local-evidence-bundle-v1}) containing the manifest snapshot,
+surface-parity report, workspace replay, per-run evidence summaries,
+knowledge-source metadata, artifact records, and recent benchmark
+reports; this bundle is exposed consistently through the CLI/TUI and
+desktop app. Individual benchmark report files can also be re-linked
+to their underlying run evidence through a
+\texttt{local-benchmark-evidence-v1} export, so the reported score,
+case diagnostics, event stream, tool calls, and generated artifacts
+remain inspectable from the terminal UI, the scriptable CLI, and the
+desktop app.

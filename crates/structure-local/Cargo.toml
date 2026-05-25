@@ -15,3 +15,4 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 serde_json = "1"
 structure-local-core = { path = "../structure-local-core" }
+structure-local-runtime = { path = "../structure-local-runtime" }

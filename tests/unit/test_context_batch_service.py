@@ -203,8 +203,7 @@ def test_turn_batch_index_preserves_exact_facts_beyond_short_summary_limit():
     )
     long_prefix = "background note " + ("filler " * 35)
     user_message = (
-        f"{long_prefix} release city Suzhou, risk color cobalt, "
-        "control number 5827."
+        f"{long_prefix} release city Suzhou, risk color cobalt, control number 5827."
     )
     events = [
         _event(

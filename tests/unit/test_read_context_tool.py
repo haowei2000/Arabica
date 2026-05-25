@@ -26,6 +26,4 @@ def test_read_context_input_accepts_multiple_paths():
 
 def test_read_context_input_requires_path_or_paths():
     with pytest.raises(ValidationError):
-        ReadContextTool.InputSchema(
-            workspace_id="00000000-0000-0000-0000-000000000001"
-        )
+        ReadContextTool.InputSchema(workspace_id="00000000-0000-0000-0000-000000000001")

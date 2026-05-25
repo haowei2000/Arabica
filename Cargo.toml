@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/structure-local-core",
+    "crates/structure-local-runtime",
     "crates/structure-local",
     "frontend/src-tauri",
 ]

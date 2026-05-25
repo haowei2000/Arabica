@@ -16,3 +16,4 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 structure-local-core = { path = "../../crates/structure-local-core" }
+structure-local-runtime = { path = "../../crates/structure-local-runtime" }

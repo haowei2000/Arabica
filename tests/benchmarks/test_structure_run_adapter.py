@@ -51,12 +51,17 @@ class _FakeStructureClient:
         *,
         run_statuses: list[str] | None = None,
         stream_lines: list[str] | None = None,
+        events: list[dict[str, Any]] | None = None,
+        state_payload: dict[str, Any] | None = None,
+        run_payload: dict[str, Any] | None = None,
     ):
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
         self.run_statuses = run_statuses or ["finished"]
         self.stream_lines = stream_lines or []
+        self.state_payload = state_payload if state_payload is not None else {}
+        self.run_payload = run_payload or {}
         self.closed = False
-        self.events = [
+        self.events = events or [
             {
                 "id": "event-user",
                 "event_type": "user.message",
@@ -98,18 +103,18 @@ class _FakeStructureClient:
         if url.endswith("/runs/run-1/events"):
             return _FakeResponse({"items": self.events})
         if url.endswith("/runs/run-1/state"):
-            return _FakeResponse({})
+            return _FakeResponse(self.state_payload)
         if url.endswith("/runs/run-1"):
             status = self.run_statuses.pop(0) if self.run_statuses else "finished"
-            return _FakeResponse(
-                {
-                    "id": "run-1",
-                    "workspace_id": "workspace-1",
-                    "status": status,
-                    "input_tokens": 23,
-                    "output_tokens": 4,
-                }
-            )
+            payload = {
+                "id": "run-1",
+                "workspace_id": "workspace-1",
+                "status": status,
+                "input_tokens": 23,
+                "output_tokens": 4,
+            }
+            payload.update(self.run_payload)
+            return _FakeResponse(payload)
         raise AssertionError(f"unexpected GET {url}")
 
     async def delete(self, url, **kwargs):
@@ -193,6 +198,79 @@ def test_structure_run_adapter_uses_sse_before_polling():
 
     assert result.response == "Lisbon"
     assert any(url.endswith("/events/stream") for _, url, _ in client.requests)
+
+
+@pytest.mark.unit
+def test_structure_run_adapter_extracts_nested_state_costs_and_artifacts():
+    case = BenchmarkCase(
+        task_id="case-nested",
+        inputs={"question": "Q", "sessions": []},
+        reference="Nested answer",
+    )
+    client = _FakeStructureClient(
+        run_payload={
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "metadata": {
+                "cost_ledger": {
+                    "tokens_prompt": 101,
+                    "tokens_completion": 17,
+                    "tokens_cached": 9,
+                    "cache_read_tokens": 9,
+                    "tool_calls": 3,
+                    "steps": 5,
+                    "usd_cost": 0.0123,
+                }
+            },
+        },
+        events=[
+            {
+                "event_id": "evt-1",
+                "event_type": "agent.message",
+                "sequence": 1,
+                "payload": {
+                    "content": "",
+                    "tool_calls": [{"name": "a"}, {"name": "b"}],
+                },
+            },
+            {
+                "event_id": "evt-2",
+                "event_type": "tool.result",
+                "sequence": 2,
+                "payload": {
+                    "artifact_id": "artifact-1",
+                    "artifacts": [{"path": "/tmp/answer.md"}],
+                },
+            },
+        ],
+        state_payload={
+            "messages": [
+                {"role": "user", "content": "Q"},
+                {"role": "assistant", "content": "Nested answer"},
+            ]
+        },
+    )
+    agent = StructureRunBenchmarkAgent(
+        token="token-1",
+        client=client,
+        use_sse=False,
+        poll_interval_seconds=0,
+    )
+
+    result = asyncio.run(agent.run(case))
+
+    assert result.response == "Nested answer"
+    assert result.cost.tokens_prompt == 101
+    assert result.cost.tokens_completion == 17
+    assert result.cost.tokens_cached == 9
+    assert result.cost.cache_read_tokens == 9
+    assert result.cost.tool_calls == 3
+    assert result.cost.steps == 5
+    assert result.cost.usd_cost == 0.0123
+    assert result.evidence is not None
+    assert "evt-1" in result.evidence.artifacts
+    assert "artifact-1" in result.evidence.artifacts
+    assert "/tmp/answer.md" in result.evidence.artifacts
 
 
 @pytest.mark.unit

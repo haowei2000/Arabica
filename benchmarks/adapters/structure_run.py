@@ -56,14 +56,104 @@ def _event_sequence(event: Mapping[str, Any]) -> int:
         return 0
 
 
-def _event_token_sum(events: Sequence[Mapping[str, Any]], field_name: str) -> int:
+def _int_value(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value: object) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _nested_value(source: Mapping[str, Any], path: Sequence[str]) -> object:
+    current: object = source
+    for part in path:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _first_int(source: Mapping[str, Any], paths: Sequence[Sequence[str]]) -> int:
+    for path in paths:
+        value = _int_value(_nested_value(source, path))
+        if value:
+            return value
+    return 0
+
+
+def _first_float(source: Mapping[str, Any], paths: Sequence[Sequence[str]]) -> float:
+    for path in paths:
+        value = _float_value(_nested_value(source, path))
+        if value:
+            return value
+    return 0.0
+
+
+def _sum_event_int(
+    events: Sequence[Mapping[str, Any]],
+    paths: Sequence[Sequence[str]],
+) -> int:
     total = 0
     for event in events:
-        try:
-            total += int(event.get(field_name) or 0)
-        except (TypeError, ValueError):
-            continue
+        for source in (event, _event_payload(event)):
+            value = _first_int(source, paths)
+            if value:
+                total += value
+                break
     return total
+
+
+def _tool_call_count_from_payload(payload: Mapping[str, Any]) -> int:
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, Sequence) and not isinstance(tool_calls, (str, bytes)):
+        return len(tool_calls)
+    if payload.get("tool_name") or payload.get("tool_id") or payload.get("call_id"):
+        return 1
+    return 0
+
+
+def _event_tool_call_count(event: Mapping[str, Any]) -> int:
+    event_type = _event_type(event)
+    payload_count = _tool_call_count_from_payload(_event_payload(event))
+    if payload_count:
+        return payload_count
+    return 1 if event_type == "tool.call" else 0
+
+
+def _evidence_artifacts(events: Sequence[Mapping[str, Any]]) -> list[str]:
+    artifacts: list[str] = []
+    for event in events:
+        event_id = event.get("id") or event.get("event_id")
+        if event_id:
+            artifacts.append(str(event_id))
+        payload = _event_payload(event)
+        for key in ("artifact_id", "artifact_path", "path", "url"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                artifacts.append(value)
+        nested_artifacts = payload.get("artifacts")
+        if isinstance(nested_artifacts, Sequence) and not isinstance(
+            nested_artifacts,
+            (str, bytes),
+        ):
+            for artifact in nested_artifacts:
+                if isinstance(artifact, str):
+                    artifacts.append(artifact)
+                elif isinstance(artifact, Mapping):
+                    value = (
+                        artifact.get("id")
+                        or artifact.get("artifact_id")
+                        or artifact.get("path")
+                    )
+                    if value:
+                        artifacts.append(str(value))
+    return artifacts
 
 
 def _format_sessions(sessions: object) -> str:
@@ -330,7 +420,8 @@ class StructureRunBenchmarkAgent:
         agent_events = [
             event
             for event in sorted(events, key=_event_sequence)
-            if _event_type(event) == "agent.message"
+            if _event_type(event) in {"agent.message", "assistant.message"}
+            or _event_payload(event).get("role") == "assistant"
         ]
         for event in reversed(agent_events):
             payload = _event_payload(event)
@@ -343,6 +434,19 @@ class StructureRunBenchmarkAgent:
                 value = run_state.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+            messages = run_state.get("messages") or run_state.get("conversation")
+            if isinstance(messages, Sequence) and not isinstance(
+                messages, (str, bytes)
+            ):
+                for message in reversed(messages):
+                    if not isinstance(message, Mapping):
+                        continue
+                    role = str(message.get("role") or message.get("speaker") or "")
+                    if role and role != "assistant":
+                        continue
+                    content = message.get("content") or message.get("message")
+                    if isinstance(content, str) and content.strip():
+                        return content.strip()
         return ""
 
     @staticmethod
@@ -350,23 +454,119 @@ class StructureRunBenchmarkAgent:
         run: Mapping[str, Any],
         events: Sequence[Mapping[str, Any]],
         latency_seconds: float,
+        run_state: Mapping[str, Any] | None = None,
     ) -> CostLedger:
-        input_tokens = int(run.get("input_tokens") or 0) or _event_token_sum(
-            events,
-            "input_tokens",
+        state = run_state or {}
+        combined = {
+            "run": run,
+            "state": state,
+            **run,
+        }
+        input_paths = (
+            ("input_tokens",),
+            ("tokens_prompt",),
+            ("prompt_tokens",),
+            ("usage", "input_tokens"),
+            ("usage", "prompt_tokens"),
+            ("cost", "input_tokens"),
+            ("cost", "tokens_prompt"),
+            ("cost_ledger", "tokens_prompt"),
+            ("metadata", "cost_ledger", "tokens_prompt"),
+            ("state", "input_tokens"),
+            ("state", "usage", "input_tokens"),
+            ("state", "cost_ledger", "tokens_prompt"),
         )
-        output_tokens = int(run.get("output_tokens") or 0) or _event_token_sum(
-            events,
-            "output_tokens",
+        output_paths = (
+            ("output_tokens",),
+            ("tokens_completion",),
+            ("completion_tokens",),
+            ("usage", "output_tokens"),
+            ("usage", "completion_tokens"),
+            ("cost", "output_tokens"),
+            ("cost", "tokens_completion"),
+            ("cost_ledger", "tokens_completion"),
+            ("metadata", "cost_ledger", "tokens_completion"),
+            ("state", "output_tokens"),
+            ("state", "usage", "output_tokens"),
+            ("state", "cost_ledger", "tokens_completion"),
         )
-        steps = sum(1 for event in events if _event_type(event).startswith("agent."))
-        tool_calls = sum(1 for event in events if _event_type(event) == "tool.call")
+        cached_paths = (
+            ("tokens_cached",),
+            ("cached_tokens",),
+            ("usage", "cached_tokens"),
+            ("cost_ledger", "tokens_cached"),
+            ("metadata", "cost_ledger", "tokens_cached"),
+            ("state", "cost_ledger", "tokens_cached"),
+        )
+        cache_creation_paths = (
+            ("cache_creation_tokens",),
+            ("usage", "cache_creation_input_tokens"),
+            ("cost_ledger", "cache_creation_tokens"),
+            ("metadata", "cost_ledger", "cache_creation_tokens"),
+            ("state", "cost_ledger", "cache_creation_tokens"),
+        )
+        cache_read_paths = (
+            ("cache_read_tokens",),
+            ("usage", "cache_read_input_tokens"),
+            ("cost_ledger", "cache_read_tokens"),
+            ("metadata", "cost_ledger", "cache_read_tokens"),
+            ("state", "cost_ledger", "cache_read_tokens"),
+        )
+        tool_paths = (
+            ("tool_calls",),
+            ("cost_ledger", "tool_calls"),
+            ("metadata", "cost_ledger", "tool_calls"),
+            ("state", "cost_ledger", "tool_calls"),
+        )
+        step_paths = (
+            ("steps",),
+            ("cost_ledger", "steps"),
+            ("metadata", "cost_ledger", "steps"),
+            ("state", "cost_ledger", "steps"),
+        )
+        usd_paths = (
+            ("usd_cost",),
+            ("cost_ledger", "usd_cost"),
+            ("metadata", "cost_ledger", "usd_cost"),
+            ("state", "cost_ledger", "usd_cost"),
+        )
+        input_tokens = _first_int(combined, input_paths) or _sum_event_int(
+            events,
+            input_paths,
+        )
+        output_tokens = _first_int(combined, output_paths) or _sum_event_int(
+            events,
+            output_paths,
+        )
+        cached_tokens = _first_int(combined, cached_paths) or _sum_event_int(
+            events,
+            cached_paths,
+        )
+        cache_creation_tokens = _first_int(
+            combined,
+            cache_creation_paths,
+        ) or _sum_event_int(events, cache_creation_paths)
+        cache_read_tokens = _first_int(combined, cache_read_paths) or _sum_event_int(
+            events,
+            cache_read_paths,
+        )
+        steps = _first_int(combined, step_paths) or sum(
+            1 for event in events if _event_type(event).startswith("agent.")
+        )
+        tool_calls = _first_int(combined, tool_paths) or sum(
+            _event_tool_call_count(event) for event in events
+        )
+        usd_cost = _first_float(combined, usd_paths)
         return CostLedger(
             tokens_prompt=input_tokens,
             tokens_completion=output_tokens,
+            tokens_cached=cached_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             steps=steps,
             tool_calls=tool_calls,
             latency_seconds=latency_seconds,
+            usd_cost=usd_cost,
         )
 
     @staticmethod
@@ -384,9 +584,7 @@ class StructureRunBenchmarkAgent:
             evidence_status = "unknown"
         return EvidenceRecord(
             status=evidence_status,
-            artifacts=tuple(
-                str(event.get("id")) for event in events if event.get("id")
-            ),
+            artifacts=tuple(dict.fromkeys(_evidence_artifacts(events))),
             notes=f"Structure run status: {status or 'unknown'}",
         )
 
@@ -407,6 +605,7 @@ class StructureRunBenchmarkAgent:
                 final_run,
                 events,
                 latency_seconds,
+                run_state,
             )
             return BenchmarkResult(
                 task_id=case.task_id,

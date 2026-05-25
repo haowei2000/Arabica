@@ -10,8 +10,37 @@
         font-family:
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
           "Segoe UI", sans-serif;
-        background: #f8fafc;
-        color: #111827;
+        --bg: #f6f7fb;
+        --surface: #ffffff;
+        --surface-strong: #eef3f8;
+        --line: #d6dee8;
+        --line-strong: #b7c5d6;
+        --text: #101828;
+        --muted: #667085;
+        --accent: #2563eb;
+        --accent-soft: #e7efff;
+        --ok: #0f7a4f;
+        --warn: #b45309;
+        --code-bg: #0b1020;
+        --code-text: #e5edf7;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #11151b;
+          --surface: #171c23;
+          --surface-strong: #202833;
+          --line: #2f3a48;
+          --line-strong: #465466;
+          --text: #eef2f7;
+          --muted: #9aa7b8;
+          --accent: #78a8ff;
+          --accent-soft: #18253b;
+          --ok: #6ee7b7;
+          --warn: #f4bf75;
+          --code-bg: #080b12;
+          --code-text: #dce7f4;
+        }
       }
 
       * {
@@ -21,178 +50,788 @@
       body {
         margin: 0;
         min-height: 100vh;
-        background: #f8fafc;
+        background: var(--bg);
+        color: var(--text);
       }
 
-      main {
-        min-height: 100vh;
-        display: grid;
-        grid-template-columns: minmax(260px, 340px) 1fr;
+      button,
+      input,
+      textarea {
+        font: inherit;
       }
 
-      aside {
-        border-right: 1px solid #d9e2ec;
-        background: #ffffff;
-        padding: 22px;
+      button {
+        min-height: 44px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        font-weight: 650;
+        padding: 9px 14px;
+        cursor: pointer;
       }
 
-      section {
-        padding: 28px;
-        min-width: 0;
+      button:hover {
+        background: var(--surface-strong);
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.65;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible {
+        outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+        outline-offset: 2px;
       }
 
       h1,
-      h2 {
+      h2,
+      h3,
+      p {
         margin: 0;
         letter-spacing: 0;
       }
 
       h1 {
-        font-size: 24px;
+        font-size: 26px;
         line-height: 32px;
       }
 
       h2 {
+        font-size: 22px;
+        line-height: 28px;
+      }
+
+      h3 {
         font-size: 15px;
         line-height: 22px;
       }
 
+      code,
+      pre {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(268px, 320px) minmax(0, 1fr);
+      }
+
+      .sidebar {
+        min-width: 0;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        padding: 26px 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+      }
+
+      .brand {
+        display: grid;
+        gap: 8px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 12px;
+        line-height: 18px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .summary,
       .muted {
-        color: #64748b;
+        color: var(--muted);
         font-size: 13px;
         line-height: 20px;
       }
 
-      .stat {
-        margin-top: 18px;
-        border: 1px solid #d9e2ec;
-        border-radius: 8px;
-        padding: 14px;
-        background: #f8fafc;
+      .metric-list {
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
       }
 
-      .stat strong {
-        display: block;
+      .metric {
+        min-height: 68px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .metric:last-child {
+        border-bottom: 0;
+      }
+
+      .metric span,
+      .path-block span {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
         font-size: 22px;
         line-height: 30px;
       }
 
-      button {
-        min-height: 40px;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        background: #ffffff;
-        color: #0f172a;
-        font: inherit;
-        font-weight: 600;
-        padding: 8px 12px;
-        cursor: pointer;
+      .metric strong.ok {
+        color: var(--ok);
       }
 
-      button:hover {
-        background: #f1f5f9;
+      .path-block {
+        display: grid;
+        gap: 8px;
+      }
+
+      .surface-block {
+        display: grid;
+        gap: 10px;
+      }
+
+      .surface-block > span {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .surface-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .surface-item {
+        display: grid;
+        gap: 6px;
+        border: 1px solid var(--line);
+        border-left: 4px solid transparent;
+        border-radius: 8px;
+        background: var(--surface-strong);
+        padding: 10px 11px;
+      }
+
+      .surface-item[data-active="true"] {
+        border-left-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .surface-title {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .surface-title strong {
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      .surface-title span,
+      .surface-item p {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .path-block code {
+        display: block;
+        color: var(--text);
+        background: var(--surface-strong);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 12px;
+        line-height: 18px;
+        overflow-wrap: anywhere;
+      }
+
+      .workspace {
+        min-width: 0;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+      }
+
+      .topbar {
+        min-width: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 22px 26px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        background: color-mix(in srgb, var(--bg) 68%, var(--surface));
       }
 
       .toolbar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 20px;
+        gap: 10px;
+        min-width: min(460px, 100%);
       }
 
-      .reports {
+      .search {
+        min-height: 44px;
+        flex: 1;
+        min-width: 180px;
+        display: flex;
+        align-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 0 12px;
+      }
+
+      .search input {
+        width: 100%;
+        min-width: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        font-size: 14px;
+      }
+
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(320px, 42%) minmax(0, 1fr);
+      }
+
+      .agent-loop {
+        border-bottom: 1px solid var(--line);
+        padding: 22px 26px;
+        display: grid;
+        grid-template-columns: minmax(320px, 42%) minmax(0, 1fr);
+        gap: 18px;
+        background: var(--surface);
+      }
+
+      .agent-panel {
+        min-width: 0;
+        display: grid;
+        gap: 12px;
+      }
+
+      .agent-panel h3 {
+        font-size: 14px;
+        line-height: 20px;
+      }
+
+      .run-form,
+      .workspace-form,
+      .knowledge-form {
         display: grid;
         gap: 10px;
       }
 
-      .report {
+      select,
+      textarea,
+      .workspace-form input,
+      .knowledge-form input {
         width: 100%;
+        min-width: 0;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+      }
+
+      select,
+      .workspace-form input,
+      .knowledge-form input {
+        min-height: 44px;
+        padding: 0 12px;
+      }
+
+      textarea {
+        min-height: 116px;
+        resize: vertical;
+        padding: 12px;
+        font-size: 13px;
+        line-height: 20px;
+      }
+
+      .workspace-form {
+        grid-template-columns: minmax(0, 1fr) minmax(160px, 0.6fr) auto;
+      }
+
+      .knowledge-form {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .run-list,
+      .knowledge-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .run-item,
+      .knowledge-item {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        padding: 10px 11px;
+        text-align: left;
+      }
+
+      .knowledge-item {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
-        gap: 12px;
         align-items: center;
+        gap: 10px;
+      }
+
+      .knowledge-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .knowledge-actions button {
+        min-height: 34px;
+        padding: 0 10px;
+        font-size: 12px;
+      }
+
+      .knowledge-actions button[data-danger="true"] {
+        color: #fca5a5;
+        border-color: color-mix(in srgb, #ef4444 42%, var(--line));
+      }
+
+      .run-item strong,
+      .knowledge-item strong {
+        display: block;
+        font-size: 13px;
+        line-height: 19px;
+        overflow-wrap: anywhere;
+      }
+
+      .run-item span,
+      .knowledge-item span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+        overflow-wrap: anywhere;
+      }
+
+      .panel,
+      .preview-panel {
+        min-width: 0;
+        min-height: 0;
+        padding: 22px 26px;
+      }
+
+      .panel {
+        overflow: auto;
+      }
+
+      .preview-panel {
+        border-left: 1px solid var(--line);
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .panel-heading,
+      .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .count {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 20px;
+        white-space: nowrap;
+      }
+
+      .reports {
+        display: grid;
+        gap: 8px;
+      }
+
+      .report {
+        width: 100%;
+        min-height: 68px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
         text-align: left;
-        border: 1px solid #d9e2ec;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-left: 4px solid transparent;
         border-radius: 8px;
-        background: #ffffff;
-        padding: 12px 14px;
+        padding: 11px 12px;
+      }
+
+      .report:hover {
+        border-color: var(--line-strong);
+        border-left-color: var(--accent);
+      }
+
+      .report[aria-selected="true"] {
+        background: var(--accent-soft);
+        border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+        border-left-color: var(--accent);
       }
 
       .report-name {
+        min-width: 0;
         overflow-wrap: anywhere;
+        font-size: 13px;
+        line-height: 19px;
+        font-weight: 700;
+      }
+
+      .report-meta {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+        white-space: nowrap;
+      }
+
+      .empty {
+        border: 1px dashed var(--line-strong);
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--surface) 76%, transparent);
+        color: var(--muted);
+        padding: 22px;
         font-size: 14px;
-        font-weight: 650;
+        line-height: 22px;
+      }
+
+      .report-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .report-summary[hidden] {
+        display: none;
+      }
+
+      .report-stat {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        padding: 9px 10px;
+      }
+
+      .report-stat span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 16px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .report-stat strong {
+        display: block;
+        margin-top: 2px;
+        font-size: 15px;
+        line-height: 21px;
+        overflow-wrap: anywhere;
       }
 
       pre {
-        margin: 18px 0 0;
-        max-height: 52vh;
+        min-height: 0;
+        margin: 0;
         overflow: auto;
-        border: 1px solid #d9e2ec;
+        border: 1px solid var(--line);
         border-radius: 8px;
-        background: #0f172a;
-        color: #e2e8f0;
-        padding: 14px;
+        background: var(--code-bg);
+        color: var(--code-text);
+        padding: 16px;
         font-size: 12px;
         line-height: 18px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
 
-      @media (max-width: 780px) {
-        main {
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 980px) {
+        .app {
           grid-template-columns: 1fr;
         }
 
-        aside {
+        .sidebar {
           border-right: 0;
-          border-bottom: 1px solid #d9e2ec;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        .agent-loop {
+          grid-template-columns: 1fr;
+        }
+
+        .preview-panel {
+          border-left: 0;
+          border-top: 1px solid var(--line);
+          min-height: 420px;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .topbar,
+        .toolbar {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .toolbar {
+          min-width: 0;
+          width: 100%;
+        }
+
+        .topbar,
+        .agent-loop,
+        .panel,
+        .preview-panel,
+        .sidebar {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+
+        .workspace-form,
+        .knowledge-form {
+          grid-template-columns: 1fr;
         }
       }
     </style>
   </head>
   <body>
-    <main>
-      <aside>
-        <h1>Structure Local</h1>
-        <p class="muted">Rust desktop app running from local files only.</p>
-        <div class="stat">
-          <span class="muted">Mode</span>
-          <strong id="mode">Local</strong>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="eyebrow">Structure</p>
+          <h1>Local Workspace</h1>
+          <p class="summary">Native desktop view for local Structure artifacts.</p>
         </div>
-        <div class="stat">
-          <span class="muted">Benchmark reports</span>
-          <strong id="report-count">0</strong>
+
+        <div class="metric-list" aria-label="Local workspace status">
+          <div class="metric">
+            <span>Mode</span>
+            <strong id="mode" class="ok">Local</strong>
+          </div>
+          <div class="metric">
+            <span>Core</span>
+            <strong id="core-version">--</strong>
+          </div>
+          <div class="metric">
+            <span>Reports</span>
+            <strong id="report-count">0</strong>
+          </div>
+          <div class="metric">
+            <span>Shown</span>
+            <strong id="shown-count">0</strong>
+          </div>
         </div>
-        <div class="stat">
-          <span class="muted">Repository</span>
-          <div id="repo" class="muted">Loading...</div>
+
+        <div class="surface-block">
+          <span>Core Contract</span>
+          <div id="core-contract" class="surface-list"></div>
+        </div>
+
+        <div class="surface-block">
+          <span>Surfaces</span>
+          <div id="surfaces" class="surface-list"></div>
+        </div>
+
+        <div class="path-block">
+          <span>Repository</span>
+          <code id="repo">Loading...</code>
         </div>
       </aside>
-      <section>
-        <div class="toolbar">
+
+      <section class="workspace" aria-label="Benchmark workspace">
+        <header class="topbar">
           <div>
-            <h2>Recent Reports</h2>
-            <div class="muted">Read local benchmark artifacts without a web service.</div>
+            <h2>Local Agent Runtime</h2>
+            <p id="subtitle" class="muted">Loading local state...</p>
           </div>
-          <button id="refresh" type="button">Refresh</button>
+          <div class="toolbar">
+            <label class="search">
+              <span class="visually-hidden">Search reports</span>
+              <input id="search" type="search" placeholder="Search" autocomplete="off" />
+            </label>
+            <button id="refresh" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="agent-loop" aria-label="Local agent event loop">
+          <div class="agent-panel">
+            <div>
+              <h3>Run Agent</h3>
+              <p class="muted">Runs in-process with the embedded event loop.</p>
+            </div>
+            <form id="workspace-form" class="workspace-form">
+              <select id="workspace-select" aria-label="Workspace"></select>
+              <input id="workspace-id" type="text" placeholder="workspace-id" />
+              <button id="create-workspace" type="submit">Create</button>
+            </form>
+            <form id="run-form" class="run-form">
+              <textarea
+                id="agent-prompt"
+                placeholder="Ask the local Structure agent to inspect this workspace..."
+              ></textarea>
+              <button id="run-agent" type="submit">Run</button>
+            </form>
+            <button id="run-benchmark" type="button">Run Local Benchmark</button>
+            <button id="replay-workspace" type="button">Replay Workspace</button>
+            <button id="preview-artifact" type="button">Preview Latest Artifact</button>
+            <button id="show-parity" type="button">Show Parity Report</button>
+            <button id="show-bundle" type="button">Show Evidence Bundle</button>
+            <pre id="event-log">No local run selected.</pre>
+          </div>
+
+          <div class="agent-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Workspace Context</h3>
+                <p class="muted">Knowledge files are indexed into the local runtime database.</p>
+              </div>
+            </div>
+            <form id="knowledge-form" class="knowledge-form">
+              <input id="knowledge-path" type="text" placeholder="/absolute/path/to/file.md" />
+              <button id="add-knowledge" type="submit">Add</button>
+            </form>
+            <div id="knowledge-list" class="knowledge-list"></div>
+            <div class="panel-heading">
+              <h3>Recent Runs</h3>
+              <span id="run-count" class="count">0</span>
+            </div>
+            <div id="run-list" class="run-list"></div>
+          </div>
+        </section>
+
+        <div class="content">
+          <section class="panel" aria-labelledby="reports-title">
+            <div class="panel-heading">
+              <h3 id="reports-title">Recent</h3>
+              <span id="filtered-count" class="count">0</span>
+            </div>
+            <div
+              id="reports"
+              class="reports"
+              role="listbox"
+              aria-label="Benchmark report files"
+            ></div>
+          </section>
+
+          <section class="preview-panel" aria-labelledby="preview-title">
+            <div class="preview-header">
+              <div>
+                <h3 id="preview-title">Preview</h3>
+                <p id="preview-meta" class="muted">No file selected</p>
+              </div>
+              <button id="report-evidence" type="button" hidden>Evidence</button>
+              <button id="clear-preview" type="button" hidden>Clear</button>
+            </div>
+            <div id="preview-empty" class="empty">No preview open.</div>
+            <div id="report-summary" class="report-summary" hidden></div>
+            <pre id="preview" hidden></pre>
+          </section>
         </div>
-        <div id="reports" class="reports"></div>
-        <pre id="preview" hidden></pre>
       </section>
     </main>
+
     <script>
       const reportsEl = document.querySelector("#reports");
       const previewEl = document.querySelector("#preview");
+      const previewEmptyEl = document.querySelector("#preview-empty");
+      const previewMetaEl = document.querySelector("#preview-meta");
+      const reportSummaryEl = document.querySelector("#report-summary");
+      const reportEvidenceEl = document.querySelector("#report-evidence");
       const repoEl = document.querySelector("#repo");
+      const coreVersionEl = document.querySelector("#core-version");
       const reportCountEl = document.querySelector("#report-count");
+      const shownCountEl = document.querySelector("#shown-count");
+      const filteredCountEl = document.querySelector("#filtered-count");
+      const coreContractEl = document.querySelector("#core-contract");
+      const surfacesEl = document.querySelector("#surfaces");
+      const subtitleEl = document.querySelector("#subtitle");
+      const searchEl = document.querySelector("#search");
+      const refreshEl = document.querySelector("#refresh");
+      const clearPreviewEl = document.querySelector("#clear-preview");
+      const workspaceFormEl = document.querySelector("#workspace-form");
+      const workspaceSelectEl = document.querySelector("#workspace-select");
+      const workspaceIdEl = document.querySelector("#workspace-id");
+      const createWorkspaceEl = document.querySelector("#create-workspace");
+      const runFormEl = document.querySelector("#run-form");
+      const runAgentEl = document.querySelector("#run-agent");
+      const runBenchmarkEl = document.querySelector("#run-benchmark");
+      const replayWorkspaceEl = document.querySelector("#replay-workspace");
+      const previewArtifactEl = document.querySelector("#preview-artifact");
+      const showParityEl = document.querySelector("#show-parity");
+      const showBundleEl = document.querySelector("#show-bundle");
+      const agentPromptEl = document.querySelector("#agent-prompt");
+      const eventLogEl = document.querySelector("#event-log");
+      const runListEl = document.querySelector("#run-list");
+      const runCountEl = document.querySelector("#run-count");
+      const knowledgeFormEl = document.querySelector("#knowledge-form");
+      const knowledgePathEl = document.querySelector("#knowledge-path");
+      const addKnowledgeEl = document.querySelector("#add-knowledge");
+      const knowledgeListEl = document.querySelector("#knowledge-list");
       const invoke = window.__TAURI__?.core?.invoke;
+
+      const state = {
+        snapshot: null,
+        reports: [],
+        filteredReports: [],
+        selectedPath: null,
+        runs: [],
+        workspaces: [],
+        activeWorkspaceId: "default",
+        knowledge: [],
+        artifacts: [],
+        parityReport: null,
+      };
 
       async function localSnapshot() {
         if (!invoke) {
           return {
-            repo_root: "Tauri IPC is unavailable",
+            repo_root: "Desktop runtime unavailable",
             benchmark_report_count: 0,
             recent_benchmark_reports: [],
+            core_manifest: fallbackCoreManifest(),
+            product_surfaces: fallbackSurfaces(),
             local_only: true,
           };
         }
@@ -200,51 +839,925 @@
       }
 
       async function readReport(path) {
-        if (!invoke) return "Tauri IPC is unavailable.";
+        if (!invoke) return "Desktop runtime unavailable.";
         return invoke("read_local_report", { path });
       }
 
-      function render(snapshot) {
+      async function localBenchmarkEvidence(path) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_benchmark_evidence", { path });
+      }
+
+      async function coreParityReport() {
+        if (!invoke) return null;
+        return invoke("core_parity_report");
+      }
+
+      function activeWorkspaceId() {
+        return state.activeWorkspaceId || "default";
+      }
+
+      async function createLocalWorkspace(workspaceId) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("create_local_workspace", { workspaceId });
+      }
+
+      async function localWorkspaces() {
+        if (!invoke) return [];
+        return invoke("local_workspaces", { limit: 20 });
+      }
+
+      async function runLocalAgent(prompt) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_agent_run", { prompt, workspaceId: activeWorkspaceId() });
+      }
+
+      async function localRuns() {
+        if (!invoke) return [];
+        return invoke("local_runs", { workspaceId: activeWorkspaceId(), limit: 8 });
+      }
+
+      async function localRun(runId) {
+        if (!invoke) return null;
+        return invoke("local_run", { runId });
+      }
+
+      async function localRunEvents(runId) {
+        if (!invoke) return [];
+        return invoke("local_run_events", { runId });
+      }
+
+      async function localRunEvidence(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_evidence", { runId });
+      }
+
+      async function localWorkspaceReplay() {
+        if (!invoke) return null;
+        return invoke("local_workspace_replay", { workspaceId: activeWorkspaceId(), limit: 60 });
+      }
+
+      async function localEvidenceBundle() {
+        if (!invoke) return null;
+        return invoke("local_evidence_bundle", { workspaceId: activeWorkspaceId(), limit: 60 });
+      }
+
+      async function addKnowledge(path) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("add_local_knowledge", { path, workspaceId: activeWorkspaceId() });
+      }
+
+      async function localKnowledge() {
+        if (!invoke) return [];
+        return invoke("local_knowledge", { workspaceId: activeWorkspaceId(), limit: 8 });
+      }
+
+      async function localArtifacts() {
+        if (!invoke) return [];
+        return invoke("local_artifacts", {
+          workspaceId: activeWorkspaceId(),
+          runId: null,
+          limit: 8,
+        });
+      }
+
+      async function readArtifact(artifactId) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("read_local_artifact", { artifactId, maxBytes: 64000 });
+      }
+
+      async function readKnowledgeSource(sourceId) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("read_local_knowledge_source", { sourceId, maxBytes: 64000 });
+      }
+
+      async function removeKnowledgeSource(sourceId) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("remove_local_knowledge", { sourceId });
+      }
+
+      async function runLocalBenchmark() {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_benchmark_run", {
+          benchmark: "local-agent-smoke",
+          maxCases: 2,
+          workspaceId: activeWorkspaceId(),
+        });
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+      }
+
+      function formatDate(seconds) {
+        if (!seconds) return "Unknown time";
+        return new Intl.DateTimeFormat(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(new Date(seconds * 1000));
+      }
+
+      function formatPreview(text, path) {
+        if (!path.toLowerCase().endsWith(".json")) return text;
+        try {
+          return JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+          return text;
+        }
+      }
+
+      function reportSummary(text, path) {
+        if (!path.toLowerCase().endsWith(".json")) return null;
+        try {
+          const parsed = JSON.parse(text);
+          const report = parsed.report ?? parsed;
+          if (!report || typeof report !== "object" || !("overall_score" in report)) {
+            return null;
+          }
+          return [
+            ["Schema", report.report_schema_version ?? "BenchmarkReport"],
+            ["Score", Number(report.overall_score ?? 0).toFixed(4)],
+            ["Cases", String(report.n_cases ?? 0)],
+            ["Tools", String(report.total_cost?.tool_calls ?? report.total_tool_calls ?? 0)],
+          ];
+        } catch {
+          return null;
+        }
+      }
+
+      function renderReportSummary(rows) {
+        reportSummaryEl.replaceChildren();
+        if (!rows) {
+          reportSummaryEl.hidden = true;
+          return;
+        }
+        for (const [label, value] of rows) {
+          const item = document.createElement("div");
+          item.className = "report-stat";
+          const labelEl = document.createElement("span");
+          labelEl.textContent = label;
+          const valueEl = document.createElement("strong");
+          valueEl.textContent = value;
+          item.append(labelEl, valueEl);
+          reportSummaryEl.append(item);
+        }
+        reportSummaryEl.hidden = false;
+      }
+
+      function setBusy(isBusy) {
+        refreshEl.disabled = isBusy;
+        refreshEl.textContent = isBusy ? "Refreshing" : "Refresh";
+      }
+
+      function setAgentBusy(isBusy) {
+        runAgentEl.disabled = isBusy;
+        runAgentEl.textContent = isBusy ? "Running" : "Run";
+      }
+
+      function setKnowledgeBusy(isBusy) {
+        addKnowledgeEl.disabled = isBusy;
+        addKnowledgeEl.textContent = isBusy ? "Adding" : "Add";
+      }
+
+      function setWorkspaceBusy(isBusy) {
+        createWorkspaceEl.disabled = isBusy;
+        createWorkspaceEl.textContent = isBusy ? "Creating" : "Create";
+      }
+
+      function setBenchmarkBusy(isBusy) {
+        runBenchmarkEl.disabled = isBusy;
+        runBenchmarkEl.textContent = isBusy ? "Running Benchmark" : "Run Local Benchmark";
+      }
+
+      function setReplayBusy(isBusy) {
+        replayWorkspaceEl.disabled = isBusy;
+        replayWorkspaceEl.textContent = isBusy ? "Replaying" : "Replay Workspace";
+      }
+
+      function setArtifactBusy(isBusy) {
+        previewArtifactEl.disabled = isBusy;
+        previewArtifactEl.textContent = isBusy ? "Loading Artifact" : "Preview Latest Artifact";
+      }
+
+      function setParityBusy(isBusy) {
+        showParityEl.disabled = isBusy;
+        showParityEl.textContent = isBusy ? "Checking Parity" : "Show Parity Report";
+      }
+
+      function setBundleBusy(isBusy) {
+        showBundleEl.disabled = isBusy;
+        showBundleEl.textContent = isBusy ? "Loading Bundle" : "Show Evidence Bundle";
+      }
+
+      function fallbackSurfaces() {
+        return [
+          {
+            id: "cli_tui",
+            name: "CLI/TUI",
+            runtime_model: "Local Rust binary",
+            audience: "Developers and benchmark operators",
+          },
+          {
+            id: "desktop_app",
+            name: "Desktop App",
+            runtime_model: "Tauri local shell",
+            audience: "Local artifact reviewers",
+          },
+          {
+            id: "web_app",
+            name: "Web App",
+            runtime_model: "React UI backed by API services",
+            audience: "Browser and team users",
+          },
+        ];
+      }
+
+      function fallbackCoreManifest() {
+        return {
+          schema_version: "unavailable",
+          canonical_flow: [],
+          capabilities: [],
+          primitives: [],
+          surfaces: fallbackSurfaces(),
+        };
+      }
+
+      function renderSnapshot(snapshot) {
+        state.snapshot = snapshot;
+        state.reports = snapshot.recent_benchmark_reports ?? [];
         repoEl.textContent = snapshot.repo_root;
-        reportCountEl.textContent = String(snapshot.benchmark_report_count);
+        renderCoreContract(snapshot.core_manifest ?? fallbackCoreManifest(), state.parityReport);
+        reportCountEl.textContent = String(snapshot.benchmark_report_count ?? 0);
+        subtitleEl.textContent = `${activeWorkspaceId()} / ${state.runs.length} runs / ${
+          snapshot.benchmark_report_count ?? 0
+        } reports / ${state.artifacts.length} artifacts in local storage`;
+        renderSurfaces(snapshot.product_surfaces ?? []);
+        applyFilter();
+      }
+
+      function renderWorkspaces(workspaces) {
+        state.workspaces = workspaces;
+        workspaceSelectEl.replaceChildren();
+        const knownIds = new Set(workspaces.map((workspace) => workspace.workspace_id));
+        if (!knownIds.has(state.activeWorkspaceId)) {
+          state.activeWorkspaceId = workspaces[0]?.workspace_id ?? "default";
+        }
+        for (const workspace of workspaces) {
+          const option = document.createElement("option");
+          option.value = workspace.workspace_id;
+          option.textContent = `${workspace.workspace_id} / ${workspace.name}`;
+          option.selected = workspace.workspace_id === state.activeWorkspaceId;
+          workspaceSelectEl.append(option);
+        }
+        if (workspaces.length === 0) {
+          const option = document.createElement("option");
+          option.value = "default";
+          option.textContent = "default / Default Workspace";
+          option.selected = true;
+          workspaceSelectEl.append(option);
+        }
+      }
+
+      function renderRuns(runs) {
+        state.runs = runs;
+        runCountEl.textContent = `${runs.length} shown`;
+        runListEl.replaceChildren();
+        if (runs.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No local agent runs yet.";
+          runListEl.append(empty);
+          return;
+        }
+
+        for (const run of runs) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "run-item";
+
+          const title = document.createElement("strong");
+          title.textContent = `${run.status} / ${run.run_id}`;
+
+          const prompt = document.createElement("span");
+          prompt.textContent = run.prompt;
+
+          button.append(title, prompt);
+          button.addEventListener("click", () => selectRun(run));
+          runListEl.append(button);
+        }
+      }
+
+      function renderKnowledge(sources) {
+        state.knowledge = sources;
+        knowledgeListEl.replaceChildren();
+        if (sources.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No knowledge sources registered.";
+          knowledgeListEl.append(empty);
+          return;
+        }
+
+        for (const source of sources) {
+          const item = document.createElement("div");
+          item.className = "knowledge-item";
+
+          const body = document.createElement("div");
+
+          const title = document.createElement("strong");
+          title.textContent = source.title;
+
+          const path = document.createElement("span");
+          path.textContent = `${formatBytes(source.size_bytes)} / ${source.path}`;
+
+          const actions = document.createElement("div");
+          actions.className = "knowledge-actions";
+
+          const previewButton = document.createElement("button");
+          previewButton.type = "button";
+          previewButton.textContent = "Preview";
+          previewButton.addEventListener("click", () => previewKnowledge(source));
+
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.dataset.danger = "true";
+          removeButton.textContent = "Remove";
+          removeButton.addEventListener("click", () => removeKnowledge(source, removeButton));
+
+          body.append(title, path);
+          actions.append(previewButton, removeButton);
+          item.append(body, actions);
+          knowledgeListEl.append(item);
+        }
+      }
+
+      async function previewKnowledge(source) {
+        eventLogEl.textContent = `Loading ${source.title}...`;
+        try {
+          const result = await readKnowledgeSource(source.source_id);
+          eventLogEl.textContent = `Knowledge Source
+ID: ${result.source.source_id}
+Workspace: ${result.source.workspace_id}
+Path: ${result.source.path}
+Read: ${formatBytes(result.bytes_read)}
+Truncated: ${result.truncated}
+
+${result.preview}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
+      async function removeKnowledge(source, button) {
+        button.disabled = true;
+        button.textContent = "Removing";
+        try {
+          const removed = await removeKnowledgeSource(source.source_id);
+          eventLogEl.textContent = `Removed knowledge source registration
+${removed.source_id}
+${removed.path}
+
+The original file was not deleted.`;
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          button.disabled = false;
+          button.textContent = "Remove";
+        }
+      }
+
+      async function selectRun(run) {
+        eventLogEl.textContent = "Loading events...";
+        try {
+          const [freshRun, events] = await Promise.all([
+            localRun(run.run_id),
+            localRunEvents(run.run_id),
+          ]);
+          const evidence = await localRunEvidence(run.run_id);
+          const eventText = events
+            .map((event) => {
+              const payload = JSON.stringify(event.payload);
+              return `#${event.sequence} ${event.kind}\n${payload}`;
+            })
+            .join("\n\n");
+          const evidenceText = evidence
+            ? `Evidence
+Events: ${evidence.event_count}
+Tool calls: ${evidence.tool_call_count}
+Knowledge sources: ${evidence.knowledge_sources.length}
+Artifacts: ${evidence.artifact_paths.length}
+Response chars: ${evidence.final_response_chars}
+
+Sources
+${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources used."}
+
+Artifacts
+${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || evidence.artifact_paths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`
+            : "Evidence unavailable.";
+          const response = freshRun?.final_response
+            ? `Final Response\n${freshRun.final_response}`
+            : "Final Response\nNo final response recorded.";
+          eventLogEl.textContent = `${evidenceText}\n\n${response}\n\nEvents\n${eventText}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
+      function renderCoreContract(manifest, parityReport = null) {
+        coreVersionEl.textContent = manifest.schema_version ?? "--";
+        coreContractEl.replaceChildren();
+
+        const item = document.createElement("div");
+        item.className = "surface-item";
+        item.dataset.active = "true";
+
+        const title = document.createElement("div");
+        title.className = "surface-title";
+
+        const name = document.createElement("strong");
+        name.textContent = "Shared Core";
+
+        const version = document.createElement("span");
+        version.textContent = manifest.schema_version ?? "--";
+
+        const detail = document.createElement("p");
+        const primitiveCount = manifest.primitives?.length ?? 0;
+        const flowCount = manifest.canonical_flow?.length ?? 0;
+        const capabilityCount = manifest.capabilities?.length ?? 0;
+        detail.textContent = `${primitiveCount} primitives / ${flowCount} flow steps / ${capabilityCount} capabilities`;
+
+        title.append(name, version);
+        item.append(title, detail);
+        coreContractEl.append(item);
+
+        if (parityReport) {
+          const parityItem = document.createElement("div");
+          parityItem.className = "surface-item";
+          parityItem.dataset.active = parityReport.passed ? "true" : "false";
+
+          const parityTitle = document.createElement("div");
+          parityTitle.className = "surface-title";
+
+          const parityName = document.createElement("strong");
+          parityName.textContent = "Parity";
+
+          const parityStatus = document.createElement("span");
+          parityStatus.textContent = parityReport.passed ? "ok" : "check";
+
+          const parityDetail = document.createElement("p");
+          const failedChecks = parityReport.checks?.filter((check) => !check.passed) ?? [];
+          parityDetail.textContent = parityReport.passed
+            ? `${parityReport.checks?.length ?? 0} checks passed`
+            : `${failedChecks.length} checks need attention`;
+
+          parityTitle.append(parityName, parityStatus);
+          parityItem.append(parityTitle, parityDetail);
+          coreContractEl.append(parityItem);
+        }
+
+        for (const capability of (manifest.capabilities ?? []).slice(0, 4)) {
+          const capabilityItem = document.createElement("div");
+          capabilityItem.className = "surface-item";
+          capabilityItem.dataset.active = capability.surface_status?.some(
+            (status) =>
+              status.surface_id === "desktop_app" &&
+              (status.status === "native" || status.status === "service_native"),
+          )
+            ? "true"
+            : "false";
+
+          const capabilityTitle = document.createElement("div");
+          capabilityTitle.className = "surface-title";
+
+          const capabilityName = document.createElement("strong");
+          capabilityName.textContent = capability.name;
+
+          const primitive = document.createElement("span");
+          primitive.textContent = capability.primitive_id;
+
+          const capabilityDetail = document.createElement("p");
+          const desktopStatus = capability.surface_status?.find(
+            (status) => status.surface_id === "desktop_app",
+          );
+          capabilityDetail.textContent = desktopStatus
+            ? `${desktopStatus.status} / ${desktopStatus.entrypoint}`
+            : capability.description;
+
+          capabilityTitle.append(capabilityName, primitive);
+          capabilityItem.append(capabilityTitle, capabilityDetail);
+          coreContractEl.append(capabilityItem);
+        }
+      }
+
+      function renderSurfaces(surfaces) {
+        surfacesEl.replaceChildren();
+        for (const surface of surfaces) {
+          const item = document.createElement("div");
+          item.className = "surface-item";
+          item.dataset.active = surface.id === "desktop_app" ? "true" : "false";
+
+          const title = document.createElement("div");
+          title.className = "surface-title";
+
+          const name = document.createElement("strong");
+          name.textContent = surface.name;
+
+          const id = document.createElement("span");
+          id.textContent = surface.id.replace("_", "/");
+
+          const detail = document.createElement("p");
+          detail.textContent = surface.runtime_model;
+
+          title.append(name, id);
+          item.append(title, detail);
+          surfacesEl.append(item);
+        }
+      }
+
+      function applyFilter() {
+        const query = searchEl.value.trim().toLowerCase();
+        state.filteredReports = state.reports.filter((report) =>
+          report.relative_path.toLowerCase().includes(query),
+        );
+        shownCountEl.textContent = String(state.filteredReports.length);
+        filteredCountEl.textContent = `${state.filteredReports.length} shown`;
+        renderReports();
+      }
+
+      function renderReports() {
         reportsEl.replaceChildren();
-        const reports = snapshot.recent_benchmark_reports ?? [];
-        if (reports.length === 0) {
-          const empty = document.createElement("p");
-          empty.className = "muted";
-          empty.textContent = "No local benchmark reports found.";
+        if (state.filteredReports.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No matching reports.";
           reportsEl.append(empty);
           return;
         }
-        for (const report of reports) {
+
+        for (const report of state.filteredReports) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = "report";
-          button.innerHTML = `
-            <span class="report-name"></span>
-            <span class="muted">${report.size_bytes} bytes</span>
-          `;
-          button.querySelector(".report-name").textContent = report.relative_path;
-          button.addEventListener("click", async () => {
-            previewEl.hidden = false;
-            previewEl.textContent = await readReport(report.relative_path);
-          });
+          button.setAttribute("role", "option");
+          button.setAttribute(
+            "aria-selected",
+            report.relative_path === state.selectedPath ? "true" : "false",
+          );
+
+          const name = document.createElement("span");
+          name.className = "report-name";
+          name.textContent = report.relative_path;
+
+          const meta = document.createElement("span");
+          meta.className = "report-meta";
+          meta.textContent = `${formatBytes(report.size_bytes)} / ${formatDate(
+            report.modified_unix_seconds,
+          )}`;
+
+          button.append(name, meta);
+          button.addEventListener("click", () => selectReport(report));
           reportsEl.append(button);
         }
       }
 
-      async function refresh() {
+      async function selectReport(report) {
+        state.selectedPath = report.relative_path;
+        renderReports();
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        reportEvidenceEl.hidden = !report.relative_path.toLowerCase().endsWith(".json");
+        previewMetaEl.textContent = `${formatBytes(report.size_bytes)} / ${formatDate(
+          report.modified_unix_seconds,
+        )}`;
+        previewEl.textContent = "Loading...";
+
         try {
-          previewEl.hidden = true;
-          render(await localSnapshot());
+          const text = await readReport(report.relative_path);
+          renderReportSummary(reportSummary(text, report.relative_path));
+          previewEl.textContent = formatPreview(text, report.relative_path);
         } catch (error) {
-          reportsEl.textContent = "";
-          previewEl.hidden = false;
+          renderReportSummary(null);
           previewEl.textContent = String(error);
         }
       }
 
-      document.querySelector("#refresh").addEventListener("click", refresh);
+      function clearPreview() {
+        state.selectedPath = null;
+        previewMetaEl.textContent = "No file selected";
+        previewEl.hidden = true;
+        previewEl.textContent = "";
+        previewEmptyEl.hidden = false;
+        renderReportSummary(null);
+        reportEvidenceEl.hidden = true;
+        clearPreviewEl.hidden = true;
+        renderReports();
+      }
+
+      function renderError(error) {
+        state.reports = [];
+        state.filteredReports = [];
+        state.selectedPath = null;
+        reportsEl.replaceChildren();
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = String(error);
+        reportsEl.append(empty);
+        subtitleEl.textContent = "Local state unavailable";
+        shownCountEl.textContent = "0";
+        filteredCountEl.textContent = "0 shown";
+        renderCoreContract(fallbackCoreManifest(), null);
+        renderSurfaces(fallbackSurfaces());
+        previewMetaEl.textContent = "No file selected";
+        previewEl.hidden = true;
+        previewEl.textContent = "";
+        previewEmptyEl.hidden = false;
+        previewEmptyEl.textContent = "No preview open.";
+        renderReportSummary(null);
+        clearPreviewEl.hidden = true;
+        renderRuns([]);
+        renderWorkspaces([]);
+        renderKnowledge([]);
+        state.artifacts = [];
+        eventLogEl.textContent = String(error);
+      }
+
+      async function refresh() {
+        setBusy(true);
+        try {
+          let workspaces = await localWorkspaces();
+          if (invoke && workspaces.length === 0) {
+            await createLocalWorkspace("default");
+            workspaces = await localWorkspaces();
+          }
+          renderWorkspaces(workspaces);
+
+          const [snapshot, runs, knowledge, artifacts, parityReport] = await Promise.all([
+            localSnapshot(),
+            localRuns(),
+            localKnowledge(),
+            localArtifacts(),
+            coreParityReport(),
+          ]);
+          renderRuns(runs);
+          renderKnowledge(knowledge);
+          state.artifacts = artifacts;
+          state.parityReport = parityReport;
+          renderSnapshot(snapshot);
+          if (
+            state.selectedPath &&
+            !state.reports.some((report) => report.relative_path === state.selectedPath)
+          ) {
+            clearPreview();
+          }
+        } catch (error) {
+          renderError(error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      searchEl.addEventListener("input", applyFilter);
+      refreshEl.addEventListener("click", refresh);
+      clearPreviewEl.addEventListener("click", clearPreview);
+      reportEvidenceEl.addEventListener("click", async () => {
+        if (!state.selectedPath) {
+          eventLogEl.textContent = "Select a JSON benchmark report first.";
+          return;
+        }
+        reportEvidenceEl.disabled = true;
+        reportEvidenceEl.textContent = "Loading";
+        try {
+          const evidence = await localBenchmarkEvidence(state.selectedPath);
+          eventLogEl.textContent = `Benchmark Evidence
+Schema: ${evidence.schema_version}
+Report: ${evidence.report_path}
+Benchmark: ${evidence.report.benchmark}
+Cases: ${evidence.report.n_cases}
+Score: ${Number(evidence.report.overall_score ?? 0).toFixed(4)}
+Events: ${evidence.report.total_events}
+Tool calls: ${evidence.report.total_tool_calls}
+Run evidence records: ${evidence.run_evidence.length}
+
+Runs
+${evidence.run_evidence.map((run) => `- ${run.run.run_id}: ${run.event_count} events / ${run.tool_call_count} tools / ${run.artifacts.length} artifacts`).join("\n") || "No run evidence linked."}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          reportEvidenceEl.disabled = false;
+          reportEvidenceEl.textContent = "Evidence";
+        }
+      });
+      workspaceSelectEl.addEventListener("change", async () => {
+        state.activeWorkspaceId = workspaceSelectEl.value || "default";
+        eventLogEl.textContent = `Workspace selected: ${activeWorkspaceId()}`;
+        await refresh();
+      });
+      workspaceFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const workspaceId = workspaceIdEl.value.trim();
+        if (!workspaceId) {
+          eventLogEl.textContent = "Workspace id is required.";
+          return;
+        }
+        setWorkspaceBusy(true);
+        try {
+          const workspace = await createLocalWorkspace(workspaceId);
+          state.activeWorkspaceId = workspace.workspace_id;
+          workspaceIdEl.value = "";
+          eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setWorkspaceBusy(false);
+        }
+      });
+      runFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const prompt = agentPromptEl.value.trim();
+        if (!prompt) {
+          eventLogEl.textContent = "Prompt is required.";
+          return;
+        }
+        setAgentBusy(true);
+        eventLogEl.textContent = "Running local event loop...";
+        try {
+          const result = await runLocalAgent(prompt);
+          agentPromptEl.value = "";
+          eventLogEl.textContent = result.events
+            .map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`)
+            .join("\n");
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setAgentBusy(false);
+        }
+      });
+      knowledgeFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const path = knowledgePathEl.value.trim();
+        if (!path) return;
+        setKnowledgeBusy(true);
+        try {
+          await addKnowledge(path);
+          knowledgePathEl.value = "";
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setKnowledgeBusy(false);
+        }
+      });
+      runBenchmarkEl.addEventListener("click", async () => {
+        setBenchmarkBusy(true);
+        eventLogEl.textContent = "Running local benchmark...";
+        try {
+          const result = await runLocalBenchmark();
+          eventLogEl.textContent = `Benchmark finished
+${result.report.benchmark}
+Score: ${result.report.overall_score.toFixed(4)}
+Cases: ${result.report.n_cases}
+Events: ${result.report.total_events}
+Tool calls: ${result.report.total_tool_calls}
+JSON: ${result.json_path}
+Markdown: ${result.markdown_path}`;
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setBenchmarkBusy(false);
+        }
+      });
+      replayWorkspaceEl.addEventListener("click", async () => {
+        setReplayBusy(true);
+        eventLogEl.textContent = "Replaying workspace event stream...";
+        try {
+          const replay = await localWorkspaceReplay();
+          const events = replay.events
+            .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
+            .join("\n");
+          eventLogEl.textContent = `Workspace Replay
+Workspace: ${replay.workspace_id}
+Events: ${replay.events.length}
+Runs: ${replay.runs.length}
+Knowledge sources: ${replay.knowledge_sources.length}
+Artifacts: ${replay.artifacts.length}
+Last sequence: ${replay.last_sequence ?? "none"}
+
+${events || "No events recorded."}`;
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setReplayBusy(false);
+        }
+      });
+      previewArtifactEl.addEventListener("click", async () => {
+        setArtifactBusy(true);
+        try {
+          if (state.artifacts.length === 0) {
+            state.artifacts = await localArtifacts();
+          }
+          const artifact = state.artifacts[0];
+          if (!artifact) {
+            eventLogEl.textContent = "No local artifacts indexed yet.";
+            return;
+          }
+          const preview = await readArtifact(artifact.artifact_id);
+          eventLogEl.textContent = `Artifact
+ID: ${preview.artifact.artifact_id}
+Run: ${preview.artifact.run_id}
+Kind: ${preview.artifact.kind}
+Path: ${preview.artifact.path}
+Read: ${formatBytes(preview.bytes_read)}
+Truncated: ${preview.truncated}
+
+${preview.preview}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setArtifactBusy(false);
+        }
+      });
+      showParityEl.addEventListener("click", async () => {
+        setParityBusy(true);
+        try {
+          const report = state.parityReport ?? (await coreParityReport());
+          state.parityReport = report;
+          if (!report) {
+            eventLogEl.textContent = "Parity report unavailable outside the desktop runtime.";
+            return;
+          }
+          const checks = report.checks
+            .map((check) => {
+              const details = check.details?.length
+                ? `\n${check.details.map((detail) => `  - ${detail}`).join("\n")}`
+                : "";
+              return `${check.passed ? "OK" : "FAIL"} ${check.id}: ${check.summary}${details}`;
+            })
+            .join("\n");
+          eventLogEl.textContent = `Surface Parity
+Schema: ${report.schema_version}
+Passed: ${report.passed}
+Surfaces: ${report.surface_count}
+Primitives: ${report.primitive_count}
+Capabilities: ${report.capability_count}
+
+${checks}`;
+          renderCoreContract(state.snapshot?.core_manifest ?? fallbackCoreManifest(), report);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setParityBusy(false);
+        }
+      });
+      showBundleEl.addEventListener("click", async () => {
+        setBundleBusy(true);
+        try {
+          const bundle = await localEvidenceBundle();
+          if (!bundle) {
+            eventLogEl.textContent = "Evidence bundle unavailable outside the desktop runtime.";
+            return;
+          }
+          eventLogEl.textContent = `Local Evidence Bundle
+Schema: ${bundle.schema_version}
+Workspace: ${bundle.workspace_id}
+Generated: ${bundle.generated_at_ms}
+Parity passed: ${bundle.parity_report.passed}
+Benchmark reports: ${bundle.snapshot.benchmark_report_count}
+Events: ${bundle.workspace_replay.events.length}
+Runs: ${bundle.workspace_replay.runs.length}
+Knowledge sources: ${bundle.workspace_replay.knowledge_sources.length}
+Artifacts: ${bundle.workspace_replay.artifacts.length}
+Run evidence records: ${bundle.run_evidence.length}
+
+Recent Reports
+${bundle.snapshot.recent_benchmark_reports.map((report) => `- ${report.relative_path}`).join("\n") || "No benchmark reports found."}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setBundleBusy(false);
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        const activeTag = document.activeElement?.tagName;
+        const typing = activeTag === "INPUT" || activeTag === "TEXTAREA";
+        if (event.key === "/" && !typing) {
+          event.preventDefault();
+          searchEl.focus();
+        }
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r") {
+          event.preventDefault();
+          refresh();
+        }
+      });
+
       refresh();
     </script>
   </body>

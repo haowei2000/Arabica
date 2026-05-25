@@ -1,0 +1,410 @@
+{
+  "schema_version": "2026.05",
+  "paper_anchor": {
+    "system_name": "Structure",
+    "thesis": "Long-running LLM agent context should be a structured address space rather than an opaque buffer.",
+    "sections": [
+      "abstract",
+      "introduction",
+      "method",
+      "experiments",
+      "results"
+    ]
+  },
+  "canonical_flow": [
+    {
+      "id": "goal",
+      "name": "Goal",
+      "description": "The user, benchmark, or run defines the objective and budget."
+    },
+    {
+      "id": "address",
+      "name": "Address",
+      "description": "The agent or operator locates durable state by path, prefix, glob, or semantic query."
+    },
+    {
+      "id": "disclose",
+      "name": "Disclose",
+      "description": "The system materializes glance, overview, or detail according to the current need."
+    },
+    {
+      "id": "event",
+      "name": "Event",
+      "description": "Mutations and observations are recorded as ordered events."
+    },
+    {
+      "id": "evidence",
+      "name": "Evidence",
+      "description": "Reports, run state, cost, ratings, and artifacts make the trajectory inspectable."
+    },
+    {
+      "id": "feedback",
+      "name": "Feedback",
+      "description": "Ratings, GC policy, and benchmark outcomes feed back into future retrieval and evaluation."
+    }
+  ],
+  "benchmark_report_schema": {
+    "id": "benchmark-report-v1",
+    "family": "BenchmarkReport",
+    "description": "Shared evidence contract for live Structure benchmarks and embedded local benchmarks.",
+    "required_fields": [
+      "benchmark",
+      "n_cases",
+      "overall_score",
+      "per_ability_score",
+      "mean_cost",
+      "total_cost",
+      "per_case",
+      "per_case_diagnostics",
+      "evidence_summary"
+    ],
+    "cost_fields": [
+      "tokens_prompt",
+      "tokens_completion",
+      "tokens_cached",
+      "cache_creation_tokens",
+      "cache_read_tokens",
+      "steps",
+      "tool_calls",
+      "latency_seconds",
+      "usd_cost"
+    ],
+    "evidence_fields": [
+      "task_id",
+      "score",
+      "adapter",
+      "run_id",
+      "run_status",
+      "event_count",
+      "tool_calls",
+      "artifact_path"
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "core_manifest",
+      "name": "Shared Core Manifest",
+      "primitive_id": "reproducible_evidence",
+      "description": "All surfaces read the same paper/runtime contract and expose the same vocabulary for primitives, flows, surfaces, and benchmark evidence.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local core --json / structure-local surfaces --json",
+          "evidence": "Rust local-core parses core/structure_core.json and CLI/TUI render the parsed contract."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_snapshot / core_manifest Tauri commands",
+          "evidence": "Desktop shell renders the manifest through Rust local-core without requiring a backend service."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "read_only",
+          "entrypoint": "frontend/src/core/structureCore.ts",
+          "evidence": "React imports the manifest as a typed read-only contract while preserving service-backed runtime behavior."
+        }
+      ]
+    },
+    {
+      "id": "local_agent_run_loop",
+      "name": "Local Agent Run Loop",
+      "primitive_id": "event_audit",
+      "description": "The local products run an embedded event-sourced agent loop with workspace opening, context loading, tool planning, tool execution, synthesis, artifact writing, and terminal status.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local run / structure-local tui",
+          "evidence": "CLI returns JSON RunResult; TUI can run a fixed workspace check with n or accept a custom prompt with c."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_agent_run",
+          "evidence": "Tauri command invokes structure-local-runtime directly and renders events/final response."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "Structure API run creation and SSE streaming",
+          "evidence": "Web run loop remains API-backed and shares event/run vocabulary instead of embedding the local runtime."
+        }
+      ]
+    },
+    {
+      "id": "workspace_context",
+      "name": "Workspace Context And Knowledge",
+      "primitive_id": "path_addressing",
+      "description": "Workspace state keeps stable paths for registered knowledge sources and separates metadata/listing from preview/detail.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local workspace create/list/show/replay and knowledge add/list/show/remove",
+          "evidence": "CLI manages workspace metadata, SQLite knowledge indexes, and previews original files; TUI can create/open workspaces with o, register knowledge paths with s, and remove registrations with x."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "create_local_workspace / local_workspaces / add_local_knowledge / read_local_knowledge_source / remove_local_knowledge",
+          "evidence": "Desktop UI supports workspace selection/creation plus knowledge source add, preview, and metadata removal through the local runtime."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "Workspace context API and storage services",
+          "evidence": "Web workspace context remains backend-managed but follows path-addressed context semantics."
+        }
+      ]
+    },
+    {
+      "id": "event_replay",
+      "name": "Event Replay",
+      "primitive_id": "event_audit",
+      "description": "Ordered events can be replayed at run or workspace scope for debugging, benchmark evidence, and artifact inspection.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local runs events / structure-local workspace replay",
+          "evidence": "CLI emits JSON event streams and workspace replay bundles for automation."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_run_events / local_workspace_replay",
+          "evidence": "Desktop UI can replay the workspace stream and inspect run evidence locally."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "SSE event stream and replay endpoints",
+          "evidence": "Service runs stream and persist events through the backend event-sourcing layer."
+        }
+      ]
+    },
+    {
+      "id": "artifact_evidence",
+      "name": "Artifact Evidence",
+      "primitive_id": "reproducible_evidence",
+      "description": "Generated assistant responses and benchmark reports are addressable artifacts linked back to runs, events, and costs.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local artifacts list/show",
+          "evidence": "CLI lists artifact records and previews artifact files by artifact_id."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_artifacts / read_local_artifact",
+          "evidence": "Desktop UI previews the latest local artifact and displays report summaries."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "Run artifacts and persisted cost/report state",
+          "evidence": "Service artifacts are linked to backend runs and benchmark evidence."
+        }
+      ]
+    },
+    {
+      "id": "benchmark_execution",
+      "name": "Benchmark Execution",
+      "primitive_id": "reproducible_evidence",
+      "description": "Both service-backed and embedded benchmark paths produce comparable report evidence and cost fields.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local bench run / structure-local bench local / structure-local bench evidence",
+          "evidence": "CLI delegates service benchmarks to the Python adapter, can run the embedded local benchmark, and can relink a report to run evidence."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_benchmark_run / local_benchmark_evidence",
+          "evidence": "Desktop shell can start the embedded benchmark, read resulting JSON/Markdown reports, and inspect linked run evidence."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "read_only",
+          "entrypoint": "Benchmark reports surfaced as artifacts",
+          "evidence": "Web is not an operator benchmark runner; it preserves shared evidence vocabulary for service runs."
+        }
+      ]
+    }
+  ],
+  "primitives": [
+    {
+      "id": "path_addressing",
+      "name": "Path-addressable context",
+      "paper_section": "method: Path-Addressable Context",
+      "invariant": "Durable state has a stable hierarchical path and can be discovered by exact, prefix, glob, or semantic query.",
+      "implementation_contract": "All product surfaces must preserve path identity when rendering, exporting, replaying, or benchmarking context state.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Primary live workspace and run context surface."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Local artifact and report path inspection surface."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Scriptable path/report discovery and diagnostics surface."
+        }
+      ]
+    },
+    {
+      "id": "multi_level_disclosure",
+      "name": "Multi-level disclosure",
+      "paper_section": "method: Multi-Level Disclosure",
+      "invariant": "Every context object should be materializable as glance, overview, or detail without changing the underlying state.",
+      "implementation_contract": "Interfaces should separate cheap listing/metadata views from full content previews and should record escalation counts in benchmark artifacts.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Executes disclosure choices during live agent runs."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Maps report list, metadata, and preview to the same disclosure ladder for local review."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Exposes list/status/show commands as machine-readable disclosure levels."
+        }
+      ]
+    },
+    {
+      "id": "event_audit",
+      "name": "Event-sourced audit",
+      "paper_section": "method: Event-Sourced Audit Layer",
+      "invariant": "Every mutation is an ordered immutable event that can be streamed live and replayed offline.",
+      "implementation_contract": "Live clients, local apps, and benchmark scripts must keep event identifiers and replay metadata visible in their outputs.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Streams and renders live run/workspace events."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Reads persisted evidence produced by event replay and benchmark runs."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Provides reproducible event/report inspection for automation and CI."
+        }
+      ]
+    },
+    {
+      "id": "source_evaluation",
+      "name": "Source evaluation",
+      "paper_section": "method: Source Evaluation via Agent Ratings",
+      "invariant": "Consulted context can receive bounded usefulness ratings that affect filtering, ranking, and later analysis.",
+      "implementation_contract": "Ratings must be event-sourced and reported with enough metadata to separate filtering effects from reranking effects.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Produces and consumes ratings inside the live agent loop."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Surfaces rating evidence and score traces for local review."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Exports rating-aware benchmark summaries and ablation diagnostics."
+        }
+      ]
+    },
+    {
+      "id": "event_gc",
+      "name": "Event-level garbage collection",
+      "paper_section": "method: Event-Level Garbage Collection",
+      "invariant": "GC is a visibility filter over events, not a destructive rewrite of storage.",
+      "implementation_contract": "Run artifacts must include the GC policy and enough event counts to reproduce the live context at each step.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Applies GC policy while constructing the live agent working context."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Displays GC policy and retained/expired event evidence from local artifacts."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Runs and compares GC ablations in benchmark workflows."
+        }
+      ]
+    },
+    {
+      "id": "reproducible_evidence",
+      "name": "Reproducible evidence",
+      "paper_section": "experiments: Evaluation Metrics and Analysis",
+      "invariant": "Accuracy, token cost, latency, disclosure counts, ratings, and replay identifiers are preserved as inspectable evidence.",
+      "implementation_contract": "All surfaces should expose the same run/report vocabulary so paper tables and local diagnostics refer to the same evidence objects.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Creates service-backed runs and records state for evaluation."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Makes benchmark evidence inspectable without a backend service."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Provides stable JSON/text outputs for benchmark automation and paper artifact checks."
+        }
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "cli_tui",
+      "name": "CLI/TUI",
+      "entrypoint": "uv run structure ... / structure-local tui",
+      "audience": "Developers and benchmark operators",
+      "runtime_model": "Local Rust binary; no backend service required",
+      "primary_jobs": [
+        "Status and JSON snapshots",
+        "Benchmark report discovery",
+        "Terminal-first inspection"
+      ],
+      "boundary": "Operator tooling only; it should stay scriptable and should not become the product UI."
+    },
+    {
+      "id": "desktop_app",
+      "name": "Desktop App",
+      "entrypoint": "npm run desktop:dev / structure-desktop",
+      "audience": "Local users reviewing Structure artifacts",
+      "runtime_model": "Tauri shell over local files and Rust commands",
+      "primary_jobs": [
+        "Native local workspace",
+        "Report search and preview",
+        "Goal-oriented review flow"
+      ],
+      "boundary": "User-facing local app; it should not expose terminal service controls as its main workflow."
+    },
+    {
+      "id": "web_app",
+      "name": "Web App",
+      "entrypoint": "cd frontend && npm run dev",
+      "audience": "Browser users and collaborative service deployments",
+      "runtime_model": "React UI backed by Structure API services",
+      "primary_jobs": [
+        "Auth and workspaces",
+        "Run creation and streaming",
+        "Service-backed collaboration"
+      ],
+      "boundary": "Service product surface; it remains separate from the offline local app and CLI/TUI."
+    }
+  ]
+}

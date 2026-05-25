@@ -66,7 +66,10 @@ def test_loader_supports_upstream_session_dict_and_adversarial_answer(tmp_path):
     assert case.reference == "7 May 2023"
     assert case.ability == "5"
     assert case.metadata["evidence"] == ["D1:1"]
-    assert case.inputs["sessions"][0][0]["content"] == "session date: 1:56 pm on 8 May, 2023"
+    assert (
+        case.inputs["sessions"][0][0]["content"]
+        == "session date: 1:56 pm on 8 May, 2023"
+    )
 
 
 @pytest.mark.unit

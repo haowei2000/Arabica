@@ -12,7 +12,10 @@ import os
 from pathlib import Path
 import random
 
-from benchmarks.adapters import StructureMemoryBenchmarkAgent
+from benchmarks.adapters import (
+    StructureMemoryBenchmarkAgent,
+    StructurePathMemoryBenchmarkAgent,
+)
 from benchmarks.baselines import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -95,6 +98,11 @@ def _make_agent(
     if method == "StructureMemory":
         return StructureMemoryBenchmarkAgent(
             data_root=output_dir / "structure-context",
+            **common,
+        )
+    if method == "StructurePathMemory":
+        return StructurePathMemoryBenchmarkAgent(
+            data_root=output_dir / "structure-path-context",
             **common,
         )
     raise ValueError(f"unsupported method: {method}")
@@ -430,7 +438,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=("FullText", "NaiveRAG", "StructureMemory"),
+        choices=("FullText", "NaiveRAG", "StructureMemory", "StructurePathMemory"),
         default=["FullText", "NaiveRAG", "StructureMemory"],
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)

@@ -284,7 +284,8 @@ LIGHTMEM_LOCOMO_OVERVIEW: tuple[LightMemLoCoMoOverview, ...] = (
 
 
 def iter_baseline_catalog(
-    *, status: str | None = None,
+    *,
+    status: str | None = None,
 ) -> Iterable[MemoryBaselineSpec]:
     """Yield baseline specs, optionally filtered by implementation status."""
     for spec in MEMORY_BASELINE_CATALOG:
@@ -293,7 +294,8 @@ def iter_baseline_catalog(
 
 
 def iter_locomo_overview(
-    *, backbone: str | None = None,
+    *,
+    backbone: str | None = None,
 ) -> Iterable[LightMemLoCoMoOverview]:
     """Yield LightMem LoCoMo overview rows, optionally filtered by backbone."""
     for row in LIGHTMEM_LOCOMO_OVERVIEW:
@@ -302,8 +304,8 @@ def iter_locomo_overview(
 
 
 def locomo_overview_dicts(
-    *, backbone: str | None = None,
+    *,
+    backbone: str | None = None,
 ) -> list[dict[str, object]]:
     """Return overview rows as JSON-serialisable dictionaries."""
     return [row.to_dict() for row in iter_locomo_overview(backbone=backbone)]
-

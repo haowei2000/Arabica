@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import type { WorkspaceCreate } from '@/types/workspace';
 import { APP_ICONS } from '@/constants/icons';
+import { STRUCTURE_CORE_MANIFEST, WEB_SURFACE } from '@/core/structureCore';
 
 const STATUS_DOT: Record<string, string> = {
   active:   'bg-green-500',
@@ -144,7 +145,12 @@ export default function AppWorkspacePage() {
             <div className="size-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-md shadow-primary-500/20">
               <BrandIcon className="size-4 text-white" />
             </div>
-            <span className="text-sm font-bold tracking-tight cursor-default">Structure</span>
+            <div className="flex flex-col">
+              <span className="text-sm font-bold tracking-tight cursor-default">Structure</span>
+              <span className="text-[10px] leading-3 text-muted-foreground">
+                {WEB_SURFACE.name} / {STRUCTURE_CORE_MANIFEST.benchmark_report_schema.id}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">

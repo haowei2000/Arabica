@@ -59,8 +59,7 @@ OPEN_SOURCE_BENCHMARK_TARGETS = (
     OpenSourceBenchmarkTarget(
         name="longmemeval-v2",
         upstream_url="https://xiaowu0162.github.io/longmemeval-v2/",
-        fixture_path=REPO_ROOT
-        / "benchmarks/longmemeval_v2/fixtures/sample.json",
+        fixture_path=REPO_ROOT / "benchmarks/longmemeval_v2/fixtures/sample.json",
         loader=load_longmemeval_v2,
         scorer=longmemeval_v2_scorer,
         expected_cases=3,
