@@ -1,0 +1,18 @@
+[package]
+name = "structure-desktop"
+version = "5.5.0"
+description = "Local desktop shell for Structure"
+authors = ["Structure contributors"]
+license = "Apache-2.0"
+edition = "2021"
+
+[lib]
+name = "structure_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+structure-local-core = { path = "../../crates/structure-local-core" }

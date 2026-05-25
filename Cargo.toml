@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/structure-local-core",
+    "crates/structure-local",
+    "frontend/src-tauri",
+]
+resolver = "2"

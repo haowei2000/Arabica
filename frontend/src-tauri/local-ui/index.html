@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Structure Local</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #f8fafc;
+        color: #111827;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #f8fafc;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(260px, 340px) 1fr;
+      }
+
+      aside {
+        border-right: 1px solid #d9e2ec;
+        background: #ffffff;
+        padding: 22px;
+      }
+
+      section {
+        padding: 28px;
+        min-width: 0;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        line-height: 32px;
+      }
+
+      h2 {
+        font-size: 15px;
+        line-height: 22px;
+      }
+
+      .muted {
+        color: #64748b;
+        font-size: 13px;
+        line-height: 20px;
+      }
+
+      .stat {
+        margin-top: 18px;
+        border: 1px solid #d9e2ec;
+        border-radius: 8px;
+        padding: 14px;
+        background: #f8fafc;
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 22px;
+        line-height: 30px;
+      }
+
+      button {
+        min-height: 40px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #0f172a;
+        font: inherit;
+        font-weight: 600;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #f1f5f9;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+
+      .reports {
+        display: grid;
+        gap: 10px;
+      }
+
+      .report {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        text-align: left;
+        border: 1px solid #d9e2ec;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 12px 14px;
+      }
+
+      .report-name {
+        overflow-wrap: anywhere;
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      pre {
+        margin: 18px 0 0;
+        max-height: 52vh;
+        overflow: auto;
+        border: 1px solid #d9e2ec;
+        border-radius: 8px;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 14px;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      @media (max-width: 780px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        aside {
+          border-right: 0;
+          border-bottom: 1px solid #d9e2ec;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <aside>
+        <h1>Structure Local</h1>
+        <p class="muted">Rust desktop app running from local files only.</p>
+        <div class="stat">
+          <span class="muted">Mode</span>
+          <strong id="mode">Local</strong>
+        </div>
+        <div class="stat">
+          <span class="muted">Benchmark reports</span>
+          <strong id="report-count">0</strong>
+        </div>
+        <div class="stat">
+          <span class="muted">Repository</span>
+          <div id="repo" class="muted">Loading...</div>
+        </div>
+      </aside>
+      <section>
+        <div class="toolbar">
+          <div>
+            <h2>Recent Reports</h2>
+            <div class="muted">Read local benchmark artifacts without a web service.</div>
+          </div>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <div id="reports" class="reports"></div>
+        <pre id="preview" hidden></pre>
+      </section>
+    </main>
+    <script>
+      const reportsEl = document.querySelector("#reports");
+      const previewEl = document.querySelector("#preview");
+      const repoEl = document.querySelector("#repo");
+      const reportCountEl = document.querySelector("#report-count");
+      const invoke = window.__TAURI__?.core?.invoke;
+
+      async function localSnapshot() {
+        if (!invoke) {
+          return {
+            repo_root: "Tauri IPC is unavailable",
+            benchmark_report_count: 0,
+            recent_benchmark_reports: [],
+            local_only: true,
+          };
+        }
+        return invoke("local_snapshot");
+      }
+
+      async function readReport(path) {
+        if (!invoke) return "Tauri IPC is unavailable.";
+        return invoke("read_local_report", { path });
+      }
+
+      function render(snapshot) {
+        repoEl.textContent = snapshot.repo_root;
+        reportCountEl.textContent = String(snapshot.benchmark_report_count);
+        reportsEl.replaceChildren();
+        const reports = snapshot.recent_benchmark_reports ?? [];
+        if (reports.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No local benchmark reports found.";
+          reportsEl.append(empty);
+          return;
+        }
+        for (const report of reports) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "report";
+          button.innerHTML = `
+            <span class="report-name"></span>
+            <span class="muted">${report.size_bytes} bytes</span>
+          `;
+          button.querySelector(".report-name").textContent = report.relative_path;
+          button.addEventListener("click", async () => {
+            previewEl.hidden = false;
+            previewEl.textContent = await readReport(report.relative_path);
+          });
+          reportsEl.append(button);
+        }
+      }
+
+      async function refresh() {
+        try {
+          previewEl.hidden = true;
+          render(await localSnapshot());
+        } catch (error) {
+          reportsEl.textContent = "";
+          previewEl.hidden = false;
+          previewEl.textContent = String(error);
+        }
+      }
+
+      document.querySelector("#refresh").addEventListener("click", refresh);
+      refresh();
+    </script>
+  </body>
+</html>
