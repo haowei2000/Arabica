@@ -554,7 +554,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     println!(
         "  commands:  /help, /status, /llm, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
     );
-    println!("  context:   mention @repo/relative/path in a prompt to attach a file");
+    println!("  context:   mention @repo/relative/path[:line] in a prompt to attach a file");
     println!();
 
     let stdin = io::stdin();
@@ -938,7 +938,7 @@ fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
 
 fn print_chat_session_help() {
     println!("Structure local session commands");
-    println!("  @path in prompt        Attach a repo-relative file before model planning");
+    println!("  @path[:line] prompt    Attach a repo-relative file before model planning");
     println!("  /status               Show workspace, mode, selected run, and LLM env");
     println!("  /llm                  Check the configured OPENAI__ API endpoint");
     println!("  /mode chat|code       Switch between chat and code-agent mode");

@@ -53,7 +53,8 @@ source reads, and allowlisted local verification commands through
 `run_local_command`. Command execution never uses a shell, resolves cwd under
 the repository root, clamps runtime/output limits, and records stdout, stderr,
 exit status, timeout state, and truncation metadata as ordinary tool evidence.
-Prompts can also include Codex-style `@repo/relative/path` references. The
+Prompts can also include Codex-style `@repo/relative/path`,
+`@repo/relative/path:line`, and `@repo/relative/path#Lline` references. The
 runtime resolves those references as `read_repo_file` tool calls before model
 planning, so CLI, TUI, and desktop app all get the same addressed file context
 through Structure events instead of surface-specific prompt rewriting.

@@ -669,6 +669,10 @@ impl LocalAgentRuntime {
         let mut tool_results = Vec::new();
         let prompt_references = prompt_path_references(&run.prompt);
         if !prompt_references.is_empty() {
+            let prompt_reference_labels = prompt_references
+                .iter()
+                .map(|reference| reference.display.clone())
+                .collect::<Vec<_>>();
             self.store.append_event(
                 &run.workspace_id,
                 Some(&run.run_id),
@@ -679,15 +683,15 @@ impl LocalAgentRuntime {
                     "steps": ["prompt_reference_resolution"],
                     "tool_call_count": prompt_references.len(),
                     "total_tool_results": tool_results.len(),
-                    "prompt_references": prompt_references,
+                    "prompt_references": prompt_reference_labels,
                 }),
             )?;
-            for path in &prompt_references {
+            for reference in &prompt_references {
                 let call = LocalToolCall {
                     call_id: new_id("tool"),
                     name: "read_repo_file".to_string(),
                     input: serde_json::json!({
-                        "path": path,
+                        "path": reference.path,
                         "max_bytes": 8192,
                     }),
                 };
@@ -936,23 +940,57 @@ fn read_limited_text(
     Ok((preview, bytes_read, truncated))
 }
 
-fn prompt_path_references(prompt: &str) -> Vec<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PromptPathReference {
+    display: String,
+    path: String,
+}
+
+fn prompt_path_references(prompt: &str) -> Vec<PromptPathReference> {
     let mut references = Vec::new();
     for raw_token in prompt.split_whitespace() {
-        let Some(reference) = raw_token.strip_prefix('@') else {
+        let Some(reference) = parse_prompt_path_reference(raw_token) else {
             continue;
         };
-        let reference = reference.trim_matches(|ch: char| {
-            matches!(ch, ',' | '.' | ':' | ';' | ')' | ']' | '}' | '"' | '\'')
-        });
-        if !looks_like_repo_path_reference(reference) {
-            continue;
-        }
-        if !references.iter().any(|existing| existing == reference) {
-            references.push(reference.to_string());
+        if !references
+            .iter()
+            .any(|existing: &PromptPathReference| existing.display == reference.display)
+        {
+            references.push(reference);
         }
     }
     references
+}
+
+fn parse_prompt_path_reference(raw_token: &str) -> Option<PromptPathReference> {
+    let reference = raw_token.strip_prefix('@')?;
+    let reference = reference.trim_matches(|ch: char| {
+        matches!(ch, ',' | '.' | ':' | ';' | ')' | ']' | '}' | '"' | '\'')
+    });
+    let path = prompt_reference_path_part(reference);
+    looks_like_repo_path_reference(path).then(|| PromptPathReference {
+        display: reference.to_string(),
+        path: path.to_string(),
+    })
+}
+
+fn prompt_reference_path_part(reference: &str) -> &str {
+    if let Some((path, line)) = reference.rsplit_once("#L") {
+        if !path.is_empty() && line.chars().all(|ch| ch.is_ascii_digit()) {
+            return path;
+        }
+    }
+    if let Some((path, line)) = reference.rsplit_once("#l") {
+        if !path.is_empty() && line.chars().all(|ch| ch.is_ascii_digit()) {
+            return path;
+        }
+    }
+    if let Some((path, line)) = reference.rsplit_once(':') {
+        if !path.is_empty() && line.chars().all(|ch| ch.is_ascii_digit()) {
+            return path;
+        }
+    }
+    reference
 }
 
 fn looks_like_repo_path_reference(reference: &str) -> bool {
@@ -1468,7 +1506,7 @@ mod tests {
 
         let result = runtime
             .run_prompt(RunRequest {
-                prompt: "Use @docs/local-agent.md in the answer.".to_string(),
+                prompt: "Use @docs/local-agent.md:1 in the answer.".to_string(),
                 workspace_id: None,
                 mode: Some(LocalAgentMode::Chat),
             })
@@ -1502,15 +1540,36 @@ mod tests {
         let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
         assert_eq!(
             evidence.prompt_references,
-            vec!["docs/local-agent.md".to_string()]
+            vec!["docs/local-agent.md:1".to_string()]
         );
         let transcript = runtime.run_transcript(&result.run.run_id).unwrap();
         assert_eq!(
             transcript.evidence.prompt_references,
-            vec!["docs/local-agent.md".to_string()]
+            vec!["docs/local-agent.md:1".to_string()]
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prompt_path_reference_parser_supports_line_qualified_paths() {
+        let references = prompt_path_references(
+            "Read @src/lib.rs:42, compare @docs/guide.md#L7 and ignore @../secret",
+        );
+
+        assert_eq!(
+            references,
+            vec![
+                PromptPathReference {
+                    display: "src/lib.rs:42".to_string(),
+                    path: "src/lib.rs".to_string(),
+                },
+                PromptPathReference {
+                    display: "docs/guide.md#L7".to_string(),
+                    path: "docs/guide.md".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]

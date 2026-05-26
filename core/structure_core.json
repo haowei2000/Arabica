@@ -111,7 +111,7 @@
       "id": "local_agent_run_loop",
       "name": "Local Chat And Code-Agent Loop",
       "primitive_id": "event_audit",
-      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, prompt @path reference resolution, recent-turn context replay, bounded iterative OpenAI-compatible or deterministic tool planning, code search, allowlisted local command checks, knowledge loading, tool execution, synthesis, proposed code-change artifacts, reviewed proposal application, artifact writing, and terminal status.",
+      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, prompt @path and @path:line reference resolution, recent-turn context replay, bounded iterative OpenAI-compatible or deterministic tool planning, code search, allowlisted local command checks, knowledge loading, tool execution, synthesis, proposed code-change artifacts, reviewed proposal application, artifact writing, and terminal status.",
       "surface_status": [
         {
           "surface_id": "cli_tui",
