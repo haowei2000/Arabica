@@ -189,7 +189,7 @@ into runtime calls:
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
-  `/status`, `/context`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`,
+  `/status`, `/context`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
@@ -246,7 +246,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected

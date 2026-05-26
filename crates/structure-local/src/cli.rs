@@ -1207,13 +1207,14 @@ fn print_chat_session_help() {
     println!("  /inspect [run_id]     Alias for /transcript");
     println!("  /artifacts            List recent artifacts");
     println!("  /proposal [run_id]    Show the latest code-change proposal");
+    println!("  /diff [run_id]        Alias for /proposal");
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
+    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /runs, /continue, /usage, /transcript, /proposal, /diff, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1871,6 +1872,7 @@ mod tests {
         assert!(summary.contains("/remember"));
         assert!(summary.contains("/recall"));
         assert!(summary.contains("/forget"));
+        assert!(summary.contains("/diff"));
         assert!(!summary.contains("benchmark"));
     }
 

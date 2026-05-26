@@ -697,6 +697,8 @@ mod tests {
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));
+        assert!(local_ui.contains("case \"/diff\":"));
+        assert!(local_ui.contains("/diff [run_id]"));
     }
 
     #[test]
