@@ -333,7 +333,59 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
             worktree.changed_files.len()
         );
     }
+    println!(
+        "  refs:      {}",
+        transcript.evidence.prompt_references.len()
+    );
+    println!(
+        "  knowledge: {}",
+        transcript.evidence.knowledge_sources.len()
+    );
     println!("  artifacts: {}", transcript.evidence.artifact_paths.len());
+    if !transcript.evidence.prompt_references.is_empty() {
+        println!("  prompt refs:");
+        for reference in &transcript.evidence.prompt_references {
+            println!("    @{reference}");
+        }
+    }
+    if !transcript.evidence.agent_instruction_paths.is_empty() {
+        println!("  instructions:");
+        for path in &transcript.evidence.agent_instruction_paths {
+            println!("    {path}");
+        }
+    }
+    if let Some(worktree) = &transcript.evidence.worktree {
+        if !worktree.changed_files.is_empty() {
+            println!("  changed files:");
+            for change in worktree.changed_files.iter().take(12) {
+                println!("    {} {}", change.status, change.path);
+            }
+        }
+    }
+    if !transcript.evidence.knowledge_sources.is_empty() {
+        println!("  sources:");
+        for source in &transcript.evidence.knowledge_sources {
+            println!("    {}  {}", source.title, source.path);
+        }
+    }
+    if !transcript.evidence.artifact_paths.is_empty() {
+        println!("  artifacts:");
+        for artifact in &transcript.evidence.artifacts {
+            println!(
+                "    {}  {} bytes  {}",
+                artifact.artifact_id, artifact.size_bytes, artifact.path
+            );
+        }
+        for path in transcript.evidence.artifact_paths.iter().filter(|path| {
+            !transcript
+                .evidence
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.path == **path)
+        }) {
+            println!("    {path}");
+        }
+    }
     if let Some(turn) = &transcript.chat_turn {
         println!();
         println!("User");

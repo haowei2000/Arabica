@@ -144,6 +144,7 @@ enum RunsCommand {
     Events(RunEventsArgs),
     Evidence(RunEvidenceArgs),
     Transcript(RunTranscriptArgs),
+    Inspect(RunTranscriptArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -1208,6 +1209,14 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
                 print_run_transcript(&transcript);
             }
         }
+        RunsCommand::Inspect(args) => {
+            let transcript = local_result(runtime.run_transcript(&args.run_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&transcript)?);
+            } else {
+                print_run_transcript(&transcript);
+            }
+        }
     }
     Ok(())
 }
@@ -1564,6 +1573,17 @@ mod tests {
 
         assert!(!help.contains("benchmark"));
         assert!(!help.contains("bench"));
+    }
+
+    #[test]
+    fn cli_runs_help_exposes_inspect_alias_for_transcripts() {
+        let runs = Cli::command()
+            .find_subcommand("runs")
+            .expect("runs command should exist")
+            .clone();
+
+        assert!(runs.find_subcommand("transcript").is_some());
+        assert!(runs.find_subcommand("inspect").is_some());
     }
 
     #[test]
