@@ -1032,6 +1032,7 @@
                 <p id="preview-meta" class="muted">No file selected</p>
               </div>
               <div id="preview-actions" class="preview-actions" hidden>
+                <button id="preview-attach" type="button">Attach</button>
                 <button id="preview-dry-run" type="button">Dry Run</button>
                 <button id="preview-apply" type="button" data-primary="true">Apply</button>
                 <button id="clear-preview" type="button">Clear</button>
@@ -1051,6 +1052,7 @@
       const previewEmptyEl = document.querySelector("#preview-empty");
       const previewMetaEl = document.querySelector("#preview-meta");
       const previewActionsEl = document.querySelector("#preview-actions");
+      const previewAttachEl = document.querySelector("#preview-attach");
       const previewDryRunEl = document.querySelector("#preview-dry-run");
       const previewApplyEl = document.querySelector("#preview-apply");
       const reportSummaryEl = document.querySelector("#report-summary");
@@ -1118,6 +1120,7 @@
         commandMessages: [],
         inFlightRun: null,
         previewArtifact: null,
+        previewRepoPath: null,
         knowledge: [],
         artifacts: [],
         parityReport: null,
@@ -1899,6 +1902,7 @@ ${events || "No new events."}`;
         previewMetaEl.textContent = `${event.kind} / #${event.sequence} / ${event.run_id ?? event.workspace_id}`;
         previewEl.textContent = payload;
         previewActionsEl.hidden = false;
+        previewAttachEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
         eventLogEl.textContent = `Event
@@ -2631,11 +2635,13 @@ Last sequence: ${replay.last_sequence ?? 0}`;
       async function selectReport(artifact) {
         state.selectedPath = artifact.artifact_id;
         state.previewArtifact = null;
+        state.previewRepoPath = null;
         renderReports();
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
         previewActionsEl.hidden = false;
+        previewAttachEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
         previewMetaEl.textContent = `${artifact.kind} / ${formatBytes(artifact.size_bytes)} / ${artifact.run_id}`;
@@ -2653,11 +2659,13 @@ Last sequence: ${replay.last_sequence ?? 0}`;
       function renderArtifactPreview(artifactPreview) {
         state.selectedPath = artifactPreview.artifact.artifact_id;
         state.previewArtifact = artifactPreview.artifact;
+        state.previewRepoPath = null;
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
         previewActionsEl.hidden = false;
         const isProposal = artifactPreview.artifact.kind === "code_change_proposal";
+        previewAttachEl.hidden = true;
         previewDryRunEl.hidden = !isProposal;
         previewApplyEl.hidden = !isProposal;
         previewMetaEl.textContent = `${artifactPreview.artifact.kind} / ${formatBytes(artifactPreview.bytes_read)} read / ${artifactPreview.artifact.run_id}`;
@@ -2680,6 +2688,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
         previewActionsEl.hidden = false;
+        previewAttachEl.hidden = true;
         previewDryRunEl.hidden = false;
         previewApplyEl.hidden = false;
         previewMetaEl.textContent = `Proposal review / ${checked.target_path}`;
@@ -2726,6 +2735,23 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
         return result;
       }
 
+      function attachPreviewFileToPrompt() {
+        if (!state.previewRepoPath) {
+          eventLogEl.textContent = "No repository file preview is selected.";
+          return;
+        }
+        const reference = `@${state.previewRepoPath}`;
+        const current = agentPromptEl.value.trim();
+        const alreadyAttached = current
+          .split(/\s+/)
+          .some((part) => part === reference || part.startsWith(`${reference}:`));
+        if (!alreadyAttached) {
+          agentPromptEl.value = current ? `${current}\n${reference} ` : `${reference} `;
+        }
+        agentPromptEl.focus();
+        eventLogEl.textContent = `Attached ${reference} to the next local agent prompt.`;
+      }
+
       function renderRepoToolResult(result) {
         renderReportSummary(null);
         previewEmptyEl.hidden = true;
@@ -2733,7 +2759,9 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
         clearPreviewEl.hidden = false;
         state.selectedPath = null;
         state.previewArtifact = null;
+        state.previewRepoPath = null;
         previewActionsEl.hidden = false;
+        previewAttachEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
         if (!result.success) {
@@ -2763,6 +2791,8 @@ ${entries.length} visible entries. Sensitive local config files are filtered.`;
           eventLogEl.textContent = `Search: ${result.output.query}
 Matches: ${matches.length}`;
         } else if (result.name === "read_repo_file") {
+          state.previewRepoPath = result.output.path ?? null;
+          previewAttachEl.hidden = !state.previewRepoPath;
           previewMetaEl.textContent = `${result.output.path} / ${result.output.chars_returned} chars`;
           previewEl.textContent = formatPreview(result.output.preview ?? "", result.output.path ?? "");
           eventLogEl.textContent = `Repo File
@@ -2804,6 +2834,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
       function clearPreview() {
         state.selectedPath = null;
         state.previewArtifact = null;
+        state.previewRepoPath = null;
         previewMetaEl.textContent = "No file selected";
         previewEl.hidden = true;
         previewEl.textContent = "";
@@ -2811,6 +2842,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         renderReportSummary(null);
         clearPreviewEl.hidden = true;
         previewActionsEl.hidden = true;
+        previewAttachEl.hidden = true;
         renderReports();
       }
 
@@ -2836,6 +2868,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         renderReportSummary(null);
         clearPreviewEl.hidden = true;
         previewActionsEl.hidden = true;
+        previewAttachEl.hidden = true;
         renderRuns([]);
         renderChat([]);
         renderEventTimeline([]);
@@ -3244,6 +3277,7 @@ Opened in Preview${state.selectedRunId ? " for the selected run." : "."}`;
           setProposalBusy(false);
         }
       });
+      previewAttachEl.addEventListener("click", attachPreviewFileToPrompt);
       previewDryRunEl.addEventListener("click", async () => {
         setPreviewProposalBusy(true, "dry-run");
         try {

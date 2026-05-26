@@ -237,8 +237,11 @@ into runtime calls:
   review -> apply loop without falling back to terminal-style service controls.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
-  persisted as workspace events, and the UI renders both workspace feed events
-  and an inspectable latest-run transcript from successful or failed attempts.
+  persisted as workspace events. A `read_repo_file` preview can be attached to
+  the next composer message as an `@path` reference, so desktop users get the
+  same addressed file-context mechanism as CLI/TUI prompts without hand-copying
+  paths. The UI renders both workspace feed events and an inspectable
+  latest-run transcript from successful or failed attempts.
   `local_evidence_bundle` exposes the same reproducibility artifact as the
   CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
   `benchmarks/adapters/`.

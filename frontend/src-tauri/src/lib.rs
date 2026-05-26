@@ -705,6 +705,17 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_attaches_repo_previews_to_prompt() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("id=\"preview-attach\""));
+        assert!(local_ui.contains("function attachPreviewFileToPrompt"));
+        assert!(local_ui.contains("state.previewRepoPath"));
+        assert!(local_ui.contains("state.previewRepoPath = result.output.path ?? null"));
+        assert!(local_ui.contains("const reference = `@${state.previewRepoPath}`"));
+    }
+
+    #[test]
     fn desktop_app_uses_local_ui_and_runtime_entrypoints() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
