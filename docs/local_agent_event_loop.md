@@ -161,6 +161,9 @@ into runtime calls:
   `/runs`, `/transcript`, `/search`, `/read`, `/source`, `/artifacts`,
   `/proposal`, and `/apply --dry-run`, so desktop interaction can stay in the
   chat/code-agent loop instead of becoming a separate operator dashboard.
+  Normal prompt submissions appear immediately as in-flight local chat turns
+  while the Rust runtime is executing, then collapse back into persisted
+  workspace chat turns after refresh.
   Command results are appended to the desktop chat thread as local interaction
   turns while
   persisted agent runs still come from the Rust runtime event store.

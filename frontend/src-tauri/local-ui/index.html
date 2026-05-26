@@ -982,6 +982,7 @@
         workspaceFeedEvents: [],
         chatTurns: [],
         commandMessages: [],
+        inFlightRun: null,
         knowledge: [],
         artifacts: [],
         parityReport: null,
@@ -1489,6 +1490,27 @@ Model: ${llm.model_name ?? "not set"}`;
 
           chatThreadEl.append(user, assistant);
         }
+        if (state.inFlightRun) {
+          const user = document.createElement("div");
+          user.className = "chat-message";
+          user.dataset.role = "user";
+          const userRole = document.createElement("strong");
+          userRole.textContent = `You / ${activeWorkspaceId()}`;
+          const userText = document.createElement("p");
+          userText.textContent = state.inFlightRun.prompt;
+          user.append(userRole, userText);
+
+          const assistant = document.createElement("div");
+          assistant.className = "chat-message";
+          assistant.dataset.role = "assistant";
+          const assistantRole = document.createElement("strong");
+          assistantRole.textContent = `Structure / ${state.inFlightRun.status}`;
+          const assistantText = document.createElement("p");
+          assistantText.textContent = state.inFlightRun.message;
+          assistant.append(assistantRole, assistantText);
+
+          chatThreadEl.append(user, assistant);
+        }
         for (const message of state.commandMessages) {
           const command = document.createElement("div");
           command.className = "chat-message";
@@ -1505,6 +1527,16 @@ Model: ${llm.model_name ?? "not set"}`;
 
       function renderChat(turns) {
         state.chatTurns = turns;
+        renderChatThread();
+      }
+
+      function setInFlightRun(prompt, status, message) {
+        state.inFlightRun = { prompt, status, message };
+        renderChatThread();
+      }
+
+      function clearInFlightRun() {
+        state.inFlightRun = null;
         renderChatThread();
       }
 
@@ -2545,6 +2577,11 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         }
         setAgentBusy(true);
         eventLogEl.textContent = `Running Structure local event loop in ${state.agentMode} mode...`;
+        setInFlightRun(
+          prompt,
+          "running",
+          `Working through the Structure local event loop in ${state.agentMode} mode...`,
+        );
         try {
           await primeWorkspaceEventCursor();
           startLiveEventPolling();
@@ -2564,7 +2601,15 @@ ${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unk
 
 Events
 ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
+          setInFlightRun(
+            prompt,
+            attempt.run.status,
+            result
+              ? result.final_response.slice(0, 2400)
+              : `Run failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+          );
           await refresh();
+          clearInFlightRun();
           if (!result) {
             eventLogEl.textContent += "\n\nThe failed run is still recorded and visible in the event trace.";
             return;
@@ -2581,6 +2626,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           }
         } catch (error) {
           eventLogEl.textContent = String(error);
+          setInFlightRun(prompt, "failed", String(error));
         } finally {
           stopLiveEventPolling();
           setAgentBusy(false);
