@@ -11,9 +11,9 @@ use structure_local_core::{
     collect_snapshot, verify_structure_core_parity_for_repo, LocalSnapshot, SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactRecord, KnowledgeSource, LocalAgentMode, LocalAgentRuntime, LocalEvidenceBundle,
-    LocalToolCall, ProposalApplyResult, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
-    WorkspaceSummary,
+    ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
+    LocalEvidenceBundle, LocalToolCall, ProposalApplyResult, RunAttempt, RunEvidenceSummary,
+    RunRequest, RunSummary, RunTranscript, WorkspaceSummary,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -37,6 +37,7 @@ struct TuiPreview {
 #[derive(Debug, Clone, Copy)]
 enum TuiInputKind {
     AgentPrompt,
+    FollowUpPrompt,
     KnowledgePath,
     WorkspaceId,
     LocalCommand,
@@ -46,6 +47,7 @@ impl TuiInputKind {
     fn title(self) -> &'static str {
         match self {
             Self::AgentPrompt => "Custom agent prompt",
+            Self::FollowUpPrompt => "Follow-up instruction",
             Self::KnowledgePath => "Knowledge file path",
             Self::WorkspaceId => "Workspace id",
             Self::LocalCommand => "Local command argv",
@@ -55,6 +57,7 @@ impl TuiInputKind {
     fn placeholder(self) -> &'static str {
         match self {
             Self::AgentPrompt => "Type a prompt and press Enter",
+            Self::FollowUpPrompt => "Type a follow-up for the selected run",
             Self::KnowledgePath => "Type an absolute or repo-relative file path",
             Self::WorkspaceId => "Type a workspace id to create or open",
             Self::LocalCommand => "Type an allowlisted command, e.g. cargo check --workspace",
@@ -189,6 +192,7 @@ impl TuiState {
 
         match input.kind {
             TuiInputKind::AgentPrompt => self.run_custom_prompt(repo_root, value),
+            TuiInputKind::FollowUpPrompt => self.run_follow_up_prompt(repo_root, value),
             TuiInputKind::KnowledgePath => self.add_knowledge_path(repo_root, value),
             TuiInputKind::WorkspaceId => self.open_or_create_workspace(repo_root, value),
             TuiInputKind::LocalCommand => self.run_local_command(repo_root, value),
@@ -204,6 +208,29 @@ impl TuiState {
         }))?;
         let notice = format!("Finished {}", result.run.run_id);
         self.refresh(repo_root)?;
+        self.notice = notice;
+        Ok(())
+    }
+
+    fn run_follow_up_prompt(&mut self, repo_root: &Path, instruction: String) -> Result<()> {
+        let Some(run_id) = self.selected_run_id().map(str::to_string) else {
+            self.notice = "No run selected for follow-up".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let attempt = local_result(runtime.run_continuation_attempt(ContinuationRequest {
+            run_id: run_id.clone(),
+            extra_instruction: Some(instruction),
+            mode: Some(self.agent_mode.clone()),
+        }))?;
+        self.active_workspace_id = attempt.run.workspace_id.clone();
+        let preview = render_run_attempt(&attempt);
+        let notice = format!("Continued {run_id} as {}", attempt.run.run_id);
+        self.refresh(repo_root)?;
+        self.preview = Some(TuiPreview {
+            path: format!("continuation / {}", attempt.run.run_id),
+            text: preview,
+        });
         self.notice = notice;
         Ok(())
     }
@@ -569,6 +596,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('w') => state.cycle_workspace(repo_root)?,
                     KeyCode::Char('o') => state.begin_input(TuiInputKind::WorkspaceId),
                     KeyCode::Char('c') => state.begin_input(TuiInputKind::AgentPrompt),
+                    KeyCode::Char('f') => state.begin_input(TuiInputKind::FollowUpPrompt),
                     KeyCode::Char('s') => state.begin_input(TuiInputKind::KnowledgePath),
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
@@ -662,7 +690,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  s knowledge path  ! local command",
+            "m mode  o workspace  c prompt  f follow-up  s knowledge path  ! local command",
             width,
         )?,
     }
@@ -750,7 +778,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, n to run a local check",
+        "press j/k to select, t transcript, f follow-up, n to run a local check",
         width,
     )?;
     let run_rows = usize::from(height.saturating_sub(3))
@@ -902,7 +930,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  m mode  o workspace  c prompt  ! cmd  n run  t transcript  g proposal  u dry-run  y apply";
+    let controls = "q quit  r refresh  m mode  c prompt  f follow-up  ! cmd  t transcript  g proposal  u dry-run  y apply";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1159,6 +1187,35 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
     text
 }
 
+fn render_run_attempt(attempt: &RunAttempt) -> String {
+    let mut text = String::new();
+    text.push_str("Run Attempt\n");
+    text.push_str(&format!("Run: {}\n", attempt.run.run_id));
+    text.push_str(&format!("Workspace: {}\n", attempt.run.workspace_id));
+    text.push_str(&format!("Status: {}\n", attempt.run.status));
+    text.push_str(&format!("Events: {}\n", attempt.events.len()));
+    if let Some(error) = &attempt.error {
+        text.push_str(&format!("Error: {error}\n"));
+    }
+    if let Some(result) = &attempt.result {
+        text.push_str(&format!("Artifact: {}\n", result.artifact_path));
+        text.push_str(&format!(
+            "Response chars: {}\n\n",
+            result.final_response.chars().count()
+        ));
+        text.push_str(&result.final_response);
+        text.push_str("\n\n");
+    }
+    text.push_str("Events\n");
+    for event in attempt.events.iter().rev().take(18).rev() {
+        text.push_str(&format!(
+            "#{} {} / {} / {}\n",
+            event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
+        ));
+    }
+    text
+}
+
 fn render_proposal_apply_result(result: &ProposalApplyResult) -> String {
     let mut text = String::new();
     text.push_str("Proposal Apply\n");
@@ -1303,7 +1360,10 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn tui_local_command_records_workspace_tool_events() {
@@ -1367,6 +1427,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tui_follow_up_runs_continuation_through_runtime() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_openai = openai_env_keys()
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in openai_env_keys() {
+            std::env::remove_var(key);
+        }
+
+        let root = unique_repo("tui-follow-up");
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(
+            snapshot,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            "tui-follow-up".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let result = (|| -> Result<()> {
+            state.run_custom_prompt(&root, "Summarize this workspace.".to_string())?;
+            let original_run_id = state.runs.first().unwrap().run_id.clone();
+            state.run_follow_up_prompt(
+                &root,
+                "Continue with one implementation note.".to_string(),
+            )?;
+
+            assert!(state.notice.contains(&original_run_id));
+            assert!(state.notice.contains("Continued"));
+            assert!(state.runs.len() >= 2);
+            let preview = state.preview.as_ref().expect("continuation preview");
+            assert!(preview.path.starts_with("continuation / run_"));
+            assert!(preview.text.contains("Run Attempt"));
+            assert!(preview.text.contains("Events"));
+
+            let runtime = local_result(LocalAgentRuntime::open(&root))?;
+            let latest = state.runs.first().expect("latest continuation run");
+            let evidence = local_result(runtime.run_evidence_summary(&latest.run_id))?;
+            assert!(evidence.event_count > 0);
+            assert!(evidence.core_trace.core_aligned);
+            Ok(())
+        })();
+
+        fs::remove_dir_all(root).ok();
+        for (key, value) in previous_openai {
+            restore_env(key, value);
+        }
+        result.unwrap();
+    }
+
     fn artifact(artifact_id: &str, run_id: &str, kind: &str) -> ArtifactRecord {
         ArtifactRecord {
             artifact_id: artifact_id.to_string(),
@@ -1376,6 +1490,18 @@ mod tests {
             path: format!("artifacts/{artifact_id}.md"),
             size_bytes: 42,
             created_at_ms: 1,
+        }
+    }
+
+    fn openai_env_keys() -> [&'static str; 3] {
+        ["OPENAI__API_KEY", "OPENAI__BASE_URL", "OPENAI__MODEL"]
+    }
+
+    fn restore_env(key: &str, value: Option<String>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
         }
     }
 
