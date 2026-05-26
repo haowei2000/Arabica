@@ -58,7 +58,8 @@ The same event log is also exposed as a cursor-based workspace feed through
 `workspace_event_feed`. CLI and desktop callers can request events after a known
 sequence number and receive `next_after_sequence`, which gives local app/TUI
 surfaces an in-process analogue of the service SSE replay cursor without
-starting an API server.
+starting an API server. The desktop shell uses this cursor both for manual Poll
+Events and for short-lived live polling while a local agent run is in flight.
 
 Current event sequence:
 
@@ -115,12 +116,12 @@ into runtime calls:
 - Desktop app: Tauri commands such as `local_agent_run`, `local_runs`, and
   `local_run_events`; `create_local_workspace` and `local_workspaces` back the
   native workspace selector. `local_workspace_event_feed` powers the Poll Events
-  action from a persisted cursor. Repository tool controls call safe
-  list/search/read commands plus `run_local_command` for allowlisted local
-  checks, and the UI renders an inspectable latest-run event trace from
-  `local_run_events`. `local_evidence_bundle` exposes the same reproducibility
-  artifact as the CLI/TUI. Benchmark execution stays in the dedicated Python
-  adapters under `benchmarks/adapters/`.
+  action and live in-flight run polling from a persisted cursor. Repository
+  tool controls call safe list/search/read commands plus `run_local_command` for
+  allowlisted local checks, and the UI renders an inspectable latest-run event
+  trace from `local_run_events`. `local_evidence_bundle` exposes the same
+  reproducibility artifact as the CLI/TUI. Benchmark execution stays in the
+  dedicated Python adapters under `benchmarks/adapters/`.
 
 This keeps the conceptual model aligned with the distributed web backend:
 event-sourced run lifecycle, workspace-scoped context, knowledge retrieval, and

@@ -970,12 +970,15 @@
         selectedRunId: null,
         selectedEventKey: null,
         workspaceEventCursor: 0,
+        workspaceFeedEvents: [],
         chatTurns: [],
         knowledge: [],
         artifacts: [],
         parityReport: null,
         agentMode: "code_agent",
       };
+      let liveEventPollTimer = null;
+      let liveEventPollInFlight = false;
 
       async function localSnapshot() {
         if (!invoke) {
@@ -1438,6 +1441,67 @@
 
       function eventKey(event) {
         return `${event.run_id ?? event.workspace_id ?? "workspace"}:${event.sequence}`;
+      }
+
+      function appendWorkspaceFeedEvents(events, autoSelectLatest = false) {
+        if (!events.length) return;
+        const byKey = new Map(state.workspaceFeedEvents.map((event) => [eventKey(event), event]));
+        for (const event of events) {
+          byKey.set(eventKey(event), event);
+        }
+        state.workspaceFeedEvents = [...byKey.values()]
+          .sort((left, right) => left.sequence - right.sequence)
+          .slice(-160);
+        renderEventTimeline(state.workspaceFeedEvents, null, autoSelectLatest);
+      }
+
+      async function pollWorkspaceEvents({ silent = false, autoSelectLatest = true } = {}) {
+        if (liveEventPollInFlight) return null;
+        liveEventPollInFlight = true;
+        try {
+          const feed = await localWorkspaceEventFeed();
+          state.workspaceEventCursor = feed.next_after_sequence;
+          appendWorkspaceFeedEvents(feed.events, autoSelectLatest);
+          if (!silent) {
+            const events = feed.events
+              .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
+              .join("\n");
+            eventLogEl.textContent = `Workspace Event Feed
+Workspace: ${feed.workspace_id}
+After sequence: ${feed.after_sequence}
+Events: ${feed.events.length}
+Next after: ${feed.next_after_sequence}
+
+${events || "No new events."}`;
+          }
+          return feed;
+        } catch (error) {
+          if (!silent) eventLogEl.textContent = String(error);
+          throw error;
+        } finally {
+          liveEventPollInFlight = false;
+        }
+      }
+
+      async function primeWorkspaceEventCursor() {
+        const replay = await localWorkspaceReplay();
+        state.workspaceEventCursor = replay?.last_sequence ?? 0;
+        state.workspaceFeedEvents = [];
+      }
+
+      function startLiveEventPolling() {
+        stopLiveEventPolling();
+        pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
+        liveEventPollTimer = window.setInterval(() => {
+          pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
+        }, 500);
+      }
+
+      function stopLiveEventPolling() {
+        if (liveEventPollTimer !== null) {
+          window.clearInterval(liveEventPollTimer);
+          liveEventPollTimer = null;
+        }
       }
 
       function selectEvent(event) {
@@ -2034,6 +2098,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
       workspaceSelectEl.addEventListener("change", async () => {
         state.activeWorkspaceId = workspaceSelectEl.value || "default";
         state.workspaceEventCursor = 0;
+        state.workspaceFeedEvents = [];
         eventLogEl.textContent = `Workspace selected: ${activeWorkspaceId()}`;
         await refresh();
       });
@@ -2049,6 +2114,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           const workspace = await createLocalWorkspace(workspaceId);
           state.activeWorkspaceId = workspace.workspace_id;
           state.workspaceEventCursor = 0;
+          state.workspaceFeedEvents = [];
           workspaceIdEl.value = "";
           eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
           await refresh();
@@ -2068,7 +2134,10 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         setAgentBusy(true);
         eventLogEl.textContent = `Running Structure local event loop in ${state.agentMode} mode...`;
         try {
+          await primeWorkspaceEventCursor();
+          startLiveEventPolling();
           const result = await runLocalAgent(prompt);
+          await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
           agentPromptEl.value = "";
           state.workspaceEventCursor = Math.max(
             state.workspaceEventCursor,
@@ -2096,6 +2165,7 @@ ${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {
+          stopLiveEventPolling();
           setAgentBusy(false);
         }
       });
@@ -2211,21 +2281,7 @@ ${events || "No events recorded."}`;
         setPollEventsBusy(true);
         eventLogEl.textContent = `Polling workspace events after #${state.workspaceEventCursor}...`;
         try {
-          const feed = await localWorkspaceEventFeed();
-          state.workspaceEventCursor = feed.next_after_sequence;
-          if (feed.events.length > 0) {
-            renderEventTimeline(feed.events, null, true);
-          }
-          const events = feed.events
-            .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
-            .join("\n");
-          eventLogEl.textContent = `Workspace Event Feed
-Workspace: ${feed.workspace_id}
-After sequence: ${feed.after_sequence}
-Events: ${feed.events.length}
-Next after: ${feed.next_after_sequence}
-
-${events || "No new events."}`;
+          await pollWorkspaceEvents({ silent: false, autoSelectLatest: true });
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {

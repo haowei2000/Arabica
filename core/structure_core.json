@@ -175,7 +175,7 @@
           "surface_id": "desktop_app",
           "status": "native",
           "entrypoint": "local_run_events / local_workspace_event_feed / local_workspace_replay",
-          "evidence": "Desktop UI can poll cursor-based workspace events, replay the workspace stream, and inspect run evidence locally."
+          "evidence": "Desktop UI can poll cursor-based workspace events manually and during local agent runs, replay the workspace stream, and inspect run evidence locally."
         },
         {
           "surface_id": "web_app",
