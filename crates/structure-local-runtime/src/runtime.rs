@@ -1195,6 +1195,9 @@ fn is_sensitive_proposal_target(path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::test_env::OpenAiEnvGuard;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     #[test]
     fn local_runtime_runs_prompt_and_replays_events() {
@@ -1689,6 +1692,180 @@ diff --git a/docs/example.md b/docs/example.md
         assert!(events.iter().any(|event| event.kind == "run_failed"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_completes_openai_compatible_tool_call_loop() {
+        let _env = OpenAiEnvGuard::clear();
+        let server = MockOpenAiServer::start(vec![
+            serde_json::json!({
+                "id": "chatcmpl-plan",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": null,
+                            "tool_calls": [
+                                {
+                                    "id": "call_list_workspace",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_workspace",
+                                        "arguments": "{\"max_entries\":5}"
+                                    }
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls"
+                    }
+                ]
+            }),
+            serde_json::json!({
+                "id": "chatcmpl-plan-done",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "No more tools are required."
+                        },
+                        "finish_reason": "stop"
+                    }
+                ]
+            }),
+            serde_json::json!({
+                "id": "chatcmpl-synthesis",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "Mock API synthesized an answer from the Structure local tool evidence."
+                        },
+                        "finish_reason": "stop"
+                    }
+                ]
+            }),
+        ]);
+        env::set_var("OPENAI__API_KEY", "mock-key");
+        env::set_var("OPENAI__BASE_URL", server.base_url());
+        env::set_var("OPENAI__MODEL", "mock-openai-model");
+        let root = unique_repo("api-success");
+        fs::write(root.join("README.md"), "mock api workspace").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Use the configured API model and inspect this workspace.".to_string(),
+                workspace_id: Some("api-success".to_string()),
+                mode: Some(LocalAgentMode::CodeAgent),
+            })
+            .unwrap();
+        let events = runtime.run_events(&result.run.run_id).unwrap();
+
+        assert_eq!(result.run.status, "finished");
+        assert!(result.final_response.contains("environment API model"));
+        assert!(result
+            .final_response
+            .contains("Mock API synthesized an answer"));
+        assert!(events.iter().any(|event| {
+            event.kind == "model_requested"
+                && event.payload["provider"] == "local_env_api"
+                && event.payload["network_required"] == true
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == "tool_call_requested"
+                && event.payload["name"] == "list_workspace"
+                && event.payload["call_id"] == "call_list_workspace"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == "model_responded"
+                && event.payload["phase"] == "response_synthesis"
+                && event.payload["provider"] == "local_env_api"
+        }));
+        assert!(runtime
+            .list_artifacts(Some("api-success"), Some(&result.run.run_id), 10)
+            .unwrap()
+            .iter()
+            .any(|artifact| artifact.kind == "code_change_proposal"));
+        server.join();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    struct MockOpenAiServer {
+        base_url: String,
+        handle: Option<thread::JoinHandle<()>>,
+    }
+
+    impl MockOpenAiServer {
+        fn start(responses: Vec<serde_json::Value>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let handle = thread::spawn(move || {
+                for response in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    read_http_request(&mut stream);
+                    let body = serde_json::to_string(&response).unwrap();
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    stream.write_all(reply.as_bytes()).unwrap();
+                }
+            });
+            Self {
+                base_url: format!("http://{address}/v1"),
+                handle: Some(handle),
+            }
+        }
+
+        fn base_url(&self) -> &str {
+            &self.base_url
+        }
+
+        fn join(mut self) {
+            if let Some(handle) = self.handle.take() {
+                handle.join().unwrap();
+            }
+        }
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) {
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            let Some(header_end) = find_header_end(&buffer) else {
+                continue;
+            };
+            let header = String::from_utf8_lossy(&buffer[..header_end]);
+            let content_length = header
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or_default();
+            let body_start = header_end + 4;
+            if buffer.len() >= body_start + content_length {
+                break;
+            }
+        }
+    }
+
+    fn find_header_end(buffer: &[u8]) -> Option<usize> {
+        buffer.windows(4).position(|window| window == b"\r\n\r\n")
     }
 
     fn unique_repo(label: &str) -> PathBuf {

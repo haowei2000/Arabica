@@ -39,7 +39,10 @@ The local loop is event-sourced regardless of model provider. When
 OpenAI-compatible provider plans local tool calls through native `tool_calls`
 and can iterate over prior tool results before the final synthesis. Without
 those variables, the runtime falls back to a deterministic planner/synthesizer
-for offline development and tests.
+for offline development and tests. The Rust test suite also runs the env-selected
+API path against a local OpenAI-compatible mock server, covering tool planning,
+local tool execution, response synthesis, event persistence, and artifact
+creation without requiring a paid external account.
 
 Local tool execution includes safe repository listing/search/reads, knowledge
 source reads, and allowlisted local verification commands through
