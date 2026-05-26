@@ -610,9 +610,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
         state.workspace_id.as_deref().unwrap_or("default")
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
-    println!(
-        "  commands:  /help, /status, /llm, /mode, /workspace, /ls, /search, /read, /source, /runs, /continue, /transcript, /proposal, /apply, /quit"
-    );
+    println!("  commands:  {}", chat_session_command_summary());
     println!("  context:   mention @repo/relative/path[:line] in a prompt to attach a file");
     println!();
 
@@ -782,6 +780,15 @@ fn handle_chat_session_command(
         "/llm" => {
             let diagnostic = runtime.llm_diagnostic();
             print!("{}", render_llm_diagnostic(&diagnostic));
+            Ok(true)
+        }
+        "/worktree" | "/dirty" => {
+            let worktree = runtime.worktree_snapshot();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&worktree)?);
+            } else {
+                print_worktree_snapshot(&worktree);
+            }
             Ok(true)
         }
         "/mode" => {
@@ -1115,6 +1122,8 @@ fn print_chat_session_help() {
     println!("  @path[:line] prompt    Attach a repo-relative file before model planning");
     println!("  /status               Show workspace, mode, selected run, and LLM env");
     println!("  /llm                  Check the configured OPENAI__ API endpoint");
+    println!("  /worktree             Show current branch and changed files");
+    println!("  /dirty                Alias for /worktree");
     println!("  /mode chat|code       Switch between chat and code-agent mode");
     println!("  /workspace [id]       Show or open/create a workspace");
     println!("  /ls                   List top-level workspace entries");
@@ -1137,6 +1146,10 @@ fn print_chat_session_help() {
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
+}
+
+fn chat_session_command_summary() -> &'static str {
+    "/help, /status, /llm, /worktree, /mode, /workspace, /ls, /search, /read, /source, /runs, /continue, /transcript, /proposal, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1780,6 +1793,16 @@ mod tests {
         assert_eq!(args.instruction, vec!["write", "tests"]);
         assert_eq!(args.mode.as_deref(), Some("chat"));
         assert!(args.json);
+    }
+
+    #[test]
+    fn cli_chat_session_summary_includes_worktree_command() {
+        let summary = chat_session_command_summary();
+
+        assert!(summary.contains("/worktree"));
+        assert!(summary.contains("/status"));
+        assert!(summary.contains("/continue"));
+        assert!(!summary.contains("benchmark"));
     }
 
     #[test]
