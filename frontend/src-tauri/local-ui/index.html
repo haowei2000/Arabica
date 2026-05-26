@@ -1584,7 +1584,7 @@ Error: ${diagnostic.error ?? "none"}`;
           case "agent_step_planned":
             return withTaxonomy(`${payload.mode ?? "agent"} iteration ${payload.iteration ?? "?"} / ${payload.tool_call_count ?? 0} tool calls`);
           case "workspace_context_loaded":
-            return withTaxonomy(`${payload.agent_instruction_count ?? 0} instructions / ${payload.knowledge_sources ?? 0} knowledge / ${payload.recent_turns ?? 0} turns`);
+            return withTaxonomy(`${payload.agent_instruction_count ?? 0} instructions / ${(payload.worktree?.changed_files ?? []).length} worktree / ${payload.knowledge_sources ?? 0} knowledge / ${payload.recent_turns ?? 0} turns`);
           case "tool_call_requested":
             return withTaxonomy(`${payload.name ?? "tool"} ${JSON.stringify(payload.input ?? {})}`);
           case "tool_call_completed":
@@ -1843,6 +1843,7 @@ The original file was not deleted.`;
 Events: ${evidence.event_count}
 Tool calls: ${evidence.tool_call_count}
 Instructions: ${evidence.agent_instruction_paths?.length ?? 0}
+Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} / ${evidence.worktree.changed_files?.length ?? 0} changes` : "unavailable"}
 Prompt refs: ${evidence.prompt_references?.length ?? 0}
 Knowledge sources: ${evidence.knowledge_sources.length}
 Artifacts: ${evidence.artifact_paths.length}
@@ -1859,6 +1860,9 @@ ${evidence.prompt_references?.map((path) => `- @${path}`).join("\n") || "No prom
 
 Agent Instructions
 ${evidence.agent_instruction_paths?.map((path) => `- ${path}`).join("\n") || "No AGENTS.md instructions loaded."}
+
+Worktree Changes
+${evidence.worktree?.changed_files?.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No worktree changes recorded."}
 
 Artifacts
 ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || evidence.artifact_paths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`
@@ -2021,6 +2025,7 @@ Status: ${evidence.run.status}
 Events: ${evidence.event_count}
 Tools: ${evidence.tool_call_count}
 Instructions: ${evidence.agent_instruction_paths?.length ?? 0}
+Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} / ${evidence.worktree.changed_files?.length ?? 0} changes` : "unavailable"}
 Artifacts: ${evidence.artifact_paths.length}
 Flows: ${evidence.canonical_flow_ids.join(", ")}
 Primitives: ${evidence.primitive_ids.join(", ")}

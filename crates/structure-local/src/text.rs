@@ -225,6 +225,13 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     println!("  events:    {}", evidence.event_count);
     println!("  tools:     {}", evidence.tool_call_count);
     println!("  instr:     {}", evidence.agent_instruction_paths.len());
+    if let Some(worktree) = &evidence.worktree {
+        println!(
+            "  worktree:  {} / {} changes",
+            if worktree.clean { "clean" } else { "dirty" },
+            worktree.changed_files.len()
+        );
+    }
     println!("  refs:      {}", evidence.prompt_references.len());
     println!("  knowledge: {}", evidence.knowledge_sources.len());
     println!("  response:  {} chars", evidence.final_response_chars);
@@ -264,6 +271,14 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
         println!("  instructions:");
         for path in &evidence.agent_instruction_paths {
             println!("    {path}");
+        }
+    }
+    if let Some(worktree) = &evidence.worktree {
+        if !worktree.changed_files.is_empty() {
+            println!("  changed files:");
+            for change in worktree.changed_files.iter().take(12) {
+                println!("    {} {}", change.status, change.path);
+            }
         }
     }
     if !evidence.knowledge_sources.is_empty() {
@@ -311,6 +326,13 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
         "  instr:     {}",
         transcript.evidence.agent_instruction_paths.len()
     );
+    if let Some(worktree) = &transcript.evidence.worktree {
+        println!(
+            "  worktree:  {} / {} changes",
+            if worktree.clean { "clean" } else { "dirty" },
+            worktree.changed_files.len()
+        );
+    }
     println!("  artifacts: {}", transcript.evidence.artifact_paths.len());
     if let Some(turn) = &transcript.chat_turn {
         println!();

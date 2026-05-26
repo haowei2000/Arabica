@@ -151,6 +151,21 @@ pub struct AgentInstruction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeChange {
+    pub status: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeSnapshot {
+    pub available: bool,
+    pub clean: bool,
+    pub branch: Option<String>,
+    pub changed_files: Vec<WorktreeChange>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
     pub run_id: String,
     pub workspace_id: String,
@@ -226,6 +241,7 @@ pub struct RunEvidenceSummary {
     pub event_count: usize,
     pub tool_call_count: usize,
     pub agent_instruction_paths: Vec<String>,
+    pub worktree: Option<WorktreeSnapshot>,
     pub prompt_references: Vec<String>,
     pub knowledge_sources: Vec<KnowledgeSource>,
     pub artifact_paths: Vec<String>,

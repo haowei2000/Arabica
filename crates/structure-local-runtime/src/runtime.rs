@@ -8,13 +8,14 @@ use crate::types::{
     KnowledgeSource, KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle,
     LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ProposalApplyResult, RunAttempt,
     RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use structure_local_core::{
     collect_snapshot, default_repo_root, structure_core_manifest,
     verify_structure_core_parity_for_repo,
@@ -490,6 +491,7 @@ impl LocalAgentRuntime {
         let mut canonical_flow_ids = Vec::new();
         let mut primitive_ids = Vec::new();
         let mut agent_instruction_paths = Vec::new();
+        let mut worktree = None;
         let mut prompt_references = Vec::new();
         let mut tool_call_count = 0;
 
@@ -522,6 +524,13 @@ impl LocalAgentRuntime {
                                 }
                             }
                         }
+                    }
+                    if worktree.is_none() {
+                        worktree = event
+                            .payload
+                            .get("worktree")
+                            .cloned()
+                            .and_then(|value| serde_json::from_value(value).ok());
                     }
                 }
                 "agent_step_planned" => {
@@ -591,6 +600,7 @@ impl LocalAgentRuntime {
             event_count: events.len(),
             tool_call_count,
             agent_instruction_paths,
+            worktree,
             prompt_references,
             knowledge_sources,
             artifact_paths,
@@ -655,6 +665,7 @@ impl LocalAgentRuntime {
         mode: LocalAgentMode,
     ) -> Result<RunResult, String> {
         let agent_instructions = load_agent_instructions(&self.repo_root)?;
+        let worktree = collect_worktree_snapshot(&self.repo_root);
         let knowledge = self.store.list_knowledge_sources(&run.workspace_id, 8)?;
         let recent_turns = self
             .chat_turns(Some(&run.workspace_id), 8)?
@@ -671,6 +682,7 @@ impl LocalAgentRuntime {
                 "runtime_db": self.db_path(),
                 "agent_instruction_count": agent_instructions.len(),
                 "agent_instructions": agent_instructions.clone(),
+                "worktree": worktree.clone(),
                 "knowledge_sources": knowledge.len(),
                 "recent_turns": recent_turns.len(),
                 "context_replay_limit": 8,
@@ -690,6 +702,7 @@ impl LocalAgentRuntime {
             run: run.clone(),
             repo_root: self.repo_root.clone(),
             agent_instructions,
+            worktree,
             knowledge,
             recent_turns,
             mode: mode.clone(),
@@ -994,6 +1007,69 @@ fn load_agent_instructions(repo_root: &Path) -> Result<Vec<AgentInstruction>, St
         truncated,
     });
     Ok(instructions)
+}
+
+fn collect_worktree_snapshot(repo_root: &Path) -> WorktreeSnapshot {
+    match Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["status", "--short", "--branch", "--untracked-files=all"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            parse_git_status_snapshot(&text)
+        }
+        Ok(output) => WorktreeSnapshot {
+            available: false,
+            clean: true,
+            branch: None,
+            changed_files: Vec::new(),
+            error: Some(
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(500)
+                    .collect::<String>(),
+            )
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Some(format!("git status exited with {}", output.status))),
+        },
+        Err(error) => WorktreeSnapshot {
+            available: false,
+            clean: true,
+            branch: None,
+            changed_files: Vec::new(),
+            error: Some(format!("failed to run git status: {error}")),
+        },
+    }
+}
+
+fn parse_git_status_snapshot(text: &str) -> WorktreeSnapshot {
+    let mut branch = None;
+    let mut changed_files = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("## ") {
+            branch = Some(rest.split("...").next().unwrap_or(rest).trim().to_string())
+                .filter(|value| !value.is_empty());
+            continue;
+        }
+        if line.len() < 3 {
+            continue;
+        }
+        let status = line[..2].trim().to_string();
+        let path = line[3..].trim().to_string();
+        if !status.is_empty() && !path.is_empty() {
+            changed_files.push(WorktreeChange { status, path });
+        }
+    }
+    changed_files.truncate(64);
+    WorktreeSnapshot {
+        available: true,
+        clean: changed_files.is_empty(),
+        branch,
+        changed_files,
+        error: None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1721,6 +1797,56 @@ mod tests {
             transcript.evidence.agent_instruction_paths,
             vec!["AGENTS.md".to_string()]
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_records_worktree_snapshot_in_run_evidence() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("worktree");
+        run_git(&root, &["init"]);
+        run_git(&root, &["checkout", "-b", "feature/local-agent"]);
+        fs::write(root.join("tracked.md"), "tracked\n").unwrap();
+        run_git(&root, &["add", "tracked.md"]);
+        run_git(
+            &root,
+            &[
+                "-c",
+                "user.name=Structure Test",
+                "-c",
+                "user.email=structure@example.test",
+                "commit",
+                "-m",
+                "seed",
+            ],
+        );
+        fs::write(root.join("tracked.md"), "changed\n").unwrap();
+        fs::write(root.join("new-note.md"), "new\n").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Inspect dirty worktree state.".to_string(),
+                workspace_id: None,
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        let worktree = evidence.worktree.expect("worktree snapshot should exist");
+
+        assert!(worktree.available);
+        assert!(!worktree.clean);
+        assert_eq!(worktree.branch.as_deref(), Some("feature/local-agent"));
+        assert!(worktree
+            .changed_files
+            .iter()
+            .any(|change| change.path == "tracked.md"));
+        assert!(worktree
+            .changed_files
+            .iter()
+            .any(|change| change.path == "new-note.md"));
+        assert!(result.final_response.contains("Worktree"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2507,6 +2633,21 @@ new file mode 100644
                 break;
             }
         }
+    }
+
+    fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run git {args:?}: {err}"));
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn find_header_end(buffer: &[u8]) -> Option<usize> {

@@ -59,6 +59,11 @@ workspace instructions when present. Those instructions are written into
 and promoted into run evidence as instruction paths. That gives the CLI, TUI,
 and desktop app the same repository instruction semantics without each surface
 implementing its own prompt prelude.
+The same `WorkspaceContextLoaded` event also records a git worktree snapshot
+when available: branch, clean/dirty state, and bounded changed-file entries.
+That snapshot is passed to planning and synthesis, then promoted into run
+evidence, so local code-agent proposals can account for existing user changes
+before suggesting a patch.
 Prompts can also include Codex-style `@repo/relative/path`,
 `@repo/relative/path:line`, and `@repo/relative/path#Lline` references. The
 runtime resolves those references as `read_repo_file` tool calls before model
@@ -98,7 +103,7 @@ WorkspaceOpened
 RunCreated
 ChatMessageRecorded     # user prompt
 PromptReceived
-WorkspaceContextLoaded  # AGENTS.md instructions, recent turns, workspace meta
+WorkspaceContextLoaded  # AGENTS.md instructions, git worktree, recent turns, workspace meta
 KnowledgeRetrieved
 ModelRequested          # tool_planning
 ModelResponded          # planned LocalToolCall list

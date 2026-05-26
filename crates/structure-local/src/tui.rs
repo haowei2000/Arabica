@@ -764,10 +764,15 @@ fn draw_reports(
             .find(|evidence| evidence.run.run_id == run.run_id)
             .map(|evidence| {
                 format!(
-                    "  [{} events, {} tools, {} instr, {} sources, {} artifacts]",
+                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} artifacts]",
                     evidence.event_count,
                     evidence.tool_call_count,
                     evidence.agent_instruction_paths.len(),
+                    evidence
+                        .worktree
+                        .as_ref()
+                        .map(|worktree| worktree.changed_files.len())
+                        .unwrap_or_default(),
                     evidence.knowledge_sources.len(),
                     evidence.artifacts.len()
                 )
@@ -1053,11 +1058,16 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
     } else {
         for evidence in &bundle.run_evidence {
             text.push_str(&format!(
-                "- {}: {} events, {} tools, {} instr, {} sources, {} artifacts\n",
+                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} artifacts\n",
                 evidence.run.run_id,
                 evidence.event_count,
                 evidence.tool_call_count,
                 evidence.agent_instruction_paths.len(),
+                evidence
+                    .worktree
+                    .as_ref()
+                    .map(|worktree| worktree.changed_files.len())
+                    .unwrap_or_default(),
                 evidence.knowledge_sources.len(),
                 evidence.artifacts.len()
             ));
@@ -1091,10 +1101,27 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
         "Instructions: {}\n",
         transcript.evidence.agent_instruction_paths.len()
     ));
+    if let Some(worktree) = &transcript.evidence.worktree {
+        text.push_str(&format!(
+            "Worktree: {} / {} changes\n",
+            if worktree.clean { "clean" } else { "dirty" },
+            worktree.changed_files.len()
+        ));
+    }
     text.push_str(&format!(
         "Artifacts: {}\n\n",
         transcript.evidence.artifact_paths.len()
     ));
+
+    if let Some(worktree) = &transcript.evidence.worktree {
+        if !worktree.changed_files.is_empty() {
+            text.push_str("Worktree Changes\n");
+            for change in worktree.changed_files.iter().take(16) {
+                text.push_str(&format!("- {} {}\n", change.status, change.path));
+            }
+            text.push('\n');
+        }
+    }
 
     if !transcript.evidence.agent_instruction_paths.is_empty() {
         text.push_str("Agent Instructions\n");

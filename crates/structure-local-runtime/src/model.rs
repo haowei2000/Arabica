@@ -1,7 +1,7 @@
 use crate::store::new_id;
 use crate::types::{
     AgentInstruction, ChatTurn, KnowledgeSource, LocalAgentMode, LocalLlmDiagnostic, LocalToolCall,
-    LocalToolResult, RunSummary,
+    LocalToolResult, RunSummary, WorktreeSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -13,6 +13,7 @@ pub struct ModelRequest {
     pub run: RunSummary,
     pub repo_root: PathBuf,
     pub agent_instructions: Vec<AgentInstruction>,
+    pub worktree: WorktreeSnapshot,
     pub knowledge: Vec<KnowledgeSource>,
     pub recent_turns: Vec<ChatTurn>,
     pub mode: LocalAgentMode,
@@ -270,6 +271,15 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
             request.agent_instructions.len()
         ));
         response.push_str(&format!(
+            "- Worktree: `{}` / {} changed files\n",
+            if request.worktree.clean {
+                "clean"
+            } else {
+                "dirty"
+            },
+            request.worktree.changed_files.len()
+        ));
+        response.push_str(&format!(
             "- Knowledge sources: `{}`\n",
             request.knowledge.len()
         ));
@@ -301,6 +311,10 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
                 ));
             }
         }
+
+        response.push_str("\n## Worktree\n\n");
+        response.push_str(&render_worktree_for_response(&request.worktree));
+        response.push('\n');
 
         response.push_str("\n## Retrieved Context\n\n");
         if request.knowledge.is_empty() {
@@ -440,6 +454,15 @@ impl LocalModelProvider for EnvApiModelProvider {
             request.agent_instructions.len()
         ));
         final_response.push_str(&format!(
+            "- Worktree: `{}` / {} changed files\n",
+            if request.worktree.clean {
+                "clean"
+            } else {
+                "dirty"
+            },
+            request.worktree.changed_files.len()
+        ));
+        final_response.push_str(&format!(
             "- Replayed chat turns: `{}`\n",
             request.recent_turns.len()
         ));
@@ -502,11 +525,12 @@ fn render_planning_prompt(request: &ModelRequest, tool_results: &[LocalToolResul
             .collect::<String>()
     };
     format!(
-        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
+        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nWorktree snapshot:\n{worktree}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
         prompt = request.run.prompt,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),
         instructions = render_agent_instructions_for_api(&request.agent_instructions),
+        worktree = render_worktree_for_api(&request.worktree),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
     )
 }
@@ -690,16 +714,48 @@ fn render_api_prompt(
     let evidence = serde_json::to_string_pretty(tool_results)
         .map_err(|err| format!("failed to render tool evidence: {err}"))?;
     Ok(format!(
-        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nRecent workspace conversation:\n{recent_turns}\n\nTool evidence JSON:\n{evidence}",
+        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nWorktree snapshot:\n{worktree}\n\nRecent workspace conversation:\n{recent_turns}\n\nTool evidence JSON:\n{evidence}",
         prompt = request.run.prompt,
         run_id = request.run.run_id,
         workspace_id = request.run.workspace_id,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),
         instructions = render_agent_instructions_for_api(&request.agent_instructions),
+        worktree = render_worktree_for_api(&request.worktree),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
         evidence = evidence.chars().take(20_000).collect::<String>()
     ))
+}
+
+fn render_worktree_for_response(worktree: &WorktreeSnapshot) -> String {
+    if !worktree.available {
+        return format!(
+            "Worktree status unavailable: {}",
+            worktree.error.as_deref().unwrap_or("unknown")
+        );
+    }
+    let mut text = String::new();
+    text.push_str(&format!(
+        "Branch: {}\n",
+        worktree.branch.as_deref().unwrap_or("unknown")
+    ));
+    text.push_str(&format!("Clean: {}\n", worktree.clean));
+    if worktree.changed_files.is_empty() {
+        text.push_str("No changed files were reported.\n");
+    } else {
+        text.push_str("Changed files:\n");
+        for change in worktree.changed_files.iter().take(24) {
+            text.push_str(&format!("- {} {}\n", change.status, change.path));
+        }
+    }
+    text
+}
+
+fn render_worktree_for_api(worktree: &WorktreeSnapshot) -> String {
+    render_worktree_for_response(worktree)
+        .chars()
+        .take(4_000)
+        .collect()
 }
 
 fn render_agent_instructions_for_api(instructions: &[AgentInstruction]) -> String {
@@ -890,6 +946,13 @@ mod tests {
             },
             repo_root: PathBuf::from("/tmp/repo"),
             agent_instructions: Vec::new(),
+            worktree: WorktreeSnapshot {
+                available: true,
+                clean: true,
+                branch: Some("main".to_string()),
+                changed_files: Vec::new(),
+                error: None,
+            },
             knowledge: Vec::new(),
             recent_turns: Vec::new(),
             mode: LocalAgentMode::CodeAgent,
