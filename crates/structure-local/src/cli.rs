@@ -115,6 +115,8 @@ struct ChatArgs {
     prompt: Option<String>,
     #[arg(long)]
     workspace: Option<String>,
+    #[arg(long, value_name = "chat|code_agent")]
+    mode: Option<String>,
     #[arg(long)]
     json: bool,
     #[arg(long)]
@@ -133,6 +135,8 @@ struct RunArgs {
     prompt: String,
     #[arg(long)]
     workspace: Option<String>,
+    #[arg(long, value_name = "chat|code_agent")]
+    mode: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -496,10 +500,11 @@ fn run_parity(repo_root: &PathBuf, args: ParityArgs) -> Result<()> {
 }
 
 fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
+    let mode = parse_agent_mode(args.mode.as_deref(), false)?;
     let request = RunRequest {
         prompt: args.prompt,
         workspace_id: args.workspace,
-        mode: Some(LocalAgentMode::CodeAgent),
+        mode: Some(mode),
     };
     let attempt = if args.json {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
@@ -517,11 +522,7 @@ fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
 
 fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-    let mode = if args.chat_only {
-        LocalAgentMode::Chat
-    } else {
-        LocalAgentMode::CodeAgent
-    };
+    let mode = parse_agent_mode(args.mode.as_deref(), args.chat_only)?;
     let mut state = ChatSessionState {
         workspace_id: args.workspace.clone(),
         mode,
@@ -934,6 +935,18 @@ fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
     match mode {
         LocalAgentMode::Chat => "chat",
         LocalAgentMode::CodeAgent => "code_agent",
+    }
+}
+
+fn parse_agent_mode(value: Option<&str>, chat_only: bool) -> Result<LocalAgentMode> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("chat") => Ok(LocalAgentMode::Chat),
+        Some("code") | Some("code_agent") | Some("code-agent") => Ok(LocalAgentMode::CodeAgent),
+        Some(other) => Err(anyhow!(
+            "unknown agent mode `{other}`; use `chat`, `code`, or `code_agent`"
+        )),
+        None if chat_only => Ok(LocalAgentMode::Chat),
+        None => Ok(LocalAgentMode::CodeAgent),
     }
 }
 
@@ -1584,6 +1597,48 @@ mod tests {
 
         assert!(runs.find_subcommand("transcript").is_some());
         assert!(runs.find_subcommand("inspect").is_some());
+    }
+
+    #[test]
+    fn cli_agent_mode_defaults_to_code_agent() {
+        assert_eq!(
+            parse_agent_mode(None, false).unwrap(),
+            LocalAgentMode::CodeAgent
+        );
+    }
+
+    #[test]
+    fn cli_agent_mode_keeps_chat_only_compatibility() {
+        assert_eq!(parse_agent_mode(None, true).unwrap(), LocalAgentMode::Chat);
+    }
+
+    #[test]
+    fn cli_agent_mode_accepts_chat_and_code_aliases() {
+        assert_eq!(
+            parse_agent_mode(Some("chat"), false).unwrap(),
+            LocalAgentMode::Chat
+        );
+        assert_eq!(
+            parse_agent_mode(Some("code"), false).unwrap(),
+            LocalAgentMode::CodeAgent
+        );
+        assert_eq!(
+            parse_agent_mode(Some("code_agent"), false).unwrap(),
+            LocalAgentMode::CodeAgent
+        );
+        assert_eq!(
+            parse_agent_mode(Some("code-agent"), false).unwrap(),
+            LocalAgentMode::CodeAgent
+        );
+    }
+
+    #[test]
+    fn cli_agent_mode_rejects_unknown_values() {
+        let error = parse_agent_mode(Some("planner"), false)
+            .expect_err("unknown mode should be rejected")
+            .to_string();
+
+        assert!(error.contains("unknown agent mode"));
     }
 
     #[test]

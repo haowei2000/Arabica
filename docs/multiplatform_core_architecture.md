@@ -146,7 +146,10 @@ or the Python backend. It is the common local execution layer.
 - `main.rs`: process entrypoint only.
 
 The CLI should remain scriptable. Commands that emit machine-readable
-state should support JSON where practical.
+state should support JSON where practical. Noninteractive agent commands expose
+the same local event loop with explicit `--mode chat|code_agent` selection:
+`chat` remains useful for conversational runs, while `run` defaults to
+code-agent behavior for Codex/OpenCode-style repository work.
 
 ## Web Compatibility Rule
 
