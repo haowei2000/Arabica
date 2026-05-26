@@ -5,11 +5,11 @@ use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
-    KnowledgeSource, KnowledgeSourcePreview, LocalAgentMode, LocalEvent, LocalEvidenceBundle,
-    LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage, ModelUsageSummary,
-    ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
-    RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorktreeChange, WorktreeSnapshot,
+    KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
+    LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage,
+    ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary,
+    RunResult, RunStatus, RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay,
+    WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -84,6 +84,17 @@ impl LocalAgentRuntime {
         workspace_id: Option<String>,
     ) -> Result<WorkspaceSummary, String> {
         self.store.ensure_workspace(workspace_id, &self.repo_root)
+    }
+
+    pub fn agent_context(
+        &self,
+        workspace_id: Option<&str>,
+        mode: Option<LocalAgentMode>,
+    ) -> Result<LocalAgentContext, String> {
+        let workspace = self
+            .store
+            .ensure_workspace(workspace_id.map(str::to_string), &self.repo_root)?;
+        self.build_agent_context(&workspace.workspace_id, mode.unwrap_or_default(), None, 8)
     }
 
     pub fn list_workspaces(&self, limit: usize) -> Result<Vec<WorkspaceSummary>, String> {
@@ -724,28 +735,23 @@ impl LocalAgentRuntime {
         run: RunSummary,
         mode: LocalAgentMode,
     ) -> Result<RunResult, String> {
-        let agent_instructions = load_agent_instructions(&self.repo_root)?;
-        let worktree = collect_worktree_snapshot(&self.repo_root);
-        let knowledge = self.store.list_knowledge_sources(&run.workspace_id, 8)?;
-        let recent_turns = self
-            .chat_turns(Some(&run.workspace_id), 8)?
-            .into_iter()
-            .filter(|turn| turn.run_id != run.run_id && turn.assistant_message.is_some())
-            .collect::<Vec<_>>();
+        let context =
+            self.build_agent_context(&run.workspace_id, mode.clone(), Some(&run.run_id), 8)?;
         self.store.append_event(
             &run.workspace_id,
             Some(&run.run_id),
             RunEventKind::WorkspaceContextLoaded,
             &serde_json::json!({
                 "workspace_id": run.workspace_id,
-                "repo_root": self.repo_root,
-                "runtime_db": self.db_path(),
-                "agent_instruction_count": agent_instructions.len(),
-                "agent_instructions": agent_instructions.clone(),
-                "worktree": worktree.clone(),
-                "knowledge_sources": knowledge.len(),
-                "recent_turns": recent_turns.len(),
-                "context_replay_limit": 8,
+                "repo_root": context.repo_root.clone(),
+                "runtime_db": context.runtime_db.clone(),
+                "mode": context.mode.clone(),
+                "agent_instruction_count": context.agent_instructions.len(),
+                "agent_instructions": context.agent_instructions.clone(),
+                "worktree": context.worktree.clone(),
+                "knowledge_sources": context.knowledge_sources.len(),
+                "recent_turns": context.recent_turns.len(),
+                "context_replay_limit": context.context_replay_limit,
             }),
         )?;
         self.store.append_event(
@@ -753,7 +759,7 @@ impl LocalAgentRuntime {
             Some(&run.run_id),
             RunEventKind::KnowledgeRetrieved,
             &KnowledgePayload {
-                sources: knowledge.clone(),
+                sources: context.knowledge_sources.clone(),
             },
         )?;
 
@@ -761,10 +767,10 @@ impl LocalAgentRuntime {
         let model_request = ModelRequest {
             run: run.clone(),
             repo_root: self.repo_root.clone(),
-            agent_instructions,
-            worktree,
-            knowledge,
-            recent_turns,
+            agent_instructions: context.agent_instructions,
+            worktree: context.worktree,
+            knowledge: context.knowledge_sources,
+            recent_turns: context.recent_turns,
             mode: mode.clone(),
         };
         let registry = BuiltinLocalToolRegistry::new(&self.repo_root);
@@ -1008,6 +1014,36 @@ impl LocalAgentRuntime {
             final_response,
             artifact_path: artifact.path.clone(),
             artifact,
+        })
+    }
+
+    fn build_agent_context(
+        &self,
+        workspace_id: &str,
+        mode: LocalAgentMode,
+        exclude_run_id: Option<&str>,
+        limit: usize,
+    ) -> Result<LocalAgentContext, String> {
+        let agent_instructions = load_agent_instructions(&self.repo_root)?;
+        let worktree = collect_worktree_snapshot(&self.repo_root);
+        let knowledge_sources = self.store.list_knowledge_sources(workspace_id, limit)?;
+        let recent_turns = self
+            .chat_turns(Some(workspace_id), limit)?
+            .into_iter()
+            .filter(|turn| {
+                exclude_run_id != Some(turn.run_id.as_str()) && turn.assistant_message.is_some()
+            })
+            .collect::<Vec<_>>();
+        Ok(LocalAgentContext {
+            workspace_id: workspace_id.to_string(),
+            mode: mode.as_str().to_string(),
+            repo_root: self.repo_root.display().to_string(),
+            runtime_db: self.db_path().display().to_string(),
+            agent_instructions,
+            worktree,
+            knowledge_sources,
+            recent_turns,
+            context_replay_limit: limit,
         })
     }
 }
@@ -1953,6 +1989,45 @@ mod tests {
             transcript.evidence.agent_instruction_paths,
             vec!["AGENTS.md".to_string()]
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_exposes_agent_context_without_starting_run() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("agent-context");
+        fs::write(
+            root.join("AGENTS.md"),
+            "Use Structure core context for every local surface.",
+        )
+        .unwrap();
+        let source_path = root.join("notes.md");
+        fs::write(&source_path, "workspace knowledge").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        runtime
+            .add_knowledge_source(Some("ctx".to_string()), &source_path)
+            .unwrap();
+        runtime
+            .run_prompt(RunRequest {
+                prompt: "Seed one prior assistant turn.".to_string(),
+                workspace_id: Some("ctx".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let context = runtime
+            .agent_context(Some("ctx"), Some(LocalAgentMode::CodeAgent))
+            .unwrap();
+
+        assert_eq!(context.workspace_id, "ctx");
+        assert_eq!(context.mode, "code_agent");
+        assert_eq!(context.context_replay_limit, 8);
+        assert_eq!(context.agent_instructions.len(), 1);
+        assert_eq!(context.knowledge_sources.len(), 1);
+        assert_eq!(context.recent_turns.len(), 1);
+        assert!(context.repo_root.contains(root.to_str().unwrap()));
+        assert!(context.runtime_db.ends_with("structure.db"));
 
         fs::remove_dir_all(root).unwrap();
     }

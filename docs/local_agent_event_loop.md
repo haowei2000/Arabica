@@ -189,12 +189,15 @@ into runtime calls:
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
-  `/status`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`,
+  `/status`, `/context`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`,
   and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
   evidence summary, preserving the event-sourced audit trail instead of editing
   an old run in place.
+  `/context` renders the same Rust-built context snapshot used before model
+  planning: workspace id, mode, AGENTS instructions, git worktree, knowledge
+  sources, and replayed assistant turns.
   `/usage` is the lightweight model-call view over the same
   `RunEvidenceSummary`, so terminal sessions can inspect request counts,
   network-backed calls, token usage, and core alignment without opening the
@@ -242,6 +245,8 @@ into runtime calls:
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
   run's transcript and evidence.
+  Desktop `/context` calls the shared `local_agent_context` Tauri command so
+  the app shows the same assembled context the CLI sees before a run starts.
   Desktop `/usage [run-id]` mirrors the CLI model-call shortcut and renders the
   same `model_usage` evidence summary from Rust.
   Normal prompt submissions appear immediately as in-flight local chat turns

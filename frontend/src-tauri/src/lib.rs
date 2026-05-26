@@ -70,6 +70,15 @@ fn local_worktree_snapshot() -> Result<structure_local_runtime::WorktreeSnapshot
 }
 
 #[tauri::command]
+fn local_agent_context(
+    workspace_id: Option<String>,
+    mode: Option<String>,
+) -> Result<structure_local_runtime::LocalAgentContext, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.agent_context(workspace_id.as_deref(), Some(parse_local_agent_mode(mode)))
+}
+
+#[tauri::command]
 fn core_manifest() -> Result<structure_local_core::StructureCoreManifest, String> {
     structure_core_manifest()
 }
@@ -380,6 +389,7 @@ pub fn run() {
             local_session_status,
             local_llm_diagnostic,
             local_worktree_snapshot,
+            local_agent_context,
             core_manifest,
             core_parity_report,
             local_repo_entries,
@@ -663,6 +673,8 @@ mod tests {
         let local_ui = include_str!("../local-ui/index.html");
 
         assert!(local_ui.contains("function renderEvidenceText(evidence)"));
+        assert!(local_ui.contains("function renderAgentContextText(context)"));
+        assert!(local_ui.contains("case \"/context\":"));
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
         assert!(local_ui.contains("Worktree Changes"));
@@ -773,6 +785,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_agent_run_attempt\""));
         assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
         assert!(local_ui.contains("invoke(\"local_session_status\""));
+        assert!(local_ui.contains("invoke(\"local_agent_context\""));
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
         assert!(!local_ui.contains("fetch("));

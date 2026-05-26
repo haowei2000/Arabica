@@ -1,9 +1,9 @@
 use crate::text::{
-    print_artifact_preview, print_artifacts, print_core_capabilities, print_core_manifest,
-    print_events, print_knowledge_preview, print_knowledge_source, print_knowledge_sources,
-    print_local_evidence_bundle, print_model_usage_summary, print_run_attempt,
-    print_run_evidence_summary, print_run_summary, print_run_transcript, print_runs,
-    print_snapshot, print_surface_parity_report, print_surfaces, print_workspace,
+    print_agent_context, print_artifact_preview, print_artifacts, print_core_capabilities,
+    print_core_manifest, print_events, print_knowledge_preview, print_knowledge_source,
+    print_knowledge_sources, print_local_evidence_bundle, print_model_usage_summary,
+    print_run_attempt, print_run_evidence_summary, print_run_summary, print_run_transcript,
+    print_runs, print_snapshot, print_surface_parity_report, print_surfaces, print_workspace,
     print_workspace_event_feed, print_workspace_replay, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
@@ -782,6 +782,17 @@ fn handle_chat_session_command(
             print!("{}", render_llm_diagnostic(&diagnostic));
             Ok(true)
         }
+        "/context" | "/ctx" => {
+            let context = local_result(
+                runtime.agent_context(state.workspace_id.as_deref(), Some(state.mode.clone())),
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&context)?);
+            } else {
+                print_agent_context(&context);
+            }
+            Ok(true)
+        }
         "/worktree" | "/dirty" => {
             let worktree = runtime.worktree_snapshot();
             if json {
@@ -1135,6 +1146,7 @@ fn print_chat_session_help() {
     println!("  @path[:line] prompt    Attach a repo-relative file before model planning");
     println!("  /status               Show workspace, mode, selected run, and LLM env");
     println!("  /llm                  Check the configured OPENAI__ API endpoint");
+    println!("  /context              Show assembled agent context without starting a run");
     println!("  /worktree             Show current branch and changed files");
     println!("  /dirty                Alias for /worktree");
     println!("  /mode chat|code       Switch between chat and code-agent mode");
@@ -1163,7 +1175,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /worktree, /mode, /workspace, /ls, /search, /read, /source, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
+    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1815,6 +1827,7 @@ mod tests {
 
         assert!(summary.contains("/worktree"));
         assert!(summary.contains("/status"));
+        assert!(summary.contains("/context"));
         assert!(summary.contains("/continue"));
         assert!(summary.contains("/usage"));
         assert!(!summary.contains("benchmark"));

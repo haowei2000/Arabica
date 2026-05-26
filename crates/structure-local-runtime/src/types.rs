@@ -229,6 +229,19 @@ pub struct RunResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAgentContext {
+    pub workspace_id: String,
+    pub mode: String,
+    pub repo_root: String,
+    pub runtime_db: String,
+    pub agent_instructions: Vec<AgentInstruction>,
+    pub worktree: WorktreeSnapshot,
+    pub knowledge_sources: Vec<KnowledgeSource>,
+    pub recent_turns: Vec<ChatTurn>,
+    pub context_replay_limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunAttempt {
     pub run: RunSummary,
     pub events: Vec<LocalEvent>,

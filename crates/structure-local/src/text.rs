@@ -3,9 +3,9 @@ use structure_local_core::{
     SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvent,
-    LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
+    ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
+    LocalEvent, LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary,
+    RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -522,6 +522,51 @@ pub(crate) fn print_knowledge_preview(preview: &KnowledgeSourcePreview) {
     print!("{}", preview.preview);
     if preview.truncated && !preview.preview.ends_with('\n') {
         println!();
+    }
+}
+
+pub(crate) fn print_agent_context(context: &LocalAgentContext) {
+    println!("Agent context");
+    println!("  workspace: {}", context.workspace_id);
+    println!("  mode:      {}", context.mode);
+    println!("  repo:      {}", context.repo_root);
+    println!("  runtime:   {}", context.runtime_db);
+    println!(
+        "  worktree:  {} / {} changes",
+        if context.worktree.clean {
+            "clean"
+        } else {
+            "dirty"
+        },
+        context.worktree.changed_files.len()
+    );
+    println!("  instr:     {}", context.agent_instructions.len());
+    println!("  knowledge: {}", context.knowledge_sources.len());
+    println!("  turns:     {}", context.recent_turns.len());
+    println!("  limit:     {}", context.context_replay_limit);
+    if !context.agent_instructions.is_empty() {
+        println!("  instructions:");
+        for instruction in &context.agent_instructions {
+            println!(
+                "    {}  {} bytes  truncated: {}",
+                instruction.path, instruction.size_bytes, instruction.truncated
+            );
+        }
+    }
+    if !context.knowledge_sources.is_empty() {
+        println!("  sources:");
+        for source in &context.knowledge_sources {
+            println!("    {}  {}", source.title, source.path);
+        }
+    }
+    if !context.recent_turns.is_empty() {
+        println!("  recent turns:");
+        for turn in context.recent_turns.iter().take(5) {
+            println!(
+                "    {}  {}  {} events",
+                turn.run_id, turn.status, turn.event_count
+            );
+        }
     }
 }
 

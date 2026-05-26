@@ -1243,6 +1243,14 @@
         return invoke("local_worktree_snapshot");
       }
 
+      async function localAgentContext() {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_agent_context", {
+          workspaceId: activeWorkspaceId(),
+          mode: state.agentMode,
+        });
+      }
+
       async function localChatTurns() {
         if (!invoke) return [];
         return invoke("local_chat_turns", { workspaceId: activeWorkspaceId(), limit: 20 });
@@ -1652,6 +1660,33 @@ Branch: ${worktree.branch ?? "unknown"}
 Changes: ${changes.length}
 
 ${changes.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No changed files."}`;
+      }
+
+      function renderAgentContextText(context) {
+        if (!context) return "Agent context unavailable.";
+        const instructions = context.agent_instructions ?? [];
+        const sources = context.knowledge_sources ?? [];
+        const turns = context.recent_turns ?? [];
+        const changes = context.worktree?.changed_files ?? [];
+        return `Agent Context
+Workspace: ${context.workspace_id}
+Mode: ${context.mode}
+Replay limit: ${context.context_replay_limit}
+Repository: ${context.repo_root}
+Database: ${context.runtime_db}
+Worktree: ${context.worktree?.clean ? "clean" : "dirty"} / ${changes.length} changes
+Instructions: ${instructions.length}
+Knowledge sources: ${sources.length}
+Recent turns: ${turns.length}
+
+Agent Instructions
+${instructions.map((item) => `- ${item.path} / ${item.size_bytes} bytes / truncated: ${item.truncated}`).join("\n") || "No AGENTS.md instructions loaded."}
+
+Knowledge Sources
+${sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources registered."}
+
+Recent Turns
+${turns.map((turn) => `- ${turn.run_id} / ${turn.status} / ${turn.event_count} events`).join("\n") || "No prior assistant turns replayed."}`;
       }
 
       function renderLlmDiagnostic(diagnostic) {
@@ -2381,6 +2416,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         eventLogEl.textContent = `Desktop Agent Commands
 /status
 /llm
+/context
 /worktree
 /mode chat|code
 /workspace <id>
@@ -2419,6 +2455,12 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           case "/llm": {
             const diagnostic = await localLlmDiagnostic();
             eventLogEl.textContent = renderLlmDiagnostic(diagnostic);
+            return true;
+          }
+          case "/context":
+          case "/ctx": {
+            const context = await localAgentContext();
+            eventLogEl.textContent = renderAgentContextText(context);
             return true;
           }
           case "/worktree": {
