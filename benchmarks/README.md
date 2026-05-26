@@ -48,6 +48,10 @@ token Pareto; the P2+ entries validate generalisation across regimes.
 # Run the harness self-test (uses EchoAgent + the bundled fixture).
 pytest tests/benchmarks -m unit
 
+# Run the consolidated offline benchmark flow (unit + open-source fixture +
+# memory baseline smoke tests).
+uv run python -m benchmarks.scripts.run_benchmark_integration
+
 # Export the LightMem/MemBase LoCoMo baseline table used by the paper.
 python -m benchmarks.scripts.lightmem_baseline_report --format markdown
 

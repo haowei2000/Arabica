@@ -1,7 +1,7 @@
 # Makefile for Structure
 # 提供便捷的开发和测试命令
 
-.PHONY: help test test-unit test-integration test-slow test-coverage test-fast test-verbose test-failed clean install install-dev lint lint-fix format format-check check db-migrate db-upgrade db-rollback db-downgrade db-reset db-revision db-revision-empty db-current db-history db-heads db-branches db-stamp db-status run run-mcp dev dev-mcp docker-build docker-build-cache docker-build-multi docker-build-push docker-build-context-service docker-up docker-up-infra docker-down docker-logs docker-restart docker-shell docker-status docker-stats docker-size docker-inspect-layers docker-clean docker-prune-all docker-build-dev docker-scan docker-info docker-test-build env-sync ci pre-commit quick-test full-test shell deps-update deps-tree info
+.PHONY: help test test-unit test-integration test-slow test-coverage test-fast test-verbose test-failed clean install install-dev lint lint-fix format format-check check db-migrate db-upgrade db-downgrade db-reset db-revision db-revision-empty db-current db-history db-heads db-branches db-stamp db-status run run-mcp dev dev-mcp docker-build docker-build-cache docker-build-multi docker-build-push docker-build-context-service docker-up docker-up-infra docker-down docker-logs docker-restart docker-shell docker-status docker-stats docker-size docker-inspect-layers docker-clean docker-prune-all docker-build-dev docker-scan docker-info docker-test-build env-sync ci pre-commit quick-test full-test shell deps-update deps-tree info benchmark benchmark-unit benchmark-integration benchmark-live
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -199,6 +199,18 @@ check: lint format-check ## 运行所有检查 (lint + format check)
 
 test: ## 运行所有单元测试
 	uv run pytest tests/unit/ -q
+
+benchmark: ## 一键运行 benchmark 离线整合流程（默认不包含 live）
+	uv run python -m benchmarks.scripts.run_benchmark_integration
+
+benchmark-unit: ## 运行 benchmark 单元测试
+	uv run pytest tests/benchmarks -m unit
+
+benchmark-integration: ## 运行开源 benchmark fixture 与本地 baseline 的整合检查
+	uv run python -m benchmarks.scripts.run_benchmark_integration --skip-live
+
+benchmark-live: ## 在可用认证信息下运行 live Structure 基准
+	uv run python -m benchmarks.scripts.run_benchmark_integration --live
 
 test-coverage: ## 运行测试并生成覆盖率报告
 	uv run pytest tests/unit/ --cov=src/structure --cov-report=html --cov-report=term-missing --cov-report=xml --cov-fail-under=60 -q
