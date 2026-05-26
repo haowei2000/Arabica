@@ -131,6 +131,10 @@ into runtime calls:
   `CoreExecutionTrace` that validates those flow and primitive references
   against the current Structure core manifest and marks the run `core_aligned`
   only when no drift is detected.
+- Core write guard: `SqliteLocalStore::append_event` validates each event
+  kind's canonical flow and primitive mapping against the current Structure core
+  manifest before persisting it, so CLI/TUI and desktop cannot silently write a
+  local event stream that has drifted away from the paper-facing core contract.
 - CLI transcript: `uv run structure runs transcript <run-id> --json` returns the
   shared run inspection object used by both local surfaces. It combines the run
   summary, chat turn, ordered events, evidence summary, final response, and

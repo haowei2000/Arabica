@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use structure_local_core::structure_core_manifest;
 
 pub struct SqliteLocalStore {
     db_path: PathBuf,
@@ -147,6 +148,9 @@ impl SqliteLocalStore {
         payload: &T,
     ) -> Result<LocalEvent, String> {
         let event_id = new_id("evt");
+        let kind = kind.as_str();
+        let (canonical_flow_id, primitive_id) = event_taxonomy_for_kind(kind);
+        validate_core_taxonomy(kind, canonical_flow_id, primitive_id)?;
         let payload_json = serde_json::to_string(payload)
             .map_err(|err| format!("failed to serialize event payload: {err}"))?;
         let now = now_ms();
@@ -156,14 +160,7 @@ impl SqliteLocalStore {
                     "INSERT INTO events
                        (event_id, run_id, workspace_id, kind, payload_json, created_at_ms)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        event_id,
-                        run_id,
-                        workspace_id,
-                        kind.as_str(),
-                        payload_json,
-                        now
-                    ],
+                    params![event_id, run_id, workspace_id, kind, payload_json, now],
                 )
                 .map_err(sql_error)?;
             let sequence = connection.last_insert_rowid();
@@ -675,6 +672,28 @@ fn sql_error(err: rusqlite::Error) -> String {
     format!("local runtime database error: {err}")
 }
 
+fn validate_core_taxonomy(
+    kind: &str,
+    canonical_flow_id: &str,
+    primitive_id: &str,
+) -> Result<(), String> {
+    let manifest = structure_core_manifest()?;
+    let flow_known = manifest
+        .canonical_flow
+        .iter()
+        .any(|step| step.id == canonical_flow_id);
+    let primitive_known = manifest
+        .primitives
+        .iter()
+        .any(|primitive| primitive.id == primitive_id);
+    if flow_known && primitive_known {
+        return Ok(());
+    }
+    Err(format!(
+        "event {kind} maps to flow {canonical_flow_id} / primitive {primitive_id}, which is outside the Structure core manifest"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,6 +730,46 @@ mod tests {
         assert_eq!(events[0].primitive_id, "event_audit");
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn store_event_taxonomy_matches_structure_core_manifest() {
+        let kinds = [
+            RunEventKind::WorkspaceOpened,
+            RunEventKind::RunCreated,
+            RunEventKind::ChatMessageRecorded,
+            RunEventKind::PromptReceived,
+            RunEventKind::AgentStepPlanned,
+            RunEventKind::WorkspaceContextLoaded,
+            RunEventKind::KnowledgeRetrieved,
+            RunEventKind::ModelRequested,
+            RunEventKind::ModelResponded,
+            RunEventKind::ToolCallRequested,
+            RunEventKind::ToolCallCompleted,
+            RunEventKind::CodeChangeProposed,
+            RunEventKind::CodeChangeApplied,
+            RunEventKind::ArtifactWritten,
+            RunEventKind::RunFinished,
+            RunEventKind::RunFailed,
+        ];
+
+        for kind in kinds {
+            let kind_name = kind.as_str();
+            let (flow, primitive) = event_taxonomy_for_kind(kind_name);
+            validate_core_taxonomy(kind_name, flow, primitive).unwrap();
+        }
+    }
+
+    #[test]
+    fn store_rejects_event_taxonomy_outside_structure_core_manifest() {
+        let error = validate_core_taxonomy(
+            "bad_event",
+            "not_a_structure_flow",
+            "not_a_structure_primitive",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("outside the Structure core manifest"));
     }
 
     #[test]
