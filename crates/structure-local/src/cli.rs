@@ -18,12 +18,11 @@ use structure_local_core::{
     LocalSnapshot,
 };
 use structure_local_runtime::{
-    LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic, LocalToolCall, ProposalApplyResult,
-    RunAttempt, RunRequest, RunTranscript,
+    ContinuationRequest, LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic, LocalToolCall,
+    ProposalApplyResult, RunAttempt, RunRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
-const CONTINUATION_SNIPPET_MAX_CHARS: usize = 1_200;
 
 #[derive(Debug, Parser)]
 #[command(name = "structure-local")]
@@ -638,6 +637,41 @@ fn run_prompt_with_live_events(repo_root: &PathBuf, request: RunRequest) -> Resu
     local_result(run_result)
 }
 
+fn run_continuation_with_live_events(
+    repo_root: &PathBuf,
+    workspace_id: String,
+    request: ContinuationRequest,
+) -> Result<RunAttempt> {
+    let feed_runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let replay = local_result(feed_runtime.workspace_replay(Some(&workspace_id), 1))?;
+    let mut cursor = replay.last_sequence.unwrap_or_default();
+    let repo_root = repo_root.clone();
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = LocalAgentRuntime::open(&repo_root)
+            .and_then(|runtime| runtime.run_continuation_attempt(request));
+        let _ = sender.send(result);
+    });
+
+    println!("Live event feed");
+    let run_result = loop {
+        match receiver.try_recv() {
+            Ok(result) => break result,
+            Err(mpsc::TryRecvError::Empty) => {
+                cursor = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
+                thread::sleep(Duration::from_millis(200));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(anyhow!("local continuation worker disconnected"));
+            }
+        }
+    };
+    let _ = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
+    println!();
+    local_result(run_result)
+}
+
 fn attempt_error(attempt: &RunAttempt) -> Result<()> {
     if let Some(error) = &attempt.error {
         return Err(anyhow!(error.clone()));
@@ -963,17 +997,17 @@ fn run_continuation_from_session(
         return Ok(());
     };
     let transcript = local_result(runtime.run_transcript(&run_id))?;
-    let prompt = build_continuation_prompt(&transcript, extra_instruction.as_deref());
-    state.workspace_id = Some(transcript.run.workspace_id.clone());
-    let request = RunRequest {
-        prompt,
-        workspace_id: Some(transcript.run.workspace_id.clone()),
+    let workspace_id = transcript.run.workspace_id;
+    state.workspace_id = Some(workspace_id.clone());
+    let request = ContinuationRequest {
+        run_id,
+        extra_instruction,
         mode: Some(state.mode.clone()),
     };
     let attempt = if json {
-        local_result(runtime.run_prompt_attempt(request))?
+        local_result(runtime.run_continuation_attempt(request))?
     } else {
-        run_prompt_with_live_events(repo_root, request)?
+        run_continuation_with_live_events(repo_root, workspace_id, request)?
     };
     state.last_run_id = Some(attempt.run.run_id.clone());
     if json {
@@ -1005,80 +1039,6 @@ fn parse_continuation_args(
     } else {
         (selected_run_id, Some(command_body.to_string()))
     }
-}
-
-fn build_continuation_prompt(
-    transcript: &RunTranscript,
-    extra_instruction: Option<&str>,
-) -> String {
-    let assistant_message = transcript
-        .chat_turn
-        .as_ref()
-        .and_then(|turn| turn.assistant_message.as_deref())
-        .or(transcript.final_response.as_deref())
-        .unwrap_or("No assistant response was recorded.");
-    let assistant_excerpt = continuation_response_excerpt(assistant_message);
-    let tool_events = transcript
-        .events
-        .iter()
-        .filter(|event| event.kind == "tool_call_completed")
-        .count();
-    let artifact_paths = if transcript.evidence.artifact_paths.is_empty() {
-        "none".to_string()
-    } else {
-        transcript.evidence.artifact_paths.join("\n")
-    };
-    let extra_instruction = extra_instruction
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Continue the same task from the previous run using the persisted transcript, event evidence, workspace context, and current repository state.");
-
-    format!(
-        "Continue from Structure local run `{run_id}` in workspace `{workspace_id}`.\n\n\
-Previous user prompt:\n{previous_prompt}\n\n\
-Previous assistant response summary:\n{assistant_summary}\n\n\
-Previous run evidence:\n- status: {status}\n- events: {event_count}\n- completed tool calls: {tool_events}\n- core aligned: {core_aligned}\n- artifacts:\n{artifact_paths}\n\n\
-Continuation instruction:\n{extra_instruction}\n",
-        run_id = transcript.run.run_id,
-        workspace_id = transcript.run.workspace_id,
-        previous_prompt = truncate_for_prompt(&transcript.run.prompt, CONTINUATION_SNIPPET_MAX_CHARS),
-        assistant_summary = truncate_for_prompt(&assistant_excerpt, CONTINUATION_SNIPPET_MAX_CHARS),
-        status = transcript.run.status,
-        event_count = transcript.events.len(),
-        core_aligned = transcript.evidence.core_trace.core_aligned,
-    )
-}
-
-fn continuation_response_excerpt(response: &str) -> String {
-    let mut body = Vec::new();
-    let mut after_runtime_header = false;
-    for line in response.lines() {
-        if line.starts_with("## Tool Evidence Summary") {
-            break;
-        }
-        if after_runtime_header {
-            body.push(line);
-            continue;
-        }
-        if line.starts_with("- Mode:") {
-            after_runtime_header = true;
-        }
-    }
-
-    let excerpt = body.join("\n").trim().to_string();
-    if excerpt.is_empty() {
-        response.trim().to_string()
-    } else {
-        excerpt
-    }
-}
-
-fn truncate_for_prompt(value: &str, max_chars: usize) -> String {
-    let mut output = value.chars().take(max_chars).collect::<String>();
-    if value.chars().count() > max_chars {
-        output.push_str("\n...[truncated]");
-    }
-    output
 }
 
 fn parse_agent_mode(value: Option<&str>, chat_only: bool) -> Result<LocalAgentMode> {
@@ -1740,93 +1700,6 @@ mod tests {
             (Some("run_other".to_string()), Some("add docs".to_string()))
         );
         assert_eq!(parse_continuation_args(None, ""), (None, None));
-    }
-
-    #[test]
-    fn cli_continuation_prompt_preserves_run_evidence_and_instruction() {
-        let run = structure_local_runtime::RunSummary {
-            run_id: "run_continue".to_string(),
-            workspace_id: "default".to_string(),
-            prompt: "Investigate the local agent CLI".to_string(),
-            status: "finished".to_string(),
-            final_response: Some("Previous response".to_string()),
-            created_at_ms: 1,
-            updated_at_ms: 2,
-        };
-        let transcript = RunTranscript {
-            run: run.clone(),
-            chat_turn: Some(structure_local_runtime::ChatTurn {
-                run_id: run.run_id.clone(),
-                workspace_id: run.workspace_id.clone(),
-                mode: "code_agent".to_string(),
-                user_message: run.prompt.clone(),
-                assistant_message: Some("Assistant evidence summary".to_string()),
-                status: "finished".to_string(),
-                event_count: 3,
-                created_at_ms: 1,
-                updated_at_ms: 2,
-            }),
-            events: vec![structure_local_runtime::LocalEvent {
-                sequence: 1,
-                event_id: "evt_tool".to_string(),
-                run_id: Some(run.run_id.clone()),
-                workspace_id: run.workspace_id.clone(),
-                kind: "tool_call_completed".to_string(),
-                canonical_flow_id: "event".to_string(),
-                primitive_id: "event_audit".to_string(),
-                payload: serde_json::json!({}),
-                created_at_ms: 1,
-            }],
-            evidence: structure_local_runtime::RunEvidenceSummary {
-                run,
-                event_count: 3,
-                tool_call_count: 1,
-                agent_instruction_paths: vec!["AGENTS.md".to_string()],
-                worktree: None,
-                prompt_references: vec![],
-                knowledge_sources: vec![],
-                artifact_paths: vec![".structure/local/artifacts/response.md".to_string()],
-                artifacts: vec![],
-                event_kinds: vec!["tool_call_completed".to_string()],
-                canonical_flow_ids: vec!["event".to_string()],
-                primitive_ids: vec!["event_audit".to_string()],
-                core_trace: structure_local_runtime::CoreExecutionTrace {
-                    manifest_schema_version: "2026.05".to_string(),
-                    event_count: 3,
-                    flow_ids: vec!["event".to_string()],
-                    primitive_ids: vec!["event_audit".to_string()],
-                    invalid_flow_ids: vec![],
-                    invalid_primitive_ids: vec![],
-                    core_aligned: true,
-                },
-                final_response_chars: 26,
-            },
-            final_response: Some("Previous response".to_string()),
-        };
-
-        let prompt = build_continuation_prompt(&transcript, Some("finish the CLI resume path"));
-
-        assert!(prompt.contains("run_continue"));
-        assert!(prompt.contains("Investigate the local agent CLI"));
-        assert!(prompt.contains("Assistant evidence summary"));
-        assert!(prompt.contains("completed tool calls: 1"));
-        assert!(prompt.contains("core aligned: true"));
-        assert!(prompt.contains("finish the CLI resume path"));
-    }
-
-    #[test]
-    fn cli_continuation_excerpt_strips_runtime_envelope() {
-        let response = "# Structure Local Agent Response\n\n\
-This response was produced by the embedded Structure event loop.\n\n\
-- Provider: `local_env_api`\n\
-- Mode: `chat`\n\n\
-User-facing continuation point.\n\n\
-## Tool Evidence Summary\n\n\
-- list_workspace: ok\n";
-
-        let excerpt = continuation_response_excerpt(response);
-
-        assert_eq!(excerpt, "User-facing continuation point.");
     }
 
     #[test]

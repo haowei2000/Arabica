@@ -209,9 +209,12 @@ into runtime calls:
   `local_workspace_event_feed` powers the Poll Events action and live in-flight
   run polling from a persisted cursor.
   The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,
-  `/runs`, `/transcript`, `/search`, `/read`, `/source`, `/artifacts`,
-  `/proposal`, and `/apply --dry-run`, so desktop interaction can stay in the
-  chat/code-agent loop instead of becoming a separate operator dashboard.
+  `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
+  `/read`, `/source`, `/artifacts`, `/proposal`, and `/apply --dry-run`, so
+  desktop interaction can stay in the chat/code-agent loop instead of becoming
+  a separate operator dashboard. Desktop `/continue` calls the same Rust
+  runtime continuation path as the CLI, creating a fresh run from the selected
+  run's transcript and evidence.
   Normal prompt submissions appear immediately as in-flight local chat turns
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.

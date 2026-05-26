@@ -28,6 +28,13 @@ pub struct RunRequest {
     pub mode: Option<LocalAgentMode>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ContinuationRequest {
+    pub run_id: String,
+    pub extra_instruction: Option<String>,
+    pub mode: Option<LocalAgentMode>,
+}
+
 pub struct LocalAgentRuntime {
     repo_root: PathBuf,
     runtime_dir: PathBuf,
@@ -634,6 +641,19 @@ impl LocalAgentRuntime {
         })
     }
 
+    pub fn run_continuation_attempt(
+        &self,
+        request: ContinuationRequest,
+    ) -> Result<RunAttempt, String> {
+        let transcript = self.run_transcript(&request.run_id)?;
+        let prompt = build_continuation_prompt(&transcript, request.extra_instruction.as_deref());
+        self.run_prompt_attempt(RunRequest {
+            prompt,
+            workspace_id: Some(transcript.run.workspace_id),
+            mode: request.mode,
+        })
+    }
+
     fn write_response_artifact(&self, run_id: &str, response: &str) -> Result<PathBuf, String> {
         let artifact_dir = self.runtime_dir.join("artifacts").join(run_id);
         fs::create_dir_all(&artifact_dir)
@@ -1197,6 +1217,85 @@ fn build_core_execution_trace(
         invalid_flow_ids,
         invalid_primitive_ids,
     })
+}
+
+const CONTINUATION_SNIPPET_MAX_CHARS: usize = 1_200;
+
+fn build_continuation_prompt(
+    transcript: &RunTranscript,
+    extra_instruction: Option<&str>,
+) -> String {
+    let assistant_message = transcript
+        .chat_turn
+        .as_ref()
+        .and_then(|turn| turn.assistant_message.as_deref())
+        .or(transcript.final_response.as_deref())
+        .unwrap_or("No assistant response was recorded.");
+    let assistant_excerpt = continuation_response_excerpt(assistant_message);
+    let artifact_paths = if transcript.evidence.artifact_paths.is_empty() {
+        "none".to_string()
+    } else {
+        transcript.evidence.artifact_paths.join("\n")
+    };
+    let extra_instruction = extra_instruction
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Continue the same task from the previous run using the persisted transcript, event evidence, workspace context, and current repository state.");
+
+    format!(
+        "Continue from Structure local run `{run_id}` in workspace `{workspace_id}`.\n\n\
+Previous user prompt:\n{previous_prompt}\n\n\
+Previous assistant response summary:\n{assistant_summary}\n\n\
+Previous run evidence:\n- status: {status}\n- events: {event_count}\n- completed tool calls: {tool_call_count}\n- core aligned: {core_aligned}\n- artifacts:\n{artifact_paths}\n\n\
+Produce the next assistant response now. Treat the continuation instruction as the active user request for this new run.\n\n\
+Continuation instruction:\n{extra_instruction}\n",
+        run_id = transcript.run.run_id,
+        workspace_id = transcript.run.workspace_id,
+        previous_prompt = truncate_for_prompt(
+            &transcript.run.prompt,
+            CONTINUATION_SNIPPET_MAX_CHARS,
+        ),
+        assistant_summary =
+            truncate_for_prompt(&assistant_excerpt, CONTINUATION_SNIPPET_MAX_CHARS),
+        status = transcript.run.status,
+        event_count = transcript.events.len(),
+        tool_call_count = transcript.evidence.tool_call_count,
+        core_aligned = transcript.evidence.core_trace.core_aligned,
+    )
+}
+
+fn continuation_response_excerpt(response: &str) -> String {
+    let mut body = Vec::new();
+    let mut after_runtime_header = false;
+    for line in response.lines() {
+        if line.starts_with("## Tool Evidence Summary") {
+            break;
+        }
+        if after_runtime_header {
+            body.push(line);
+            continue;
+        }
+        if line.starts_with("- Mode:") || line.starts_with("**Mode:**") {
+            after_runtime_header = true;
+        }
+    }
+
+    let excerpt = body.join("\n").trim().to_string();
+    if !excerpt.is_empty() {
+        excerpt
+    } else if after_runtime_header {
+        "Previous response contained no assistant body before tool evidence.".to_string()
+    } else {
+        response.trim().to_string()
+    }
+}
+
+fn truncate_for_prompt(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        output.push_str("\n...[truncated]");
+    }
+    output
 }
 
 fn tool_call_fingerprint(call: &crate::types::LocalToolCall) -> String {
@@ -2358,6 +2457,77 @@ new file mode 100644
     }
 
     #[test]
+    fn local_runtime_continues_from_run_transcript_and_evidence() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("continuation");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let first = runtime
+            .run_prompt(RunRequest {
+                prompt: "Remember the phrase silver lattice".to_string(),
+                workspace_id: Some("thread".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let continuation = runtime
+            .run_continuation_attempt(ContinuationRequest {
+                run_id: first.run.run_id.clone(),
+                extra_instruction: Some("Say the remembered phrase back.".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        assert_eq!(continuation.run.workspace_id, "thread");
+        assert!(continuation.run.prompt.contains(&first.run.run_id));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Remember the phrase silver lattice"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Say the remembered phrase back."));
+        assert!(continuation.run.prompt.contains("core aligned: true"));
+        assert!(continuation
+            .events
+            .iter()
+            .any(|event| event.kind == "run_finished"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_continuation_excerpt_handles_empty_runtime_envelope() {
+        let response = "# Structure Local Agent Response\n\n\
+This response was produced by the embedded Structure event loop.\n\n\
+- Provider: `local_env_api`\n\
+- Mode: `chat`\n\n\
+\n\
+## Tool Evidence Summary\n\n\
+- list_workspace: ok\n";
+
+        assert_eq!(
+            continuation_response_excerpt(response),
+            "Previous response contained no assistant body before tool evidence."
+        );
+    }
+
+    #[test]
+    fn local_runtime_continuation_excerpt_strips_markdown_runtime_envelope() {
+        let response = "# Structure Local Agent Response\n\
+This response was produced by the embedded Structure event loop.\n\
+**Provider:** `local_env_api`\n\
+**Mode:** `chat`\n\n\
+User-facing follow-up.\n\n\
+## Tool Evidence Summary\n";
+
+        assert_eq!(
+            continuation_response_excerpt(response),
+            "User-facing follow-up."
+        );
+    }
+
+    #[test]
     fn local_runtime_checks_configured_llm_api() {
         let _env = OpenAiEnvGuard::clear();
         let server = MockOpenAiServer::start(vec![serde_json::json!({
@@ -2693,7 +2863,7 @@ new file mode 100644
             "crates/structure-local/src/cli.rs",
             r#"
             Command::Core Command::Surfaces Command::Chat Command::Run Command::Proposals Command::Tui
-            run_core run_surfaces run_chat_agent run_local_agent
+            run_core run_surfaces run_chat_agent run_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
             RunsCommand::Events RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
@@ -2706,7 +2876,8 @@ new file mode 100644
             "frontend/src-tauri/src/lib.rs",
             r#"
             fn local_snapshot() {} fn core_manifest() {} core_manifest,
-            fn local_agent_run() {} fn local_chat_turns() {} local_chat_turns,
+            fn local_agent_run() {} fn local_agent_continue_attempt() {}
+            fn local_chat_turns() {} local_chat_turns,
             fn create_local_workspace() {} fn local_workspaces() {}
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}

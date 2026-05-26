@@ -1131,6 +1131,15 @@
         });
       }
 
+      async function continueLocalAgentAttempt(runId, extraInstruction) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_agent_continue_attempt", {
+          runId,
+          extraInstruction: extraInstruction || null,
+          mode: state.agentMode,
+        });
+      }
+
       async function localSessionStatus() {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("local_session_status", {
@@ -2058,6 +2067,25 @@ Opened in Preview for the selected run.`;
         return parts[0] ?? state.selectedRunId ?? state.runs[0]?.run_id ?? null;
       }
 
+      function parseContinuationCommand(parts) {
+        if (!parts.length) {
+          return {
+            runId: state.selectedRunId ?? state.runs[0]?.run_id ?? null,
+            extraInstruction: "",
+          };
+        }
+        if (parts[0]?.startsWith("run_")) {
+          return {
+            runId: parts[0],
+            extraInstruction: parts.slice(1).join(" ").trim(),
+          };
+        }
+        return {
+          runId: state.selectedRunId ?? state.runs[0]?.run_id ?? null,
+          extraInstruction: parts.join(" ").trim(),
+        };
+      }
+
       function renderDesktopCommandHelp() {
         eventLogEl.textContent = `Desktop Agent Commands
 /status
@@ -2067,6 +2095,8 @@ Opened in Preview for the selected run.`;
 /runs
 /select <run_id>
 /last
+/continue [run_id] [instruction]
+/resume [run_id] [instruction]
 /transcript [run_id]
 /inspect [run_id]
 /events [run_id]
@@ -2152,6 +2182,54 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
             }
             const run = await localRun(runId);
             await selectRun(run);
+            return true;
+          }
+          case "/continue":
+          case "/resume":
+          case "/again": {
+            const { runId, extraInstruction } = parseContinuationCommand(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected. Run a prompt or use /continue <run_id> [instruction].";
+              return true;
+            }
+            eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
+            setInFlightRun(
+              extraInstruction || `Continue from ${runId}`,
+              "running",
+              `Continuing from ${runId} in ${state.agentMode} mode...`,
+            );
+            await primeWorkspaceEventCursor();
+            startLiveEventPolling();
+            const attempt = await continueLocalAgentAttempt(runId, extraInstruction);
+            await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
+            state.workspaceEventCursor = Math.max(
+              state.workspaceEventCursor,
+              ...attempt.events.map((runEvent) => runEvent.sequence),
+            );
+            state.selectedRunId = attempt.run.run_id;
+            renderEventTimeline(attempt.events, attempt.run.run_id, true);
+            const result = attempt.result;
+            eventLogEl.textContent = `Continuation Run: ${attempt.run.run_id}
+Continued From: ${runId}
+Workspace: ${attempt.run.workspace_id}
+Status: ${attempt.run.status}
+Mode: ${state.agentMode}
+${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
+
+Events
+${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
+            setInFlightRun(
+              extraInstruction || `Continue from ${runId}`,
+              attempt.run.status,
+              result
+                ? result.final_response.slice(0, 2400)
+                : `Continuation failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+            );
+            await refresh();
+            clearInFlightRun();
+            if (!result) {
+              eventLogEl.textContent += "\n\nThe failed continuation is still recorded and visible in the event trace.";
+            }
             return true;
           }
           case "/transcript":

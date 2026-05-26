@@ -1,6 +1,8 @@
 use serde::Serialize;
 use structure_local_core::{collect_snapshot, default_repo_root, structure_core_manifest};
-use structure_local_runtime::{LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest};
+use structure_local_runtime::{
+    ContinuationRequest, LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest,
+};
 
 #[derive(Debug, Serialize)]
 struct DesktopSessionStatus {
@@ -160,6 +162,20 @@ fn local_agent_run_attempt(
     runtime.run_prompt_attempt(RunRequest {
         prompt,
         workspace_id,
+        mode: Some(parse_local_agent_mode(mode)),
+    })
+}
+
+#[tauri::command]
+fn local_agent_continue_attempt(
+    run_id: String,
+    extra_instruction: Option<String>,
+    mode: Option<String>,
+) -> Result<structure_local_runtime::RunAttempt, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_continuation_attempt(ContinuationRequest {
+        run_id,
+        extra_instruction,
         mode: Some(parse_local_agent_mode(mode)),
     })
 }
@@ -365,6 +381,7 @@ pub fn run() {
             run_local_command,
             local_agent_run,
             local_agent_run_attempt,
+            local_agent_continue_attempt,
             local_chat_turns,
             local_runs,
             create_local_workspace,
@@ -655,6 +672,16 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_supports_run_continuation_command() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
+        assert!(local_ui.contains("case \"/continue\":"));
+        assert!(local_ui.contains("case \"/resume\":"));
+        assert!(local_ui.contains("continueLocalAgentAttempt"));
+    }
+
+    #[test]
     fn desktop_local_ui_links_chat_turns_to_run_evidence() {
         let local_ui = include_str!("../local-ui/index.html");
 
@@ -682,6 +709,7 @@ mod tests {
             "cargo build --release --manifest-path src-tauri/Cargo.toml"
         );
         assert!(local_ui.contains("invoke(\"local_agent_run_attempt\""));
+        assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
         assert!(local_ui.contains("invoke(\"local_session_status\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
         assert!(!local_ui.contains("fetch("));

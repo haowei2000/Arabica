@@ -329,6 +329,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "Command::Proposals",
                 "Command::Tui",
                 "run_chat_agent",
+                "run_continuation_from_session",
                 "ProposalsCommand::Apply",
             ],
         )],
@@ -336,6 +337,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             "frontend/src-tauri/src/lib.rs",
             &[
                 "fn local_agent_run",
+                "fn local_agent_continue_attempt",
                 "fn local_chat_turns",
                 "fn apply_local_proposal",
                 "local_chat_turns,",
