@@ -15,6 +15,7 @@ use std::thread;
 use std::time::Duration;
 use structure_local_core::{
     collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
+    LocalSnapshot,
 };
 use structure_local_runtime::{
     LocalAgentMode, LocalAgentRuntime, LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest,
@@ -489,7 +490,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
     println!(
-        "  commands:  /help, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
+        "  commands:  /help, /status, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
     );
     println!();
 
@@ -608,6 +609,11 @@ fn handle_chat_session_command(
         "/quit" | "/exit" => Ok(false),
         "/help" => {
             print_chat_session_help();
+            Ok(true)
+        }
+        "/status" => {
+            let snapshot = local_result(collect_snapshot(runtime.repo_root()))?;
+            print!("{}", render_chat_session_status(state, &snapshot));
             Ok(true)
         }
         "/mode" => {
@@ -864,6 +870,7 @@ fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
 
 fn print_chat_session_help() {
     println!("Structure local session commands");
+    println!("  /status               Show workspace, mode, selected run, and LLM env");
     println!("  /mode chat|code       Switch between chat and code-agent mode");
     println!("  /workspace [id]       Show or open/create a workspace");
     println!("  /ls                   List top-level workspace entries");
@@ -884,6 +891,42 @@ fn print_chat_session_help() {
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
+}
+
+fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
+    let config = &snapshot.llm_config;
+    let mut text = String::new();
+    text.push_str("Structure local session\n");
+    text.push_str(&format!(
+        "  workspace:    {}\n",
+        state.workspace_id.as_deref().unwrap_or("default")
+    ));
+    text.push_str(&format!(
+        "  mode:         {}\n",
+        session_mode_label(&state.mode)
+    ));
+    text.push_str(&format!(
+        "  selected run: {}\n",
+        state.last_run_id.as_deref().unwrap_or("none")
+    ));
+    text.push_str(&format!("  repo:         {}\n", snapshot.repo_root));
+    text.push_str(&format!("  runtime:      {}\n", snapshot.runtime_dir));
+    text.push_str(&format!(
+        "  llm:          {} ({}/{}/{})\n",
+        if config.configured {
+            "OPENAI__ configured"
+        } else {
+            "OPENAI__ missing"
+        },
+        config.api_key.source,
+        config.base_url.source,
+        config.model.source
+    ));
+    text.push_str(&format!(
+        "  model:        {}\n",
+        config.model_name.as_deref().unwrap_or("not set")
+    ));
+    text
 }
 
 fn execute_session_tool(
@@ -1376,6 +1419,9 @@ fn render_proposal_apply_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn cli_dry_run_apply_output_includes_review_preview() {
@@ -1436,5 +1482,46 @@ mod tests {
                 selected: Some("art_1".to_string())
             }
         );
+    }
+
+    #[test]
+    fn cli_session_status_reports_workspace_mode_and_llm_contract() {
+        let root = unique_repo("cli-session-status");
+        fs::write(
+            root.join(".env"),
+            "OPENAI__API_KEY=test-key\nOPENAI__BASE_URL=http://example.test/v1\nOPENAI__MODEL=test-model\n",
+        )
+        .unwrap();
+        let snapshot = collect_snapshot(&root).unwrap();
+        let state = ChatSessionState {
+            workspace_id: Some("paper".to_string()),
+            mode: LocalAgentMode::CodeAgent,
+            last_run_id: Some("run_selected".to_string()),
+        };
+
+        let output = render_chat_session_status(&state, &snapshot);
+
+        assert!(output.contains("workspace:    paper"));
+        assert!(output.contains("mode:         code_agent"));
+        assert!(output.contains("selected run: run_selected"));
+        assert!(output.contains("llm:          OPENAI__"));
+        assert!(output.contains("model:        "));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn unique_repo(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "structure-cli-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src/structure")).unwrap();
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::write(root.join("pyproject.toml"), "").unwrap();
+        root.canonicalize().unwrap()
     }
 }
