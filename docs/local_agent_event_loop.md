@@ -159,6 +159,8 @@ into runtime calls:
   loop instead of becoming a separate operator dashboard. Command results are
   appended to the desktop chat thread as local interaction turns while
   persisted agent runs still come from the Rust runtime event store.
+  Proposal preview/apply controls prefer the selected run, matching the
+  transcript and event-trace selection model.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events, and the UI renders both workspace feed events

@@ -841,7 +841,7 @@
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
-            <button id="preview-proposal" type="button">Preview Latest Proposal</button>
+            <button id="preview-proposal" type="button">Preview Selected Proposal</button>
             <button id="apply-proposal" type="button">Apply Proposal</button>
             <button id="show-parity" type="button">Show Parity Report</button>
             <button id="show-bundle" type="button">Show Evidence Bundle</button>
@@ -2702,7 +2702,7 @@ ${preview.preview}`;
       previewProposalEl.addEventListener("click", async () => {
         setProposalBusy(true);
         try {
-          const preview = await latestProposal();
+          const preview = await latestProposal(state.selectedRunId);
           renderArtifactPreview(preview);
           eventLogEl.textContent = `Code Change Proposal
 ID: ${preview.artifact.artifact_id}
@@ -2711,7 +2711,7 @@ Path: ${preview.artifact.path}
 Read: ${formatBytes(preview.bytes_read)}
 Truncated: ${preview.truncated}
 
-Opened in Preview.`;
+Opened in Preview${state.selectedRunId ? " for the selected run." : "."}`;
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {
