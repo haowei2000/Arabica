@@ -635,7 +635,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
 
   const [sExecutorCode, setSExecutorCode] = useState('');
   const [sModelName, setSModelName] = useState('');
-  const [sModelProvider, setSModelProvider] = useState('tongyi');
+  const [sModelProvider, setSModelProvider] = useState('openai');
   const [sGlobalEvent, setSGlobalEvent] = useState(true);
   const [settingsSaving, setSettingsSaving] = useState(false);
 
@@ -644,7 +644,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
     if (!currentWorkspace) return;
     setSExecutorCode(currentWorkspace.executor_code ?? '');
     setSModelName(wsModel?.name ?? '');
-    setSModelProvider(wsModel?.provider ?? 'tongyi');
+    setSModelProvider(wsModel?.provider ?? 'openai');
     setSGlobalEvent(wsConfig?.global_event !== undefined ? Boolean(wsConfig.global_event) : true);
   }, [currentWorkspaceId, currentWorkspace, wsConfig?.global_event, wsModel?.name, wsModel?.provider]);
 
@@ -1418,13 +1418,13 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     onChange={(e) => setSModelProvider(e.target.value)}
                     className="rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-24 shrink-0"
                   >
-                    <option value="tongyi">tongyi</option>
-                    <option value="ollama">ollama</option>
+                    <option value="openai">openai</option>
+                    <option value="custom">custom</option>
                   </select>
                   <Input
                     value={sModelName}
                     onChange={(e) => setSModelName(e.target.value)}
-                    placeholder="e.g. qwen-plus"
+                    placeholder="e.g. gpt-4.1-mini"
                     className="flex-1 text-sm h-9"
                   />
                 </div>

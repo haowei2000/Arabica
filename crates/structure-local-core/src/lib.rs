@@ -15,4 +15,6 @@ pub use parity::{
 };
 pub use repo::{default_repo_root, find_repo_root};
 pub use reports::{read_repo_text_file, recent_benchmark_reports, LocalFile};
-pub use snapshot::{collect_snapshot, snapshot_json, LocalSnapshot};
+pub use snapshot::{
+    collect_snapshot, snapshot_json, LocalEnvVarStatus, LocalLlmConfigStatus, LocalSnapshot,
+};

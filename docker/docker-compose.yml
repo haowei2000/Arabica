@@ -69,9 +69,6 @@ services:
       AUTH__REFRESH_TOKEN_EXPIRE_DAYS: ${AUTH__REFRESH_TOKEN_EXPIRE_DAYS:-7}
       AUTH__ADMIN_USERNAME: ${AUTH__ADMIN_USERNAME:-admin}
       AUTH__ADMIN_PASSWORD: ${AUTH__ADMIN_PASSWORD:?Set AUTH__ADMIN_PASSWORD in .env}
-      OLLAMA__HOST: ollama
-      OLLAMA__PORT: 11434
-      OLLAMA__PROTOCOL: http
       CONTEXT_SERVICE_DATA_ROOT: /app/data/context
       MALLOC_ARENA_MAX: "2"
       EMBED_WORKER: ${EMBED_WORKER:-true}
@@ -357,42 +354,6 @@ services:
           memory: ${REDIS_MEMORY_LIMIT:-150M}
         reservations:
           memory: ${REDIS_MEMORY_RESERVATION:-64M}
-
-  # Ollama Service (for local LLM)
-  ollama:
-    image: ollama/ollama:latest
-    profiles:
-      - ollama
-    ports:
-      - "${EXPOSE_PORT_OLLAMA:-11434}:11434"
-    volumes:
-      - ./ollama-models:/root/.ollama
-      - ./ollama:/app/ollama:ro
-    environment:
-      <<: *common-env
-      OLLAMA_HOST: 0.0.0.0
-      OLLAMA_MODELS: /app/ollama
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
-    logging: *default-logging
-    networks:
-      - structure-network
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 1G
-          # Uncomment for GPU support
-          # devices:
-          #   - driver: nvidia
-          #     count: all
-          #     capabilities: [gpu]
 
   # Optional: Redis Commander for Redis management
   redis-commander:

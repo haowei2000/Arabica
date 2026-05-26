@@ -849,15 +849,15 @@ class DefaultExecutor(Executor):
         "enabled": True,
         "version": 1,
         "config": AppConfig(
-            model=ChatLLM(provider="tongyi", name="qwen-plus"), context=None
+            model=ChatLLM(provider="openai", name="gpt-4.1-mini"), context=None
         ),
     }
 
     def __init__(self, config: dict):
         super().__init__(config)
         self._config = config  # kept for _resolve_llm_config
-        self.model_provider = config.get("model_provider", "tongyi")
-        self.model_name = config.get("model_name", "qwen-plus")
+        self.model_provider = config.get("model_provider", "openai")
+        self.model_name = config.get("model_name", "gpt-4.1-mini")
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")
@@ -1354,27 +1354,15 @@ class DefaultExecutor(Executor):
         """Return ``(api_key, base_url)`` from the database ChatModel config.
 
         Values are injected by the event worker from the default ChatModel
-        record.  Ollama is the only exception — it never needs a real key.
+        record, which is seeded from the three OPENAI__ environment variables.
         """
         api_key = self._config.get("api_key") or ""
         base_url = self._config.get("base_url") or ""
 
-        if self.model_provider == "ollama":
-            from structure.config.factory import get_settings
-
-            settings = get_settings()
-            api_key = "ollama"
-            base_url = base_url or (
-                settings.ollama.base_url + "/v1"
-                if settings.ollama
-                else "http://127.0.0.1:11434/v1"
-            )
-            return api_key, base_url
-
         if not api_key or not base_url:
             raise ValueError(
                 "No LLM model configured. Please add a default chat model "
-                "with an API key and base URL in the LLM Models settings page."
+                "seeded from OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL."
             )
         return api_key, base_url
 

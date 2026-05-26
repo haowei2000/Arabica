@@ -373,9 +373,45 @@
       }
 
       .run-list,
-      .knowledge-list {
+      .knowledge-list,
+      .chat-thread {
         display: grid;
         gap: 8px;
+      }
+
+      .chat-thread {
+        max-height: 420px;
+        overflow: auto;
+        padding-right: 2px;
+      }
+
+      .chat-message {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        padding: 11px 12px;
+      }
+
+      .chat-message[data-role="assistant"] {
+        border-left: 4px solid var(--accent);
+        background: var(--surface);
+      }
+
+      .chat-message strong {
+        display: block;
+        font-size: 12px;
+        line-height: 18px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+
+      .chat-message p {
+        margin-top: 5px;
+        font-size: 13px;
+        line-height: 20px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
 
       .run-item,
@@ -641,8 +677,8 @@
       <aside class="sidebar">
         <div class="brand">
           <p class="eyebrow">Structure</p>
-          <h1>Local Workspace</h1>
-          <p class="summary">Native desktop view for local Structure artifacts.</p>
+          <h1>Code Agent</h1>
+          <p class="summary">Native local chat and code-agent workspace.</p>
         </div>
 
         <div class="metric-list" aria-label="Local workspace status">
@@ -655,8 +691,12 @@
             <strong id="core-version">--</strong>
           </div>
           <div class="metric">
-            <span>Reports</span>
+            <span>Artifacts</span>
             <strong id="report-count">0</strong>
+          </div>
+          <div class="metric">
+            <span>LLM</span>
+            <strong id="llm-mode">--</strong>
           </div>
           <div class="metric">
             <span>Shown</span>
@@ -680,15 +720,15 @@
         </div>
       </aside>
 
-      <section class="workspace" aria-label="Benchmark workspace">
+      <section class="workspace" aria-label="Local code agent workspace">
         <header class="topbar">
           <div>
-            <h2>Local Agent Runtime</h2>
+            <h2>Local Chat Runtime</h2>
             <p id="subtitle" class="muted">Loading local state...</p>
           </div>
           <div class="toolbar">
             <label class="search">
-              <span class="visually-hidden">Search reports</span>
+              <span class="visually-hidden">Search artifacts</span>
               <input id="search" type="search" placeholder="Search" autocomplete="off" />
             </label>
             <button id="refresh" type="button">Refresh</button>
@@ -698,8 +738,8 @@
         <section class="agent-loop" aria-label="Local agent event loop">
           <div class="agent-panel">
             <div>
-              <h3>Run Agent</h3>
-              <p class="muted">Runs in-process with the embedded event loop.</p>
+              <h3>Code-Agent Chat</h3>
+              <p class="muted">Runs in-process through Structure event scheduling.</p>
             </div>
             <form id="workspace-form" class="workspace-form">
               <select id="workspace-select" aria-label="Workspace"></select>
@@ -709,13 +749,14 @@
             <form id="run-form" class="run-form">
               <textarea
                 id="agent-prompt"
-                placeholder="Ask the local Structure agent to inspect this workspace..."
+                placeholder="Ask the local Structure code agent to inspect, explain, or plan changes..."
               ></textarea>
-              <button id="run-agent" type="submit">Run</button>
+              <button id="run-agent" type="submit">Send</button>
             </form>
-            <button id="run-benchmark" type="button">Run Local Benchmark</button>
+            <div id="chat-thread" class="chat-thread" aria-label="Local chat thread"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
+            <button id="preview-proposal" type="button">Preview Latest Proposal</button>
             <button id="show-parity" type="button">Show Parity Report</button>
             <button id="show-bundle" type="button">Show Evidence Bundle</button>
             <pre id="event-log">No local run selected.</pre>
@@ -744,14 +785,14 @@
         <div class="content">
           <section class="panel" aria-labelledby="reports-title">
             <div class="panel-heading">
-              <h3 id="reports-title">Recent</h3>
+              <h3 id="reports-title">Recent Artifacts</h3>
               <span id="filtered-count" class="count">0</span>
             </div>
             <div
               id="reports"
               class="reports"
               role="listbox"
-              aria-label="Benchmark report files"
+              aria-label="Local artifacts"
             ></div>
           </section>
 
@@ -761,7 +802,6 @@
                 <h3 id="preview-title">Preview</h3>
                 <p id="preview-meta" class="muted">No file selected</p>
               </div>
-              <button id="report-evidence" type="button" hidden>Evidence</button>
               <button id="clear-preview" type="button" hidden>Clear</button>
             </div>
             <div id="preview-empty" class="empty">No preview open.</div>
@@ -778,11 +818,11 @@
       const previewEmptyEl = document.querySelector("#preview-empty");
       const previewMetaEl = document.querySelector("#preview-meta");
       const reportSummaryEl = document.querySelector("#report-summary");
-      const reportEvidenceEl = document.querySelector("#report-evidence");
       const repoEl = document.querySelector("#repo");
       const coreVersionEl = document.querySelector("#core-version");
       const reportCountEl = document.querySelector("#report-count");
       const shownCountEl = document.querySelector("#shown-count");
+      const llmModeEl = document.querySelector("#llm-mode");
       const filteredCountEl = document.querySelector("#filtered-count");
       const coreContractEl = document.querySelector("#core-contract");
       const surfacesEl = document.querySelector("#surfaces");
@@ -796,13 +836,14 @@
       const createWorkspaceEl = document.querySelector("#create-workspace");
       const runFormEl = document.querySelector("#run-form");
       const runAgentEl = document.querySelector("#run-agent");
-      const runBenchmarkEl = document.querySelector("#run-benchmark");
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const previewArtifactEl = document.querySelector("#preview-artifact");
+      const previewProposalEl = document.querySelector("#preview-proposal");
       const showParityEl = document.querySelector("#show-parity");
       const showBundleEl = document.querySelector("#show-bundle");
       const agentPromptEl = document.querySelector("#agent-prompt");
       const eventLogEl = document.querySelector("#event-log");
+      const chatThreadEl = document.querySelector("#chat-thread");
       const runListEl = document.querySelector("#run-list");
       const runCountEl = document.querySelector("#run-count");
       const knowledgeFormEl = document.querySelector("#knowledge-form");
@@ -813,12 +854,12 @@
 
       const state = {
         snapshot: null,
-        reports: [],
         filteredReports: [],
         selectedPath: null,
         runs: [],
         workspaces: [],
         activeWorkspaceId: "default",
+        chatTurns: [],
         knowledge: [],
         artifacts: [],
         parityReport: null,
@@ -828,24 +869,13 @@
         if (!invoke) {
           return {
             repo_root: "Desktop runtime unavailable",
-            benchmark_report_count: 0,
-            recent_benchmark_reports: [],
             core_manifest: fallbackCoreManifest(),
             product_surfaces: fallbackSurfaces(),
+            llm_config: fallbackLlmConfig(),
             local_only: true,
           };
         }
         return invoke("local_snapshot");
-      }
-
-      async function readReport(path) {
-        if (!invoke) return "Desktop runtime unavailable.";
-        return invoke("read_local_report", { path });
-      }
-
-      async function localBenchmarkEvidence(path) {
-        if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("local_benchmark_evidence", { path });
       }
 
       async function coreParityReport() {
@@ -869,7 +899,16 @@
 
       async function runLocalAgent(prompt) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("local_agent_run", { prompt, workspaceId: activeWorkspaceId() });
+        return invoke("local_agent_run", {
+          prompt,
+          workspaceId: activeWorkspaceId(),
+          mode: "code_agent",
+        });
+      }
+
+      async function localChatTurns() {
+        if (!invoke) return [];
+        return invoke("local_chat_turns", { workspaceId: activeWorkspaceId(), limit: 20 });
       }
 
       async function localRuns() {
@@ -936,15 +975,6 @@
         return invoke("remove_local_knowledge", { sourceId });
       }
 
-      async function runLocalBenchmark() {
-        if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("local_benchmark_run", {
-          benchmark: "local-agent-smoke",
-          maxCases: 2,
-          workspaceId: activeWorkspaceId(),
-        });
-      }
-
       function formatBytes(bytes) {
         if (bytes < 1024) return `${bytes} B`;
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
@@ -967,25 +997,6 @@
           return JSON.stringify(JSON.parse(text), null, 2);
         } catch {
           return text;
-        }
-      }
-
-      function reportSummary(text, path) {
-        if (!path.toLowerCase().endsWith(".json")) return null;
-        try {
-          const parsed = JSON.parse(text);
-          const report = parsed.report ?? parsed;
-          if (!report || typeof report !== "object" || !("overall_score" in report)) {
-            return null;
-          }
-          return [
-            ["Schema", report.report_schema_version ?? "BenchmarkReport"],
-            ["Score", Number(report.overall_score ?? 0).toFixed(4)],
-            ["Cases", String(report.n_cases ?? 0)],
-            ["Tools", String(report.total_cost?.tool_calls ?? report.total_tool_calls ?? 0)],
-          ];
-        } catch {
-          return null;
         }
       }
 
@@ -1015,7 +1026,7 @@
 
       function setAgentBusy(isBusy) {
         runAgentEl.disabled = isBusy;
-        runAgentEl.textContent = isBusy ? "Running" : "Run";
+        runAgentEl.textContent = isBusy ? "Thinking" : "Send";
       }
 
       function setKnowledgeBusy(isBusy) {
@@ -1028,11 +1039,6 @@
         createWorkspaceEl.textContent = isBusy ? "Creating" : "Create";
       }
 
-      function setBenchmarkBusy(isBusy) {
-        runBenchmarkEl.disabled = isBusy;
-        runBenchmarkEl.textContent = isBusy ? "Running Benchmark" : "Run Local Benchmark";
-      }
-
       function setReplayBusy(isBusy) {
         replayWorkspaceEl.disabled = isBusy;
         replayWorkspaceEl.textContent = isBusy ? "Replaying" : "Replay Workspace";
@@ -1041,6 +1047,11 @@
       function setArtifactBusy(isBusy) {
         previewArtifactEl.disabled = isBusy;
         previewArtifactEl.textContent = isBusy ? "Loading Artifact" : "Preview Latest Artifact";
+      }
+
+      function setProposalBusy(isBusy) {
+        previewProposalEl.disabled = isBusy;
+        previewProposalEl.textContent = isBusy ? "Loading Proposal" : "Preview Latest Proposal";
       }
 
       function setParityBusy(isBusy) {
@@ -1059,7 +1070,7 @@
             id: "cli_tui",
             name: "CLI/TUI",
             runtime_model: "Local Rust binary",
-            audience: "Developers and benchmark operators",
+            audience: "Developers and local agent operators",
           },
           {
             id: "desktop_app",
@@ -1086,15 +1097,29 @@
         };
       }
 
+      function fallbackLlmConfig() {
+        return {
+          provider: "openai_compatible",
+          configured: false,
+          api_key: { name: "OPENAI__API_KEY", configured: false, source: "missing" },
+          base_url: { name: "OPENAI__BASE_URL", configured: false, source: "missing" },
+          model: { name: "OPENAI__MODEL", configured: false, source: "missing" },
+          model_name: null,
+        };
+      }
+
       function renderSnapshot(snapshot) {
         state.snapshot = snapshot;
-        state.reports = snapshot.recent_benchmark_reports ?? [];
         repoEl.textContent = snapshot.repo_root;
         renderCoreContract(snapshot.core_manifest ?? fallbackCoreManifest(), state.parityReport);
-        reportCountEl.textContent = String(snapshot.benchmark_report_count ?? 0);
-        subtitleEl.textContent = `${activeWorkspaceId()} / ${state.runs.length} runs / ${
-          snapshot.benchmark_report_count ?? 0
-        } reports / ${state.artifacts.length} artifacts in local storage`;
+        reportCountEl.textContent = String(state.artifacts.length);
+        const llmConfig = snapshot.llm_config ?? fallbackLlmConfig();
+        llmModeEl.textContent = llmConfig.configured ? "API" : "Missing";
+        llmModeEl.className = llmConfig.configured ? "ok" : "";
+        llmModeEl.title = llmConfig.configured
+          ? `OPENAI__ sources: ${llmConfig.api_key.source}/${llmConfig.base_url.source}/${llmConfig.model.source}`
+          : "Set OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL";
+        subtitleEl.textContent = `${activeWorkspaceId()} / ${state.runs.length} runs / ${state.artifacts.length} artifacts in local storage`;
         renderSurfaces(snapshot.product_surfaces ?? []);
         applyFilter();
       }
@@ -1149,6 +1174,42 @@
           button.addEventListener("click", () => selectRun(run));
           runListEl.append(button);
         }
+      }
+
+      function renderChat(turns) {
+        state.chatTurns = turns;
+        chatThreadEl.replaceChildren();
+        if (turns.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "Start a local code-agent conversation in this workspace.";
+          chatThreadEl.append(empty);
+          return;
+        }
+
+        for (const turn of [...turns].reverse()) {
+          const user = document.createElement("div");
+          user.className = "chat-message";
+          user.dataset.role = "user";
+          const userRole = document.createElement("strong");
+          userRole.textContent = `You / ${turn.workspace_id}`;
+          const userText = document.createElement("p");
+          userText.textContent = turn.user_message;
+          user.append(userRole, userText);
+
+          const assistant = document.createElement("div");
+          assistant.className = "chat-message";
+          assistant.dataset.role = "assistant";
+          const assistantRole = document.createElement("strong");
+          assistantRole.textContent = `Structure / ${turn.status} / ${turn.event_count} events`;
+          const assistantText = document.createElement("p");
+          assistantText.textContent =
+            turn.assistant_message?.slice(0, 2400) || "No assistant response recorded.";
+          assistant.append(assistantRole, assistantText);
+
+          chatThreadEl.append(user, assistant);
+        }
+        chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
       }
 
       function renderKnowledge(sources) {
@@ -1380,8 +1441,12 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
 
       function applyFilter() {
         const query = searchEl.value.trim().toLowerCase();
-        state.filteredReports = state.reports.filter((report) =>
-          report.relative_path.toLowerCase().includes(query),
+        state.filteredReports = state.artifacts.filter((artifact) =>
+          [artifact.path, artifact.kind, artifact.artifact_id, artifact.run_id]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(query),
         );
         shownCountEl.textContent = String(state.filteredReports.length);
         filteredCountEl.textContent = `${state.filteredReports.length} shown`;
@@ -1393,53 +1458,48 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
         if (state.filteredReports.length === 0) {
           const empty = document.createElement("div");
           empty.className = "empty";
-          empty.textContent = "No matching reports.";
+          empty.textContent = "No matching artifacts.";
           reportsEl.append(empty);
           return;
         }
 
-        for (const report of state.filteredReports) {
+        for (const artifact of state.filteredReports) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = "report";
           button.setAttribute("role", "option");
           button.setAttribute(
             "aria-selected",
-            report.relative_path === state.selectedPath ? "true" : "false",
+            artifact.artifact_id === state.selectedPath ? "true" : "false",
           );
 
           const name = document.createElement("span");
           name.className = "report-name";
-          name.textContent = report.relative_path;
+          name.textContent = artifact.path;
 
           const meta = document.createElement("span");
           meta.className = "report-meta";
-          meta.textContent = `${formatBytes(report.size_bytes)} / ${formatDate(
-            report.modified_unix_seconds,
-          )}`;
+          meta.textContent = `${artifact.kind} / ${formatBytes(artifact.size_bytes)}`;
 
           button.append(name, meta);
-          button.addEventListener("click", () => selectReport(report));
+          button.addEventListener("click", () => selectReport(artifact));
           reportsEl.append(button);
         }
       }
 
-      async function selectReport(report) {
-        state.selectedPath = report.relative_path;
+      async function selectReport(artifact) {
+        state.selectedPath = artifact.artifact_id;
         renderReports();
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
-        reportEvidenceEl.hidden = !report.relative_path.toLowerCase().endsWith(".json");
-        previewMetaEl.textContent = `${formatBytes(report.size_bytes)} / ${formatDate(
-          report.modified_unix_seconds,
-        )}`;
+        previewMetaEl.textContent = `${artifact.kind} / ${formatBytes(artifact.size_bytes)} / ${artifact.run_id}`;
         previewEl.textContent = "Loading...";
 
         try {
-          const text = await readReport(report.relative_path);
-          renderReportSummary(reportSummary(text, report.relative_path));
-          previewEl.textContent = formatPreview(text, report.relative_path);
+          const artifactPreview = await readArtifact(artifact.artifact_id);
+          renderReportSummary(null);
+          previewEl.textContent = formatPreview(artifactPreview.preview, artifact.path);
         } catch (error) {
           renderReportSummary(null);
           previewEl.textContent = String(error);
@@ -1453,13 +1513,12 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
         previewEl.textContent = "";
         previewEmptyEl.hidden = false;
         renderReportSummary(null);
-        reportEvidenceEl.hidden = true;
         clearPreviewEl.hidden = true;
         renderReports();
       }
 
       function renderError(error) {
-        state.reports = [];
+        state.artifacts = [];
         state.filteredReports = [];
         state.selectedPath = null;
         reportsEl.replaceChildren();
@@ -1480,6 +1539,7 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
         renderReportSummary(null);
         clearPreviewEl.hidden = true;
         renderRuns([]);
+        renderChat([]);
         renderWorkspaces([]);
         renderKnowledge([]);
         state.artifacts = [];
@@ -1496,21 +1556,23 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
           }
           renderWorkspaces(workspaces);
 
-          const [snapshot, runs, knowledge, artifacts, parityReport] = await Promise.all([
+          const [snapshot, runs, turns, knowledge, artifacts, parityReport] = await Promise.all([
             localSnapshot(),
             localRuns(),
+            localChatTurns(),
             localKnowledge(),
             localArtifacts(),
             coreParityReport(),
           ]);
           renderRuns(runs);
+          renderChat(turns);
           renderKnowledge(knowledge);
           state.artifacts = artifacts;
           state.parityReport = parityReport;
           renderSnapshot(snapshot);
           if (
             state.selectedPath &&
-            !state.reports.some((report) => report.relative_path === state.selectedPath)
+            !state.artifacts.some((artifact) => artifact.artifact_id === state.selectedPath)
           ) {
             clearPreview();
           }
@@ -1524,34 +1586,6 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
       searchEl.addEventListener("input", applyFilter);
       refreshEl.addEventListener("click", refresh);
       clearPreviewEl.addEventListener("click", clearPreview);
-      reportEvidenceEl.addEventListener("click", async () => {
-        if (!state.selectedPath) {
-          eventLogEl.textContent = "Select a JSON benchmark report first.";
-          return;
-        }
-        reportEvidenceEl.disabled = true;
-        reportEvidenceEl.textContent = "Loading";
-        try {
-          const evidence = await localBenchmarkEvidence(state.selectedPath);
-          eventLogEl.textContent = `Benchmark Evidence
-Schema: ${evidence.schema_version}
-Report: ${evidence.report_path}
-Benchmark: ${evidence.report.benchmark}
-Cases: ${evidence.report.n_cases}
-Score: ${Number(evidence.report.overall_score ?? 0).toFixed(4)}
-Events: ${evidence.report.total_events}
-Tool calls: ${evidence.report.total_tool_calls}
-Run evidence records: ${evidence.run_evidence.length}
-
-Runs
-${evidence.run_evidence.map((run) => `- ${run.run.run_id}: ${run.event_count} events / ${run.tool_call_count} tools / ${run.artifacts.length} artifacts`).join("\n") || "No run evidence linked."}`;
-        } catch (error) {
-          eventLogEl.textContent = String(error);
-        } finally {
-          reportEvidenceEl.disabled = false;
-          reportEvidenceEl.textContent = "Evidence";
-        }
-      });
       workspaceSelectEl.addEventListener("change", async () => {
         state.activeWorkspaceId = workspaceSelectEl.value || "default";
         eventLogEl.textContent = `Workspace selected: ${activeWorkspaceId()}`;
@@ -1585,13 +1619,17 @@ ${evidence.run_evidence.map((run) => `- ${run.run.run_id}: ${run.event_count} ev
           return;
         }
         setAgentBusy(true);
-        eventLogEl.textContent = "Running local event loop...";
+        eventLogEl.textContent = "Running Structure local event loop...";
         try {
           const result = await runLocalAgent(prompt);
           agentPromptEl.value = "";
-          eventLogEl.textContent = result.events
-            .map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`)
-            .join("\n");
+          eventLogEl.textContent = `Run: ${result.run.run_id}
+Workspace: ${result.run.workspace_id}
+Status: ${result.run.status}
+Artifact: ${result.artifact_path}
+
+Events
+${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join("\n")}`;
           await refresh();
         } catch (error) {
           eventLogEl.textContent = String(error);
@@ -1612,26 +1650,6 @@ ${evidence.run_evidence.map((run) => `- ${run.run.run_id}: ${run.event_count} ev
           eventLogEl.textContent = String(error);
         } finally {
           setKnowledgeBusy(false);
-        }
-      });
-      runBenchmarkEl.addEventListener("click", async () => {
-        setBenchmarkBusy(true);
-        eventLogEl.textContent = "Running local benchmark...";
-        try {
-          const result = await runLocalBenchmark();
-          eventLogEl.textContent = `Benchmark finished
-${result.report.benchmark}
-Score: ${result.report.overall_score.toFixed(4)}
-Cases: ${result.report.n_cases}
-Events: ${result.report.total_events}
-Tool calls: ${result.report.total_tool_calls}
-JSON: ${result.json_path}
-Markdown: ${result.markdown_path}`;
-          await refresh();
-        } catch (error) {
-          eventLogEl.textContent = String(error);
-        } finally {
-          setBenchmarkBusy(false);
         }
       });
       replayWorkspaceEl.addEventListener("click", async () => {
@@ -1685,6 +1703,34 @@ ${preview.preview}`;
           setArtifactBusy(false);
         }
       });
+      previewProposalEl.addEventListener("click", async () => {
+        setProposalBusy(true);
+        try {
+          if (state.artifacts.length === 0) {
+            state.artifacts = await localArtifacts();
+          }
+          const proposal = state.artifacts.find(
+            (artifact) => artifact.kind === "code_change_proposal",
+          );
+          if (!proposal) {
+            eventLogEl.textContent = "No local code-change proposals indexed yet.";
+            return;
+          }
+          const preview = await readArtifact(proposal.artifact_id);
+          eventLogEl.textContent = `Code Change Proposal
+ID: ${preview.artifact.artifact_id}
+Run: ${preview.artifact.run_id}
+Path: ${preview.artifact.path}
+Read: ${formatBytes(preview.bytes_read)}
+Truncated: ${preview.truncated}
+
+${preview.preview}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setProposalBusy(false);
+        }
+      });
       showParityEl.addEventListener("click", async () => {
         setParityBusy(true);
         try {
@@ -1730,15 +1776,14 @@ Schema: ${bundle.schema_version}
 Workspace: ${bundle.workspace_id}
 Generated: ${bundle.generated_at_ms}
 Parity passed: ${bundle.parity_report.passed}
-Benchmark reports: ${bundle.snapshot.benchmark_report_count}
 Events: ${bundle.workspace_replay.events.length}
 Runs: ${bundle.workspace_replay.runs.length}
 Knowledge sources: ${bundle.workspace_replay.knowledge_sources.length}
 Artifacts: ${bundle.workspace_replay.artifacts.length}
 Run evidence records: ${bundle.run_evidence.length}
 
-Recent Reports
-${bundle.snapshot.recent_benchmark_reports.map((report) => `- ${report.relative_path}`).join("\n") || "No benchmark reports found."}`;
+Recent Artifacts
+${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join("\n") || "No artifacts found."}`;
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {

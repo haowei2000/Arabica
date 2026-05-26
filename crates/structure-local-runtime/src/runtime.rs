@@ -1,10 +1,12 @@
-use crate::model::{DeterministicLocalModelProvider, LocalModelProvider, ModelRequest};
+use crate::model::{
+    selected_synthesis_provider, DeterministicLocalModelProvider, LocalModelProvider, ModelRequest,
+};
 use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
-    ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvidenceBundle,
-    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceReplay,
-    WorkspaceSummary,
+    ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
+    LocalAgentMode, LocalEvidenceBundle, LocalToolResult, RunEventKind, RunEvidenceSummary,
+    RunResult, RunStatus, RunSummary, WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -19,6 +21,7 @@ use structure_local_core::{
 pub struct RunRequest {
     pub prompt: String,
     pub workspace_id: Option<String>,
+    pub mode: Option<LocalAgentMode>,
 }
 
 pub struct LocalAgentRuntime {
@@ -33,6 +36,7 @@ impl LocalAgentRuntime {
             .as_ref()
             .canonicalize()
             .map_err(|err| format!("failed to canonicalize repo root: {err}"))?;
+        load_openai_env_file(&repo_root)?;
         let runtime_dir = env::var("STRUCTURE_LOCAL_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| repo_root.join(".structure/local"));
@@ -78,6 +82,7 @@ impl LocalAgentRuntime {
         if request.prompt.trim().is_empty() {
             return Err("prompt must not be empty".to_string());
         }
+        let mode = request.mode.unwrap_or_default();
 
         let workspace = self
             .store
@@ -101,12 +106,26 @@ impl LocalAgentRuntime {
         self.store.append_event(
             &workspace.workspace_id,
             Some(&run_id),
+            RunEventKind::ChatMessageRecorded,
+            &serde_json::json!({
+                "role": "user",
+                "mode": mode.as_str(),
+                "content": request.prompt,
+            }),
+        )?;
+        self.store.append_event(
+            &workspace.workspace_id,
+            Some(&run_id),
             RunEventKind::PromptReceived,
-            &serde_json::json!({ "prompt": request.prompt }),
+            &serde_json::json!({
+                "prompt": request.prompt,
+                "mode": mode.as_str(),
+                "surface": "local_rust",
+            }),
         )?;
 
         run = self.store.update_run(&run_id, RunStatus::Running, None)?;
-        match self.execute_running_run(run.clone()) {
+        match self.execute_running_run(run.clone(), mode) {
             Ok(result) => Ok(result),
             Err(error) => {
                 let failed_run = self
@@ -198,6 +217,29 @@ impl LocalAgentRuntime {
         limit: usize,
     ) -> Result<Vec<RunSummary>, String> {
         self.store.list_runs(workspace_id, limit)
+    }
+
+    pub fn chat_turns(
+        &self,
+        workspace_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ChatTurn>, String> {
+        let runs = self.store.list_runs(workspace_id, limit)?;
+        let mut turns = Vec::new();
+        for run in runs {
+            let events = self.store.run_events(&run.run_id)?;
+            turns.push(ChatTurn {
+                run_id: run.run_id,
+                workspace_id: run.workspace_id,
+                user_message: run.prompt,
+                assistant_message: run.final_response,
+                status: run.status,
+                event_count: events.len(),
+                created_at_ms: run.created_at_ms,
+                updated_at_ms: run.updated_at_ms,
+            });
+        }
+        Ok(turns)
     }
 
     pub fn workspace_replay(
@@ -364,7 +406,27 @@ impl LocalAgentRuntime {
         Ok(path)
     }
 
-    fn execute_running_run(&self, run: RunSummary) -> Result<RunResult, String> {
+    fn write_code_change_proposal_artifact(
+        &self,
+        run: &RunSummary,
+        tool_results: &[LocalToolResult],
+    ) -> Result<(PathBuf, String), String> {
+        let artifact_dir = self.runtime_dir.join("artifacts").join(&run.run_id);
+        fs::create_dir_all(&artifact_dir)
+            .map_err(|err| format!("failed to create run artifact directory: {err}"))?;
+        let inspected_files = inspected_files_from_tools(tool_results);
+        let proposal = render_code_change_proposal(run, &inspected_files);
+        let path = artifact_dir.join("code_change_proposal.md");
+        fs::write(&path, &proposal)
+            .map_err(|err| format!("failed to write code change proposal artifact: {err}"))?;
+        Ok((path, proposal))
+    }
+
+    fn execute_running_run(
+        &self,
+        run: RunSummary,
+        mode: LocalAgentMode,
+    ) -> Result<RunResult, String> {
         let knowledge = self.store.list_knowledge_sources(&run.workspace_id, 8)?;
         self.store.append_event(
             &run.workspace_id,
@@ -391,6 +453,7 @@ impl LocalAgentRuntime {
             run: run.clone(),
             repo_root: self.repo_root.clone(),
             knowledge,
+            mode: mode.clone(),
         };
         self.store.append_event(
             &run.workspace_id,
@@ -403,6 +466,23 @@ impl LocalAgentRuntime {
             }),
         )?;
         let plan = model.plan(&model_request)?;
+        self.store.append_event(
+            &run.workspace_id,
+            Some(&run.run_id),
+            RunEventKind::AgentStepPlanned,
+            &serde_json::json!({
+                "mode": mode.as_str(),
+                "planner": "structure_local_runtime",
+                "steps": [
+                    "workspace_context_replay",
+                    "tool_planning",
+                    "local_tool_execution",
+                    "response_synthesis",
+                    "artifact_persistence"
+                ],
+                "tool_call_count": plan.tool_calls.len(),
+            }),
+        )?;
         self.store.append_event(
             &run.workspace_id,
             Some(&run.run_id),
@@ -433,19 +513,33 @@ impl LocalAgentRuntime {
             tool_results.push(result);
         }
 
+        let synthesis_model = selected_synthesis_provider()?;
         self.store.append_event(
             &run.workspace_id,
             Some(&run.run_id),
             RunEventKind::ModelRequested,
             &serde_json::json!({
-                "provider": model.provider_id(),
+                "provider": synthesis_model.provider_id(),
                 "phase": "response_synthesis",
                 "tool_results": tool_results.len(),
-                "network_required": false,
+                "network_required": synthesis_model.provider_id() != "local_deterministic",
             }),
         )?;
-        let output = model.synthesize(&model_request, &tool_results)?;
-        let final_response = output.final_response;
+        let output = synthesis_model.synthesize(&model_request, &tool_results)?;
+        let mut final_response = output.final_response;
+        let proposal_path = if matches!(mode, LocalAgentMode::CodeAgent) {
+            let (path, proposal) = self.write_code_change_proposal_artifact(&run, &tool_results)?;
+            final_response.push_str("\n## Code Change Proposal\n\n");
+            final_response.push_str("A proposed change artifact was produced for review. ");
+            final_response.push_str("No repository files were modified by this run.\n\n");
+            final_response.push_str(&format!("Artifact: `{}`\n\n", path.display()));
+            final_response.push_str("```diff\n");
+            final_response.push_str(&extract_patch_sketch(&proposal));
+            final_response.push_str("\n```\n");
+            Some(path)
+        } else {
+            None
+        };
         self.store.append_event(
             &run.workspace_id,
             Some(&run.run_id),
@@ -455,6 +549,16 @@ impl LocalAgentRuntime {
                 "phase": "response_synthesis",
                 "response_chars": final_response.chars().count(),
                 "response_preview": final_response.chars().take(240).collect::<String>(),
+            }),
+        )?;
+        self.store.append_event(
+            &run.workspace_id,
+            Some(&run.run_id),
+            RunEventKind::ChatMessageRecorded,
+            &serde_json::json!({
+                "role": "assistant",
+                "mode": mode.as_str(),
+                "content": final_response,
             }),
         )?;
 
@@ -471,6 +575,30 @@ impl LocalAgentRuntime {
             RunEventKind::ArtifactWritten,
             &artifact,
         )?;
+        if let Some(proposal_path) = proposal_path {
+            let proposal_artifact = self.store.add_artifact(
+                &run.run_id,
+                &run.workspace_id,
+                "code_change_proposal",
+                &proposal_path,
+            )?;
+            self.store.append_event(
+                &run.workspace_id,
+                Some(&run.run_id),
+                RunEventKind::CodeChangeProposed,
+                &serde_json::json!({
+                    "artifact": proposal_artifact,
+                    "status": "proposed_only",
+                    "applied": false,
+                }),
+            )?;
+            self.store.append_event(
+                &run.workspace_id,
+                Some(&run.run_id),
+                RunEventKind::ArtifactWritten,
+                &proposal_artifact,
+            )?;
+        }
 
         let run = self
             .store
@@ -491,6 +619,27 @@ impl LocalAgentRuntime {
             artifact,
         })
     }
+}
+
+fn load_openai_env_file(repo_root: &Path) -> Result<(), String> {
+    let env_path = repo_root.join(".env");
+    if !env_path.exists() {
+        return Ok(());
+    }
+    let entries = dotenvy::from_path_iter(&env_path)
+        .map_err(|err| format!("failed to parse {}: {err}", env_path.display()))?;
+    for entry in entries {
+        let (key, value) =
+            entry.map_err(|err| format!("failed to parse {}: {err}", env_path.display()))?;
+        if matches!(
+            key.as_str(),
+            "OPENAI__API_KEY" | "OPENAI__BASE_URL" | "OPENAI__MODEL"
+        ) && env::var_os(&key).is_none()
+        {
+            env::set_var(key, value);
+        }
+    }
+    Ok(())
 }
 
 fn read_limited_text(
@@ -516,24 +665,133 @@ struct KnowledgePayload {
     sources: Vec<KnowledgeSource>,
 }
 
+fn inspected_files_from_tools(tool_results: &[LocalToolResult]) -> Vec<String> {
+    let mut files = Vec::new();
+    for result in tool_results {
+        if !result.success {
+            continue;
+        }
+        if result.name == "search_repo" {
+            if let Some(matches) = result
+                .output
+                .get("matches")
+                .and_then(|value| value.as_array())
+            {
+                for item in matches {
+                    if let Some(path) = item.get("path").and_then(|value| value.as_str()) {
+                        push_unique_file(&mut files, path);
+                    }
+                }
+            }
+        }
+        if result.name == "read_repo_file" {
+            if let Some(path) = result.output.get("path").and_then(|value| value.as_str()) {
+                push_unique_file(&mut files, path);
+            }
+        }
+    }
+    files.truncate(8);
+    files
+}
+
+fn push_unique_file(files: &mut Vec<String>, path: &str) {
+    if !files.iter().any(|existing| existing == path) {
+        files.push(path.to_string());
+    }
+}
+
+fn render_code_change_proposal(run: &RunSummary, inspected_files: &[String]) -> String {
+    let target_file = inspected_files
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "docs/local-code-agent-proposal.md".to_string());
+    let inspected = if inspected_files.is_empty() {
+        "- No concrete source files were selected by the local search tool.\n".to_string()
+    } else {
+        inspected_files
+            .iter()
+            .map(|path| format!("- `{path}`\n"))
+            .collect::<String>()
+    };
+
+    format!(
+        r#"# Structure Code Change Proposal
+
+Status: proposed_only
+Applied: false
+Run: `{run_id}`
+Workspace: `{workspace_id}`
+
+## Intent
+
+{prompt}
+
+## Files Inspected
+
+{inspected}
+## Review Notes
+
+This artifact is generated inside the Rust local event loop. It is evidence for
+the agent's proposed direction and does not modify repository files. A later
+approval/apply step can turn a reviewed proposal into an actual patch.
+
+## Patch Sketch
+
+```diff
+diff --git a/{target_file} b/{target_file}
+--- a/{target_file}
++++ b/{target_file}
+@@
++# Proposed Structure local code-agent change
++Run: {run_id}
++Workspace: {workspace_id}
++Intent: {escaped_prompt}
++Evidence: review the run events, tool results, and this proposal artifact before applying.
+```
+"#,
+        run_id = run.run_id,
+        workspace_id = run.workspace_id,
+        prompt = run.prompt,
+        inspected = inspected,
+        target_file = target_file,
+        escaped_prompt = run.prompt.replace('\n', " ")
+    )
+}
+
+fn extract_patch_sketch(proposal: &str) -> String {
+    let marker = "```diff\n";
+    let Some(start) = proposal.find(marker) else {
+        return proposal.chars().take(1000).collect();
+    };
+    let body = &proposal[start + marker.len()..];
+    let end = body.find("\n```").unwrap_or(body.len());
+    body[..end].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env::OpenAiEnvGuard;
 
     #[test]
     fn local_runtime_runs_prompt_and_replays_events() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("run-loop");
         let runtime = LocalAgentRuntime::open(&root).unwrap();
         let result = runtime
             .run_prompt(RunRequest {
                 prompt: "Summarize this workspace".to_string(),
                 workspace_id: None,
+                mode: None,
             })
             .unwrap();
 
         assert_eq!(result.run.status, "finished");
-        assert!(result.final_response.contains("embedded local event loop"));
+        assert!(result
+            .final_response
+            .contains("embedded Structure event loop"));
         assert!(result.final_response.contains("Tool Evidence"));
+        assert!(result.final_response.contains("Code Change Proposal"));
         assert!(Path::new(&result.artifact_path).exists());
         assert_eq!(
             result.events.last().map(|event| event.kind.as_str()),
@@ -543,20 +801,25 @@ mod tests {
             .events
             .iter()
             .any(|event| event.kind == "tool_call_completed"));
+        assert!(result
+            .events
+            .iter()
+            .any(|event| event.kind == "code_change_proposed"));
         assert_eq!(result.artifact.kind, "assistant_response");
-        assert_eq!(
-            runtime
-                .list_artifacts(None, Some(&result.run.run_id), 10)
-                .unwrap()
-                .len(),
-            1
-        );
+        let artifacts = runtime
+            .list_artifacts(None, Some(&result.run.run_id), 10)
+            .unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "code_change_proposal"));
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn local_runtime_lists_explicit_workspaces() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("workspaces");
         let runtime = LocalAgentRuntime::open(&root).unwrap();
         runtime
@@ -566,6 +829,7 @@ mod tests {
             .run_prompt(RunRequest {
                 prompt: "Run inside the app workspace".to_string(),
                 workspace_id: Some("app".to_string()),
+                mode: None,
             })
             .unwrap();
 
@@ -585,6 +849,7 @@ mod tests {
 
     #[test]
     fn local_runtime_attaches_knowledge_to_context() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("knowledge");
         let source_path = root.join("note.md");
         fs::write(&source_path, "local context").unwrap();
@@ -596,6 +861,7 @@ mod tests {
             .run_prompt(RunRequest {
                 prompt: "Use the note".to_string(),
                 workspace_id: None,
+                mode: None,
             })
             .unwrap();
 
@@ -607,7 +873,7 @@ mod tests {
             .any(|event| event.kind == "knowledge_retrieved"));
         let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
         assert_eq!(evidence.knowledge_sources.len(), 1);
-        assert_eq!(evidence.artifacts.len(), 1);
+        assert_eq!(evidence.artifacts.len(), 2);
         assert!(evidence.tool_call_count >= 1);
         assert!(evidence
             .event_kinds
@@ -618,12 +884,14 @@ mod tests {
 
     #[test]
     fn local_runtime_replays_workspace_and_reads_artifacts() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("replay");
         let runtime = LocalAgentRuntime::open(&root).unwrap();
         let result = runtime
             .run_prompt(RunRequest {
                 prompt: "Create a replayable run".to_string(),
                 workspace_id: None,
+                mode: None,
             })
             .unwrap();
 
@@ -634,7 +902,7 @@ mod tests {
 
         assert_eq!(replay.workspace_id, "default");
         assert!(replay.events.len() >= result.events.len());
-        assert_eq!(replay.artifacts.len(), 1);
+        assert_eq!(replay.artifacts.len(), 2);
         assert_eq!(
             replay.last_sequence,
             replay.events.last().map(|event| event.sequence)
@@ -652,6 +920,7 @@ mod tests {
 
     #[test]
     fn local_runtime_builds_evidence_bundle() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("bundle");
         write_parity_marker_files(&root);
         let runtime = LocalAgentRuntime::open(&root).unwrap();
@@ -659,6 +928,7 @@ mod tests {
             .run_prompt(RunRequest {
                 prompt: "Bundle this local evidence".to_string(),
                 workspace_id: None,
+                mode: None,
             })
             .unwrap();
 
@@ -682,6 +952,7 @@ mod tests {
 
     #[test]
     fn local_runtime_previews_and_removes_knowledge_source() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("knowledge-preview");
         let source_path = root.join("source.md");
         fs::write(&source_path, "first line\nsecond line\nthird line").unwrap();
@@ -709,6 +980,74 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn local_runtime_loads_openai_env_from_repo_dotenv_without_overriding_shell() {
+        let _env = OpenAiEnvGuard::clear();
+        env::set_var("OPENAI__MODEL", "shell-model");
+        let root = unique_repo("dotenv");
+        fs::write(
+            root.join(".env"),
+            "OPENAI__API_KEY=dotenv-key\nOPENAI__BASE_URL=http://dotenv.test/v1\nOPENAI__MODEL=dotenv-model\n",
+        )
+        .unwrap();
+
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        assert_eq!(runtime.repo_root(), root.canonicalize().unwrap());
+        assert_eq!(env::var("OPENAI__API_KEY").unwrap(), "dotenv-key");
+        assert_eq!(
+            env::var("OPENAI__BASE_URL").unwrap(),
+            "http://dotenv.test/v1"
+        );
+        assert_eq!(env::var("OPENAI__MODEL").unwrap(), "shell-model");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_persists_failed_run_when_openai_api_fails() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("api-failure");
+        fs::write(
+            root.join(".env"),
+            "OPENAI__API_KEY=test-key\nOPENAI__BASE_URL=http://127.0.0.1:9/v1\nOPENAI__MODEL=test-model\n",
+        )
+        .unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let error = runtime
+            .run_prompt(RunRequest {
+                prompt: "This should record a failed API-backed run".to_string(),
+                workspace_id: Some("api-failure".to_string()),
+                mode: Some(LocalAgentMode::CodeAgent),
+            })
+            .unwrap_err();
+        let runs = runtime.list_runs(Some("api-failure"), 1).unwrap();
+        let run = runs.first().expect("failed run should be persisted");
+        let events = runtime.run_events(&run.run_id).unwrap();
+
+        assert!(error.contains("local LLM API request failed"));
+        assert_eq!(run.status, "failed");
+        assert!(run
+            .final_response
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local LLM API request failed"));
+        assert!(events.iter().any(|event| {
+            event.kind == "model_requested"
+                && event.payload.get("phase").and_then(|value| value.as_str())
+                    == Some("response_synthesis")
+                && event
+                    .payload
+                    .get("provider")
+                    .and_then(|value| value.as_str())
+                    == Some("local_env_api")
+        }));
+        assert!(events.iter().any(|event| event.kind == "run_failed"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn unique_repo(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "structure-local-runtime-repo-{label}-{}-{}",
@@ -726,13 +1065,13 @@ mod tests {
             root,
             "crates/structure-local/src/cli.rs",
             r#"
-            Command::Core Command::Surfaces Command::Run Command::Tui
-            run_core run_surfaces run_local_agent
+            Command::Core Command::Surfaces Command::Chat Command::Run Command::Proposals Command::Tui
+            run_core run_surfaces run_chat_agent run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
             RunsCommand::Events WorkspaceCommand::Replay
             ArtifactsCommand::List ArtifactsCommand::Show
-            BenchCommand::Run BenchCommand::Local BenchCommand::Evidence
+            ProposalsCommand::List ProposalsCommand::Show
             "#,
         );
         write_file(
@@ -740,20 +1079,18 @@ mod tests {
             "frontend/src-tauri/src/lib.rs",
             r#"
             fn local_snapshot() {} fn core_manifest() {} core_manifest,
-            fn local_agent_run() {} local_agent_run,
+            fn local_agent_run() {} fn local_chat_turns() {} local_chat_turns,
             fn create_local_workspace() {} fn local_workspaces() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
             fn local_run_events() {} fn local_workspace_replay() {} local_workspace_replay,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,
-            fn local_benchmark_run() {} local_benchmark_run
-            fn local_benchmark_evidence() {} local_benchmark_evidence
             "#,
         );
         write_file(
             root,
             "frontend/src-tauri/local-ui/index.html",
-            r#"invoke("local_benchmark_run" invoke("local_benchmark_evidence""#,
+            r#"Preview Latest Proposal Code-Agent Chat"#,
         );
         write_file(
             root,

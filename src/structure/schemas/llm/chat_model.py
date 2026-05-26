@@ -17,13 +17,13 @@ class ChatModelCreate(BaseModel):
         ...,
         min_length=1,
         max_length=50,
-        description="Provider: openai/anthropic/dashscope/ollama/azure/custom",
+        description="Provider: openai or custom OpenAI-compatible endpoint",
     )
     model_id: str = Field(
         ...,
         min_length=1,
         max_length=255,
-        description="Model identifier, e.g. gpt-4o, qwen-turbo",
+        description="Model identifier, e.g. gpt-4.1-mini",
     )
     base_url: str | None = Field(None, max_length=500, description="API base URL")
     api_key_ref: str | None = Field(

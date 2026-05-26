@@ -40,12 +40,12 @@ class EmbeddingModel(Base):
     provider: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        comment="提供商: openai/dashscope/huggingface/ollama/custom",
+        comment="提供商: openai/custom(OpenAI-compatible)",
     )
     model_id: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
-        comment="模型标识符: text-embedding-3-small/text-embedding-v2/bge-large-zh",
+        comment="模型标识符: text-embedding-3-small",
     )
 
     # API configuration

@@ -443,14 +443,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--api-key-env", default="BENCHMARK_LLM_API_KEY")
+    parser.add_argument(
+        "--api-key-env",
+        default="OPENAI__API_KEY",
+        help="Environment variable containing the API key. Defaults to OPENAI__API_KEY.",
+    )
     parser.add_argument(
         "--base-url",
-        default=os.getenv("BENCHMARK_LLM_BASE_URL", DEFAULT_BASE_URL),
+        default=os.getenv("OPENAI__BASE_URL", DEFAULT_BASE_URL),
     )
-    parser.add_argument(
-        "--model", default=os.getenv("BENCHMARK_LLM_MODEL", DEFAULT_MODEL)
-    )
+    parser.add_argument("--model", default=os.getenv("OPENAI__MODEL", DEFAULT_MODEL))
     parser.add_argument("--top-k", type=int, default=6)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-cases", type=int)

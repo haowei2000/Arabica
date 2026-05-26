@@ -126,17 +126,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-key-env",
-        default="BENCHMARK_LLM_API_KEY",
+        default="OPENAI__API_KEY",
         help="Environment variable containing the API key.",
     )
     parser.add_argument(
         "--base-url",
-        default=os.getenv("BENCHMARK_LLM_BASE_URL", DEFAULT_BASE_URL),
+        default=os.getenv("OPENAI__BASE_URL", DEFAULT_BASE_URL),
         help="OpenAI-compatible base URL.",
     )
     parser.add_argument(
         "--model",
-        default=os.getenv("BENCHMARK_LLM_MODEL", DEFAULT_MODEL),
+        default=os.getenv("OPENAI__MODEL", DEFAULT_MODEL),
         help="Chat model name.",
     )
     parser.add_argument(

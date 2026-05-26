@@ -24,7 +24,7 @@ class SimpleExecutor(DefaultExecutor):
         "enabled": True,
         "version": 1,
         "config": AppConfig(
-            model=ChatLLM(provider="tongyi", name="qwen-plus"), context=None
+            model=ChatLLM(provider="openai", name="gpt-4.1-mini"), context=None
         ),
     }
 

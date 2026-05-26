@@ -84,7 +84,7 @@ async def test_registry():
     logger.info("\n5. Testing instance creation:")
     try:
         agent_cls = ExecutorRegistry.get("DEFAULT001")
-        config = {"model_provider": "ollama", "model_name": "qwen3:30b"}
+        config = {"model_provider": "openai", "model_name": "gpt-4.1-mini"}
         agent = agent_cls(config)
         logger.info(f"   ✓ Instance created: {agent}")
         logger.info(f"   ✓ Instance type: {type(agent)}")

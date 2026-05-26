@@ -41,7 +41,7 @@ def upgrade() -> None:
             "provider",
             sa.String(length=50),
             nullable=False,
-            comment="提供商: openai/anthropic/dashscope/ollama/azure/custom",
+            comment="提供商: openai/custom(OpenAI-compatible)",
         ),
         sa.Column(
             "model_id",
@@ -134,7 +134,7 @@ def upgrade() -> None:
             "provider",
             sa.String(length=50),
             nullable=False,
-            comment="提供商: openai/dashscope/huggingface/ollama/custom",
+            comment="提供商: openai/custom(OpenAI-compatible)",
         ),
         sa.Column(
             "model_id",

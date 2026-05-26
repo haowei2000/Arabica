@@ -1,20 +1,19 @@
 use crate::text::{
     print_artifact_preview, print_artifacts, print_core_capabilities, print_core_manifest,
     print_events, print_knowledge_preview, print_knowledge_source, print_knowledge_sources,
-    print_local_benchmark_evidence, print_local_evidence_bundle, print_run_evidence_summary,
-    print_run_result, print_run_summary, print_runs, print_snapshot, print_surface_parity_report,
-    print_surfaces, print_workspace, print_workspace_replay, print_workspaces,
+    print_local_evidence_bundle, print_run_evidence_summary, print_run_result, print_run_summary,
+    print_runs, print_snapshot, print_surface_parity_report, print_surfaces, print_workspace,
+    print_workspace_replay, print_workspaces,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
+use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::{Command as ProcessCommand, Stdio};
 use structure_local_core::{
-    collect_snapshot, default_repo_root, product_surfaces, read_repo_text_file,
-    recent_benchmark_reports, snapshot_json, structure_core_manifest,
+    collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
 };
-use structure_local_runtime::{LocalAgentRuntime, LocalBenchmarkRequest, RunRequest};
+use structure_local_runtime::{LocalAgentMode, LocalAgentRuntime, RunRequest};
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
 
@@ -34,6 +33,7 @@ enum Command {
     Surfaces(SurfacesArgs),
     Core(CoreArgs),
     Parity(ParityArgs),
+    Chat(ChatArgs),
     Run(RunArgs),
     Runs {
         #[command(subcommand)]
@@ -51,13 +51,13 @@ enum Command {
         #[command(subcommand)]
         command: ArtifactsCommand,
     },
+    Proposals {
+        #[command(subcommand)]
+        command: ProposalsCommand,
+    },
     Evidence {
         #[command(subcommand)]
         command: EvidenceCommand,
-    },
-    Bench {
-        #[command(subcommand)]
-        command: BenchCommand,
     },
     Tui,
 }
@@ -86,6 +86,17 @@ struct ParityArgs {
     verify: bool,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ChatArgs {
+    prompt: Option<String>,
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long)]
+    json: bool,
+    #[arg(long)]
+    chat_only: bool,
 }
 
 #[derive(Debug, Args)]
@@ -226,6 +237,12 @@ enum ArtifactsCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ProposalsCommand {
+    List(ListProposalsArgs),
+    Show(ShowProposalArgs),
+}
+
+#[derive(Debug, Subcommand)]
 enum EvidenceCommand {
     Bundle(EvidenceBundleArgs),
 }
@@ -252,62 +269,32 @@ struct ShowArtifactArgs {
 }
 
 #[derive(Debug, Args)]
+struct ListProposalsArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long)]
+    run: Option<String>,
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ShowProposalArgs {
+    artifact_id: String,
+    #[arg(long, default_value_t = PREVIEW_MAX_BYTES)]
+    max_bytes: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 struct EvidenceBundleArgs {
     #[arg(long)]
     workspace: Option<String>,
     #[arg(long, default_value_t = 50)]
     limit: usize,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Subcommand)]
-enum BenchCommand {
-    Run(RunBenchArgs),
-    Local(LocalBenchArgs),
-    List(ListBenchArgs),
-    Show(ShowBenchArgs),
-    Evidence(BenchEvidenceArgs),
-}
-
-#[derive(Debug, Args)]
-struct RunBenchArgs {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    args: Vec<String>,
-}
-
-#[derive(Debug, Args)]
-struct LocalBenchArgs {
-    #[arg(long, default_value = "local-agent-smoke")]
-    benchmark: String,
-    #[arg(long)]
-    max_cases: Option<usize>,
-    #[arg(long)]
-    output_dir: Option<PathBuf>,
-    #[arg(long)]
-    workspace: Option<String>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct ListBenchArgs {
-    #[arg(long, default_value_t = 8)]
-    limit: usize,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct ShowBenchArgs {
-    path: PathBuf,
-    #[arg(long, default_value_t = PREVIEW_MAX_BYTES)]
-    max_bytes: u64,
-}
-
-#[derive(Debug, Args)]
-struct BenchEvidenceArgs {
-    path: PathBuf,
     #[arg(long)]
     json: bool,
 }
@@ -324,13 +311,14 @@ pub(crate) fn run() -> Result<()> {
         Command::Surfaces(args) => run_surfaces(args)?,
         Command::Core(args) => run_core(args)?,
         Command::Parity(args) => run_parity(&repo_root, args)?,
+        Command::Chat(args) => run_chat_agent(&repo_root, args)?,
         Command::Run(args) => run_local_agent(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
         Command::Workspace { command } => run_workspace(&repo_root, command)?,
         Command::Knowledge { command } => run_knowledge(&repo_root, command)?,
         Command::Artifacts { command } => run_artifacts(&repo_root, command)?,
+        Command::Proposals { command } => run_proposals(&repo_root, command)?,
         Command::Evidence { command } => run_evidence(&repo_root, command)?,
-        Command::Bench { command } => run_bench(&repo_root, command)?,
         Command::Tui => tui::run_tui(&repo_root)?,
     }
     Ok(())
@@ -392,6 +380,7 @@ fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
     let result = local_result(runtime.run_prompt(RunRequest {
         prompt: args.prompt,
         workspace_id: args.workspace,
+        mode: Some(LocalAgentMode::CodeAgent),
     }))?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&result)?);
@@ -399,6 +388,77 @@ fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
         print_run_result(&result);
     }
     Ok(())
+}
+
+fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let mode = if args.chat_only {
+        LocalAgentMode::Chat
+    } else {
+        LocalAgentMode::CodeAgent
+    };
+    let workspace_id = args.workspace.clone();
+    if let Some(prompt) = args.prompt {
+        let result = local_result(runtime.run_prompt(RunRequest {
+            prompt,
+            workspace_id,
+            mode: Some(mode),
+        }))?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_chat_turn(&result);
+        }
+        return Ok(());
+    }
+
+    println!("Structure local chat");
+    println!(
+        "  workspace: {}",
+        workspace_id.as_deref().unwrap_or("default")
+    );
+    println!("  mode:      {}", mode.as_str());
+    println!("  exit:      /quit");
+    println!();
+
+    let stdin = io::stdin();
+    loop {
+        print!("structure> ");
+        io::stdout().flush()?;
+        let mut prompt = String::new();
+        let bytes = stdin.read_line(&mut prompt)?;
+        if bytes == 0 {
+            break;
+        }
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            continue;
+        }
+        if matches!(prompt, "/quit" | "/exit") {
+            break;
+        }
+        let result = local_result(runtime.run_prompt(RunRequest {
+            prompt: prompt.to_string(),
+            workspace_id: workspace_id.clone(),
+            mode: Some(mode.clone()),
+        }))?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_chat_turn(&result);
+        }
+    }
+    Ok(())
+}
+
+fn print_chat_turn(result: &structure_local_runtime::RunResult) {
+    println!("assistant [{} / {}]", result.run.run_id, result.run.status);
+    println!("{}", result.final_response);
+    println!(
+        "\n[event-sourced: {} events, artifact: {}]",
+        result.events.len(),
+        result.artifact_path
+    );
 }
 
 fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
@@ -551,6 +611,43 @@ fn run_artifacts(repo_root: &PathBuf, command: ArtifactsCommand) -> Result<()> {
     Ok(())
 }
 
+fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    match command {
+        ProposalsCommand::List(args) => {
+            let proposals = local_result(runtime.list_artifacts(
+                args.workspace.as_deref(),
+                args.run.as_deref(),
+                args.limit,
+            ))?
+            .into_iter()
+            .filter(|artifact| artifact.kind == "code_change_proposal")
+            .collect::<Vec<_>>();
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&proposals)?);
+            } else {
+                print_artifacts(&proposals);
+            }
+        }
+        ProposalsCommand::Show(args) => {
+            let preview = local_result(runtime.read_artifact(&args.artifact_id, args.max_bytes))?;
+            if preview.artifact.kind != "code_change_proposal" {
+                return Err(anyhow!(
+                    "artifact {} is {}, not code_change_proposal",
+                    preview.artifact.artifact_id,
+                    preview.artifact.kind
+                ));
+            }
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&preview)?);
+            } else {
+                print_artifact_preview(&preview);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_evidence(repo_root: &PathBuf, command: EvidenceCommand) -> Result<()> {
     let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
     match command {
@@ -567,111 +664,6 @@ fn run_evidence(repo_root: &PathBuf, command: EvidenceCommand) -> Result<()> {
     Ok(())
 }
 
-fn run_bench(repo_root: &PathBuf, command: BenchCommand) -> Result<()> {
-    match command {
-        BenchCommand::Run(args) => {
-            let status = ProcessCommand::new("uv")
-                .args(build_benchmark_runner_args(&args.args))
-                .current_dir(repo_root)
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-                .map_err(|err| anyhow!("failed to start benchmark runner: {err}"))?;
-            if !status.success() {
-                return Err(anyhow!("benchmark runner exited with status {status}"));
-            }
-        }
-        BenchCommand::Local(args) => {
-            let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-            let result = local_result(runtime.run_local_benchmark(LocalBenchmarkRequest {
-                benchmark: Some(args.benchmark),
-                max_cases: args.max_cases,
-                output_dir: args.output_dir,
-                workspace_id: args.workspace,
-            }))?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("Local benchmark finished");
-                println!("  benchmark: {}", result.report.benchmark);
-                println!("  cases:     {}", result.report.n_cases);
-                println!("  score:     {:.4}", result.report.overall_score);
-                println!("  events:    {}", result.report.total_events);
-                println!("  tools:     {}", result.report.total_tool_calls);
-                println!("  json:      {}", result.json_path);
-                println!("  markdown:  {}", result.markdown_path);
-            }
-        }
-        BenchCommand::List(args) => {
-            let reports = local_result(recent_benchmark_reports(repo_root, args.limit))?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&reports)?);
-            } else if reports.is_empty() {
-                println!("No local benchmark reports found.");
-            } else {
-                for report in reports {
-                    println!("{}  {} bytes", report.relative_path, report.size_bytes);
-                }
-            }
-        }
-        BenchCommand::Show(args) => {
-            let text = local_result(read_repo_text_file(repo_root, args.path, args.max_bytes))?;
-            print!("{text}");
-        }
-        BenchCommand::Evidence(args) => {
-            let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-            let evidence = local_result(runtime.local_benchmark_evidence(args.path))?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&evidence)?);
-            } else {
-                print_local_benchmark_evidence(&evidence);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn local_result<T>(result: std::result::Result<T, String>) -> Result<T> {
     result.map_err(|message| anyhow!(message))
-}
-
-fn build_benchmark_runner_args(extra_args: &[String]) -> Vec<String> {
-    let mut args = vec![
-        "run".to_string(),
-        "python".to_string(),
-        "-m".to_string(),
-        "benchmarks.scripts.run_structure_benchmark".to_string(),
-    ];
-    args.extend(extra_args.iter().cloned());
-    args
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn benchmark_runner_args_delegate_to_python_module() {
-        let args = build_benchmark_runner_args(&[
-            "--benchmark".to_string(),
-            "locomo".to_string(),
-            "--max-cases".to_string(),
-            "1".to_string(),
-        ]);
-
-        assert_eq!(
-            args,
-            vec![
-                "run",
-                "python",
-                "-m",
-                "benchmarks.scripts.run_structure_benchmark",
-                "--benchmark",
-                "locomo",
-                "--max-cases",
-                "1",
-            ]
-        );
-    }
 }

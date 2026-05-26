@@ -16,7 +16,7 @@ Structure Service is a production-ready backend for running intelligent AI agent
 - 🔌 **Plugin-Based Extensibility**: Dynamic executor and tool discovery via registry system
 - 📊 **Real-time Streaming**: Server-Sent Events (SSE) for live updates
 - 🔄 **Distributed Workers**: Horizontal scaling with Redis Streams
-- 🧩 **Multi-LLM Support**: OpenAI, DashScope, Ollama integration
+- 🧩 **LLM Support**: OpenAI-compatible endpoints configured via `OPENAI__*`
 
 ---
 
@@ -331,7 +331,6 @@ Key fixtures available in `conftest.py`:
 
 Never commit sensitive values:
 - `AUTH__JWT_SECRET_KEY`
-- `DASHSCOPE_API_KEY`
 - `OPENAI__API_KEY`
 - Database passwords
 - S3/RustFS credentials

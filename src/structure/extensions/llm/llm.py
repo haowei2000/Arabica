@@ -2,7 +2,6 @@ import logging
 
 from langchain_community.cache import RedisCache
 from langchain_core.language_models import BaseChatModel
-from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
 from structure.config.factory import get_settings
@@ -16,7 +15,7 @@ _llm_cache: dict[tuple[str, str, bool], BaseChatModel] = {}
 
 
 def get_llm(
-    name: str, provider: str = "tongyi", add_cache: bool = False
+    name: str, provider: str = "openai", add_cache: bool = False
 ) -> BaseChatModel:
     """Return a cached LangChain model instance.
 
@@ -26,7 +25,7 @@ def get_llm(
 
     Args:
         name: Model name.
-        provider: Model provider. Defaults to ``"tongyi"``.
+        provider: Model provider. Defaults to ``"openai"``.
         add_cache: Whether to attach a Redis response cache.
 
     Returns:
@@ -52,23 +51,18 @@ def get_llm(
 
     settings = get_settings()
     match provider:
-        case "tongyi":
-            if settings.openai:
-                api_key = settings.openai.api_key or settings.dashscope_api_key
-                base_url = settings.openai.base_url
-            else:
-                api_key = settings.dashscope_api_key
-                base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
+        case "openai" | "custom":
+            api_key = settings.openai.api_key if settings.openai else ""
+            base_url = (
+                settings.openai.base_url
+                if settings.openai
+                else "https://api.openai.com/v1"
+            )
             llm = ChatOpenAI(
                 model=name,
                 api_key=api_key,  # type: ignore
                 base_url=base_url,
                 cache=redis_cache,
-            )
-        case "ollama":
-            llm = ChatOllama(
-                model=name, base_url=settings.ollama.base_url, cache=redis_cache
             )
         case _:
             raise ValueError(f"Unsupported provider: {provider}")

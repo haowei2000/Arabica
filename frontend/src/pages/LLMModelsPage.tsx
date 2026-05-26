@@ -25,12 +25,6 @@ import type { ChatModel, ChatModelCreate, EmbeddingModel, EmbeddingModelCreate }
 
 const PROVIDER_COLOR: Record<string, string> = {
   openai:     'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
-  anthropic:  'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
-  dashscope:  'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  tongyi:     'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  ollama:     'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
-  azure:      'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
-  huggingface:'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
   custom:     'bg-muted text-muted-foreground',
 };
 
@@ -123,11 +117,11 @@ function ChatModelDialog({
             </div>
             <div className="space-y-1">
               <Label>Provider *</Label>
-              <Input value={form.provider} onChange={e => set('provider', e.target.value)} required placeholder="openai / ollama / custom" />
+              <Input value={form.provider} onChange={e => set('provider', e.target.value)} required placeholder="openai / custom" />
             </div>
             <div className="space-y-1">
               <Label>Model ID *</Label>
-              <Input value={form.model_id} onChange={e => set('model_id', e.target.value)} required placeholder="gpt-4o / qwen-turbo" />
+              <Input value={form.model_id} onChange={e => set('model_id', e.target.value)} required placeholder="gpt-4.1-mini" />
             </div>
             <div className="space-y-1 col-span-2">
               <Label>Description</Label>
@@ -226,19 +220,6 @@ const EMPTY_EMBED: EmbeddingModelCreate = {
 
 const EMBEDDING_PRESETS = [
   {
-    id: 'tongyi-v3',
-    label: 'DashScope text-embedding-v3',
-    values: {
-      name: 'DashScope text-embedding-v3',
-      provider: 'tongyi',
-      model_id: 'text-embedding-v3',
-      dimension: 1024,
-      base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      max_tokens: 8192,
-      currency: 'CNY',
-    },
-  },
-  {
     id: 'openai-small',
     label: 'OpenAI text-embedding-3-small',
     values: {
@@ -247,19 +228,6 @@ const EMBEDDING_PRESETS = [
       model_id: 'text-embedding-3-small',
       dimension: 1536,
       base_url: 'https://api.openai.com/v1',
-      max_tokens: 8192,
-      currency: 'USD',
-    },
-  },
-  {
-    id: 'ollama-nomic',
-    label: 'Ollama nomic-embed-text',
-    values: {
-      name: 'Ollama nomic-embed-text',
-      provider: 'ollama',
-      model_id: 'nomic-embed-text',
-      dimension: 768,
-      base_url: 'http://127.0.0.1:11434',
       max_tokens: 8192,
       currency: 'USD',
     },
@@ -385,7 +353,7 @@ function EmbeddingModelDialog({
             </div>
             <div className="space-y-1">
               <Label>Provider *</Label>
-              <Input value={form.provider} onChange={e => set('provider', e.target.value)} required placeholder="tongyi / openai / ollama" />
+              <Input value={form.provider} onChange={e => set('provider', e.target.value)} required placeholder="openai / custom" />
             </div>
             <div className="space-y-1">
               <Label>Model ID *</Label>

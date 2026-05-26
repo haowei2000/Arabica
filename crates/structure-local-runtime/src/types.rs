@@ -26,13 +26,16 @@ impl RunStatus {
 pub enum RunEventKind {
     WorkspaceOpened,
     RunCreated,
+    ChatMessageRecorded,
     PromptReceived,
+    AgentStepPlanned,
     WorkspaceContextLoaded,
     KnowledgeRetrieved,
     ModelRequested,
     ModelResponded,
     ToolCallRequested,
     ToolCallCompleted,
+    CodeChangeProposed,
     ArtifactWritten,
     RunFinished,
     RunFailed,
@@ -43,16 +46,38 @@ impl RunEventKind {
         match self {
             Self::WorkspaceOpened => "workspace_opened",
             Self::RunCreated => "run_created",
+            Self::ChatMessageRecorded => "chat_message_recorded",
             Self::PromptReceived => "prompt_received",
+            Self::AgentStepPlanned => "agent_step_planned",
             Self::WorkspaceContextLoaded => "workspace_context_loaded",
             Self::KnowledgeRetrieved => "knowledge_retrieved",
             Self::ModelRequested => "model_requested",
             Self::ModelResponded => "model_responded",
             Self::ToolCallRequested => "tool_call_requested",
             Self::ToolCallCompleted => "tool_call_completed",
+            Self::CodeChangeProposed => "code_change_proposed",
             Self::ArtifactWritten => "artifact_written",
             Self::RunFinished => "run_finished",
             Self::RunFailed => "run_failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentMode {
+    Chat,
+    #[default]
+    CodeAgent,
+    Benchmark,
+}
+
+impl LocalAgentMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::CodeAgent => "code_agent",
+            Self::Benchmark => "benchmark",
         }
     }
 }
@@ -102,6 +127,18 @@ pub struct RunSummary {
     pub prompt: String,
     pub status: String,
     pub final_response: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatTurn {
+    pub run_id: String,
+    pub workspace_id: String,
+    pub user_message: String,
+    pub assistant_message: Option<String>,
+    pub status: String,
+    pub event_count: usize,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }

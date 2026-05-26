@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PROVIDER = "tongyi"
-DEFAULT_MODEL = "text-embedding-v3"
-DEFAULT_DIMENSION = 1024
+DEFAULT_PROVIDER = "openai"
+DEFAULT_MODEL = "text-embedding-3-small"
+DEFAULT_DIMENSION = 1536
 
 
 async def load_default_embedding_service(db: AsyncSession) -> EmbeddingService:

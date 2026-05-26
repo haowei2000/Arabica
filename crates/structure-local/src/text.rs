@@ -3,9 +3,9 @@ use structure_local_core::{
     SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview,
-    LocalBenchmarkEvidence, LocalEvent, LocalEvidenceBundle, RunEvidenceSummary, RunResult,
-    RunSummary, WorkspaceReplay, WorkspaceSummary,
+    ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvent,
+    LocalEvidenceBundle, RunEvidenceSummary, RunResult, RunSummary, WorkspaceReplay,
+    WorkspaceSummary,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -14,15 +14,23 @@ pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
     println!("  runtime:    {}", snapshot.runtime_dir);
     println!("  frontend:   {}", snapshot.frontend_dir);
     println!("  local only: {}", snapshot.local_only);
-    println!("  benchmark reports: {}", snapshot.benchmark_report_count);
     println!("  surfaces:   {}", snapshot.product_surfaces.len());
-    if snapshot.recent_benchmark_reports.is_empty() {
-        println!("  recent:     none");
-    } else {
-        println!("  recent:");
-        for report in &snapshot.recent_benchmark_reports {
-            println!("    {} ({} bytes)", report.relative_path, report.size_bytes);
+    println!(
+        "  llm api:    {}",
+        if snapshot.llm_config.configured {
+            "configured"
+        } else {
+            "missing"
         }
+    );
+    println!(
+        "  llm env:    key={}, base_url={}, model={}",
+        snapshot.llm_config.api_key.source,
+        snapshot.llm_config.base_url.source,
+        snapshot.llm_config.model.source
+    );
+    if let Some(model) = &snapshot.llm_config.model_name {
+        println!("  llm model:  {model}");
     }
 }
 
@@ -312,7 +320,6 @@ pub(crate) fn print_local_evidence_bundle(bundle: &LocalEvidenceBundle) {
     println!("  workspace:    {}", bundle.workspace_id);
     println!("  generated:    {}", bundle.generated_at_ms);
     println!("  parity:       {}", bundle.parity_report.passed);
-    println!("  reports:      {}", bundle.snapshot.benchmark_report_count);
     println!("  events:       {}", bundle.workspace_replay.events.len());
     println!("  runs:         {}", bundle.workspace_replay.runs.len());
     println!(
@@ -324,36 +331,6 @@ pub(crate) fn print_local_evidence_bundle(bundle: &LocalEvidenceBundle) {
         bundle.workspace_replay.artifacts.len()
     );
     println!("  run evidence: {}", bundle.run_evidence.len());
-    if !bundle.snapshot.recent_benchmark_reports.is_empty() {
-        println!("  recent reports:");
-        for report in &bundle.snapshot.recent_benchmark_reports {
-            println!("    {} ({} bytes)", report.relative_path, report.size_bytes);
-        }
-    }
-}
-
-pub(crate) fn print_local_benchmark_evidence(evidence: &LocalBenchmarkEvidence) {
-    println!("Local benchmark evidence");
-    println!("  schema:    {}", evidence.schema_version);
-    println!("  report:    {}", evidence.report_path);
-    println!("  benchmark: {}", evidence.report.benchmark);
-    println!("  cases:     {}", evidence.report.n_cases);
-    println!("  score:     {:.4}", evidence.report.overall_score);
-    println!("  events:    {}", evidence.report.total_events);
-    println!("  tools:     {}", evidence.report.total_tool_calls);
-    println!("  runs:      {}", evidence.run_evidence.len());
-    if !evidence.run_evidence.is_empty() {
-        println!("  run evidence:");
-        for run in &evidence.run_evidence {
-            println!(
-                "    {}  {} events  {} tools  {} artifacts",
-                run.run.run_id,
-                run.event_count,
-                run.tool_call_count,
-                run.artifacts.len()
-            );
-        }
-    }
 }
 
 fn print_core_primitive(primitive: &CorePrimitive) {

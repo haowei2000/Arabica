@@ -142,6 +142,7 @@ impl LocalAgentRuntime {
             let result = self.run_prompt(RunRequest {
                 prompt: case.prompt.to_string(),
                 workspace_id: request.workspace_id.clone(),
+                mode: Some(crate::types::LocalAgentMode::Benchmark),
             })?;
             let latency_seconds = started.elapsed().as_secs_f64();
             let response_lower = result.final_response.to_lowercase();
@@ -422,10 +423,12 @@ fn round4(value: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::runtime::LocalAgentRuntime;
+    use crate::test_env::OpenAiEnvGuard;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn local_benchmark_writes_json_and_markdown_reports() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("benchmark");
         let runtime = LocalAgentRuntime::open(&root).unwrap();
         let output_dir = root.join("benchmark_runs/local-test");
@@ -453,6 +456,7 @@ mod tests {
 
     #[test]
     fn local_benchmark_evidence_relinks_report_to_run_evidence() {
+        let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("benchmark-evidence");
         let runtime = LocalAgentRuntime::open(&root).unwrap();
         let output_dir = root.join("benchmark_runs/local-evidence");

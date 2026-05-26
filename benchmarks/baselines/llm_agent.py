@@ -17,8 +17,8 @@ from benchmarks.baselines.memory_agents import (
 )
 from benchmarks.core.types import BenchmarkCase, BenchmarkResult, CostLedger
 
-DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_MODEL = "qwen-plus"
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 
 def _usage_value(usage: object, *names: str) -> int:

@@ -1,4 +1,3 @@
-use crate::cli::PREVIEW_MAX_BYTES;
 use anyhow::{anyhow, Context, Result};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -9,13 +8,11 @@ use std::io::{stdout, Write};
 use std::path::Path;
 use std::time::Duration;
 use structure_local_core::{
-    collect_snapshot, read_repo_text_file, verify_structure_core_parity_for_repo, LocalFile,
-    LocalSnapshot, SurfaceParityReport,
+    collect_snapshot, verify_structure_core_parity_for_repo, LocalSnapshot, SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactRecord, KnowledgeSource, LocalAgentRuntime, LocalBenchmarkEvidence,
-    LocalBenchmarkRequest, LocalBenchmarkRunResult, LocalEvidenceBundle, RunEvidenceSummary,
-    RunRequest, RunSummary, WorkspaceSummary,
+    ArtifactRecord, KnowledgeSource, LocalAgentMode, LocalAgentRuntime, LocalEvidenceBundle,
+    RunEvidenceSummary, RunRequest, RunSummary, WorkspaceSummary,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -78,7 +75,6 @@ struct TuiState {
     artifacts: Vec<ArtifactRecord>,
     selected: usize,
     preview: Option<TuiPreview>,
-    last_benchmark: Option<LocalBenchmarkRunResult>,
     input: Option<TuiInput>,
     notice: String,
 }
@@ -103,7 +99,6 @@ impl TuiState {
             artifacts,
             selected: 0,
             preview: None,
-            last_benchmark: None,
             input: None,
             notice: "Ready".to_string(),
         }
@@ -132,17 +127,6 @@ impl TuiState {
         self.run_evidence = collect_run_evidence(&runtime, &self.runs);
         self.knowledge_sources = local_result(runtime.knowledge_sources(Some(workspace_id), 5))?;
         self.artifacts = local_result(runtime.list_artifacts(Some(workspace_id), None, 5))?;
-        self.clamp_selection();
-        if let Some(preview) = &self.preview {
-            let still_exists = self
-                .snapshot
-                .recent_benchmark_reports
-                .iter()
-                .any(|report| report.relative_path == preview.path);
-            if !still_exists {
-                self.preview = None;
-            }
-        }
         self.notice = "Snapshot refreshed".to_string();
         Ok(())
     }
@@ -206,6 +190,7 @@ impl TuiState {
         let result = local_result(runtime.run_prompt(RunRequest {
             prompt,
             workspace_id: Some(self.active_workspace_id.clone()),
+            mode: Some(LocalAgentMode::CodeAgent),
         }))?;
         let notice = format!("Finished {}", result.run.run_id);
         self.refresh(repo_root)?;
@@ -253,6 +238,7 @@ impl TuiState {
                 prompt: "Inspect the local workspace state and summarize the available context."
                     .to_string(),
                 workspace_id: Some(self.active_workspace_id.clone()),
+                mode: Some(LocalAgentMode::CodeAgent),
             }),
         )?;
         self.runs = local_result(runtime.list_runs(Some(&self.active_workspace_id), 5))?;
@@ -262,37 +248,6 @@ impl TuiState {
         self.artifacts =
             local_result(runtime.list_artifacts(Some(&self.active_workspace_id), None, 5))?;
         self.notice = format!("Finished {}", result.run.run_id);
-        Ok(())
-    }
-
-    fn run_local_benchmark(&mut self, repo_root: &Path) -> Result<()> {
-        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-        let result = local_result(runtime.run_local_benchmark(LocalBenchmarkRequest {
-            max_cases: Some(2),
-            workspace_id: Some(self.active_workspace_id.clone()),
-            ..LocalBenchmarkRequest::default()
-        }))?;
-        self.last_benchmark = Some(result);
-        self.refresh(repo_root)?;
-        if let Some(result) = &self.last_benchmark {
-            self.preview = Some(TuiPreview {
-                path: result.markdown_path.clone(),
-                text: format!(
-                    "Benchmark: {}\nScore: {:.4}\nCases: {}\nEvents: {}\nTool calls: {}\n\nJSON: {}\nMarkdown: {}",
-                    result.report.benchmark,
-                    result.report.overall_score,
-                    result.report.n_cases,
-                    result.report.total_events,
-                    result.report.total_tool_calls,
-                    result.json_path,
-                    result.markdown_path
-                ),
-            });
-            self.notice = format!(
-                "Benchmark {} score {:.4}",
-                result.report.benchmark, result.report.overall_score
-            );
-        }
         Ok(())
     }
 
@@ -372,36 +327,6 @@ impl TuiState {
         Ok(())
     }
 
-    fn preview_benchmark_evidence(&mut self, repo_root: &Path) -> Result<()> {
-        let Some(report) = self.selected_report() else {
-            self.notice = "No report selected".to_string();
-            return Ok(());
-        };
-        if !report.relative_path.to_lowercase().ends_with(".json") {
-            self.notice = "Select a JSON benchmark report".to_string();
-            return Ok(());
-        }
-        let path = report.relative_path.clone();
-        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-        match runtime.local_benchmark_evidence(&path) {
-            Ok(evidence) => {
-                self.preview = Some(TuiPreview {
-                    path: format!("benchmark evidence: {path}"),
-                    text: render_benchmark_evidence(&evidence),
-                });
-                self.notice = format!("Benchmark evidence: {} runs", evidence.run_evidence.len());
-            }
-            Err(message) => {
-                self.preview = Some(TuiPreview {
-                    path: format!("benchmark evidence: {path}"),
-                    text: format!("Unable to load benchmark evidence:\n{message}"),
-                });
-                self.notice = "Benchmark evidence unavailable".to_string();
-            }
-        }
-        Ok(())
-    }
-
     fn cycle_workspace(&mut self, repo_root: &Path) -> Result<()> {
         if self.workspaces.is_empty() {
             self.notice = "No workspace registered".to_string();
@@ -420,12 +345,16 @@ impl TuiState {
     }
 
     fn move_selection(&mut self, offset: isize) {
-        let report_count = self.snapshot.recent_benchmark_reports.len();
-        if report_count == 0 {
+        let item_count = self
+            .runs
+            .len()
+            .max(self.knowledge_sources.len())
+            .max(self.artifacts.len());
+        if item_count == 0 {
             self.selected = 0;
             return;
         }
-        let last = (report_count - 1) as isize;
+        let last = (item_count - 1) as isize;
         self.selected = (self.selected as isize + offset).clamp(0, last) as usize;
         self.notice.clear();
     }
@@ -436,48 +365,15 @@ impl TuiState {
     }
 
     fn select_last(&mut self) {
-        if let Some(last) = self.snapshot.recent_benchmark_reports.len().checked_sub(1) {
+        let item_count = self
+            .runs
+            .len()
+            .max(self.knowledge_sources.len())
+            .max(self.artifacts.len());
+        if let Some(last) = item_count.checked_sub(1) {
             self.selected = last;
         }
         self.notice.clear();
-    }
-
-    fn open_preview(&mut self, repo_root: &Path) -> Result<()> {
-        let Some(report) = self.selected_report() else {
-            self.notice = "No report selected".to_string();
-            return Ok(());
-        };
-        let path = report.relative_path.clone();
-        match read_repo_text_file(repo_root, &path, PREVIEW_MAX_BYTES) {
-            Ok(text) => {
-                self.preview = Some(TuiPreview {
-                    path: path.clone(),
-                    text,
-                });
-                self.notice = format!("Previewing {}", path);
-            }
-            Err(message) => {
-                self.preview = Some(TuiPreview {
-                    path: path.clone(),
-                    text: format!("Unable to preview file:\n{message}"),
-                });
-                self.notice = "Preview unavailable".to_string();
-            }
-        }
-        Ok(())
-    }
-
-    fn selected_report(&self) -> Option<&LocalFile> {
-        self.snapshot.recent_benchmark_reports.get(self.selected)
-    }
-
-    fn clamp_selection(&mut self) {
-        let report_count = self.snapshot.recent_benchmark_reports.len();
-        if report_count == 0 {
-            self.selected = 0;
-        } else if self.selected >= report_count {
-            self.selected = report_count - 1;
-        }
     }
 }
 
@@ -519,19 +415,16 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('s') => state.begin_input(TuiInputKind::KnowledgePath),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
-                    KeyCode::Char('b') => state.run_local_benchmark(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
-                    KeyCode::Char('g') => state.preview_benchmark_evidence(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
                     KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
                     KeyCode::PageUp => state.move_selection(-5),
                     KeyCode::PageDown => state.move_selection(5),
                     KeyCode::Home => state.select_first(),
                     KeyCode::End => state.select_last(),
-                    KeyCode::Enter => state.open_preview(repo_root)?,
                     _ => {}
                 },
                 _ => {}
@@ -587,9 +480,10 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
         0,
         6,
         &format!(
-            "Workspace: {} ({} registered)",
+            "Workspace: {} ({} registered) | LLM: {}",
             state.active_workspace_id,
-            state.workspaces.len()
+            state.workspaces.len(),
+            llm_status_label(&state.snapshot.llm_config)
         ),
         width,
     )?;
@@ -648,6 +542,21 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
     draw_footer(out, rows, width, &state.notice)?;
     out.flush()?;
     Ok(())
+}
+
+fn llm_status_label(config: &structure_local_core::LocalLlmConfigStatus) -> String {
+    if config.configured {
+        let model = config.model_name.as_deref().unwrap_or("configured model");
+        format!(
+            "OPENAI__ configured ({}/{}/{}, {model})",
+            config.api_key.source, config.base_url.source, config.model.source
+        )
+    } else {
+        format!(
+            "missing OPENAI__ ({}/{}/{})",
+            config.api_key.source, config.base_url.source, config.model.source
+        )
+    }
 }
 
 fn draw_reports(
@@ -768,72 +677,6 @@ fn draw_reports(
         )?;
         write_at(out, x, artifacts_y + 2, &artifact_text, width)?;
     }
-    let reports_y = artifacts_y + 5;
-    if reports_y >= y + height {
-        return Ok(());
-    }
-
-    styled_at(
-        out,
-        x,
-        reports_y,
-        "Recent benchmark reports",
-        width,
-        Some(Attribute::Bold),
-        None,
-    )?;
-    muted_at(
-        out,
-        x,
-        reports_y + 1,
-        &format!(
-            "{} shown of {} total",
-            state.snapshot.recent_benchmark_reports.len(),
-            state.snapshot.benchmark_report_count
-        ),
-        width,
-    )?;
-
-    if state.snapshot.recent_benchmark_reports.is_empty() {
-        muted_at(
-            out,
-            x,
-            reports_y + 3,
-            "No local benchmark reports found.",
-            width,
-        )?;
-        return Ok(());
-    }
-
-    let report_height = (y + height).saturating_sub(reports_y);
-    let row_count = usize::from(report_height.saturating_sub(4))
-        .min(state.snapshot.recent_benchmark_reports.len());
-    for index in 0..row_count {
-        let report = &state.snapshot.recent_benchmark_reports[index];
-        let size = format_bytes(report.size_bytes);
-        let marker = if index == state.selected { ">" } else { " " };
-        let name_width = width.saturating_sub(size.len() + 4).max(8);
-        let line = format!(
-            "{} {} {}",
-            marker,
-            pad_right(&truncate(&report.relative_path, name_width), name_width),
-            size
-        );
-        let row_y = reports_y + 3 + u16::try_from(index).unwrap_or_default();
-        if index == state.selected {
-            styled_at(
-                out,
-                x,
-                row_y,
-                &line,
-                width,
-                Some(Attribute::Reverse),
-                Some(Color::White),
-            )?;
-        } else {
-            write_at(out, x, row_y, &line, width)?;
-        }
-    }
     Ok(())
 }
 
@@ -868,37 +711,7 @@ fn draw_preview(
             }
         }
         None => {
-            muted_at(out, x, y + 1, "No report preview open.", width)?;
-            if let Some(result) = &state.last_benchmark {
-                write_at(
-                    out,
-                    x,
-                    y + 3,
-                    &format!(
-                        "Last benchmark: {} score {:.4}",
-                        result.report.benchmark, result.report.overall_score
-                    ),
-                    width,
-                )?;
-                muted_at(out, x, y + 4, &format!("JSON: {}", result.json_path), width)?;
-                muted_at(
-                    out,
-                    x,
-                    y + 5,
-                    &format!("Markdown: {}", result.markdown_path),
-                    width,
-                )?;
-                return Ok(());
-            }
-            if let Some(report) = state.selected_report() {
-                write_at(
-                    out,
-                    x,
-                    y + 3,
-                    &format!("Selected: {}", report.relative_path),
-                    width,
-                )?;
-            }
+            muted_at(out, x, y + 1, "No preview open.", width)?;
         }
     }
     Ok(())
@@ -909,7 +722,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  o workspace  c prompt  s source  x remove  n run  b bench  g report  a artifact  v parity  e bundle";
+    let controls = "q quit  r refresh  o workspace  c prompt  s source  x remove  n run  a artifact  v parity  e bundle";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -978,14 +791,6 @@ fn clean_line(value: &str) -> String {
         .replace('\t', "  ")
 }
 
-fn pad_right(value: &str, width: usize) -> String {
-    let current = value.chars().count();
-    if current >= width {
-        return value.to_string();
-    }
-    format!("{}{}", value, " ".repeat(width - current))
-}
-
 fn format_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
@@ -1050,10 +855,6 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
     text.push_str(&format!("Generated: {}\n", bundle.generated_at_ms));
     text.push_str(&format!("Parity passed: {}\n", bundle.parity_report.passed));
     text.push_str(&format!(
-        "Benchmark reports: {}\n",
-        bundle.snapshot.benchmark_report_count
-    ));
-    text.push_str(&format!(
         "Events: {}\n",
         bundle.workspace_replay.events.len()
     ));
@@ -1071,18 +872,6 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
         bundle.run_evidence.len()
     ));
 
-    text.push_str("Recent Reports\n");
-    if bundle.snapshot.recent_benchmark_reports.is_empty() {
-        text.push_str("No benchmark reports found.\n");
-    } else {
-        for report in &bundle.snapshot.recent_benchmark_reports {
-            text.push_str(&format!(
-                "- {} ({} bytes)\n",
-                report.relative_path, report.size_bytes
-            ));
-        }
-    }
-
     text.push_str("\nRecent Run Evidence\n");
     if bundle.run_evidence.is_empty() {
         text.push_str("No run evidence recorded.\n");
@@ -1095,40 +884,6 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
                 evidence.tool_call_count,
                 evidence.knowledge_sources.len(),
                 evidence.artifacts.len()
-            ));
-        }
-    }
-    text
-}
-
-fn render_benchmark_evidence(evidence: &LocalBenchmarkEvidence) -> String {
-    let mut text = String::new();
-    text.push_str("Local Benchmark Evidence\n");
-    text.push_str(&format!("Schema: {}\n", evidence.schema_version));
-    text.push_str(&format!("Report: {}\n", evidence.report_path));
-    text.push_str(&format!("Benchmark: {}\n", evidence.report.benchmark));
-    text.push_str(&format!("Cases: {}\n", evidence.report.n_cases));
-    text.push_str(&format!("Score: {:.4}\n", evidence.report.overall_score));
-    text.push_str(&format!("Events: {}\n", evidence.report.total_events));
-    text.push_str(&format!(
-        "Tool calls: {}\n",
-        evidence.report.total_tool_calls
-    ));
-    text.push_str(&format!(
-        "Run evidence records: {}\n\n",
-        evidence.run_evidence.len()
-    ));
-    text.push_str("Runs\n");
-    if evidence.run_evidence.is_empty() {
-        text.push_str("No linked run evidence found.\n");
-    } else {
-        for run in &evidence.run_evidence {
-            text.push_str(&format!(
-                "- {}: {} events, {} tools, {} artifacts\n",
-                run.run.run_id,
-                run.event_count,
-                run.tool_call_count,
-                run.artifacts.len()
             ));
         }
     }

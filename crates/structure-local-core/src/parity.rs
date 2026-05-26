@@ -323,11 +323,21 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
         )],
         ("local_agent_run_loop", "cli_tui") => vec![marker(
             "crates/structure-local/src/cli.rs",
-            &["Command::Run", "Command::Tui", "run_local_agent"],
+            &[
+                "Command::Chat",
+                "Command::Run",
+                "Command::Proposals",
+                "Command::Tui",
+                "run_chat_agent",
+            ],
         )],
         ("local_agent_run_loop", "desktop_app") => vec![marker(
             "frontend/src-tauri/src/lib.rs",
-            &["fn local_agent_run", "local_agent_run,"],
+            &[
+                "fn local_agent_run",
+                "fn local_chat_turns",
+                "local_chat_turns,",
+            ],
         )],
         ("local_agent_run_loop", "web_app") => vec![
             marker(
@@ -402,7 +412,12 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
         ],
         ("artifact_evidence", "cli_tui") => vec![marker(
             "crates/structure-local/src/cli.rs",
-            &["ArtifactsCommand::List", "ArtifactsCommand::Show"],
+            &[
+                "ArtifactsCommand::List",
+                "ArtifactsCommand::Show",
+                "ProposalsCommand::List",
+                "ProposalsCommand::Show",
+            ],
         )],
         ("artifact_evidence", "desktop_app") => vec![marker(
             "frontend/src-tauri/src/lib.rs",
@@ -420,42 +435,6 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             marker(
                 "src/structure/services/runs/artifact_crud.py",
                 &["class ArtifactCRUD"],
-            ),
-        ],
-        ("benchmark_execution", "cli_tui") => vec![marker(
-            "crates/structure-local/src/cli.rs",
-            &[
-                "BenchCommand::Run",
-                "BenchCommand::Local",
-                "BenchCommand::Evidence",
-            ],
-        )],
-        ("benchmark_execution", "desktop_app") => vec![
-            marker(
-                "frontend/src-tauri/src/lib.rs",
-                &[
-                    "fn local_benchmark_run",
-                    "local_benchmark_run",
-                    "fn local_benchmark_evidence",
-                    "local_benchmark_evidence",
-                ],
-            ),
-            marker(
-                "frontend/src-tauri/local-ui/index.html",
-                &[
-                    "invoke(\"local_benchmark_run\"",
-                    "invoke(\"local_benchmark_evidence\"",
-                ],
-            ),
-        ],
-        ("benchmark_execution", "web_app") => vec![
-            marker(
-                "benchmarks/adapters/structure_run.py",
-                &["class StructureRunBenchmarkAgent"],
-            ),
-            marker(
-                "frontend/src/core/structureCore.ts",
-                &["BenchmarkReportSchema", "benchmark_report_schema"],
             ),
         ],
         _ => Vec::new(),
@@ -481,7 +460,7 @@ mod tests {
 
         assert!(report.passed);
         assert_eq!(report.surface_count, 3);
-        assert!(report.capability_count >= 6);
+        assert!(report.capability_count >= 5);
         assert!(report.checks.iter().all(|check| check.passed));
     }
 

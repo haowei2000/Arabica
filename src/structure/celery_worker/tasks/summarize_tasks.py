@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from uuid import UUID
 
 from structure.celery_worker.celery_app import celery_app
@@ -26,9 +27,7 @@ logger = logging.getLogger(__name__)
 # Maximum number of recent run summaries fed into the workspace prompt.
 _WORKSPACE_RUN_WINDOW = 10
 
-# Default LLM used for summarization (cheap, fast model).
-_SUMMARY_PROVIDER = "tongyi"
-_SUMMARY_MODEL = "qwen-turbo"
+_SUMMARY_PROVIDER = "openai"
 
 
 # ─── LLM helper ───────────────────────────────────────────────────────────────
@@ -40,7 +39,8 @@ def _call_llm(prompt: str) -> str:
 
     from structure.extensions.llm.llm import get_llm
 
-    llm = get_llm(_SUMMARY_MODEL, provider=_SUMMARY_PROVIDER)
+    model = os.getenv("OPENAI__MODEL", "gpt-4.1-mini")
+    llm = get_llm(model, provider=_SUMMARY_PROVIDER)
     response = llm.invoke([HumanMessage(content=prompt)])
     return response.content
 

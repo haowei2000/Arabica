@@ -17,7 +17,7 @@ class EmbeddingModelCreate(BaseModel):
         ...,
         min_length=1,
         max_length=50,
-        description="Provider: openai/dashscope/huggingface/ollama/custom",
+        description="Provider: openai or custom OpenAI-compatible endpoint",
     )
     model_id: str = Field(
         ...,

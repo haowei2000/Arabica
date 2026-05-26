@@ -9,14 +9,13 @@ The Docker Compose setup includes the following services:
 - `postgres`: PostgreSQL database for primary data storage
 - `redis`: Redis cache and session storage
 - `rustfs`: S3-compatible object storage
-- `ollama`: Local LLM service
 - `redis-commander`: Redis management UI (optional)
 
 ## Prerequisites
 
 - Docker Engine (version 20.10 or higher)
 - Docker Compose (version 2.0 or higher)
-- At least 8GB of RAM (recommended 16GB for optimal performance with Ollama)
+- At least 8GB of RAM
 
 ## Setup Instructions
 
@@ -37,7 +36,7 @@ The Docker Compose setup includes the following services:
    - `POSTGRES__PASSWORD`: Set a secure PostgreSQL password
    - `REDIS__PASSWORD`: Set a secure Redis password
    - `RUSTFS__ACCESS_KEY` / `RUSTFS__SECRET_KEY`: Set secure object storage credentials
-   - `DASHSCOPE_API_KEY`: If using DashScope AI services
+   - `OPENAI__API_KEY`, `OPENAI__BASE_URL`, `OPENAI__MODEL`: OpenAI-compatible LLM endpoint
 
 ### 2. Initialize Databases (Optional)
 
@@ -74,7 +73,6 @@ docker compose -p structure -f docker/docker-compose.yml ps
 - **PostgreSQL**: `localhost:5432` (internal: `postgres:5432`)
 - **Redis**: `localhost:6379` (internal: `redis:6379`)
 - **RustFS**: `http://localhost:9000` (console: `http://localhost:9001`)
-- **Ollama**: `http://localhost:11434`
 - **Redis Commander**: `http://localhost:8081`
 
 ## Management Commands
@@ -123,7 +121,6 @@ docker compose -p structure -f docker/docker-compose.yml up -d --scale backend=2
 - **postgres**: PostgreSQL 15 with health checks and persistent volume
 - **mysql**: MySQL 8.0 with health checks and persistent volume
 - **redis**: Redis 7 with authentication and persistence
-- **ollama**: Latest Ollama image with resource configuration for AI models
 - **redis-commander**: Web UI for Redis management
 
 ### Environment Variables
@@ -139,7 +136,6 @@ The service uses environment variables from the `.env` file for configuration. T
 ## Resource Considerations
 
 - The setup includes resource limits to prevent excessive usage
-- Ollama requires significant memory when running large language models
 - Adjust `MEMORY_LIMIT` in the `.env` file based on your system capabilities
 
 ## Troubleshooting
@@ -149,7 +145,6 @@ The service uses environment variables from the `.env` file for configuration. T
 1. **Port already in use**: Check if services are already running on the configured ports
 2. **Database initialization fails**: Ensure that the database containers have enough time to initialize
 3. **Health checks failing**: Check logs to see if services are starting properly
-4. **Ollama performance**: If using Ollama, ensure you have enough memory allocated
 
 ### Useful Commands for Troubleshooting
 

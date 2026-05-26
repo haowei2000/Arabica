@@ -65,15 +65,6 @@ pub fn read_repo_text_file(
     fs::read_to_string(&canonical).map_err(|err| format!("failed to read file: {err}"))
 }
 
-pub(crate) fn count_benchmark_reports(repo_root: &Path) -> Result<usize, String> {
-    let mut files = Vec::new();
-    for dir in ["benchmark_runs", "reports"] {
-        let scan_root = repo_root.join(dir);
-        collect_report_files(repo_root, &scan_root, &scan_root, &mut files)?;
-    }
-    Ok(files.len())
-}
-
 fn collect_report_files(
     repo_root: &Path,
     scan_root: &Path,

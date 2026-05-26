@@ -426,13 +426,8 @@ class ApplicationBootstrap:
         chat_model_id = (
             (openai_settings.model if openai_settings else "") or "gpt-4.1-mini"
         ).strip()
-        embedding_model_id = (
-            (openai_settings.embedding_model if openai_settings else "")
-            or "text-embedding-3-small"
-        ).strip()
-        embedding_dimension = (
-            openai_settings.embedding_dimension if openai_settings else 1536
-        )
+        embedding_model_id = "text-embedding-3-small"
+        embedding_dimension = 1536
 
         try:
             from structure.models.llm.chat_model import ChatModel

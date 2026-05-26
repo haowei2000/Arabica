@@ -46,8 +46,6 @@ async def test_seed_default_llm_models_creates_system_models_from_openai_setting
             api_key="sk-platform",
             base_url="https://api.openai.com/v1",
             model="gpt-4.1-mini",
-            embedding_model="text-embedding-3-small",
-            embedding_dimension=1536,
         )
     )
 
