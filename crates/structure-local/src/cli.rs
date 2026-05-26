@@ -251,6 +251,7 @@ enum ProposalsCommand {
     List(ListProposalsArgs),
     Latest(LatestProposalArgs),
     Show(ShowProposalArgs),
+    Apply(ApplyProposalArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -308,6 +309,15 @@ struct ShowProposalArgs {
     artifact_id: String,
     #[arg(long, default_value_t = PREVIEW_MAX_BYTES)]
     max_bytes: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ApplyProposalArgs {
+    artifact_id: String,
+    #[arg(long)]
+    dry_run: bool,
     #[arg(long)]
     json: bool,
 }
@@ -446,7 +456,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
     println!(
-        "  commands:  /help, /mode, /workspace, /ls, /search, /read, /source, /runs, /proposal, /quit"
+        "  commands:  /help, /mode, /workspace, /ls, /search, /read, /source, /runs, /proposal, /apply, /quit"
     );
     println!();
 
@@ -645,6 +655,53 @@ fn handle_chat_session_command(
             }
             Ok(true)
         }
+        "/apply" => {
+            let args = parts.collect::<Vec<_>>();
+            let dry_run = args.contains(&"--dry-run");
+            let selected = args
+                .iter()
+                .find(|part| **part != "--dry-run")
+                .map(|part| (*part).to_string());
+            let (artifact_id, run_id) = match selected {
+                Some(value) if value.starts_with("art_") => (value, None),
+                Some(value) => {
+                    let preview = local_result(latest_proposal_preview(
+                        runtime,
+                        state.workspace_id.as_deref(),
+                        Some(&value),
+                        PREVIEW_MAX_BYTES,
+                    ))?;
+                    (preview.artifact.artifact_id, Some(value))
+                }
+                None => {
+                    let preview = local_result(latest_proposal_preview(
+                        runtime,
+                        state.workspace_id.as_deref(),
+                        state.last_run_id.as_deref(),
+                        PREVIEW_MAX_BYTES,
+                    ))?;
+                    (preview.artifact.artifact_id, state.last_run_id.clone())
+                }
+            };
+            let result = local_result(runtime.apply_code_change_proposal(&artifact_id, dry_run))?;
+            println!(
+                "{} proposal {}",
+                if result.applied {
+                    "Applied"
+                } else {
+                    "Previewed"
+                },
+                result.artifact.artifact_id
+            );
+            if let Some(run_id) = run_id {
+                println!("  run:         {run_id}");
+            }
+            println!("  target:      {}", result.target_path);
+            println!("  added lines: {}", result.added_lines);
+            println!("  bytes:       {}", result.bytes_written);
+            println!("  dry run:     {}", result.dry_run);
+            Ok(true)
+        }
         "/replay" => {
             let replay = local_result(runtime.workspace_replay(state.workspace_id.as_deref(), 40))?;
             print_workspace_replay(&replay);
@@ -680,6 +737,7 @@ fn print_chat_session_help() {
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /artifacts            List recent artifacts");
     println!("  /proposal [run_id]    Show the latest code-change proposal");
+    println!("  /apply [id|run]       Apply a reviewed proposal; add --dry-run to preview");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
 }
@@ -975,6 +1033,31 @@ fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&preview)?);
             } else {
                 print_artifact_preview(&preview);
+            }
+        }
+        ProposalsCommand::Apply(args) => {
+            let result =
+                local_result(runtime.apply_code_change_proposal(&args.artifact_id, args.dry_run))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "{} code-change proposal {}",
+                    if result.applied {
+                        "Applied"
+                    } else {
+                        "Previewed"
+                    },
+                    result.artifact.artifact_id
+                );
+                println!("  target:      {}", result.target_path);
+                println!("  added lines: {}", result.added_lines);
+                println!("  bytes:       {}", result.bytes_written);
+                println!("  dry run:     {}", result.dry_run);
+                if result.dry_run {
+                    println!();
+                    println!("{}", result.preview);
+                }
             }
         }
     }

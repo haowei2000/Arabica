@@ -193,6 +193,15 @@ fn latest_local_proposal(
     runtime.read_artifact(&proposal.artifact_id, max_bytes.unwrap_or(64_000))
 }
 
+#[tauri::command]
+fn apply_local_proposal(
+    artifact_id: String,
+    dry_run: Option<bool>,
+) -> Result<structure_local_runtime::ProposalApplyResult, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.apply_code_change_proposal(&artifact_id, dry_run.unwrap_or(false))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -219,6 +228,7 @@ pub fn run() {
             local_artifacts,
             read_local_artifact,
             latest_local_proposal,
+            apply_local_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Structure desktop app");
@@ -280,6 +290,8 @@ mod tests {
                 Some(run.run.run_id.clone()),
                 Some(64_000),
             )?;
+            let dry_apply =
+                apply_local_proposal(proposal_preview.artifact.artifact_id.clone(), Some(true))?;
             let chat_artifacts = local_artifacts(
                 Some(workspace.workspace_id.clone()),
                 Some(chat_run.run.run_id.clone()),
@@ -299,6 +311,11 @@ mod tests {
                 .any(|artifact| artifact.kind == "code_change_proposal"));
             assert_eq!(proposal_preview.artifact.kind, "code_change_proposal");
             assert!(proposal_preview.preview.contains("Patch Sketch"));
+            assert!(!dry_apply.applied);
+            assert!(dry_apply.dry_run);
+            assert!(dry_apply
+                .preview
+                .contains("Proposed Structure local code-agent change"));
             assert!(chat_artifacts
                 .iter()
                 .all(|artifact| artifact.kind != "code_change_proposal"));

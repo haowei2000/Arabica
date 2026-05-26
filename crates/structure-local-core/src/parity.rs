@@ -329,6 +329,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "Command::Proposals",
                 "Command::Tui",
                 "run_chat_agent",
+                "ProposalsCommand::Apply",
             ],
         )],
         ("local_agent_run_loop", "desktop_app") => vec![marker(
@@ -336,6 +337,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             &[
                 "fn local_agent_run",
                 "fn local_chat_turns",
+                "fn apply_local_proposal",
                 "local_chat_turns,",
             ],
         )],
@@ -417,6 +419,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "ArtifactsCommand::Show",
                 "ProposalsCommand::List",
                 "ProposalsCommand::Show",
+                "ProposalsCommand::Apply",
             ],
         )],
         ("artifact_evidence", "desktop_app") => vec![marker(
@@ -424,6 +427,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             &[
                 "fn local_artifacts",
                 "fn read_local_artifact",
+                "fn apply_local_proposal",
                 "read_local_artifact,",
             ],
         )],

@@ -771,6 +771,7 @@
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Latest Proposal</button>
+            <button id="apply-proposal" type="button">Apply Proposal</button>
             <button id="show-parity" type="button">Show Parity Report</button>
             <button id="show-bundle" type="button">Show Evidence Bundle</button>
             <pre id="event-log">No local run selected.</pre>
@@ -854,6 +855,7 @@
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
+      const applyProposalEl = document.querySelector("#apply-proposal");
       const showParityEl = document.querySelector("#show-parity");
       const showBundleEl = document.querySelector("#show-bundle");
       const agentPromptEl = document.querySelector("#agent-prompt");
@@ -990,6 +992,11 @@
         });
       }
 
+      async function applyProposal(artifactId, dryRun = false) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("apply_local_proposal", { artifactId, dryRun });
+      }
+
       async function readKnowledgeSource(sourceId) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("read_local_knowledge_source", { sourceId, maxBytes: 64000 });
@@ -1081,6 +1088,11 @@
       function setProposalBusy(isBusy) {
         previewProposalEl.disabled = isBusy;
         previewProposalEl.textContent = isBusy ? "Loading Proposal" : "Preview Latest Proposal";
+      }
+
+      function setApplyProposalBusy(isBusy) {
+        applyProposalEl.disabled = isBusy;
+        applyProposalEl.textContent = isBusy ? "Applying Proposal" : "Apply Proposal";
       }
 
       function setParityBusy(isBusy) {
@@ -1781,6 +1793,47 @@ Opened in Preview.`;
           eventLogEl.textContent = String(error);
         } finally {
           setProposalBusy(false);
+        }
+      });
+      applyProposalEl.addEventListener("click", async () => {
+        setApplyProposalBusy(true);
+        try {
+          let artifactId = state.selectedPath;
+          let preview = null;
+          if (!artifactId) {
+            preview = await latestProposal();
+            artifactId = preview.artifact.artifact_id;
+          }
+          if (!preview) {
+            preview = await readArtifact(artifactId);
+          }
+          if (preview.artifact.kind !== "code_change_proposal") {
+            preview = await latestProposal();
+            artifactId = preview.artifact.artifact_id;
+          }
+          renderArtifactPreview(preview);
+          const dryRun = await applyProposal(artifactId, true);
+          const confirmed = window.confirm(
+            `Apply proposal to ${dryRun.target_path}?\n\n${dryRun.added_lines} lines will be appended.`,
+          );
+          if (!confirmed) {
+            eventLogEl.textContent = `Proposal apply cancelled.
+Target: ${dryRun.target_path}
+Added lines: ${dryRun.added_lines}`;
+            return;
+          }
+          const result = await applyProposal(artifactId, false);
+          eventLogEl.textContent = `Proposal Applied
+ID: ${result.artifact.artifact_id}
+Run: ${result.artifact.run_id}
+Target: ${result.target_path}
+Added lines: ${result.added_lines}
+Bytes written: ${formatBytes(result.bytes_written)}`;
+          await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setApplyProposalBusy(false);
         }
       });
       showParityEl.addEventListener("click", async () => {

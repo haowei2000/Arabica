@@ -111,19 +111,19 @@
       "id": "local_agent_run_loop",
       "name": "Local Chat And Code-Agent Loop",
       "primitive_id": "event_audit",
-      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, context replay, code search, knowledge loading, tool planning, tool execution, synthesis, proposed code-change artifacts, artifact writing, and terminal status.",
+      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, context replay, code search, knowledge loading, tool planning, tool execution, synthesis, proposed code-change artifacts, reviewed proposal application, artifact writing, and terminal status.",
       "surface_status": [
         {
           "surface_id": "cli_tui",
           "status": "native",
-          "entrypoint": "structure-local chat / structure-local run / structure-local proposals list/show / structure-local tui",
-          "evidence": "CLI offers a Codex/OpenCode-style local chat command, returns JSON RunResult, exposes proposed code-change artifacts, and TUI can run fixed or custom prompts through the same Rust runtime."
+          "entrypoint": "structure-local chat / structure-local run / structure-local proposals list/show/apply / structure-local tui",
+          "evidence": "CLI offers a Codex/OpenCode-style local chat command, returns JSON RunResult, exposes proposed code-change artifacts, can apply reviewed proposals with a code_change_applied event, and TUI can run fixed or custom prompts through the same Rust runtime."
         },
         {
           "surface_id": "desktop_app",
           "status": "native",
-          "entrypoint": "local_agent_run / local_chat_turns",
-          "evidence": "Tauri commands invoke structure-local-runtime directly, render chat turns, and expose run events/final responses plus proposed code-change artifacts without a backend service."
+          "entrypoint": "local_agent_run / local_chat_turns / apply_local_proposal",
+          "evidence": "Tauri commands invoke structure-local-runtime directly, render chat turns, and expose run events/final responses plus proposed code-change artifacts and reviewed proposal application without a backend service."
         },
         {
           "surface_id": "web_app",
@@ -194,14 +194,14 @@
         {
           "surface_id": "cli_tui",
           "status": "native",
-          "entrypoint": "structure-local artifacts list/show / structure-local proposals list/show",
-          "evidence": "CLI lists artifact records, previews artifact files by artifact_id, and separates code-change proposals for review."
+          "entrypoint": "structure-local artifacts list/show / structure-local proposals list/show/apply",
+          "evidence": "CLI lists artifact records, previews artifact files by artifact_id, and separates code-change proposals for review before explicit application."
         },
         {
           "surface_id": "desktop_app",
           "status": "native",
-          "entrypoint": "local_artifacts / read_local_artifact",
-          "evidence": "Desktop UI previews the latest local artifact and latest code-change proposal."
+          "entrypoint": "local_artifacts / read_local_artifact / apply_local_proposal",
+          "evidence": "Desktop UI previews the latest local artifact and latest code-change proposal, then applies reviewed proposals through the Rust runtime."
         },
         {
           "surface_id": "web_app",

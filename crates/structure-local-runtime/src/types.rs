@@ -36,6 +36,7 @@ pub enum RunEventKind {
     ToolCallRequested,
     ToolCallCompleted,
     CodeChangeProposed,
+    CodeChangeApplied,
     ArtifactWritten,
     RunFinished,
     RunFailed,
@@ -56,6 +57,7 @@ impl RunEventKind {
             Self::ToolCallRequested => "tool_call_requested",
             Self::ToolCallCompleted => "tool_call_completed",
             Self::CodeChangeProposed => "code_change_proposed",
+            Self::CodeChangeApplied => "code_change_applied",
             Self::ArtifactWritten => "artifact_written",
             Self::RunFinished => "run_finished",
             Self::RunFailed => "run_failed",
@@ -160,6 +162,17 @@ pub struct ArtifactPreview {
     pub preview: String,
     pub bytes_read: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposalApplyResult {
+    pub artifact: ArtifactRecord,
+    pub target_path: String,
+    pub applied: bool,
+    pub dry_run: bool,
+    pub added_lines: usize,
+    pub bytes_written: u64,
+    pub preview: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

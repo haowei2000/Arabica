@@ -18,8 +18,9 @@ pub use store::SqliteLocalStore;
 pub use tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 pub use types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalToolCall, LocalToolResult, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceReplay, WorkspaceSummary,
+    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalToolCall, LocalToolResult,
+    ProposalApplyResult, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary,
+    WorkspaceReplay, WorkspaceSummary,
 };
 
 #[cfg(test)]
