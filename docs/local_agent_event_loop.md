@@ -153,7 +153,9 @@ into runtime calls:
   The composer accepts slash commands such as `/mode`, `/workspace`, `/runs`,
   `/transcript`, `/search`, `/read`, `/source`, `/artifacts`, and `/proposal`,
   so desktop interaction can stay in the chat/code-agent loop instead of
-  becoming a separate operator dashboard.
+  becoming a separate operator dashboard. Command results are appended to the
+  desktop chat thread as local interaction turns while persisted agent runs
+  still come from the Rust runtime event store.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events, and the UI renders both workspace feed events

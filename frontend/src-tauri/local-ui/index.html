@@ -406,6 +406,10 @@
         background: var(--surface);
       }
 
+      .chat-message[data-role="command"] {
+        border-left: 4px solid var(--warning);
+      }
+
       .chat-message strong {
         display: block;
         font-size: 12px;
@@ -972,6 +976,7 @@
         workspaceEventCursor: 0,
         workspaceFeedEvents: [],
         chatTurns: [],
+        commandMessages: [],
         knowledge: [],
         artifacts: [],
         parityReport: null,
@@ -1388,10 +1393,9 @@
         }
       }
 
-      function renderChat(turns) {
-        state.chatTurns = turns;
+      function renderChatThread() {
         chatThreadEl.replaceChildren();
-        if (turns.length === 0) {
+        if (state.chatTurns.length === 0 && state.commandMessages.length === 0) {
           const empty = document.createElement("div");
           empty.className = "empty";
           empty.textContent = "Start a local code-agent conversation in this workspace.";
@@ -1399,7 +1403,7 @@
           return;
         }
 
-        for (const turn of [...turns].reverse()) {
+        for (const turn of [...state.chatTurns].reverse()) {
           const user = document.createElement("div");
           user.className = "chat-message";
           user.dataset.role = "user";
@@ -1421,7 +1425,36 @@
 
           chatThreadEl.append(user, assistant);
         }
+        for (const message of state.commandMessages) {
+          const command = document.createElement("div");
+          command.className = "chat-message";
+          command.dataset.role = "command";
+          const commandRole = document.createElement("strong");
+          commandRole.textContent = `Command / ${message.status}`;
+          const commandText = document.createElement("p");
+          commandText.textContent = `${message.input}\n\n${message.output.slice(0, 2400)}`;
+          command.append(commandRole, commandText);
+          chatThreadEl.append(command);
+        }
         chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
+      }
+
+      function renderChat(turns) {
+        state.chatTurns = turns;
+        renderChatThread();
+      }
+
+      function appendCommandMessage(input, output, status = "ok") {
+        state.commandMessages = [
+          ...state.commandMessages,
+          {
+            input,
+            output,
+            status,
+            created_at_ms: Date.now(),
+          },
+        ].slice(-20);
+        renderChatThread();
       }
 
       function eventDetail(event) {
@@ -1780,6 +1813,7 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
             state.activeWorkspaceId = workspace.workspace_id;
             state.workspaceEventCursor = 0;
             state.workspaceFeedEvents = [];
+            state.commandMessages = [];
             eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
             await refresh();
             return true;
@@ -2340,6 +2374,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         state.activeWorkspaceId = workspaceSelectEl.value || "default";
         state.workspaceEventCursor = 0;
         state.workspaceFeedEvents = [];
+        state.commandMessages = [];
         eventLogEl.textContent = `Workspace selected: ${activeWorkspaceId()}`;
         await refresh();
       });
@@ -2356,6 +2391,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           state.activeWorkspaceId = workspace.workspace_id;
           state.workspaceEventCursor = 0;
           state.workspaceFeedEvents = [];
+          state.commandMessages = [];
           workspaceIdEl.value = "";
           eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
           await refresh();
@@ -2377,10 +2413,12 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           try {
             const handled = await handleComposerCommand(prompt);
             if (handled) {
+              appendCommandMessage(prompt, eventLogEl.textContent || "Command completed.");
               agentPromptEl.value = "";
             }
           } catch (error) {
             eventLogEl.textContent = String(error);
+            appendCommandMessage(prompt, eventLogEl.textContent, "error");
           } finally {
             setAgentBusy(false);
           }
