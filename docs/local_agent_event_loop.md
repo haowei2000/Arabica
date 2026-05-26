@@ -73,26 +73,23 @@ into runtime calls:
 - CLI parity checks: `uv run structure parity --json` reads the shared
   capability matrix, while `uv run structure parity --verify --json` verifies
   surface coverage, primitive references, entrypoints, and evidence fields.
-- CLI benchmarks: `uv run structure bench local` runs the embedded benchmark
-  loop and writes `summary.json` / `summary.md` reports. `uv run structure
-  bench evidence <summary.json> --json` relinks a report to its run evidence,
-  event counts, tool calls, and artifacts.
 - CLI evidence: `uv run structure evidence bundle --json` exports one
   reproducible local bundle containing the manifest snapshot, parity report,
-  workspace replay, run evidence, knowledge source metadata, artifacts, and
-  recent benchmark reports.
+  workspace replay, run evidence, knowledge source metadata, and artifacts.
+- Benchmarks: benchmark execution and report relinking are owned by dedicated
+  adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
+  app surfaces.
 - TUI: operator view plus active workspace switching bound to `w`, workspace
   create/open input bound to `o`, custom prompt input bound to `c`, knowledge
   path registration bound to `s`, knowledge registration removal bound to `x`,
-  a local workspace check bound to `n`, and a local benchmark run bound to `b`;
-  it also surfaces knowledge and artifact previews through the same runtime.
-  Press `e` to inspect the same local evidence bundle.
+  and a local workspace check bound to `n`; it also surfaces knowledge and
+  artifact previews through the same runtime. Press `e` to inspect the same
+  local evidence bundle.
 - Desktop app: Tauri commands such as `local_agent_run`, `local_runs`, and
   `local_run_events`; `create_local_workspace` and `local_workspaces` back the
-  native workspace selector. `local_benchmark_run` starts the same embedded
-  benchmark loop from the desktop shell, `local_benchmark_evidence` relinks
-  selected reports to their run evidence, and `local_evidence_bundle` exposes
-  the same reproducibility artifact as the CLI/TUI.
+  native workspace selector, and `local_evidence_bundle` exposes the same
+  reproducibility artifact as the CLI/TUI. Benchmark execution stays in the
+  dedicated Python adapters under `benchmarks/adapters/`.
 
 This keeps the conceptual model aligned with the distributed web backend:
 event-sourced run lifecycle, workspace-scoped context, knowledge retrieval, and

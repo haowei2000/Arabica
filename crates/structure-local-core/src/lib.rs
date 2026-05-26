@@ -14,7 +14,7 @@ pub use parity::{
     SurfaceParityCheck, SurfaceParityReport,
 };
 pub use repo::{default_repo_root, find_repo_root};
-pub use reports::{read_repo_text_file, recent_benchmark_reports, LocalFile};
+pub use reports::read_repo_text_file;
 pub use snapshot::{
     collect_snapshot, snapshot_json, LocalEnvVarStatus, LocalLlmConfigStatus, LocalSnapshot,
 };

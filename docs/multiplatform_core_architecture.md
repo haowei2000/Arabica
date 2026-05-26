@@ -73,22 +73,23 @@ structure-local evidence bundle --json
 ```
 
 That bundle contains the local snapshot, parity report, workspace replay,
-per-run evidence summaries, knowledge source metadata, artifact records, and
-recent benchmark report references. It is the local artifact to attach to
-paper-oriented reproduction notes when the claim concerns CLI/TUI or desktop
-behavior rather than the service-backed web runtime.
+per-run evidence summaries, knowledge source metadata, and artifact records. It
+is the local artifact to attach to paper-oriented reproduction notes when the
+claim concerns CLI/TUI or desktop behavior rather than the service-backed web
+runtime.
 
-For a specific local benchmark report, the local runtime also exposes
-`local-benchmark-evidence-v1` through:
+Benchmark reports use the shared `BenchmarkReportSchema`, but benchmark
+execution is intentionally outside the local app/CLI product surface. Dedicated
+adapters under `benchmarks/adapters/` own benchmark runs and evidence relinking,
+for example:
 
 ```text
-uv run structure bench evidence benchmark_runs/.../summary.json --json
+uv run python benchmarks/scripts/run_structure_benchmark.py ...
 ```
 
-The desktop app calls the same runtime command through
-`local_benchmark_evidence`, and the TUI previews it with `g` on a selected JSON
-report. This keeps report browsing, run replay, and artifact evidence connected
-instead of treating JSON/Markdown reports as detached files.
+This keeps the local CLI/TUI and desktop app focused on Codex-like chat and
+code-agent workflows while preserving benchmark evidence as a separate adapter
+contract for experiments.
 
 ## Runtime Layers
 
@@ -111,7 +112,8 @@ instead of treating JSON/Markdown reports as detached files.
   surface metadata.
 - `repo.rs`: finds the Structure repository and environment-defined
   repo roots.
-- `reports.rs`: discovers and reads benchmark/report files safely.
+- `reports.rs`: reads repository-local report files safely for tooling that
+  needs file previews.
 - `snapshot.rs`: composes local status from repo, reports, and manifest
   state.
 
@@ -126,8 +128,6 @@ runtime code.
   workspace listing/lookup, and knowledge source metadata.
 - `runtime.rs`: local run lifecycle, context loading, artifact writing,
   event sequencing, workspace replay, and local evidence bundle creation.
-- `benchmark.rs`: embedded fixture benchmark runner that reuses the same local
-  event loop, writes JSON/Markdown reports, and relinks reports to run evidence.
 - `types.rs`: serializable contracts shared by CLI/TUI and Tauri commands.
 
 This crate must not depend on TUI drawing code, Tauri window code, React,
@@ -156,7 +156,7 @@ to local filesystem behavior.
 ## Desktop and CLI Local-Core Rule
 
 The desktop app and CLI/TUI should use `structure-local-core` for local repo
-state, benchmark report discovery, manifest parsing, and safe file preview.
+state, manifest parsing, and safe file preview.
 They should use `structure-local-runtime` for event-sourced runs, workspace
 metadata, workspace-scoped context, knowledge source metadata, and artifacts.
 Platform-specific UI code can decide how to present the data, but should not

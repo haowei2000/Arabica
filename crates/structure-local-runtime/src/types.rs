@@ -71,7 +71,6 @@ pub enum LocalAgentMode {
     Chat,
     #[default]
     CodeAgent,
-    Benchmark,
 }
 
 impl LocalAgentMode {
@@ -79,7 +78,6 @@ impl LocalAgentMode {
         match self {
             Self::Chat => "chat",
             Self::CodeAgent => "code_agent",
-            Self::Benchmark => "benchmark",
         }
     }
 }

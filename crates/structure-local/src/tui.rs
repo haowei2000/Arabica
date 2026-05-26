@@ -627,7 +627,6 @@ fn agent_mode_label(mode: &LocalAgentMode) -> &'static str {
     match mode {
         LocalAgentMode::Chat => "chat",
         LocalAgentMode::CodeAgent => "code_agent",
-        _ => "code_agent",
     }
 }
 
