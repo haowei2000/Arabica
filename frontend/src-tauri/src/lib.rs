@@ -742,6 +742,8 @@ mod tests {
         assert!(local_ui.contains("function reviewPreviewProposal"));
         assert!(local_ui.contains("await applyProposal(artifactId, true)"));
         assert!(local_ui.contains("await applyProposal(artifactId, false)"));
+        assert!(local_ui.contains("case \"/dry-run\":"));
+        assert!(local_ui.contains("/dry-run [run_id|artifact_id]"));
         assert!(local_ui.contains("state.previewArtifact"));
     }
 

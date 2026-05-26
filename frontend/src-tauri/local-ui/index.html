@@ -2446,6 +2446,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /artifacts
 /proposal [run_id]
 /diff [run_id]
+/dry-run [run_id|artifact_id]
 /apply [run_id|artifact_id] [--dry-run] [--yes]
 /replay`;
       }
@@ -2697,6 +2698,21 @@ ${artifacts.map((artifact) => `${artifact.artifact_id} / ${artifact.kind} / ${ar
 Artifact: ${proposal.artifact.artifact_id}
 Run: ${proposal.artifact.run_id}
 Path: ${proposal.artifact.path}`;
+            return true;
+          }
+          case "/dry-run": {
+            const selected = parts.find((part) => !part.startsWith("--")) ?? null;
+            const preview = await resolveProposalPreview(selected);
+            renderArtifactPreview(preview);
+            const checked = await applyProposal(preview.artifact.artifact_id, true);
+            eventLogEl.textContent = `Proposal Apply Dry Run
+ID: ${checked.artifact.artifact_id}
+Run: ${checked.artifact.run_id}
+Target: ${checked.target_path}
+Added lines: ${checked.added_lines}
+Dry run: ${checked.dry_run}
+
+${checked.preview}`;
             return true;
           }
           case "/apply": {

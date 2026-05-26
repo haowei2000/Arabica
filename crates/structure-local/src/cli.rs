@@ -1054,6 +1054,37 @@ fn handle_chat_session_command(
             }
             Ok(true)
         }
+        "/dry-run" => {
+            let args = parts.collect::<Vec<_>>();
+            let selected = args.first().map(|value| (*value).to_string());
+            let (artifact_id, run_id) = match selected {
+                Some(value) if value.starts_with("art_") => (value, None),
+                Some(value) => {
+                    let preview = local_result(latest_proposal_preview(
+                        runtime,
+                        state.workspace_id.as_deref(),
+                        Some(&value),
+                        PREVIEW_MAX_BYTES,
+                    ))?;
+                    (preview.artifact.artifact_id, Some(value))
+                }
+                None => {
+                    let preview = local_result(latest_proposal_preview(
+                        runtime,
+                        state.workspace_id.as_deref(),
+                        state.last_run_id.as_deref(),
+                        PREVIEW_MAX_BYTES,
+                    ))?;
+                    (preview.artifact.artifact_id, state.last_run_id.clone())
+                }
+            };
+            let result = local_result(runtime.apply_code_change_proposal(&artifact_id, true))?;
+            print!(
+                "{}",
+                render_proposal_apply_result(&result, result.dry_run, run_id.as_deref())
+            );
+            Ok(true)
+        }
         "/apply" => {
             let args = parts.collect::<Vec<_>>();
             let apply_args = parse_session_apply_args(&args);
@@ -1208,13 +1239,14 @@ fn print_chat_session_help() {
     println!("  /artifacts            List recent artifacts");
     println!("  /proposal [run_id]    Show the latest code-change proposal");
     println!("  /diff [run_id]        Alias for /proposal");
+    println!("  /dry-run [id|run]     Preview proposal application without writing");
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /runs, /continue, /usage, /transcript, /proposal, /diff, /apply, /quit"
+    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /runs, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1873,6 +1905,7 @@ mod tests {
         assert!(summary.contains("/recall"));
         assert!(summary.contains("/forget"));
         assert!(summary.contains("/diff"));
+        assert!(summary.contains("/dry-run"));
         assert!(!summary.contains("benchmark"));
     }
 

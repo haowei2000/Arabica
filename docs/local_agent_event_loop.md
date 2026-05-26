@@ -190,7 +190,7 @@ into runtime calls:
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/context`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
-  and `/apply` make run inspection, continuation, and proposal review part of
+  `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
   evidence summary, preserving the event-sourced audit trail instead of editing
@@ -202,8 +202,8 @@ into runtime calls:
   `RunEvidenceSummary`, so terminal sessions can inspect request counts,
   network-backed calls, token usage, and core alignment without opening the
   full transcript.
-  Interactive `/apply` defaults to dry-run; writing requires an explicit
-  `--yes`.
+  Interactive `/dry-run` and `/apply` without `--yes` preview proposal
+  application; writing requires an explicit `/apply --yes`.
   `/remember <text>` persists a short text note into the local workspace
   knowledge directory and registers it as a normal `KnowledgeSource`, so later
   runs retrieve it through the same Structure context path as file-backed
@@ -246,7 +246,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
