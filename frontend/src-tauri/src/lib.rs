@@ -173,6 +173,12 @@ fn local_run_evidence(
 }
 
 #[tauri::command]
+fn local_run_transcript(run_id: String) -> Result<structure_local_runtime::RunTranscript, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_transcript(&run_id)
+}
+
+#[tauri::command]
 fn local_workspace_replay(
     workspace_id: Option<String>,
     limit: Option<usize>,
@@ -311,6 +317,7 @@ pub fn run() {
             local_run,
             local_run_events,
             local_run_evidence,
+            local_run_transcript,
             local_workspace_replay,
             local_workspace_event_feed,
             local_evidence_bundle,
@@ -424,6 +431,7 @@ mod tests {
             )?;
             let turns = local_chat_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
+            let transcript = local_run_transcript(run.run.run_id.clone())?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
                 local_workspace_event_feed(Some(workspace.workspace_id.clone()), Some(0), Some(5))?;
@@ -480,6 +488,17 @@ mod tests {
             assert!(turns.iter().any(|item| item.run_id == run.run.run_id));
             assert!(turns.iter().any(|item| item.run_id == chat_run.run.run_id));
             assert!(runs.iter().any(|item| item.run_id == run.run.run_id));
+            assert_eq!(transcript.run.run_id, run.run.run_id);
+            assert!(transcript.chat_turn.is_some());
+            assert_eq!(transcript.evidence.event_count, transcript.events.len());
+            assert!(transcript
+                .evidence
+                .primitive_ids
+                .contains(&"reproducible_evidence".to_string()));
+            assert!(transcript
+                .events
+                .iter()
+                .any(|event| event.canonical_flow_id == "evidence"));
             assert!(!replay.events.is_empty());
             assert!(!feed.events.is_empty());
             assert!(replay.events.iter().any(|event| {

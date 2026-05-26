@@ -2,8 +2,8 @@ use crate::text::{
     print_artifact_preview, print_artifacts, print_core_capabilities, print_core_manifest,
     print_events, print_knowledge_preview, print_knowledge_source, print_knowledge_sources,
     print_local_evidence_bundle, print_run_attempt, print_run_evidence_summary, print_run_summary,
-    print_runs, print_snapshot, print_surface_parity_report, print_surfaces, print_workspace,
-    print_workspace_event_feed, print_workspace_replay, print_workspaces,
+    print_run_transcript, print_runs, print_snapshot, print_surface_parity_report, print_surfaces,
+    print_workspace, print_workspace_event_feed, print_workspace_replay, print_workspaces,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -126,6 +126,7 @@ enum RunsCommand {
     Show(ShowRunArgs),
     Events(RunEventsArgs),
     Evidence(RunEvidenceArgs),
+    Transcript(RunTranscriptArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -163,6 +164,13 @@ struct RunEventsArgs {
 
 #[derive(Debug, Args)]
 struct RunEvidenceArgs {
+    run_id: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RunTranscriptArgs {
     run_id: String,
     #[arg(long)]
     json: bool,
@@ -1055,6 +1063,14 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&evidence)?);
             } else {
                 print_run_evidence_summary(&evidence);
+            }
+        }
+        RunsCommand::Transcript(args) => {
+            let transcript = local_result(runtime.run_transcript(&args.run_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&transcript)?);
+            } else {
+                print_run_transcript(&transcript);
             }
         }
     }

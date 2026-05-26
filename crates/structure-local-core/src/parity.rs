@@ -395,11 +395,16 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
         ],
         ("event_replay", "cli_tui") => vec![marker(
             "crates/structure-local/src/cli.rs",
-            &["RunsCommand::Events", "WorkspaceCommand::Replay"],
+            &[
+                "RunsCommand::Events",
+                "RunsCommand::Transcript",
+                "WorkspaceCommand::Replay",
+            ],
         )],
         ("event_replay", "desktop_app") => vec![marker(
             "frontend/src-tauri/src/lib.rs",
             &[
+                "fn local_run_transcript",
                 "fn local_run_events",
                 "fn local_workspace_replay",
                 "local_workspace_replay,",

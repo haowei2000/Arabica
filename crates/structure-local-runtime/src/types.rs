@@ -226,6 +226,15 @@ pub struct RunEvidenceSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunTranscript {
+    pub run: RunSummary,
+    pub chat_turn: Option<ChatTurn>,
+    pub events: Vec<LocalEvent>,
+    pub evidence: RunEvidenceSummary,
+    pub final_response: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceReplay {
     pub workspace_id: String,
     pub events: Vec<LocalEvent>,

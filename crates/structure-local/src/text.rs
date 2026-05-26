@@ -4,8 +4,8 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvent,
-    LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary,
+    LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -257,6 +257,48 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     }
     if !evidence.primitive_ids.is_empty() {
         println!("  primitives:  {}", evidence.primitive_ids.join(", "));
+    }
+}
+
+pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
+    println!("Run transcript");
+    println!("  run:       {}", transcript.run.run_id);
+    println!("  workspace: {}", transcript.run.workspace_id);
+    println!("  status:    {}", transcript.run.status);
+    println!("  events:    {}", transcript.events.len());
+    println!(
+        "  flows:     {}",
+        transcript.evidence.canonical_flow_ids.join(", ")
+    );
+    println!(
+        "  primitives: {}",
+        transcript.evidence.primitive_ids.join(", ")
+    );
+    println!("  tools:     {}", transcript.evidence.tool_call_count);
+    println!("  artifacts: {}", transcript.evidence.artifact_paths.len());
+    if let Some(turn) = &transcript.chat_turn {
+        println!();
+        println!("User");
+        println!("{}", turn.user_message);
+    }
+    if let Some(response) = &transcript.final_response {
+        println!();
+        println!("Assistant");
+        println!("{response}");
+    }
+    if !transcript.events.is_empty() {
+        println!();
+        println!("Events");
+        for event in &transcript.events {
+            println!(
+                "  #{:<4} {:<26} {:<10} {:<22} {}",
+                event.sequence,
+                event.kind,
+                event.canonical_flow_id,
+                event.primitive_id,
+                event.run_id.as_deref().unwrap_or("workspace")
+            );
+        }
     }
 }
 

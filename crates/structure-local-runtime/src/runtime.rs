@@ -4,7 +4,7 @@ use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentMode, LocalEvidenceBundle, LocalToolCall, LocalToolResult, ProposalApplyResult,
-    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary,
+    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
     WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
@@ -548,6 +548,24 @@ impl LocalAgentRuntime {
             canonical_flow_ids,
             primitive_ids,
             final_response_chars,
+        })
+    }
+
+    pub fn run_transcript(&self, run_id: &str) -> Result<RunTranscript, String> {
+        let run = self.run_by_id(run_id)?;
+        let events = self.run_events(run_id)?;
+        let evidence = self.run_evidence_summary(run_id)?;
+        let chat_turn = self
+            .chat_turns(Some(&run.workspace_id), 128)?
+            .into_iter()
+            .find(|turn| turn.run_id == run.run_id);
+        let final_response = run.final_response.clone();
+        Ok(RunTranscript {
+            run,
+            chat_turn,
+            events,
+            evidence,
+            final_response,
         })
     }
 
@@ -1354,6 +1372,18 @@ mod tests {
         assert!(evidence
             .primitive_ids
             .contains(&"multi_level_disclosure".to_string()));
+        let transcript = runtime.run_transcript(&result.run.run_id).unwrap();
+        assert_eq!(transcript.run.run_id, result.run.run_id);
+        assert!(transcript
+            .chat_turn
+            .as_ref()
+            .and_then(|turn| turn.assistant_message.as_ref())
+            .is_some_and(|message| message.contains("local context")));
+        assert_eq!(transcript.evidence.event_count, transcript.events.len());
+        assert!(transcript
+            .evidence
+            .canonical_flow_ids
+            .contains(&"disclose".to_string()));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1968,7 +1998,7 @@ diff --git a/docs/example.md b/docs/example.md
             run_core run_surfaces run_chat_agent run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events WorkspaceCommand::Events WorkspaceCommand::Replay
+            RunsCommand::Events RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -1983,7 +2013,8 @@ diff --git a/docs/example.md b/docs/example.md
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
-            fn local_run_events() {} fn local_workspace_event_feed() {} local_workspace_event_feed,
+            fn local_run_transcript() {} fn local_run_events() {}
+            fn local_workspace_event_feed() {} local_workspace_event_feed,
             fn local_workspace_replay() {} local_workspace_replay,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,
             fn apply_local_proposal() {}

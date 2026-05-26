@@ -1046,6 +1046,11 @@
         return invoke("local_run_evidence", { runId });
       }
 
+      async function localRunTranscript(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_transcript", { runId });
+      }
+
       async function localWorkspaceReplay() {
         if (!invoke) return null;
         return invoke("local_workspace_replay", { workspaceId: activeWorkspaceId(), limit: 60 });
@@ -1670,14 +1675,13 @@ The original file was not deleted.`;
       }
 
       async function selectRun(run) {
-        eventLogEl.textContent = "Loading events...";
+        eventLogEl.textContent = "Loading transcript...";
         try {
-          const [freshRun, events] = await Promise.all([
-            localRun(run.run_id),
-            localRunEvents(run.run_id),
-          ]);
-          renderEventTimeline(events, run.run_id);
-          const evidence = await localRunEvidence(run.run_id);
+          const transcript = await localRunTranscript(run.run_id);
+          const freshRun = transcript?.run ?? await localRun(run.run_id);
+          const events = transcript?.events ?? await localRunEvents(run.run_id);
+          const evidence = transcript?.evidence ?? await localRunEvidence(run.run_id);
+          renderEventTimeline(events, freshRun?.run_id ?? run.run_id);
           const eventText = events
             .map((event) => {
               const payload = JSON.stringify(event.payload);
@@ -1700,10 +1704,17 @@ ${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`
 Artifacts
 ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || evidence.artifact_paths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`
             : "Evidence unavailable.";
-          const response = freshRun?.final_response
-            ? `Final Response\n${freshRun.final_response}`
+          const turn = transcript?.chat_turn
+            ? `Chat Turn
+You: ${transcript.chat_turn.user_message}
+
+Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message recorded."}`
+            : "Chat Turn\nNo chat turn recorded.";
+          const finalResponse = transcript?.final_response ?? freshRun?.final_response;
+          const response = finalResponse
+            ? `Final Response\n${finalResponse}`
             : "Final Response\nNo final response recorded.";
-          eventLogEl.textContent = `${evidenceText}\n\n${response}\n\nEvents\n${eventText}`;
+          eventLogEl.textContent = `${evidenceText}\n\n${turn}\n\n${response}\n\nEvents\n${eventText}`;
         } catch (error) {
           eventLogEl.textContent = String(error);
         }

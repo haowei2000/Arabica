@@ -128,6 +128,10 @@ into runtime calls:
   `primitive_id`, mapping the local run trajectory back to
   `core/structure_core.json` (`goal`, `address`, `disclose`, `event`,
   `evidence`, and `feedback`).
+- CLI transcript: `uv run structure runs transcript <run-id> --json` returns the
+  shared run inspection object used by both local surfaces. It combines the run
+  summary, chat turn, ordered events, evidence summary, final response, and
+  core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - Benchmarks: benchmark execution and report relinking are owned by dedicated
   adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
   app surfaces.
@@ -139,13 +143,14 @@ into runtime calls:
   surfaces knowledge and artifact previews through the same runtime. Press `e`
   to inspect the same local evidence bundle.
 - Desktop app: Tauri commands such as `local_agent_run_attempt`, `local_runs`,
-  and `local_run_events`; `create_local_workspace` and `local_workspaces` back
-  the native workspace selector. `local_workspace_event_feed` powers the Poll
-  Events action and live in-flight run polling from a persisted cursor.
+  `local_run_transcript`, and `local_run_events`; `create_local_workspace` and
+  `local_workspaces` back the native workspace selector.
+  `local_workspace_event_feed` powers the Poll Events action and live in-flight
+  run polling from a persisted cursor.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events, and the UI renders both workspace feed events
-  and an inspectable latest-run trace from successful or failed attempts.
+  and an inspectable latest-run transcript from successful or failed attempts.
   `local_evidence_bundle` exposes the same reproducibility artifact as the
   CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
   `benchmarks/adapters/`.

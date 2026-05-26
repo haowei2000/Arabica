@@ -168,14 +168,14 @@
         {
           "surface_id": "cli_tui",
           "status": "native",
-          "entrypoint": "structure-local runs events / structure-local workspace events / structure-local workspace replay",
-          "evidence": "CLI emits JSON run event streams, cursor-based workspace event feeds, and workspace replay bundles for automation; local events include canonical_flow_id and primitive_id so diagnostics map back to the shared Structure core contract."
+          "entrypoint": "structure-local runs events / structure-local runs transcript / structure-local workspace events / structure-local workspace replay",
+          "evidence": "CLI emits JSON run event streams, shared run transcripts, cursor-based workspace event feeds, and workspace replay bundles for automation; local events include canonical_flow_id and primitive_id so diagnostics map back to the shared Structure core contract."
         },
         {
           "surface_id": "desktop_app",
           "status": "native",
-          "entrypoint": "local_run_events / local_workspace_event_feed / local_workspace_replay",
-          "evidence": "Desktop UI can poll cursor-based workspace events manually and during local agent runs, replay the workspace stream, and inspect run evidence locally with visible canonical flow and paper primitive labels."
+          "entrypoint": "local_run_transcript / local_run_events / local_workspace_event_feed / local_workspace_replay",
+          "evidence": "Desktop UI can poll cursor-based workspace events manually and during local agent runs, replay the workspace stream, and inspect run transcripts locally with visible canonical flow, paper primitive labels, chat turns, evidence, and final responses."
         },
         {
           "surface_id": "web_app",
