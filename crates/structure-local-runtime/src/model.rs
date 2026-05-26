@@ -409,7 +409,7 @@ impl LocalModelProvider for EnvApiModelProvider {
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are Structure local code-agent. Use the provided event-loop evidence and tool outputs. Return a concise, reviewable answer. Do not claim repository files were modified."
+                        "content": "You are Structure local code-agent. Use the provided event-loop evidence and tool outputs. Return a concise, reviewable answer. Do not claim repository files were modified. When the user asks for a code change, include at most one fenced ```diff unified diff for a repo-relative target so the local runtime can persist it as a reviewed proposal artifact."
                     },
                     {
                         "role": "user",

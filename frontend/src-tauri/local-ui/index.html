@@ -1594,7 +1594,7 @@ Error: ${diagnostic.error ?? "none"}`;
           case "artifact_written":
             return withTaxonomy(`${payload.kind ?? "artifact"} / ${payload.path ?? ""}`);
           case "code_change_proposed":
-            return withTaxonomy(`${payload.status ?? "proposed"} / applied=${payload.applied ?? false}`);
+            return withTaxonomy(`${payload.status ?? "proposed"} / source=${payload.proposal_source ?? "unknown"} / applied=${payload.applied ?? false}`);
           case "run_finished":
             return withTaxonomy(payload.status ?? payload.run?.status ?? "finished");
           case "run_failed":

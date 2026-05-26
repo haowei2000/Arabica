@@ -635,16 +635,18 @@ impl LocalAgentRuntime {
         &self,
         run: &RunSummary,
         tool_results: &[LocalToolResult],
-    ) -> Result<(PathBuf, String), String> {
+        model_response: &str,
+    ) -> Result<(PathBuf, String, String), String> {
         let artifact_dir = self.runtime_dir.join("artifacts").join(&run.run_id);
         fs::create_dir_all(&artifact_dir)
             .map_err(|err| format!("failed to create run artifact directory: {err}"))?;
         let inspected_files = inspected_files_from_tools(tool_results);
-        let proposal = render_code_change_proposal(run, &inspected_files);
+        let (proposal, proposal_source) =
+            render_code_change_proposal(&self.repo_root, run, &inspected_files, model_response);
         let path = artifact_dir.join("code_change_proposal.md");
         fs::write(&path, &proposal)
             .map_err(|err| format!("failed to write code change proposal artifact: {err}"))?;
-        Ok((path, proposal))
+        Ok((path, proposal, proposal_source))
     }
 
     fn execute_running_run(
@@ -834,16 +836,18 @@ impl LocalAgentRuntime {
         )?;
         let output = synthesis_model.synthesize(&model_request, &tool_results)?;
         let mut final_response = output.final_response;
-        let proposal_path = if matches!(mode, LocalAgentMode::CodeAgent) {
-            let (path, proposal) = self.write_code_change_proposal_artifact(&run, &tool_results)?;
+        let proposal = if matches!(mode, LocalAgentMode::CodeAgent) {
+            let (path, proposal, proposal_source) =
+                self.write_code_change_proposal_artifact(&run, &tool_results, &final_response)?;
             final_response.push_str("\n## Code Change Proposal\n\n");
             final_response.push_str("A proposed change artifact was produced for review. ");
             final_response.push_str("No repository files were modified by this run.\n\n");
             final_response.push_str(&format!("Artifact: `{}`\n\n", path.display()));
+            final_response.push_str(&format!("Source: `{proposal_source}`\n\n"));
             final_response.push_str("```diff\n");
             final_response.push_str(&extract_patch_sketch(&proposal));
             final_response.push_str("\n```\n");
-            Some(path)
+            Some((path, proposal_source))
         } else {
             None
         };
@@ -882,7 +886,7 @@ impl LocalAgentRuntime {
             RunEventKind::ArtifactWritten,
             &artifact,
         )?;
-        if let Some(proposal_path) = proposal_path {
+        if let Some((proposal_path, proposal_source)) = proposal {
             let proposal_artifact = self.store.add_artifact(
                 &run.run_id,
                 &run.workspace_id,
@@ -895,6 +899,7 @@ impl LocalAgentRuntime {
                 RunEventKind::CodeChangeProposed,
                 &serde_json::json!({
                     "artifact": proposal_artifact,
+                    "proposal_source": proposal_source,
                     "status": "proposed_only",
                     "applied": false,
                 }),
@@ -1150,7 +1155,12 @@ fn push_unique_string(values: &mut Vec<String>, value: &str) {
     }
 }
 
-fn render_code_change_proposal(run: &RunSummary, inspected_files: &[String]) -> String {
+fn render_code_change_proposal(
+    repo_root: &Path,
+    run: &RunSummary,
+    inspected_files: &[String],
+    model_response: &str,
+) -> (String, String) {
     let target_file = "docs/local-code-agent-proposal.md";
     let inspected = if inspected_files.is_empty() {
         "- No concrete source files were selected by the local search tool.\n".to_string()
@@ -1160,14 +1170,40 @@ fn render_code_change_proposal(run: &RunSummary, inspected_files: &[String]) -> 
             .map(|path| format!("- `{path}`\n"))
             .collect::<String>()
     };
+    let (patch, proposal_source) = model_response_patch(repo_root, model_response)
+        .map(|patch| (patch, "model_diff".to_string()))
+        .unwrap_or_else(|| {
+            (
+                format!(
+                    r#"```diff
+diff --git a/{target_file} b/{target_file}
+new file mode 100644
+--- /dev/null
++++ b/{target_file}
+@@
++# Proposed Structure local code-agent change
++Run: {run_id}
++Workspace: {workspace_id}
++Intent: {escaped_prompt}
++Evidence: review the run events, tool results, and this proposal artifact before applying.
+```"#,
+                    target_file = target_file,
+                    run_id = run.run_id,
+                    workspace_id = run.workspace_id,
+                    escaped_prompt = run.prompt.replace('\n', " ")
+                ),
+                "runtime_fallback".to_string(),
+            )
+        });
 
-    format!(
+    let proposal = format!(
         r#"# Structure Code Change Proposal
 
 Status: proposed_only
 Applied: false
 Run: `{run_id}`
 Workspace: `{workspace_id}`
+Source: `{proposal_source}`
 
 ## Intent
 
@@ -1184,26 +1220,38 @@ approval/apply step can turn a reviewed proposal into an actual patch.
 
 ## Patch Sketch
 
-```diff
-diff --git a/{target_file} b/{target_file}
-new file mode 100644
---- /dev/null
-+++ b/{target_file}
-@@
-+# Proposed Structure local code-agent change
-+Run: {run_id}
-+Workspace: {workspace_id}
-+Intent: {escaped_prompt}
-+Evidence: review the run events, tool results, and this proposal artifact before applying.
-```
+{patch}
 "#,
         run_id = run.run_id,
         workspace_id = run.workspace_id,
+        proposal_source = proposal_source,
         prompt = run.prompt,
         inspected = inspected,
-        target_file = target_file,
-        escaped_prompt = run.prompt.replace('\n', " ")
-    )
+        patch = patch
+    );
+    (proposal, proposal_source)
+}
+
+fn model_response_patch(repo_root: &Path, model_response: &str) -> Option<String> {
+    let patch = extract_first_diff_block(model_response)?;
+    let parsed = parse_proposal_patch(&patch).ok()?;
+    safe_proposal_target_path(repo_root, &parsed.target_path).ok()?;
+    Some(patch)
+}
+
+fn extract_first_diff_block(text: &str) -> Option<String> {
+    let marker = "```diff";
+    let start = text.find(marker)?;
+    let after_marker = &text[start + marker.len()..];
+    let body = after_marker.strip_prefix('\n').unwrap_or(after_marker);
+    let end = body.find("\n```").unwrap_or(body.len());
+    let patch_body = body[..end].trim();
+    (!patch_body.is_empty()).then(|| {
+        let mut patch = String::from("```diff\n");
+        patch.push_str(patch_body);
+        patch.push_str("\n```");
+        patch
+    })
 }
 
 fn extract_patch_sketch(proposal: &str) -> String {
@@ -2053,6 +2101,7 @@ diff --git a/docs/example.md b/docs/example.md
 
     #[test]
     fn generated_proposal_targets_review_artifact_file() {
+        let root = unique_repo("fallback-proposal").canonicalize().unwrap();
         let run = RunSummary {
             run_id: "run_test".to_string(),
             workspace_id: "default".to_string(),
@@ -2063,18 +2112,61 @@ diff --git a/docs/example.md b/docs/example.md
             updated_at_ms: 1,
         };
         let proposal = render_code_change_proposal(
+            &root,
             &run,
             &[
                 "core/structure_core.json".to_string(),
                 "src/main.rs".to_string(),
             ],
+            "No model diff was provided.",
         );
+        let (proposal, proposal_source) = proposal;
         let patch = parse_proposal_patch(&proposal).unwrap();
 
         assert_eq!(patch.target_path, "docs/local-code-agent-proposal.md");
         assert!(patch.new_file);
+        assert_eq!(proposal_source, "runtime_fallback");
         assert!(proposal.contains("core/structure_core.json"));
         assert!(proposal.contains("new file mode 100644"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn generated_proposal_prefers_safe_model_diff() {
+        let root = unique_repo("model-proposal").canonicalize().unwrap();
+        let run = RunSummary {
+            run_id: "run_model_patch".to_string(),
+            workspace_id: "default".to_string(),
+            prompt: "Add a note".to_string(),
+            status: "finished".to_string(),
+            final_response: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let model_response = r#"Here is the proposed patch.
+
+```diff
+diff --git a/docs/model-note.md b/docs/model-note.md
+new file mode 100644
+--- /dev/null
++++ b/docs/model-note.md
+@@
++# Model proposed note
++This patch came from the model response.
+```
+"#;
+
+        let (proposal, proposal_source) =
+            render_code_change_proposal(&root, &run, &[], model_response);
+        let patch = parse_proposal_patch(&proposal).unwrap();
+
+        assert_eq!(proposal_source, "model_diff");
+        assert_eq!(patch.target_path, "docs/model-note.md");
+        assert!(proposal.contains("Source: `model_diff`"));
+        assert!(proposal.contains("Model proposed note"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

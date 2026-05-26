@@ -69,11 +69,14 @@ evidence output and the desktop selected-run transcript can show the file
 context used by a run without requiring raw event inspection.
 
 Code-agent mode persists a reviewed code-change proposal artifact before any
-write. Applying that proposal parses its unified diff, verifies target context
-inside the repository root, refuses sensitive configuration targets, and records
-the explicit `code_change_applied` event. The deterministic offline proposal
-targets `docs/local-code-agent-proposal.md` so smoke tests and demos do not
-mutate inspected source files.
+write. If the model response includes a safe fenced unified diff, that model
+diff becomes the proposal artifact with `proposal_source=model_diff`; otherwise
+the runtime writes a deterministic fallback proposal with
+`proposal_source=runtime_fallback`. Applying a proposal parses its unified diff,
+verifies target context inside the repository root, refuses sensitive
+configuration targets, and records the explicit `code_change_applied` event.
+The deterministic offline fallback targets `docs/local-code-agent-proposal.md`
+so smoke tests and demos do not mutate inspected source files.
 
 The same event log is also exposed as a cursor-based workspace feed through
 `workspace_event_feed`. CLI and desktop callers can request events after a known
