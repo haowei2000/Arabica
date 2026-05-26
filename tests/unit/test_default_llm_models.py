@@ -1,10 +1,11 @@
-"""Tests for platform default LLM model initialization and response masking."""
+"""Tests for platform default LLM model initialization."""
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pydantic import ValidationError
 import pytest
 
 from structure.core.bootstrap import ApplicationBootstrap, BootstrapConfig
@@ -86,8 +87,6 @@ def test_system_chat_model_response_masks_api_key():
         user_id=None,
         provider="openai",
         model_id="gpt-4.1-mini",
-        base_url="https://api.openai.com/v1",
-        api_key_ref="sk-platform",
         supports_vision=False,
         supports_function_call=True,
         supports_streaming=True,
@@ -99,10 +98,11 @@ def test_system_chat_model_response_masks_api_key():
         updated_at=now,
     )
 
-    assert response.api_key_ref == "configured"
+    assert not hasattr(response, "api_key_ref")
+    assert not hasattr(response, "base_url")
 
 
-def test_user_chat_model_response_keeps_owner_api_key():
+def test_user_chat_model_response_omits_api_config():
     now = datetime.now(UTC)
 
     response = ChatModelResponse(
@@ -111,8 +111,6 @@ def test_user_chat_model_response_keeps_owner_api_key():
         user_id="00000000-0000-0000-0000-000000000002",
         provider="openai",
         model_id="gpt-4.1-mini",
-        base_url="https://api.openai.com/v1",
-        api_key_ref="sk-user",
         supports_vision=False,
         supports_function_call=True,
         supports_streaming=True,
@@ -124,11 +122,12 @@ def test_user_chat_model_response_keeps_owner_api_key():
         updated_at=now,
     )
 
-    assert response.api_key_ref == "sk-user"
+    assert not hasattr(response, "api_key_ref")
+    assert not hasattr(response, "base_url")
 
 
 def test_chat_model_create_rejects_runtime_api_config():
-    with pytest.raises(ValueError, match="OPENAI__API_KEY"):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         ChatModelCreate(
             name="Custom",
             provider="openai",
@@ -139,7 +138,7 @@ def test_chat_model_create_rejects_runtime_api_config():
 
 
 def test_embedding_model_create_rejects_runtime_api_config():
-    with pytest.raises(ValueError, match="OPENAI__API_KEY"):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         EmbeddingModelCreate(
             name="Custom Embeddings",
             provider="openai",
@@ -159,8 +158,6 @@ def test_system_embedding_model_response_masks_api_key():
         user_id=None,
         provider="openai",
         model_id="text-embedding-3-small",
-        base_url="https://api.openai.com/v1",
-        api_key_ref="sk-platform",
         dimension=1536,
         supports_batch=True,
         batch_size=32,
@@ -174,4 +171,5 @@ def test_system_embedding_model_response_masks_api_key():
         updated_at=now,
     )
 
-    assert response.api_key_ref == "configured"
+    assert not hasattr(response, "api_key_ref")
+    assert not hasattr(response, "base_url")

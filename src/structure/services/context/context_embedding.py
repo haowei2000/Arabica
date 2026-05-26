@@ -28,13 +28,8 @@ async def load_default_embedding_service(db: AsyncSession) -> EmbeddingService:
     Must be awaited inside an async context BEFORE calling embed_for_context/embed_batch_for_context
     (which must run outside any DB session).
     """
-    from structure.config.factory import get_settings
     from structure.services.context.knowledge.embeddings import EmbeddingService
     from structure.services.llm.embedding_model_crud import EmbeddingModelCRUD
-
-    openai_settings = get_settings().openai
-    api_key = (openai_settings.api_key if openai_settings else "").strip()
-    base_url = (openai_settings.base_url if openai_settings else "").strip()
 
     model = await EmbeddingModelCRUD(db).get_default()
     if model:
@@ -42,16 +37,12 @@ async def load_default_embedding_service(db: AsyncSession) -> EmbeddingService:
             provider=model.provider,  # type: ignore[arg-type]
             model=model.model_id,
             dimension=model.dimension,
-            api_key=api_key,
-            base_url=base_url,
         )
     # Fallback: return an unconfigured service that will raise on use
     return EmbeddingService(
         provider=DEFAULT_PROVIDER,
         model=DEFAULT_MODEL,
         dimension=DEFAULT_DIMENSION,
-        api_key=api_key,
-        base_url=base_url,
     )
 
 

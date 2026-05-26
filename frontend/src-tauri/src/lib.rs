@@ -60,6 +60,24 @@ fn read_local_repo_file(
 }
 
 #[tauri::command]
+fn run_local_command(
+    argv: Vec<String>,
+    cwd: Option<String>,
+    timeout_ms: Option<u64>,
+    max_output_chars: Option<u64>,
+) -> Result<structure_local_runtime::LocalToolResult, String> {
+    execute_local_repo_tool(
+        "run_local_command",
+        serde_json::json!({
+            "argv": argv,
+            "cwd": cwd.unwrap_or_else(|| ".".to_string()),
+            "timeout_ms": timeout_ms.unwrap_or(30_000),
+            "max_output_chars": max_output_chars.unwrap_or(12_000),
+        }),
+    )
+}
+
+#[tauri::command]
 fn local_agent_run(
     prompt: String,
     workspace_id: Option<String>,
@@ -253,6 +271,7 @@ pub fn run() {
             local_repo_entries,
             local_repo_search,
             read_local_repo_file,
+            run_local_command,
             local_agent_run,
             local_chat_turns,
             local_runs,
@@ -334,6 +353,7 @@ mod tests {
             let search = local_repo_search("desktop local".to_string(), Some(8))?;
             let read_note = read_local_repo_file("note.md".to_string(), Some(1_000))?;
             let read_env = read_local_repo_file(".env".to_string(), Some(1_000))?;
+            let pwd = run_local_command(vec!["pwd".to_string()], None, Some(5_000), Some(2_000))?;
             let run = local_agent_run(
                 "Inspect this desktop command workspace.".to_string(),
                 Some(workspace.workspace_id.clone()),
@@ -381,6 +401,12 @@ mod tests {
                 read_env.error.as_deref(),
                 Some("refusing to read sensitive local configuration file")
             );
+            assert!(pwd.success);
+            assert_eq!(pwd.output["success"], true);
+            assert!(pwd.output["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(root.to_str().unwrap()));
             assert_eq!(run.run.workspace_id, "desktop-test");
             assert_eq!(run.run.status, "finished");
             assert_eq!(chat_run.run.status, "finished");

@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 
-from benchmarks.baselines import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMBenchmarkAgent
+from benchmarks.baselines import LLMBenchmarkAgent
 from benchmarks.core import BenchmarkCase, BenchmarkReport, BenchmarkRunner
 from benchmarks.locomo import load_locomo, locomo_qa_scorer
 from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
@@ -109,6 +109,27 @@ def render_markdown(report: BenchmarkReport) -> str:
     return "\n".join(lines)
 
 
+def _require_openai_env() -> tuple[str, str, str]:
+    api_key = os.getenv("OPENAI__API_KEY", "").strip()
+    base_url = os.getenv("OPENAI__BASE_URL", "").strip()
+    model = os.getenv("OPENAI__MODEL", "").strip()
+    missing = [
+        name
+        for name, value in (
+            ("OPENAI__API_KEY", api_key),
+            ("OPENAI__BASE_URL", base_url),
+            ("OPENAI__MODEL", model),
+        )
+        if not value
+    ]
+    if missing:
+        raise SystemExit(
+            "missing LLM environment variables: export "
+            + ", ".join(f"{name}=..." for name in missing)
+        )
+    return api_key, base_url, model
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run benchmark fixtures or datasets with a real chat model.",
@@ -123,21 +144,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--dataset",
         type=Path,
         help="Dataset path. Defaults to the bundled fixture for the benchmark.",
-    )
-    parser.add_argument(
-        "--api-key-env",
-        default="OPENAI__API_KEY",
-        help="Environment variable containing the API key.",
-    )
-    parser.add_argument(
-        "--base-url",
-        default=os.getenv("OPENAI__BASE_URL", DEFAULT_BASE_URL),
-        help="OpenAI-compatible base URL.",
-    )
-    parser.add_argument(
-        "--model",
-        default=os.getenv("OPENAI__MODEL", DEFAULT_MODEL),
-        help="Chat model name.",
     )
     parser.add_argument(
         "--context-mode",
@@ -178,11 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    api_key = os.getenv(args.api_key_env, "")
-    if not api_key:
-        raise SystemExit(
-            f"missing API key: export {args.api_key_env}=... before running"
-        )
+    api_key, base_url, model = _require_openai_env()
 
     dataset = args.dataset or DEFAULT_DATASETS[args.benchmark]
     report = asyncio.run(
@@ -190,8 +192,8 @@ def main(argv: list[str] | None = None) -> int:
             benchmark=args.benchmark,
             dataset=dataset,
             api_key=api_key,
-            base_url=args.base_url,
-            model=args.model,
+            base_url=base_url,
+            model=model,
             context_mode=args.context_mode,
             top_k=args.top_k,
             temperature=args.temperature,

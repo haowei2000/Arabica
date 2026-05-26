@@ -599,6 +599,25 @@ fn handle_chat_session_command(
             print_tool_result(result)?;
             Ok(true)
         }
+        "/cmd" => {
+            let argv = parts.map(str::to_string).collect::<Vec<_>>();
+            if argv.is_empty() {
+                println!("Usage: /cmd <allowlisted-command> [args...]");
+                return Ok(true);
+            }
+            let result = execute_session_tool(
+                runtime,
+                "run_local_command",
+                serde_json::json!({
+                    "argv": argv,
+                    "cwd": ".",
+                    "timeout_ms": 30_000,
+                    "max_output_chars": 12_000,
+                }),
+            );
+            print_tool_result(result)?;
+            Ok(true)
+        }
         "/runs" => {
             let runs = local_result(runtime.list_runs(state.workspace_id.as_deref(), 8))?;
             print_runs(&runs);
@@ -729,6 +748,7 @@ fn print_chat_session_help() {
     println!("  /ls                   List top-level workspace entries");
     println!("  /search <query>       Search repo text through local tools");
     println!("  /read <path>          Read a repo-relative file safely");
+    println!("  /cmd <argv...>        Run an allowlisted local check command");
     println!("  /source <path>        Register a knowledge file for this workspace");
     println!("  /sources              List workspace knowledge sources");
     println!("  /runs                 List recent runs in this workspace");
@@ -820,6 +840,49 @@ fn print_tool_result(result: structure_local_runtime::LocalToolResult) -> Result
                 .unwrap_or("");
             println!("{path} ({chars} chars, truncated: {truncated})");
             println!("{preview}");
+        }
+        "run_local_command" => {
+            let argv = result
+                .output
+                .get("argv")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_else(|| "<unknown command>".to_string());
+            let exit_code = result
+                .output
+                .get("exit_code")
+                .and_then(serde_json::Value::as_i64)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            let timed_out = result
+                .output
+                .get("timed_out")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            println!("$ {argv}");
+            println!("exit: {exit_code}, timed out: {timed_out}");
+            let stdout = result
+                .output
+                .get("stdout")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let stderr = result
+                .output
+                .get("stderr")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if !stdout.is_empty() {
+                println!("\nstdout:\n{stdout}");
+            }
+            if !stderr.is_empty() {
+                println!("\nstderr:\n{stderr}");
+            }
         }
         _ => {
             println!("{}", serde_json::to_string_pretty(&result.output)?);

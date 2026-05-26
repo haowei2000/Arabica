@@ -234,7 +234,20 @@ class TestSearchKnowledge:
 
 
 class TestHybridSearchKnowledge:
-    def test_search_success(self, client, mock_context_crud):
+    def test_search_success(self, client, mock_context_crud, monkeypatch):
+        monkeypatch.setenv("OPENAI__API_KEY", "test-key")
+        monkeypatch.setenv("OPENAI__BASE_URL", "http://example.test/v1")
+        monkeypatch.setenv("OPENAI__MODEL", "test-model")
+
+        from structure.config.factory import get_settings
+        from structure.services.context.knowledge import embeddings
+
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            embeddings,
+            "OpenAIEmbeddings",
+            lambda **_kwargs: MagicMock(),
+        )
         with patch(
             "structure.services.context.knowledge.embeddings.EmbeddingService.embed_text",
             return_value=[0.1] * 1536,
@@ -244,6 +257,7 @@ class TestHybridSearchKnowledge:
         assert resp.status_code == 200
         assert "total" in resp.json()
         mock_context_crud.hybrid_search.assert_called_once()
+        get_settings.cache_clear()
 
     def test_search_no_model(self, client, mock_embedding_model_crud):
         mock_embedding_model_crud.get_default.return_value = None

@@ -458,6 +458,38 @@ fn local_tool_schemas(request: &ModelRequest) -> Vec<serde_json::Value> {
                 }
             }
         }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "run_local_command",
+                "description": "Run an allowlisted local verification or search command without a shell. Use for tests, type checks, lint checks, git inspection, and ripgrep evidence.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "argv": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Command argv. Allowed examples: cargo check --workspace, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings, uv run pytest tests/unit -q, uv run ruff check src tests, npm run build, npm run desktop:build, git status --short, git diff --stat, rg pattern path."
+                        },
+                        "cwd": {
+                            "type": "string",
+                            "description": "Repository-relative working directory."
+                        },
+                        "timeout_ms": {
+                            "type": "integer",
+                            "minimum": 1000,
+                            "maximum": 120000
+                        },
+                        "max_output_chars": {
+                            "type": "integer",
+                            "minimum": 1000,
+                            "maximum": 40000
+                        }
+                    },
+                    "required": ["argv"]
+                }
+            }
+        }),
     ];
     if !request.knowledge.is_empty() {
         tools.push(serde_json::json!({
@@ -506,7 +538,11 @@ fn parse_api_tool_calls(value: &serde_json::Value) -> Result<Vec<LocalToolCall>,
         };
         if !matches!(
             name,
-            "list_workspace" | "search_repo" | "read_repo_file" | "read_knowledge_source"
+            "list_workspace"
+                | "search_repo"
+                | "read_repo_file"
+                | "read_knowledge_source"
+                | "run_local_command"
         ) {
             continue;
         }
@@ -644,6 +680,14 @@ mod tests {
                                     "name": "write_file",
                                     "arguments": "{\"path\":\"src/lib.rs\"}"
                                 }
+                            },
+                            {
+                                "id": "call_check",
+                                "type": "function",
+                                "function": {
+                                    "name": "run_local_command",
+                                    "arguments": "{\"argv\":[\"cargo\",\"check\",\"--workspace\"],\"timeout_ms\":120000}"
+                                }
                             }
                         ]
                     }
@@ -653,11 +697,14 @@ mod tests {
 
         let calls = parse_api_tool_calls(&value).unwrap();
 
-        assert_eq!(calls.len(), 1);
+        assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].call_id, "call_search");
         assert_eq!(calls[0].name, "search_repo");
         assert_eq!(calls[0].input["query"], "LocalAgentRuntime");
         assert_eq!(calls[0].input["max_matches"], 3);
+        assert_eq!(calls[1].call_id, "call_check");
+        assert_eq!(calls[1].name, "run_local_command");
+        assert_eq!(calls[1].input["argv"][0], "cargo");
     }
 
     #[test]

@@ -53,7 +53,6 @@ function EnabledBadge({ enabled }: { enabled: boolean }) {
 
 const EMPTY_CHAT: ChatModelCreate = {
   name: '', provider: '', model_id: '', description: null,
-  base_url: null, api_key_ref: null,
   supports_vision: false, supports_function_call: true, supports_streaming: true,
   enabled: true, is_default: false,
 };
@@ -70,8 +69,7 @@ function ChatModelDialog({
     initial
       ? {
           name: initial.name, provider: initial.provider, model_id: initial.model_id,
-          description: initial.description ?? null, base_url: initial.base_url ?? null,
-          api_key_ref: initial.api_key_ref ?? null,
+          description: initial.description ?? null,
           max_tokens: initial.max_tokens ?? null, context_window: initial.context_window ?? null,
           supports_vision: initial.supports_vision, supports_function_call: initial.supports_function_call,
           supports_streaming: initial.supports_streaming,
@@ -126,14 +124,6 @@ function ChatModelDialog({
             <div className="space-y-1 col-span-2">
               <Label>Description</Label>
               <Input value={form.description ?? ''} onChange={e => set('description', e.target.value || null)} placeholder="Optional description" />
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label>Base URL</Label>
-              <Input value={form.base_url ?? ''} onChange={e => set('base_url', e.target.value || null)} placeholder="https://api.openai.com/v1" />
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label>API Key</Label>
-              <Input value={form.api_key_ref ?? ''} onChange={e => set('api_key_ref', e.target.value || null)} placeholder="sk-..." type="password" />
             </div>
             <div className="space-y-1">
               <Label>Context Window</Label>
@@ -213,7 +203,7 @@ function ChatModelDialog({
 
 const EMPTY_EMBED: EmbeddingModelCreate = {
   name: '', provider: '', model_id: '', dimension: 1536,
-  description: null, base_url: null, api_key_ref: null,
+  description: null,
   supports_batch: true, batch_size: 32, normalize: true,
   distance_metric: 'cosine', enabled: true, is_default: false,
 };
@@ -227,7 +217,6 @@ const EMBEDDING_PRESETS = [
       provider: 'openai',
       model_id: 'text-embedding-3-small',
       dimension: 1536,
-      base_url: 'https://api.openai.com/v1',
       max_tokens: 8192,
       currency: 'USD',
     },
@@ -264,8 +253,7 @@ function EmbeddingModelDialog({
     if (initial) {
       return {
           name: initial.name, provider: initial.provider, model_id: initial.model_id,
-          description: initial.description ?? null, base_url: initial.base_url ?? null,
-          api_key_ref: initial.api_key_ref ?? null,
+          description: initial.description ?? null,
           dimension: initial.dimension, max_tokens: initial.max_tokens ?? null,
           supports_batch: initial.supports_batch, batch_size: initial.batch_size,
           normalize: initial.normalize, distance_metric: initial.distance_metric,
@@ -302,7 +290,6 @@ function EmbeddingModelDialog({
     setForm((prev) => ({
       ...prev,
       ...preset.values,
-      api_key_ref: prev.api_key_ref,
       description: prev.description,
       enabled: prev.enabled,
       is_default: prev.is_default,
@@ -362,14 +349,6 @@ function EmbeddingModelDialog({
             <div className="space-y-1 col-span-2">
               <Label>Description</Label>
               <Input value={form.description ?? ''} onChange={e => set('description', e.target.value || null)} placeholder="Optional description" />
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label>Base URL</Label>
-              <Input value={form.base_url ?? ''} onChange={e => set('base_url', e.target.value || null)} placeholder="https://api.openai.com/v1" />
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label>API Key</Label>
-              <Input value={form.api_key_ref ?? ''} onChange={e => set('api_key_ref', e.target.value || null)} placeholder="sk-..." type="password" />
             </div>
             <div className="space-y-1">
               <Label>Dimension *</Label>

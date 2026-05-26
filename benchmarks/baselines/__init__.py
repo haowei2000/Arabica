@@ -21,19 +21,13 @@ from benchmarks.baselines.lightmem_reference import (
     iter_locomo_overview,
     locomo_overview_dicts,
 )
-from benchmarks.baselines.llm_agent import (
-    DEFAULT_BASE_URL,
-    DEFAULT_MODEL,
-    LLMBenchmarkAgent,
-)
+from benchmarks.baselines.llm_agent import LLMBenchmarkAgent
 from benchmarks.baselines.memory_agents import (
     RetrievalOracleBaseline,
     make_memory_baseline,
 )
 
 __all__ = [
-    "DEFAULT_BASE_URL",
-    "DEFAULT_MODEL",
     "LIGHTMEM_LOCOMO_OVERVIEW",
     "MEMORY_BASELINE_CATALOG",
     "EchoAgent",

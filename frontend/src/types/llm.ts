@@ -7,8 +7,6 @@ export interface ChatModel {
   user_id?: string | null;
   provider: string;
   model_id: string;
-  base_url?: string | null;
-  api_key_ref?: string | null;
   max_tokens?: number | null;
   context_window?: number | null;
   supports_vision: boolean;
@@ -34,8 +32,6 @@ export interface ChatModelCreate {
   description?: string | null;
   provider: string;
   model_id: string;
-  base_url?: string | null;
-  api_key_ref?: string | null;
   max_tokens?: number | null;
   context_window?: number | null;
   supports_vision?: boolean;
@@ -69,8 +65,6 @@ export interface EmbeddingModel {
   user_id?: string | null;
   provider: string;
   model_id: string;
-  base_url?: string | null;
-  api_key_ref?: string | null;
   dimension: number;
   max_tokens?: number | null;
   supports_batch: boolean;
@@ -93,8 +87,6 @@ export interface EmbeddingModelCreate {
   description?: string | null;
   provider: string;
   model_id: string;
-  base_url?: string | null;
-  api_key_ref?: string | null;
   dimension: number;
   max_tokens?: number | null;
   supports_batch?: boolean;

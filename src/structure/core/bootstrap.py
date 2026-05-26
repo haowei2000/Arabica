@@ -415,13 +415,15 @@ class ApplicationBootstrap:
         """Create or update system default LLM models from OPENAI__* settings."""
         openai_settings = self.settings.openai
         api_key = (openai_settings.api_key if openai_settings else "").strip()
-        if not api_key:
-            logger.info("Skipping system default LLM seed: OPENAI__API_KEY is not set")
+        base_url = (openai_settings.base_url if openai_settings else "").strip()
+        chat_model_id = (openai_settings.model if openai_settings else "").strip()
+        if not api_key or not base_url or not chat_model_id:
+            logger.info(
+                "Skipping system default LLM seed: OPENAI__API_KEY, "
+                "OPENAI__BASE_URL, and OPENAI__MODEL must all be set"
+            )
             return
 
-        chat_model_id = (
-            (openai_settings.model if openai_settings else "") or "gpt-4.1-mini"
-        ).strip()
         embedding_model_id = "text-embedding-3-small"
         embedding_dimension = 1536
 

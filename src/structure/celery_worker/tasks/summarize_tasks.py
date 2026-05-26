@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from uuid import UUID
 
 from structure.celery_worker.celery_app import celery_app
@@ -39,8 +38,7 @@ def _call_llm(prompt: str) -> str:
 
     from structure.extensions.llm.llm import get_llm
 
-    model = os.getenv("OPENAI__MODEL", "gpt-4.1-mini")
-    llm = get_llm(model, provider=_SUMMARY_PROVIDER)
+    llm = get_llm(provider=_SUMMARY_PROVIDER)
     response = llm.invoke([HumanMessage(content=prompt)])
     return response.content
 

@@ -28,14 +28,10 @@ class EmbeddingService:
         provider: EmbeddingProvider = "openai",
         model: str = "text-embedding-3-small",
         dimension: int = 1536,
-        api_key: str | None = None,
-        base_url: str | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
         self.dimension = dimension
-        self._api_key = api_key or ""
-        self._base_url = base_url or ""
         self._client = self._create_client()
 
         logger.info(
@@ -45,17 +41,22 @@ class EmbeddingService:
 
     def _create_client(self) -> OpenAIEmbeddings:
         """Create an OpenAI-compatible embedding client."""
+        from structure.config.factory import get_settings
+
         if self.provider not in ("openai", "custom"):
             raise ValueError(f"Unsupported embedding provider: {self.provider}")
-        if not self._api_key or not self._base_url:
+        openai_settings = get_settings().openai
+        api_key = (openai_settings.api_key if openai_settings else "").strip()
+        base_url = (openai_settings.base_url if openai_settings else "").strip()
+        if not api_key or not base_url:
             raise ValueError(
                 "No embedding model configured. Seed the default embedding model from "
                 "OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL."
             )
         return OpenAIEmbeddings(
             model=self.model,
-            openai_api_key=self._api_key,
-            openai_api_base=self._base_url,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
             dimensions=self.dimension,
         )
 

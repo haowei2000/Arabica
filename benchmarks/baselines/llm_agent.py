@@ -17,9 +17,6 @@ from benchmarks.baselines.memory_agents import (
 )
 from benchmarks.core.types import BenchmarkCase, BenchmarkResult, CostLedger
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MODEL = "gpt-4.1-mini"
-
 
 def _usage_value(usage: object, *names: str) -> int:
     for name in names:
@@ -57,9 +54,9 @@ def _choice_content(response: object) -> str:
 class LLMBenchmarkAgent:
     """Answer benchmark cases with a real chat model."""
 
-    model: str = DEFAULT_MODEL
+    model: str = ""
     api_key: str = ""
-    base_url: str = DEFAULT_BASE_URL
+    base_url: str = ""
     context_mode: str = "fulltext"
     top_k: int = 6
     temperature: float = 0.0
@@ -70,8 +67,11 @@ class LLMBenchmarkAgent:
 
     def __post_init__(self) -> None:
         if self.client is None:
-            if not self.api_key:
-                raise ValueError("LLMBenchmarkAgent requires an API key")
+            if not self.api_key or not self.base_url or not self.model:
+                raise ValueError(
+                    "LLMBenchmarkAgent requires OPENAI__API_KEY, "
+                    "OPENAI__BASE_URL, and OPENAI__MODEL"
+                )
             self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def _select_context(

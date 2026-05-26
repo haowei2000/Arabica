@@ -9,13 +9,13 @@ from structure.middleware.cache_middleware import get_redis_client
 
 logger = logging.getLogger(__name__)
 
-# Cache LLM clients by (name, provider, add_cache) to avoid creating
+# Cache LLM clients by (model, provider, add_cache) to avoid creating
 # new HTTP connection pools on every call.
 _llm_cache: dict[tuple[str, str, bool], BaseChatModel] = {}
 
 
 def get_llm(
-    name: str, provider: str = "openai", add_cache: bool = False
+    name: str | None = None, provider: str = "openai", add_cache: bool = False
 ) -> BaseChatModel:
     """Return a cached LangChain model instance from the OPENAI__ env contract.
 
@@ -72,5 +72,5 @@ def get_llm(
             raise ValueError(f"Unsupported provider: {provider}")
 
     _llm_cache[cache_key] = llm
-    logger.info("Created and cached LLM client: %s/%s", provider, name)
+    logger.info("Created and cached LLM client: %s/%s", provider, model)
     return llm

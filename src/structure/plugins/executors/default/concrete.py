@@ -850,14 +850,14 @@ class DefaultExecutor(Executor):
         "enabled": True,
         "version": 1,
         "config": AppConfig(
-            model=ChatLLM(provider="openai", name="gpt-4.1-mini"), context=None
+            model=ChatLLM(provider="openai", name="OPENAI__MODEL"), context=None
         ),
     }
 
     def __init__(self, config: dict):
         super().__init__(config)
         self.model_provider = "openai"
-        self.model_name = "gpt-4.1-mini"
+        self.model_name = ""
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")

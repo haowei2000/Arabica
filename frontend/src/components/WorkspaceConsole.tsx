@@ -12,7 +12,6 @@ import { MessageRole } from '@/types/message';
 import { formatRelativeTime } from '@/utils/formatDate';
 import { ThinkingBlock, ToolCallCard, PlanStepList, ApprovalCard, QueryCard, OutcomeCard } from '@/components/AgentEvents';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -631,11 +630,8 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
 
   const currentWorkspace = workspacesData?.items?.find((w) => w.id === currentWorkspaceId);
   const wsConfig = currentWorkspace?.executor_config as Record<string, unknown> | null | undefined;
-  const wsModel = wsConfig?.model as { name?: string; provider?: string } | undefined;
 
   const [sExecutorCode, setSExecutorCode] = useState('');
-  const [sModelName, setSModelName] = useState('');
-  const [sModelProvider, setSModelProvider] = useState('openai');
   const [sGlobalEvent, setSGlobalEvent] = useState(true);
   const [settingsSaving, setSettingsSaving] = useState(false);
 
@@ -643,19 +639,14 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
   useEffect(() => {
     if (!currentWorkspace) return;
     setSExecutorCode(currentWorkspace.executor_code ?? '');
-    setSModelName(wsModel?.name ?? '');
-    setSModelProvider(wsModel?.provider ?? 'openai');
     setSGlobalEvent(wsConfig?.global_event !== undefined ? Boolean(wsConfig.global_event) : true);
-  }, [currentWorkspaceId, currentWorkspace, wsConfig?.global_event, wsModel?.name, wsModel?.provider]);
+  }, [currentWorkspaceId, currentWorkspace, wsConfig?.global_event]);
 
   const handleSettingsSave = async () => {
     if (!currentWorkspaceId) return;
     setSettingsSaving(true);
     try {
       const executorConfig: Record<string, unknown> = { global_event: sGlobalEvent };
-      if (sModelName.trim()) {
-        executorConfig.model = { name: sModelName.trim(), provider: sModelProvider };
-      }
       await updateWorkspace.mutateAsync({
         workspaceId: currentWorkspaceId,
         data: {
@@ -1407,28 +1398,6 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     Current: <span className="font-mono">{currentWorkspace.executor_code}</span>
                   </p>
                 )}
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Model</Label>
-                <div className="flex gap-2">
-                  <select
-                    value={sModelProvider}
-                    onChange={(e) => setSModelProvider(e.target.value)}
-                    className="rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-24 shrink-0"
-                  >
-                    <option value="openai">openai</option>
-                    <option value="custom">custom</option>
-                  </select>
-                  <Input
-                    value={sModelName}
-                    onChange={(e) => setSModelName(e.target.value)}
-                    placeholder="e.g. gpt-4.1-mini"
-                    className="flex-1 text-sm h-9"
-                  />
-                </div>
-                <p className="text-[10px] text-muted-foreground">Leave blank to use executor default.</p>
               </div>
 
               {/* Global Event */}
