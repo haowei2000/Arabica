@@ -2204,11 +2204,17 @@ The original file was not deleted.`;
         const worktreeChanges = evidence.worktree?.changed_files ?? [];
         const artifacts = evidence.artifacts ?? [];
         const artifactPaths = evidence.artifact_paths ?? [];
+        const modelUsage = evidence.model_usage ?? {};
+        const tokenLine = modelUsage.total_tokens > 0
+          ? `Model tokens: ${modelUsage.prompt_tokens ?? 0} prompt / ${modelUsage.completion_tokens ?? 0} completion / ${modelUsage.total_tokens ?? 0} total\n`
+          : "";
         return `Evidence
 Run: ${evidence.run?.run_id ?? "unknown"}
 Status: ${evidence.run?.status ?? "unknown"}
 Events: ${evidence.event_count}
 Tool calls: ${evidence.tool_call_count}
+Model usage: ${modelUsage.model_request_count ?? 0} requests / ${modelUsage.model_response_count ?? 0} responses / ${modelUsage.network_request_count ?? 0} network
+${tokenLine}Model response chars: ${modelUsage.response_chars ?? 0}
 Instructions: ${agentInstructionPaths.length}
 Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} / ${worktreeChanges.length} changes` : "unavailable"}
 Prompt refs: ${promptReferences.length}

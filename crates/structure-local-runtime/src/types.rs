@@ -236,11 +236,30 @@ pub struct RunAttempt {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelTokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelUsageSummary {
+    pub model_request_count: usize,
+    pub model_response_count: usize,
+    pub network_request_count: usize,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub response_chars: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunEvidenceSummary {
     pub run: RunSummary,
     pub event_count: usize,
     pub tool_call_count: usize,
+    pub model_usage: ModelUsageSummary,
     pub agent_instruction_paths: Vec<String>,
     pub worktree: Option<WorktreeSnapshot>,
     pub prompt_references: Vec<String>,

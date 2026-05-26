@@ -1,7 +1,7 @@
 use crate::store::new_id;
 use crate::types::{
     AgentInstruction, ChatTurn, KnowledgeSource, LocalAgentMode, LocalLlmDiagnostic, LocalToolCall,
-    LocalToolResult, RunSummary, WorktreeSnapshot,
+    LocalToolResult, ModelTokenUsage, RunSummary, WorktreeSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -23,12 +23,14 @@ pub struct ModelRequest {
 pub struct ModelPlan {
     pub provider: String,
     pub tool_calls: Vec<LocalToolCall>,
+    pub usage: Option<ModelTokenUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelOutput {
     pub provider: String,
     pub final_response: String,
+    pub usage: Option<ModelTokenUsage>,
 }
 
 pub trait LocalModelProvider {
@@ -45,6 +47,7 @@ pub trait LocalModelProvider {
         Ok(ModelPlan {
             provider: self.provider_id().to_string(),
             tool_calls: Vec::new(),
+            usage: None,
         })
     }
     fn synthesize(
@@ -250,6 +253,7 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
         Ok(ModelPlan {
             provider: self.provider_id().to_string(),
             tool_calls,
+            usage: None,
         })
     }
 
@@ -367,6 +371,7 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
         Ok(ModelOutput {
             provider: self.provider_id().to_string(),
             final_response: response,
+            usage: None,
         })
     }
 }
@@ -402,15 +407,18 @@ impl LocalModelProvider for EnvApiModelProvider {
             "temperature": 0.0,
             "max_tokens": 300
         }))?;
+        let usage = parse_api_usage(&response);
         let tool_calls = parse_api_tool_calls(&response)?;
         if tool_calls.is_empty() && tool_results.is_empty() {
             let mut fallback = DeterministicLocalModelProvider.plan(request)?;
             fallback.provider = "local_env_api_fallback".to_string();
+            fallback.usage = usage;
             return Ok(fallback);
         }
         Ok(ModelPlan {
             provider: self.provider_id().to_string(),
             tool_calls,
+            usage,
         })
     }
 
@@ -435,6 +443,7 @@ impl LocalModelProvider for EnvApiModelProvider {
                 "temperature": 0.2,
                 "max_tokens": 900
             }))?;
+        let usage = parse_api_usage(&value);
         let content = value
             .get("choices")
             .and_then(|choices| choices.as_array())
@@ -483,6 +492,7 @@ impl LocalModelProvider for EnvApiModelProvider {
         Ok(ModelOutput {
             provider: self.provider_id().to_string(),
             final_response,
+            usage,
         })
     }
 }
@@ -707,6 +717,30 @@ fn parse_api_tool_calls(value: &serde_json::Value) -> Result<Vec<LocalToolCall>,
         });
     }
     Ok(calls)
+}
+
+fn parse_api_usage(value: &serde_json::Value) -> Option<ModelTokenUsage> {
+    let usage = value.get("usage")?;
+    let prompt_tokens = usage
+        .get("prompt_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let completion_tokens = usage
+        .get("completion_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(prompt_tokens + completion_tokens);
+    if prompt_tokens == 0 && completion_tokens == 0 && total_tokens == 0 {
+        return None;
+    }
+    Some(ModelTokenUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    })
 }
 
 fn render_api_prompt(

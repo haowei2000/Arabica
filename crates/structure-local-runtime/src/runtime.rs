@@ -6,9 +6,10 @@ use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     KnowledgeSource, KnowledgeSourcePreview, LocalAgentMode, LocalEvent, LocalEvidenceBundle,
-    LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ProposalApplyResult, RunAttempt,
-    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage, ModelUsageSummary,
+    ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
+    RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -508,6 +509,7 @@ impl LocalAgentRuntime {
         let mut worktree = None;
         let mut prompt_references = Vec::new();
         let mut tool_call_count = 0;
+        let mut model_usage = ModelUsageSummary::default();
 
         for event in &events {
             if !event_kinds.contains(&event.kind) {
@@ -520,6 +522,36 @@ impl LocalAgentRuntime {
                 primitive_ids.push(event.primitive_id.clone());
             }
             match event.kind.as_str() {
+                "model_requested" => {
+                    model_usage.model_request_count += 1;
+                    if event
+                        .payload
+                        .get("network_required")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false)
+                    {
+                        model_usage.network_request_count += 1;
+                    }
+                }
+                "model_responded" => {
+                    model_usage.model_response_count += 1;
+                    model_usage.response_chars += event
+                        .payload
+                        .get("response_chars")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default()
+                        as usize;
+                    if let Some(usage) = event
+                        .payload
+                        .get("usage")
+                        .cloned()
+                        .and_then(|value| serde_json::from_value::<ModelTokenUsage>(value).ok())
+                    {
+                        model_usage.prompt_tokens += usage.prompt_tokens;
+                        model_usage.completion_tokens += usage.completion_tokens;
+                        model_usage.total_tokens += usage.total_tokens;
+                    }
+                }
                 "workspace_context_loaded" => {
                     if let Some(instructions) = event
                         .payload
@@ -613,6 +645,7 @@ impl LocalAgentRuntime {
             run,
             event_count: events.len(),
             tool_call_count,
+            model_usage,
             agent_instruction_paths,
             worktree,
             prompt_references,
@@ -797,6 +830,8 @@ impl LocalAgentRuntime {
                 }),
             )?;
             let plan = model.plan_next(&model_request, &tool_results)?;
+            let plan_provider = plan.provider.clone();
+            let plan_usage = plan.usage.clone();
             let new_tool_calls = plan
                 .tool_calls
                 .into_iter()
@@ -833,10 +868,11 @@ impl LocalAgentRuntime {
                 Some(&run.run_id),
                 RunEventKind::ModelResponded,
                 &serde_json::json!({
-                    "provider": plan.provider,
+                    "provider": plan_provider,
                     "phase": "tool_planning",
                     "iteration": iteration,
                     "tool_calls": &new_tool_calls,
+                    "usage": plan_usage,
                 }),
             )?;
 
@@ -875,6 +911,8 @@ impl LocalAgentRuntime {
             }),
         )?;
         let output = synthesis_model.synthesize(&model_request, &tool_results)?;
+        let output_provider = output.provider;
+        let output_usage = output.usage;
         let mut final_response = output.final_response;
         let proposal = if matches!(mode, LocalAgentMode::CodeAgent) {
             let (path, proposal, proposal_source) =
@@ -896,10 +934,11 @@ impl LocalAgentRuntime {
             Some(&run.run_id),
             RunEventKind::ModelResponded,
             &serde_json::json!({
-                "provider": output.provider,
+                "provider": output_provider,
                 "phase": "response_synthesis",
                 "response_chars": final_response.chars().count(),
                 "response_preview": final_response.chars().take(240).collect::<String>(),
+                "usage": output_usage,
             }),
         )?;
         self.store.append_event(
@@ -2730,7 +2769,12 @@ User-facing follow-up.\n\n\
                         },
                         "finish_reason": "tool_calls"
                     }
-                ]
+                ],
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 7,
+                    "total_tokens": 18
+                }
             }),
             serde_json::json!({
                 "id": "chatcmpl-plan-done",
@@ -2744,7 +2788,12 @@ User-facing follow-up.\n\n\
                         },
                         "finish_reason": "stop"
                     }
-                ]
+                ],
+                "usage": {
+                    "prompt_tokens": 13,
+                    "completion_tokens": 5,
+                    "total_tokens": 18
+                }
             }),
             serde_json::json!({
                 "id": "chatcmpl-synthesis",
@@ -2758,7 +2807,12 @@ User-facing follow-up.\n\n\
                         },
                         "finish_reason": "stop"
                     }
-                ]
+                ],
+                "usage": {
+                    "prompt_tokens": 17,
+                    "completion_tokens": 9,
+                    "total_tokens": 26
+                }
             }),
         ]);
         env::set_var("OPENAI__API_KEY", "mock-key");
@@ -2796,7 +2850,16 @@ User-facing follow-up.\n\n\
             event.kind == "model_responded"
                 && event.payload["phase"] == "response_synthesis"
                 && event.payload["provider"] == "local_env_api"
+                && event.payload["usage"]["total_tokens"] == 26
         }));
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        assert_eq!(evidence.model_usage.model_request_count, 3);
+        assert_eq!(evidence.model_usage.model_response_count, 3);
+        assert_eq!(evidence.model_usage.network_request_count, 3);
+        assert_eq!(evidence.model_usage.prompt_tokens, 41);
+        assert_eq!(evidence.model_usage.completion_tokens, 21);
+        assert_eq!(evidence.model_usage.total_tokens, 62);
+        assert!(evidence.model_usage.response_chars > 0);
         assert!(runtime
             .list_artifacts(Some("api-success"), Some(&result.run.run_id), 10)
             .unwrap()

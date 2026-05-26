@@ -248,6 +248,20 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     println!("  status:    {}", evidence.run.status);
     println!("  events:    {}", evidence.event_count);
     println!("  tools:     {}", evidence.tool_call_count);
+    println!(
+        "  model:     {} req / {} resp / {} net",
+        evidence.model_usage.model_request_count,
+        evidence.model_usage.model_response_count,
+        evidence.model_usage.network_request_count
+    );
+    if evidence.model_usage.total_tokens > 0 {
+        println!(
+            "  tokens:    {} prompt / {} completion / {} total",
+            evidence.model_usage.prompt_tokens,
+            evidence.model_usage.completion_tokens,
+            evidence.model_usage.total_tokens
+        );
+    }
     println!("  instr:     {}", evidence.agent_instruction_paths.len());
     if let Some(worktree) = &evidence.worktree {
         println!(
@@ -346,6 +360,20 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
         transcript.evidence.core_trace.manifest_schema_version
     );
     println!("  tools:     {}", transcript.evidence.tool_call_count);
+    println!(
+        "  model:     {} req / {} resp / {} net",
+        transcript.evidence.model_usage.model_request_count,
+        transcript.evidence.model_usage.model_response_count,
+        transcript.evidence.model_usage.network_request_count
+    );
+    if transcript.evidence.model_usage.total_tokens > 0 {
+        println!(
+            "  tokens:    {} prompt / {} completion / {} total",
+            transcript.evidence.model_usage.prompt_tokens,
+            transcript.evidence.model_usage.completion_tokens,
+            transcript.evidence.model_usage.total_tokens
+        );
+    }
     println!(
         "  instr:     {}",
         transcript.evidence.agent_instruction_paths.len()

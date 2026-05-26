@@ -666,6 +666,8 @@ mod tests {
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
         assert!(local_ui.contains("Worktree Changes"));
+        assert!(local_ui.contains("Model usage:"));
+        assert!(local_ui.contains("model_usage"));
         assert!(local_ui.contains("eventLogEl.textContent = renderEvidenceText(evidence);"));
     }
 

@@ -1205,6 +1205,20 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
     ));
     text.push_str(&format!("Tools: {}\n", transcript.evidence.tool_call_count));
     text.push_str(&format!(
+        "Model: {} requests / {} responses / {} network\n",
+        transcript.evidence.model_usage.model_request_count,
+        transcript.evidence.model_usage.model_response_count,
+        transcript.evidence.model_usage.network_request_count
+    ));
+    if transcript.evidence.model_usage.total_tokens > 0 {
+        text.push_str(&format!(
+            "Tokens: {} prompt / {} completion / {} total\n",
+            transcript.evidence.model_usage.prompt_tokens,
+            transcript.evidence.model_usage.completion_tokens,
+            transcript.evidence.model_usage.total_tokens
+        ));
+    }
+    text.push_str(&format!(
         "Instructions: {}\n",
         transcript.evidence.agent_instruction_paths.len()
     ));

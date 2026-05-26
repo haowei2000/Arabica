@@ -83,6 +83,12 @@ through Structure events instead of surface-specific prompt rewriting.
 Resolved prompt references are promoted into `RunEvidenceSummary`, so terminal
 evidence output and the desktop selected-run transcript can show the file
 context used by a run without requiring raw event inspection.
+`ModelRequested` and `ModelResponded` events are also promoted into a
+`model_usage` summary that counts model requests, responses, network-backed
+requests, standard OpenAI-compatible token usage when available, and final
+model response characters. This keeps CLI/TUI/desktop inspection aligned with
+cost-ledger inputs without making any surface parse provider-specific response
+JSON.
 
 Code-agent mode persists a reviewed code-change proposal artifact before any
 write. If the model response includes a safe fenced unified diff, that model
@@ -116,14 +122,14 @@ ChatMessageRecorded     # user prompt
 PromptReceived
 WorkspaceContextLoaded  # AGENTS.md instructions, git worktree, recent turns, workspace meta
 KnowledgeRetrieved
-ModelRequested          # tool_planning
-ModelResponded          # planned LocalToolCall list
+ModelRequested          # tool_planning, network marker
+ModelResponded          # planned LocalToolCall list, optional token usage
 ToolCallRequested
 ToolCallCompleted
 ModelRequested          # optional next planning iteration with tool results
-ModelResponded          # optional additional LocalToolCall list or no-op
+ModelResponded          # optional additional LocalToolCall list or no-op, optional token usage
 ModelRequested          # response_synthesis
-ModelResponded          # final assistant response
+ModelResponded          # final assistant response, optional token usage
 ChatMessageRecorded     # assistant response
 ArtifactWritten         # assistant response artifact
 CodeChangeProposed      # code-agent mode only

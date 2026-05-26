@@ -14,9 +14,9 @@ pub use tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 pub use types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, KnowledgeSource,
     KnowledgeSourcePreview, LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic,
-    LocalToolCall, LocalToolResult, ProposalApplyResult, RunAttempt, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    LocalToolCall, LocalToolResult, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
+    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]
