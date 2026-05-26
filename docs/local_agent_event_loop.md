@@ -57,6 +57,9 @@ Prompts can also include Codex-style `@repo/relative/path` references. The
 runtime resolves those references as `read_repo_file` tool calls before model
 planning, so CLI, TUI, and desktop app all get the same addressed file context
 through Structure events instead of surface-specific prompt rewriting.
+Resolved prompt references are promoted into `RunEvidenceSummary`, so terminal
+evidence output and the desktop selected-run transcript can show the file
+context used by a run without requiring raw event inspection.
 
 Code-agent mode persists a reviewed code-change proposal artifact before any
 write. Applying that proposal parses its unified diff, verifies target context

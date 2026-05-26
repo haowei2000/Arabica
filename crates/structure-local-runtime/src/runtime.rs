@@ -488,6 +488,7 @@ impl LocalAgentRuntime {
         let mut event_kinds = Vec::new();
         let mut canonical_flow_ids = Vec::new();
         let mut primitive_ids = Vec::new();
+        let mut prompt_references = Vec::new();
         let mut tool_call_count = 0;
 
         for event in &events {
@@ -501,6 +502,24 @@ impl LocalAgentRuntime {
                 primitive_ids.push(event.primitive_id.clone());
             }
             match event.kind.as_str() {
+                "agent_step_planned" => {
+                    if let Some(references) = event
+                        .payload
+                        .get("prompt_references")
+                        .and_then(|value| value.as_array())
+                    {
+                        for reference in references {
+                            if let Some(reference) = reference.as_str() {
+                                if !prompt_references
+                                    .iter()
+                                    .any(|existing| existing == reference)
+                                {
+                                    prompt_references.push(reference.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
                 "knowledge_retrieved" => {
                     if let Some(sources) = event
                         .payload
@@ -549,6 +568,7 @@ impl LocalAgentRuntime {
             run,
             event_count: events.len(),
             tool_call_count,
+            prompt_references,
             knowledge_sources,
             artifact_paths,
             artifacts,
@@ -1479,6 +1499,16 @@ mod tests {
         assert!(result
             .final_response
             .contains("Structure local agent path reference evidence."));
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        assert_eq!(
+            evidence.prompt_references,
+            vec!["docs/local-agent.md".to_string()]
+        );
+        let transcript = runtime.run_transcript(&result.run.run_id).unwrap();
+        assert_eq!(
+            transcript.evidence.prompt_references,
+            vec!["docs/local-agent.md".to_string()]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

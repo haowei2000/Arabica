@@ -216,6 +216,7 @@ pub struct RunEvidenceSummary {
     pub run: RunSummary,
     pub event_count: usize,
     pub tool_call_count: usize,
+    pub prompt_references: Vec<String>,
     pub knowledge_sources: Vec<KnowledgeSource>,
     pub artifact_paths: Vec<String>,
     pub artifacts: Vec<ArtifactRecord>,

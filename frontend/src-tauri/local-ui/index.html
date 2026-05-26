@@ -1840,6 +1840,7 @@ The original file was not deleted.`;
             ? `Evidence
 Events: ${evidence.event_count}
 Tool calls: ${evidence.tool_call_count}
+Prompt refs: ${evidence.prompt_references?.length ?? 0}
 Knowledge sources: ${evidence.knowledge_sources.length}
 Artifacts: ${evidence.artifact_paths.length}
 Response chars: ${evidence.final_response_chars}
@@ -1849,6 +1850,9 @@ Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_tr
 
 Sources
 ${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources used."}
+
+Prompt References
+${evidence.prompt_references?.map((path) => `- @${path}`).join("\n") || "No prompt file references used."}
 
 Artifacts
 ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || evidence.artifact_paths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`

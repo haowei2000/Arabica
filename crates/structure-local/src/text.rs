@@ -224,6 +224,7 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     println!("  status:    {}", evidence.run.status);
     println!("  events:    {}", evidence.event_count);
     println!("  tools:     {}", evidence.tool_call_count);
+    println!("  refs:      {}", evidence.prompt_references.len());
     println!("  knowledge: {}", evidence.knowledge_sources.len());
     println!("  response:  {} chars", evidence.final_response_chars);
     println!(
@@ -250,6 +251,12 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
                 .any(|artifact| artifact.path == **path)
         }) {
             println!("    {path}");
+        }
+    }
+    if !evidence.prompt_references.is_empty() {
+        println!("  prompt refs:");
+        for reference in &evidence.prompt_references {
+            println!("    @{reference}");
         }
     }
     if !evidence.knowledge_sources.is_empty() {
