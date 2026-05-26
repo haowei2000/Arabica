@@ -358,16 +358,21 @@ impl TuiState {
     }
 
     fn preview_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
-        let Some(artifact) = self.latest_proposal_artifact() else {
+        let Some(artifact) =
+            select_proposal_artifact(&self.artifacts, self.selected_run_id()).cloned()
+        else {
             self.notice = "No code-change proposal to preview".to_string();
             return Ok(());
         };
+        let notice = self.proposal_notice(&artifact, "Previewing");
         self.pending_apply_artifact_id = None;
-        self.preview_artifact_record(repo_root, &artifact, "Previewing latest proposal")
+        self.preview_artifact_record(repo_root, &artifact, &notice)
     }
 
     fn preview_latest_proposal_apply(&mut self, repo_root: &Path) -> Result<()> {
-        let Some(artifact) = self.latest_proposal_artifact() else {
+        let Some(artifact) =
+            select_proposal_artifact(&self.artifacts, self.selected_run_id()).cloned()
+        else {
             self.notice = "No code-change proposal to dry-run".to_string();
             return Ok(());
         };
@@ -378,7 +383,10 @@ impl TuiState {
             path: result.target_path.clone(),
             text: render_proposal_apply_result(&result),
         });
-        self.notice = "Dry-run ready; press y to apply this proposal".to_string();
+        self.notice = format!(
+            "{} dry-run ready; press y to apply",
+            self.proposal_notice(&artifact, "Proposal")
+        );
         Ok(())
     }
 
@@ -400,11 +408,16 @@ impl TuiState {
         Ok(())
     }
 
-    fn latest_proposal_artifact(&self) -> Option<ArtifactRecord> {
-        self.artifacts
-            .iter()
-            .find(|artifact| artifact.kind == "code_change_proposal")
-            .cloned()
+    fn selected_run_id(&self) -> Option<&str> {
+        self.runs.get(self.selected).map(|run| run.run_id.as_str())
+    }
+
+    fn proposal_notice(&self, artifact: &ArtifactRecord, action: &str) -> String {
+        if self.selected_run_id() == Some(artifact.run_id.as_str()) {
+            format!("{action} selected run proposal")
+        } else {
+            format!("{action} latest proposal")
+        }
     }
 
     fn preview_artifact_record(
@@ -833,7 +846,7 @@ fn draw_reports(
             out,
             x,
             artifacts_y + 1,
-            "press a for latest artifact, g proposal, u dry-run apply, y apply",
+            "press a for latest artifact, g selected proposal, u dry-run, y apply",
             width,
         )?;
         write_at(out, x, artifacts_y + 2, &artifact_text, width)?;
@@ -1222,6 +1235,23 @@ fn collect_run_evidence(
         .collect()
 }
 
+fn select_proposal_artifact<'a>(
+    artifacts: &'a [ArtifactRecord],
+    selected_run_id: Option<&str>,
+) -> Option<&'a ArtifactRecord> {
+    if let Some(run_id) = selected_run_id {
+        if let Some(artifact) = artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "code_change_proposal" && artifact.run_id == run_id)
+        {
+            return Some(artifact);
+        }
+    }
+    artifacts
+        .iter()
+        .find(|artifact| artifact.kind == "code_change_proposal")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,6 +1295,42 @@ mod tests {
         assert_eq!(feed.events[1].payload["success"], true);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tui_proposal_selection_prefers_selected_run_before_latest() {
+        let latest = artifact("proposal_latest", "run_latest", "code_change_proposal");
+        let selected = artifact("proposal_selected", "run_selected", "code_change_proposal");
+        let log = artifact("log", "run_selected", "run_output");
+        let artifacts = vec![latest, log, selected];
+
+        let artifact = select_proposal_artifact(&artifacts, Some("run_selected")).unwrap();
+
+        assert_eq!(artifact.artifact_id, "proposal_selected");
+        assert_eq!(
+            select_proposal_artifact(&artifacts, Some("unknown"))
+                .unwrap()
+                .artifact_id,
+            "proposal_latest"
+        );
+        assert_eq!(
+            select_proposal_artifact(&artifacts, None)
+                .unwrap()
+                .artifact_id,
+            "proposal_latest"
+        );
+    }
+
+    fn artifact(artifact_id: &str, run_id: &str, kind: &str) -> ArtifactRecord {
+        ArtifactRecord {
+            artifact_id: artifact_id.to_string(),
+            run_id: run_id.to_string(),
+            workspace_id: "workspace".to_string(),
+            kind: kind.to_string(),
+            path: format!("artifacts/{artifact_id}.md"),
+            size_bytes: 42,
+            created_at_ms: 1,
+        }
     }
 
     fn unique_repo(label: &str) -> PathBuf {
