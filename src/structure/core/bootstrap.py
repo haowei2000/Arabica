@@ -447,8 +447,6 @@ class ApplicationBootstrap:
                         user_id=None,
                         provider="openai",
                         model_id=chat_model_id,
-                        base_url=None,
-                        api_key_ref=None,
                         supports_function_call=True,
                         supports_streaming=True,
                         is_system=True,
@@ -460,8 +458,6 @@ class ApplicationBootstrap:
                 else:
                     chat_model.name = f"Default OpenAI {chat_model_id}"
                     chat_model.description = "System default chat model for new users"
-                    chat_model.base_url = None
-                    chat_model.api_key_ref = None
                     chat_model.is_system = True
                     chat_model.is_default = True
                     chat_model.enabled = True
@@ -490,8 +486,6 @@ class ApplicationBootstrap:
                         user_id=None,
                         provider="openai",
                         model_id=embedding_model_id,
-                        base_url=None,
-                        api_key_ref=None,
                         dimension=embedding_dimension,
                         is_system=True,
                         is_default=True,
@@ -504,8 +498,6 @@ class ApplicationBootstrap:
                     embedding_model.description = (
                         "System default embedding model for new users"
                     )
-                    embedding_model.base_url = None
-                    embedding_model.api_key_ref = None
                     embedding_model.dimension = embedding_dimension
                     embedding_model.is_system = True
                     embedding_model.is_default = True

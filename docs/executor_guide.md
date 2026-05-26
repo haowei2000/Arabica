@@ -142,14 +142,14 @@ class MyExecutor(Executor):
         "enabled": True,
         "version": 1,
         "config": {
-            "model_name": "qwen-plus",
+            # LLM API is resolved only from OPENAI__API_KEY,
+            # OPENAI__BASE_URL, and OPENAI__MODEL.
             "max_iterations": 5,
         },
     }
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.model_name = config.get("model_name", "qwen-plus")
         self.max_iterations = config.get("max_iterations", 5)
 
         # 依赖注入：Worker 会注入这两个服务
@@ -251,7 +251,7 @@ TEMPLATE = {
     "template_code": "MyExecutor",  # 不要改这个
     "template_name": "My Executor v2",
     "version": 2,                   # 建议递增版本号
-    "config": {"model_name": "qwen-max"},
+    "config": {"max_iterations": 8},
 }
 ```
 
@@ -378,8 +378,8 @@ TEMPLATE: ClassVar[dict[str, Any]] = {
     "enabled": True,                  # 是否启用（默认 True）
     "version": 1,                     # 版本号（默认 1）
     "config": {                       # 默认配置（dict 或 Pydantic model）
-        "model_name": "qwen-plus",
-        "model_provider": "tongyi",
+        # LLM API is resolved only from OPENAI__API_KEY,
+        # OPENAI__BASE_URL, and OPENAI__MODEL.
         "max_iterations": 10,
         "approval_tools": [],
     },

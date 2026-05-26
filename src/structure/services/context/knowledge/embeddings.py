@@ -48,7 +48,8 @@ class EmbeddingService:
         openai_settings = get_settings().openai
         api_key = (openai_settings.api_key if openai_settings else "").strip()
         base_url = (openai_settings.base_url if openai_settings else "").strip()
-        if not api_key or not base_url:
+        model = (openai_settings.model if openai_settings else "").strip()
+        if not api_key or not base_url or not model:
             raise ValueError(
                 "No embedding model configured. Seed the default embedding model from "
                 "OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL."

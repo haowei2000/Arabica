@@ -70,8 +70,6 @@ def mock_embedding_model_crud():
     model.provider = "openai"
     model.model_id = "text-embedding-3-small"
     model.dimensions = 1536
-    model.api_key = "test-key"
-    model.base_url = "test-url"
     crud.get_default = AsyncMock(return_value=model)
     return crud
 

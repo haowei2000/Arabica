@@ -85,8 +85,8 @@ TEMPLATE = {
     "enabled": True,
     "version": 1,
     "config": {
-        "model_provider": "ollama",
-        "model_name": "qwen3:30b"
+        # LLM API is resolved only from OPENAI__API_KEY,
+        # OPENAI__BASE_URL, and OPENAI__MODEL.
     }
 }
 ```
@@ -137,8 +137,8 @@ from structure.services.executor.executor_registry import ExecutorRegistry
 # 获取模板类
 template_cls = ExecutorRegistry.get("DEFAULT001")
 
-# 实例化 Agent
-agent = template_cls(config={"model_name": "qwen3:30b"})
+# 实例化 Agent；LLM API 由 OPENAI__API_KEY、OPENAI__BASE_URL、OPENAI__MODEL 提供
+agent = template_cls(config={})
 
 # 运行 Agent
 result = await agent.run({"query": "Hello, world!"})
@@ -177,10 +177,7 @@ class MyCustomAgent(BaseAgentTemplate):
       "template_name": "My Custom Agent",
       "enabled": True,
       "version": 1,
-      "config": {
-         "model_provider": "openai",
-         "model_name": "gpt-4"
-      }
+      "config": {}
    }
 
    async def run(self, input_data: dict):
@@ -345,8 +342,8 @@ TEMPLATE = {
     "template_code": "ADVANCED001",
     "template_name": "Advanced Agent",
     "config": {
-        "model_provider": "openai",
-        "model_name": "gpt-4",
+        # LLM API is resolved only from OPENAI__API_KEY,
+        # OPENAI__BASE_URL, and OPENAI__MODEL.
         "temperature": 0.7,
         "max_tokens": 2000,
         "system_prompt": "You are a helpful assistant."

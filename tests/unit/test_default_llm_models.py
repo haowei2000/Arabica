@@ -11,10 +11,15 @@ import pytest
 from structure.core.bootstrap import ApplicationBootstrap, BootstrapConfig
 from structure.models.llm.chat_model import ChatModel
 from structure.models.llm.embedding_model import EmbeddingModel
-from structure.schemas.llm.chat_model import ChatModelCreate, ChatModelResponse
+from structure.schemas.llm.chat_model import (
+    ChatModelCreate,
+    ChatModelResponse,
+    ChatModelUpdate,
+)
 from structure.schemas.llm.embedding_model import (
     EmbeddingModelCreate,
     EmbeddingModelResponse,
+    EmbeddingModelUpdate,
 )
 
 
@@ -66,15 +71,15 @@ async def test_seed_default_llm_models_creates_system_models_from_openai_setting
     assert chat_model.is_default is True
     assert chat_model.provider == "openai"
     assert chat_model.model_id == "gpt-4.1-mini"
-    assert chat_model.base_url is None
-    assert chat_model.api_key_ref is None
+    assert not hasattr(chat_model, "base_url")
+    assert not hasattr(chat_model, "api_key_ref")
 
     assert embedding_model.is_system is True
     assert embedding_model.is_default is True
     assert embedding_model.model_id == "text-embedding-3-small"
     assert embedding_model.dimension == 1536
-    assert embedding_model.base_url is None
-    assert embedding_model.api_key_ref is None
+    assert not hasattr(embedding_model, "base_url")
+    assert not hasattr(embedding_model, "api_key_ref")
     session.commit.assert_awaited_once()
 
 
@@ -147,6 +152,14 @@ def test_embedding_model_create_rejects_runtime_api_config():
             api_key_ref="custom-key",
             dimension=1536,
         )
+
+
+def test_model_schemas_reject_runtime_api_config_inside_config_maps():
+    with pytest.raises(ValidationError, match="OPENAI__ env vars"):
+        ChatModelUpdate(config={"base_url": "http://custom.example/v1"})
+
+    with pytest.raises(ValidationError, match="OPENAI__ env vars"):
+        EmbeddingModelUpdate(meta={"api_key": "custom-key"})
 
 
 def test_system_embedding_model_response_masks_api_key():

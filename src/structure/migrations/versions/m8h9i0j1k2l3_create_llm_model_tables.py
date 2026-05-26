@@ -37,8 +37,6 @@ def upgrade() -> None:
         sa.Column("user_id", UUID(as_uuid=True), nullable=True),
         sa.Column("provider", sa.String(50), nullable=False),
         sa.Column("model_id", sa.String(255), nullable=False),
-        sa.Column("base_url", sa.String(500), nullable=True),
-        sa.Column("api_key_ref", sa.String(255), nullable=True),
         sa.Column("max_tokens", sa.Integer, nullable=True),
         sa.Column("context_window", sa.Integer, nullable=True),
         sa.Column(
@@ -81,8 +79,6 @@ def upgrade() -> None:
         sa.Column("user_id", UUID(as_uuid=True), nullable=True),
         sa.Column("provider", sa.String(50), nullable=False),
         sa.Column("model_id", sa.String(255), nullable=False),
-        sa.Column("base_url", sa.String(500), nullable=True),
-        sa.Column("api_key_ref", sa.String(255), nullable=True),
         sa.Column("dimension", sa.Integer, nullable=False),
         sa.Column("max_tokens", sa.Integer, nullable=True),
         sa.Column("supports_batch", sa.Boolean, nullable=False, server_default="true"),

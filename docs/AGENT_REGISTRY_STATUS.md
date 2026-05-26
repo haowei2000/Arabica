@@ -167,11 +167,8 @@ from structure.services.executor.executor_registry import ExecutorRegistry
 # 获取 Agent 类
 template_cls = ExecutorRegistry.get("DEFAULT001")
 
-# 创建实例
-agent = template_cls(config={
-   "model_provider": "ollama",
-   "model_name": "qwen3:30b"
-})
+# 创建实例；LLM API 由 OPENAI__API_KEY、OPENAI__BASE_URL、OPENAI__MODEL 提供
+agent = template_cls(config={})
 
 # 运行 Agent
 result = await agent.run({"query": "Hello, world!"})
@@ -253,10 +250,7 @@ class MyCustomAgent(BaseAgentTemplate):
       "template_name": "My Custom Agent",
       "enabled": True,
       "version": 1,
-      "config": {
-         "model_provider": "openai",
-         "model_name": "gpt-4"
-      }
+      "config": {}
    }
 
    async def run(self, input_data: dict):

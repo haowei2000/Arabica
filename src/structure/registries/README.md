@@ -277,7 +277,7 @@ from typing import Optional
 
 
 class ModelRegistry(BaseRegistry[str, "ModelConfig"]):
-    """Registry for LLM model configurations."""
+    """Registry for non-runtime model catalog metadata."""
 
     def __init__(self, config: Optional[RegistryConfig] = None):
         if config is None:
@@ -288,13 +288,13 @@ class ModelRegistry(BaseRegistry[str, "ModelConfig"]):
         super().__init__(config)
 
     def _validate_component(self, model_config: "ModelConfig") -> None:
-        """Validate model configuration."""
-        if not model_config.model_name:
-            raise ValueError("model_name is required")
+        """Validate catalog metadata."""
+        if not model_config.name:
+            raise ValueError("name is required")
 
     def _extract_key(self, model_config: "ModelConfig") -> str:
-        """Extract model name as key."""
-        return model_config.model_name
+        """Extract catalog name as key."""
+        return model_config.name
 
     def _create_instance(self, key: str, model_config: "ModelConfig", **kwargs):
         """Create model instance (if needed)."""

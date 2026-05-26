@@ -50,3 +50,21 @@ def test_embedding_service_requires_openai_env_seeded_config(monkeypatch):
             dimension=1536,
         )
     get_settings.cache_clear()
+
+
+def test_embedding_service_requires_openai_model_env(monkeypatch):
+    monkeypatch.setenv("OPENAI__API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI__BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.delenv("OPENAI__MODEL", raising=False)
+
+    from structure.config.factory import get_settings
+
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="OPENAI__MODEL"):
+        embeddings.EmbeddingService(
+            provider="openai",
+            model="text-embedding-3-small",
+            dimension=1536,
+        )
+    get_settings.cache_clear()

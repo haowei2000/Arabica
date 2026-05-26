@@ -136,9 +136,8 @@ from structure.plugins.executors.default import (
 
 # Full configuration with all options
 config = {
-    # LLM settings
-    "model_provider": "tongyi",
-    "model_name": "qwen-plus",
+    # LLM API comes only from OPENAI__API_KEY, OPENAI__BASE_URL,
+    # and OPENAI__MODEL.
     "max_history_messages": 80,
 
     # Browser tools (for web scraping, screenshots, etc.)
@@ -166,8 +165,8 @@ For simple chat without any special capabilities:
 
 ```python
 config = {
-    "model_provider": "tongyi",
-    "model_name": "qwen-plus",
+    # LLM API comes only from OPENAI__API_KEY, OPENAI__BASE_URL,
+    # and OPENAI__MODEL.
     "enable_browser_tools": False,
     "server_tools": False,  # Default
 }

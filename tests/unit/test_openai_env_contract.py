@@ -42,3 +42,15 @@ def test_get_llm_requires_all_three_openai_env_values(monkeypatch):
 
     with pytest.raises(ValueError, match="OPENAI__API_KEY"):
         llm_module.get_llm("ignored")
+
+
+def test_get_llm_ignores_legacy_openai_env_aliases(monkeypatch):
+    monkeypatch.delenv("OPENAI__API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI__BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI__MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "legacy-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://legacy.example/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "legacy-model")
+
+    with pytest.raises(ValueError, match="OPENAI__API_KEY"):
+        llm_module.get_llm("ignored")

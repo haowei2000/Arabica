@@ -48,12 +48,6 @@ class EmbeddingModel(Base):
         comment="模型标识符: text-embedding-3-small",
     )
 
-    # API configuration
-    base_url: Mapped[str | None] = mapped_column(String(500), comment="API基础URL")
-    api_key_ref: Mapped[str | None] = mapped_column(
-        String(255), comment="API密钥引用（存储密钥名称，非实际密钥）"
-    )
-
     # ChatLLM specifications
     dimension: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="向量维度: 384/768/1024/1536"
