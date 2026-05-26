@@ -1,10 +1,58 @@
+use serde::Serialize;
 use structure_local_core::{collect_snapshot, default_repo_root, structure_core_manifest};
 use structure_local_runtime::{LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest};
+
+#[derive(Debug, Serialize)]
+struct DesktopSessionStatus {
+    workspace_id: String,
+    selected_run_id: Option<String>,
+    mode: String,
+    repo_root: String,
+    runtime_dir: String,
+    runtime_db: String,
+    llm_config: structure_local_core::LocalLlmConfigStatus,
+    run_count: usize,
+    artifact_count: usize,
+    knowledge_source_count: usize,
+    recent_event_count: usize,
+    last_event_sequence: Option<i64>,
+}
 
 #[tauri::command]
 fn local_snapshot() -> Result<structure_local_core::LocalSnapshot, String> {
     let repo_root = default_repo_root()?;
     collect_snapshot(repo_root)
+}
+
+#[tauri::command]
+fn local_session_status(
+    workspace_id: Option<String>,
+    selected_run_id: Option<String>,
+    mode: Option<String>,
+) -> Result<DesktopSessionStatus, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    let snapshot = collect_snapshot(runtime.repo_root())?;
+    let workspace_id = workspace_id.unwrap_or_else(|| "default".to_string());
+    let mode = parse_local_agent_mode(mode).as_str().to_string();
+    let runs = runtime.list_runs(Some(&workspace_id), 1_000)?;
+    let artifacts = runtime.list_artifacts(Some(&workspace_id), None, 1_000)?;
+    let knowledge_sources = runtime.knowledge_sources(Some(&workspace_id), 1_000)?;
+    let replay = runtime.workspace_replay(Some(&workspace_id), 500)?;
+
+    Ok(DesktopSessionStatus {
+        workspace_id,
+        selected_run_id,
+        mode,
+        repo_root: snapshot.repo_root.clone(),
+        runtime_dir: snapshot.runtime_dir.clone(),
+        runtime_db: runtime.db_path().display().to_string(),
+        llm_config: snapshot.llm_config,
+        run_count: runs.len(),
+        artifact_count: artifacts.len(),
+        knowledge_source_count: knowledge_sources.len(),
+        recent_event_count: replay.events.len(),
+        last_event_sequence: replay.last_sequence,
+    })
 }
 
 #[tauri::command]
@@ -301,6 +349,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             local_snapshot,
+            local_session_status,
             core_manifest,
             core_parity_report,
             local_repo_entries,
@@ -448,6 +497,11 @@ mod tests {
                 Some(chat_run.run.run_id.clone()),
                 Some(10),
             )?;
+            let session_status = local_session_status(
+                Some(workspace.workspace_id.clone()),
+                Some(run.run.run_id.clone()),
+                Some("code_agent".to_string()),
+            )?;
 
             assert_eq!(workspace.workspace_id, "desktop-test");
             assert!(entries.success);
@@ -529,6 +583,19 @@ mod tests {
             assert!(chat_artifacts
                 .iter()
                 .all(|artifact| artifact.kind != "code_change_proposal"));
+            assert_eq!(session_status.workspace_id, "desktop-test");
+            assert_eq!(
+                session_status.selected_run_id.as_deref(),
+                Some(run.run.run_id.as_str())
+            );
+            assert_eq!(session_status.mode, "code_agent");
+            assert!(session_status.repo_root.contains(root.to_str().unwrap()));
+            assert!(session_status.runtime_db.ends_with("structure.db"));
+            assert!(session_status.run_count >= 3);
+            assert!(session_status.artifact_count >= 3);
+            assert!(session_status.recent_event_count > 0);
+            assert!(session_status.last_event_sequence.is_some());
+            assert!(!session_status.llm_config.configured);
             Ok::<(), String>(())
         })();
 

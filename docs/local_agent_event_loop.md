@@ -151,16 +151,18 @@ into runtime calls:
   evidence bundle. Proposal controls `g`, `u`, and `y` prefer the selected
   run's code-change proposal before falling back to the latest workspace
   proposal, preserving the inspect-review-apply loop around a chosen run.
-- Desktop app: Tauri commands such as `local_agent_run_attempt`, `local_runs`,
+- Desktop app: Tauri commands such as `local_session_status`,
+  `local_agent_run_attempt`, `local_runs`,
   `local_run_transcript`, and `local_run_events`; `create_local_workspace` and
   `local_workspaces` back the native workspace selector.
   `local_workspace_event_feed` powers the Poll Events action and live in-flight
   run polling from a persisted cursor.
-  The composer accepts slash commands such as `/mode`, `/workspace`, `/runs`,
-  `/transcript`, `/search`, `/read`, `/source`, `/artifacts`, `/proposal`, and
-  `/apply --dry-run`, so desktop interaction can stay in the chat/code-agent
-  loop instead of becoming a separate operator dashboard. Command results are
-  appended to the desktop chat thread as local interaction turns while
+  The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,
+  `/runs`, `/transcript`, `/search`, `/read`, `/source`, `/artifacts`,
+  `/proposal`, and `/apply --dry-run`, so desktop interaction can stay in the
+  chat/code-agent loop instead of becoming a separate operator dashboard.
+  Command results are appended to the desktop chat thread as local interaction
+  turns while
   persisted agent runs still come from the Rust runtime event store.
   Proposal preview/apply controls prefer the selected run, matching the
   transcript and event-trace selection model; dry-run commands display the

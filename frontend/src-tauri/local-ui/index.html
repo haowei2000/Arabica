@@ -1031,6 +1031,15 @@
         });
       }
 
+      async function localSessionStatus() {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_session_status", {
+          workspaceId: activeWorkspaceId(),
+          selectedRunId: state.selectedRunId,
+          mode: state.agentMode,
+        });
+      }
+
       async function localChatTurns() {
         if (!invoke) return [];
         return invoke("local_chat_turns", { workspaceId: activeWorkspaceId(), limit: 20 });
@@ -1368,6 +1377,28 @@
         subtitleEl.textContent = `${activeWorkspaceId()} / ${modeLabel} / ${state.runs.length} runs / ${state.artifacts.length} artifacts in local storage`;
         renderSurfaces(snapshot.product_surfaces ?? []);
         applyFilter();
+      }
+
+      function renderSessionStatus(status) {
+        const llm = status.llm_config ?? fallbackLlmConfig();
+        const selectedRun = status.selected_run_id ?? "none";
+        return `Structure Desktop Session
+Workspace: ${status.workspace_id}
+Mode: ${status.mode}
+Selected run: ${selectedRun}
+Runs: ${status.run_count}
+Artifacts: ${status.artifact_count}
+Knowledge sources: ${status.knowledge_source_count}
+Recent workspace events: ${status.recent_event_count}
+Last event sequence: ${status.last_event_sequence ?? "none"}
+
+Repository: ${status.repo_root}
+Runtime: ${status.runtime_dir}
+Database: ${status.runtime_db}
+
+LLM: ${llm.configured ? "OPENAI__ configured" : "OPENAI__ missing"}
+Sources: ${llm.api_key.source}/${llm.base_url.source}/${llm.model.source}
+Model: ${llm.model_name ?? "not set"}`;
       }
 
       function renderWorkspaces(workspaces) {
@@ -1799,6 +1830,7 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
 
       function renderDesktopCommandHelp() {
         eventLogEl.textContent = `Desktop Agent Commands
+/status
 /mode chat|code
 /workspace <id>
 /runs
@@ -1825,6 +1857,11 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
           case "/help":
             renderDesktopCommandHelp();
             return true;
+          case "/status": {
+            const status = await localSessionStatus();
+            eventLogEl.textContent = renderSessionStatus(status);
+            return true;
+          }
           case "/mode": {
             const mode = parts[0];
             if (mode === "chat") {
