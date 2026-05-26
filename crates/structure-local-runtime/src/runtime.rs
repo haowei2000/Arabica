@@ -1,6 +1,4 @@
-use crate::model::{
-    selected_synthesis_provider, DeterministicLocalModelProvider, LocalModelProvider, ModelRequest,
-};
+use crate::model::{selected_planning_provider, selected_synthesis_provider, ModelRequest};
 use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
@@ -506,7 +504,7 @@ impl LocalAgentRuntime {
             },
         )?;
 
-        let model = DeterministicLocalModelProvider;
+        let model = selected_planning_provider()?;
         let model_request = ModelRequest {
             run: run.clone(),
             repo_root: self.repo_root.clone(),
@@ -521,7 +519,7 @@ impl LocalAgentRuntime {
             &serde_json::json!({
                 "provider": model.provider_id(),
                 "phase": "tool_planning",
-                "network_required": false,
+                "network_required": model.provider_id() != "local_deterministic",
             }),
         )?;
         let plan = model.plan(&model_request)?;
@@ -1303,7 +1301,7 @@ mod tests {
         assert!(events.iter().any(|event| {
             event.kind == "model_requested"
                 && event.payload.get("phase").and_then(|value| value.as_str())
-                    == Some("response_synthesis")
+                    == Some("tool_planning")
                 && event
                     .payload
                     .get("provider")

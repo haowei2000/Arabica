@@ -9,7 +9,7 @@ crates/structure-local-runtime
   -> workspace metadata
   -> knowledge source registry
   -> artifact writer
-  -> deterministic local run loop
+  -> OpenAI-compatible or deterministic local run loop
 ```
 
 ## Storage Decision
@@ -34,9 +34,12 @@ installations.
 
 ## Event Loop
 
-The first local loop is intentionally deterministic. It does not pretend to be
-a full LLM executor yet; instead it establishes the same event-sourced lifecycle
-that future local model/tool execution will extend.
+The local loop is event-sourced regardless of model provider. When
+`OPENAI__API_KEY`, `OPENAI__BASE_URL`, and `OPENAI__MODEL` are configured, the
+OpenAI-compatible provider plans local tool calls through native `tool_calls`
+and later synthesizes the final answer. Without those variables, the runtime
+falls back to a deterministic planner/synthesizer for offline development and
+tests.
 
 Current event sequence:
 

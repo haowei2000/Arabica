@@ -74,6 +74,32 @@ impl EnvApiModelProvider {
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
     }
+
+    fn chat_completion(&self, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(90))
+            .build()
+            .map_err(|err| format!("failed to build API client: {err}"))?;
+        let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let response = client
+            .post(endpoint)
+            .bearer_auth(&self.api_key)
+            .json(&payload)
+            .send()
+            .map_err(|err| format!("local LLM API request failed: {err}"))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .map_err(|err| format!("failed to read API response body: {err}"))?;
+        if !status.is_success() {
+            return Err(format!(
+                "local LLM API returned status {status}: {}",
+                body.chars().take(500).collect::<String>()
+            ));
+        }
+        serde_json::from_str::<serde_json::Value>(&body)
+            .map_err(|err| format!("failed to parse API response JSON: {err}"))
+    }
 }
 
 impl LocalModelProvider for DeterministicLocalModelProvider {
@@ -217,7 +243,33 @@ impl LocalModelProvider for EnvApiModelProvider {
     }
 
     fn plan(&self, request: &ModelRequest) -> Result<ModelPlan, String> {
-        DeterministicLocalModelProvider.plan(request)
+        let response = self.chat_completion(serde_json::json!({
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are the Structure local agent planner. Choose local tools that should run before the final answer. Use only the provided tools. Prefer read-only inspection. Do not modify files."
+                },
+                {
+                    "role": "user",
+                    "content": render_planning_prompt(request)
+                }
+            ],
+            "tools": local_tool_schemas(request),
+            "tool_choice": "auto",
+            "temperature": 0.0,
+            "max_tokens": 300
+        }))?;
+        let tool_calls = parse_api_tool_calls(&response)?;
+        if tool_calls.is_empty() {
+            let mut fallback = DeterministicLocalModelProvider.plan(request)?;
+            fallback.provider = "local_env_api_fallback".to_string();
+            return Ok(fallback);
+        }
+        Ok(ModelPlan {
+            provider: self.provider_id().to_string(),
+            tool_calls,
+        })
     }
 
     fn synthesize(
@@ -225,16 +277,8 @@ impl LocalModelProvider for EnvApiModelProvider {
         request: &ModelRequest,
         tool_results: &[LocalToolResult],
     ) -> Result<ModelOutput, String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(90))
-            .build()
-            .map_err(|err| format!("failed to build API client: {err}"))?;
-        let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let prompt = render_api_prompt(request, tool_results)?;
-        let response = client
-            .post(endpoint)
-            .bearer_auth(&self.api_key)
-            .json(&serde_json::json!({
+        let value = self.chat_completion(serde_json::json!({
                 "model": self.model,
                 "messages": [
                     {
@@ -248,21 +292,7 @@ impl LocalModelProvider for EnvApiModelProvider {
                 ],
                 "temperature": 0.2,
                 "max_tokens": 900
-            }))
-            .send()
-            .map_err(|err| format!("local LLM API request failed: {err}"))?;
-        let status = response.status();
-        let body = response
-            .text()
-            .map_err(|err| format!("failed to read API response body: {err}"))?;
-        if !status.is_success() {
-            return Err(format!(
-                "local LLM API returned status {status}: {}",
-                body.chars().take(500).collect::<String>()
-            ));
-        }
-        let value = serde_json::from_str::<serde_json::Value>(&body)
-            .map_err(|err| format!("failed to parse API response JSON: {err}"))?;
+            }))?;
         let content = value
             .get("choices")
             .and_then(|choices| choices.as_array())
@@ -307,6 +337,170 @@ pub fn selected_synthesis_provider() -> Result<Box<dyn LocalModelProvider>, Stri
         return Ok(Box::new(EnvApiModelProvider::from_env()?));
     }
     Ok(Box::new(DeterministicLocalModelProvider))
+}
+
+pub fn selected_planning_provider() -> Result<Box<dyn LocalModelProvider>, String> {
+    if EnvApiModelProvider::enabled_from_env() {
+        return Ok(Box::new(EnvApiModelProvider::from_env()?));
+    }
+    Ok(Box::new(DeterministicLocalModelProvider))
+}
+
+fn render_planning_prompt(request: &ModelRequest) -> String {
+    let knowledge = if request.knowledge.is_empty() {
+        "No knowledge sources registered.".to_string()
+    } else {
+        request
+            .knowledge
+            .iter()
+            .map(|source| {
+                format!(
+                    "- source_id={} path={} title={}",
+                    source.source_id, source.path, source.title
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nReturn tool calls only when inspection would improve the answer.",
+        prompt = request.run.prompt,
+        mode = request.mode.as_str(),
+        repo = request.repo_root.display(),
+        recent_turns = render_recent_turns_for_api(&request.recent_turns),
+    )
+}
+
+fn local_tool_schemas(request: &ModelRequest) -> Vec<serde_json::Value> {
+    let mut tools = vec![
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "list_workspace",
+                "description": "List non-sensitive top-level repository entries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "max_entries": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 64
+                        }
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "search_repo",
+                "description": "Search repository text for a literal query.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string" },
+                        "max_matches": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 40
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "read_repo_file",
+                "description": "Read a safe repository-relative text file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "max_bytes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 131072
+                        }
+                    },
+                    "required": ["path"]
+                }
+            }
+        }),
+    ];
+    if !request.knowledge.is_empty() {
+        tools.push(serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "read_knowledge_source",
+                "description": "Read a registered workspace knowledge source by path.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source_id": { "type": "string" },
+                        "path": { "type": "string" },
+                        "max_bytes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65536
+                        }
+                    },
+                    "required": ["source_id", "path"]
+                }
+            }
+        }));
+    }
+    tools
+}
+
+fn parse_api_tool_calls(value: &serde_json::Value) -> Result<Vec<LocalToolCall>, String> {
+    let Some(tool_calls) = value
+        .get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("tool_calls"))
+        .and_then(|tool_calls| tool_calls.as_array())
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut calls = Vec::new();
+    for tool_call in tool_calls {
+        let Some(function) = tool_call.get("function") else {
+            continue;
+        };
+        let Some(name) = function.get("name").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if !matches!(
+            name,
+            "list_workspace" | "search_repo" | "read_repo_file" | "read_knowledge_source"
+        ) {
+            continue;
+        }
+        let input = function
+            .get("arguments")
+            .and_then(|value| value.as_str())
+            .filter(|arguments| !arguments.trim().is_empty())
+            .map(|arguments| {
+                serde_json::from_str::<serde_json::Value>(arguments)
+                    .map_err(|err| format!("failed to parse tool arguments for {name}: {err}"))
+            })
+            .transpose()?
+            .unwrap_or_else(|| serde_json::json!({}));
+        calls.push(LocalToolCall {
+            call_id: tool_call
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| new_id("tool")),
+            name: name.to_string(),
+            input,
+        });
+    }
+    Ok(calls)
 }
 
 fn render_api_prompt(
@@ -391,5 +585,98 @@ fn code_search_query(prompt: &str) -> String {
             .find(|word| word.chars().count() >= 5)
             .unwrap_or("Structure")
             .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_openai_tool_calls_into_local_tool_plan() {
+        let value = serde_json::json!({
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_search",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_repo",
+                                    "arguments": "{\"query\":\"LocalAgentRuntime\",\"max_matches\":3}"
+                                }
+                            },
+                            {
+                                "id": "call_unknown",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": "{\"path\":\"src/lib.rs\"}"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let calls = parse_api_tool_calls(&value).unwrap();
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].call_id, "call_search");
+        assert_eq!(calls[0].name, "search_repo");
+        assert_eq!(calls[0].input["query"], "LocalAgentRuntime");
+        assert_eq!(calls[0].input["max_matches"], 3);
+    }
+
+    #[test]
+    fn planning_tool_schemas_include_knowledge_reader_only_with_sources() {
+        let mut request = ModelRequest {
+            run: RunSummary {
+                run_id: "run_test".to_string(),
+                workspace_id: "default".to_string(),
+                prompt: "inspect".to_string(),
+                status: "running".to_string(),
+                final_response: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+            repo_root: PathBuf::from("/tmp/repo"),
+            knowledge: Vec::new(),
+            recent_turns: Vec::new(),
+            mode: LocalAgentMode::CodeAgent,
+        };
+
+        let tool_names = local_tool_schemas(&request)
+            .into_iter()
+            .filter_map(|tool| {
+                tool.get("function")
+                    .and_then(|function| function.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>();
+        assert!(!tool_names.contains(&"read_knowledge_source".to_string()));
+
+        request.knowledge.push(KnowledgeSource {
+            source_id: "src_1".to_string(),
+            workspace_id: "default".to_string(),
+            path: "/tmp/repo/note.md".to_string(),
+            title: "note.md".to_string(),
+            size_bytes: 12,
+            added_at_ms: 0,
+        });
+        let tool_names = local_tool_schemas(&request)
+            .into_iter()
+            .filter_map(|tool| {
+                tool.get("function")
+                    .and_then(|function| function.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(tool_names.contains(&"read_knowledge_source".to_string()));
     }
 }
