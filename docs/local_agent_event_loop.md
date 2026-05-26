@@ -134,9 +134,9 @@ into runtime calls:
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, and
-  `/apply --dry-run` make run inspection and proposal review part of the live
-  agent terminal instead of a separate dashboard workflow. Interactive
-  `/apply` defaults to dry-run; writing requires an explicit `--yes`.
+  `/apply` make run inspection and proposal review part of the live agent
+  terminal instead of a separate dashboard workflow. Interactive `/apply`
+  defaults to dry-run; writing requires an explicit `--yes`.
 - Benchmarks: benchmark execution and report relinking are owned by dedicated
   adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
   app surfaces.

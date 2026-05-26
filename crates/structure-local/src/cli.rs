@@ -881,7 +881,7 @@ fn print_chat_session_help() {
     println!("  /inspect [run_id]     Alias for /transcript");
     println!("  /artifacts            List recent artifacts");
     println!("  /proposal [run_id]    Show the latest code-change proposal");
-    println!("  /apply [id|run]       Apply a reviewed proposal; add --dry-run to preview");
+    println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
 }
