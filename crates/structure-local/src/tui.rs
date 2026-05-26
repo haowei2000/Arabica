@@ -349,7 +349,7 @@ impl TuiState {
     fn toggle_agent_mode(&mut self) {
         self.agent_mode = match &self.agent_mode {
             LocalAgentMode::Chat => LocalAgentMode::CodeAgent,
-            LocalAgentMode::CodeAgent | LocalAgentMode::Benchmark => LocalAgentMode::Chat,
+            _ => LocalAgentMode::Chat,
         };
         self.notice = format!("Agent mode: {}", agent_mode_label(&self.agent_mode));
     }
@@ -560,7 +560,7 @@ fn agent_mode_label(mode: &LocalAgentMode) -> &'static str {
     match mode {
         LocalAgentMode::Chat => "chat",
         LocalAgentMode::CodeAgent => "code_agent",
-        LocalAgentMode::Benchmark => "benchmark",
+        _ => "code_agent",
     }
 }
 

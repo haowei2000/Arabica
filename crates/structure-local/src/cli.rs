@@ -99,6 +99,13 @@ struct ChatArgs {
     chat_only: bool,
 }
 
+#[derive(Debug)]
+struct ChatSessionState {
+    workspace_id: Option<String>,
+    mode: LocalAgentMode,
+    last_run_id: Option<String>,
+}
+
 #[derive(Debug, Args)]
 struct RunArgs {
     prompt: String,
@@ -397,12 +404,16 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     } else {
         LocalAgentMode::CodeAgent
     };
-    let workspace_id = args.workspace.clone();
+    let mut state = ChatSessionState {
+        workspace_id: args.workspace.clone(),
+        mode,
+        last_run_id: None,
+    };
     if let Some(prompt) = args.prompt {
         let result = local_result(runtime.run_prompt(RunRequest {
             prompt,
-            workspace_id,
-            mode: Some(mode),
+            workspace_id: state.workspace_id,
+            mode: Some(state.mode),
         }))?;
         if args.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -415,15 +426,19 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     println!("Structure local chat");
     println!(
         "  workspace: {}",
-        workspace_id.as_deref().unwrap_or("default")
+        state.workspace_id.as_deref().unwrap_or("default")
     );
-    println!("  mode:      {}", mode.as_str());
-    println!("  exit:      /quit");
+    println!("  mode:      {}", session_mode_label(&state.mode));
+    println!("  commands:  /help, /mode, /workspace, /source, /sources, /runs, /events, /quit");
     println!();
 
     let stdin = io::stdin();
     loop {
-        print!("structure> ");
+        print!(
+            "structure {}:{}> ",
+            session_mode_label(&state.mode),
+            state.workspace_id.as_deref().unwrap_or("default")
+        );
         io::stdout().flush()?;
         let mut prompt = String::new();
         let bytes = stdin.read_line(&mut prompt)?;
@@ -434,14 +449,18 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
         if prompt.is_empty() {
             continue;
         }
-        if matches!(prompt, "/quit" | "/exit") {
-            break;
+        if prompt.starts_with('/') {
+            if !handle_chat_session_command(&runtime, &mut state, prompt)? {
+                break;
+            }
+            continue;
         }
         let result = local_result(runtime.run_prompt(RunRequest {
             prompt: prompt.to_string(),
-            workspace_id: workspace_id.clone(),
-            mode: Some(mode.clone()),
+            workspace_id: state.workspace_id.clone(),
+            mode: Some(state.mode.clone()),
         }))?;
+        state.last_run_id = Some(result.run.run_id.clone());
         if args.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
@@ -449,6 +468,130 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn handle_chat_session_command(
+    runtime: &LocalAgentRuntime,
+    state: &mut ChatSessionState,
+    input: &str,
+) -> Result<bool> {
+    let mut parts = input.split_whitespace();
+    let command = parts.next().unwrap_or_default();
+    match command {
+        "/quit" | "/exit" => Ok(false),
+        "/help" => {
+            print_chat_session_help();
+            Ok(true)
+        }
+        "/mode" => {
+            match parts.next() {
+                Some("chat") => state.mode = LocalAgentMode::Chat,
+                Some("code") | Some("code_agent") => state.mode = LocalAgentMode::CodeAgent,
+                Some(other) => {
+                    println!("Unknown mode: {other}");
+                    println!("Use /mode chat or /mode code");
+                    return Ok(true);
+                }
+                None => {}
+            }
+            println!("Mode: {}", session_mode_label(&state.mode));
+            Ok(true)
+        }
+        "/workspace" | "/ws" => {
+            if let Some(workspace_id) = parts.next() {
+                let workspace =
+                    local_result(runtime.ensure_workspace(Some(workspace_id.to_string())))?;
+                state.workspace_id = Some(workspace.workspace_id.clone());
+                println!("Workspace: {}", workspace.workspace_id);
+            } else {
+                println!(
+                    "Workspace: {}",
+                    state.workspace_id.as_deref().unwrap_or("default")
+                );
+            }
+            Ok(true)
+        }
+        "/source" | "/knowledge" => {
+            let Some(path) = parts.next() else {
+                println!("Usage: /source <path>");
+                return Ok(true);
+            };
+            let source =
+                local_result(runtime.add_knowledge_source(state.workspace_id.clone(), path))?;
+            println!("Added knowledge source");
+            println!("  id:   {}", source.source_id);
+            println!("  file: {}", source.path);
+            Ok(true)
+        }
+        "/sources" => {
+            let sources =
+                local_result(runtime.knowledge_sources(state.workspace_id.as_deref(), 8))?;
+            print_knowledge_sources(&sources);
+            Ok(true)
+        }
+        "/runs" => {
+            let runs = local_result(runtime.list_runs(state.workspace_id.as_deref(), 8))?;
+            print_runs(&runs);
+            Ok(true)
+        }
+        "/events" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /events <run_id>.");
+                return Ok(true);
+            };
+            let events = local_result(runtime.run_events(&run_id))?;
+            print_events(&events);
+            Ok(true)
+        }
+        "/evidence" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /evidence <run_id>.");
+                return Ok(true);
+            };
+            let evidence = local_result(runtime.run_evidence_summary(&run_id))?;
+            print_run_evidence_summary(&evidence);
+            Ok(true)
+        }
+        "/replay" => {
+            let replay = local_result(runtime.workspace_replay(state.workspace_id.as_deref(), 40))?;
+            print_workspace_replay(&replay);
+            Ok(true)
+        }
+        other => {
+            println!("Unknown command: {other}");
+            println!("Use /help to list session commands.");
+            Ok(true)
+        }
+    }
+}
+
+fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
+    match mode {
+        LocalAgentMode::Chat => "chat",
+        LocalAgentMode::CodeAgent => "code_agent",
+        _ => "code_agent",
+    }
+}
+
+fn print_chat_session_help() {
+    println!("Structure local session commands");
+    println!("  /mode chat|code       Switch between chat and code-agent mode");
+    println!("  /workspace [id]       Show or open/create a workspace");
+    println!("  /source <path>        Register a knowledge file for this workspace");
+    println!("  /sources              List workspace knowledge sources");
+    println!("  /runs                 List recent runs in this workspace");
+    println!("  /events [run_id]      Show event stream for a run");
+    println!("  /evidence [run_id]    Show run evidence summary");
+    println!("  /replay               Replay workspace event stream");
+    println!("  /quit                 Exit");
 }
 
 fn print_chat_turn(result: &structure_local_runtime::RunResult) {
