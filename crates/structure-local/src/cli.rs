@@ -19,10 +19,11 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic, LocalToolCall, ProposalApplyResult,
-    RunAttempt, RunRequest,
+    RunAttempt, RunRequest, RunTranscript,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
+const CONTINUATION_SNIPPET_MAX_CHARS: usize = 1_200;
 
 #[derive(Debug, Parser)]
 #[command(name = "structure-local")]
@@ -554,7 +555,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
     println!(
-        "  commands:  /help, /status, /llm, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
+        "  commands:  /help, /status, /llm, /mode, /workspace, /ls, /search, /read, /source, /runs, /continue, /transcript, /proposal, /apply, /quit"
     );
     println!("  context:   mention @repo/relative/path[:line] in a prompt to attach a file");
     println!();
@@ -577,7 +578,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
             continue;
         }
         if prompt.starts_with('/') {
-            if !handle_chat_session_command(&runtime, &mut state, prompt)? {
+            if !handle_chat_session_command(&runtime, repo_root, args.json, &mut state, prompt)? {
                 break;
             }
             continue;
@@ -665,11 +666,17 @@ fn print_live_workspace_events(
 
 fn handle_chat_session_command(
     runtime: &LocalAgentRuntime,
+    repo_root: &PathBuf,
+    json: bool,
     state: &mut ChatSessionState,
     input: &str,
 ) -> Result<bool> {
     let mut parts = input.split_whitespace();
     let command = parts.next().unwrap_or_default();
+    let command_body = input
+        .strip_prefix(command)
+        .map(str::trim)
+        .unwrap_or_default();
     match command {
         "/quit" | "/exit" => Ok(false),
         "/help" => {
@@ -821,6 +828,10 @@ fn handle_chat_session_command(
             print_run_summary(&run);
             Ok(true)
         }
+        "/continue" | "/resume" | "/again" => {
+            run_continuation_from_session(runtime, repo_root, json, state, command_body)?;
+            Ok(true)
+        }
         "/events" => {
             let run_id = parts
                 .next()
@@ -938,6 +949,138 @@ fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
     }
 }
 
+fn run_continuation_from_session(
+    runtime: &LocalAgentRuntime,
+    repo_root: &PathBuf,
+    json: bool,
+    state: &mut ChatSessionState,
+    command_body: &str,
+) -> Result<()> {
+    let (run_id, extra_instruction) =
+        parse_continuation_args(state.last_run_id.clone(), command_body);
+    let Some(run_id) = run_id else {
+        println!("No run selected. Run a prompt or use /continue <run_id> [instruction].");
+        return Ok(());
+    };
+    let transcript = local_result(runtime.run_transcript(&run_id))?;
+    let prompt = build_continuation_prompt(&transcript, extra_instruction.as_deref());
+    state.workspace_id = Some(transcript.run.workspace_id.clone());
+    let request = RunRequest {
+        prompt,
+        workspace_id: Some(transcript.run.workspace_id.clone()),
+        mode: Some(state.mode.clone()),
+    };
+    let attempt = if json {
+        local_result(runtime.run_prompt_attempt(request))?
+    } else {
+        run_prompt_with_live_events(repo_root, request)?
+    };
+    state.last_run_id = Some(attempt.run.run_id.clone());
+    if json {
+        println!("{}", serde_json::to_string_pretty(&attempt)?);
+    } else {
+        print_chat_attempt(&attempt);
+    }
+    Ok(())
+}
+
+fn parse_continuation_args(
+    selected_run_id: Option<String>,
+    command_body: &str,
+) -> (Option<String>, Option<String>) {
+    let command_body = command_body.trim();
+    if command_body.is_empty() {
+        return (selected_run_id, None);
+    }
+
+    let mut parts = command_body.splitn(2, char::is_whitespace);
+    let first = parts.next().unwrap_or_default();
+    if first.starts_with("run_") {
+        let extra = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        (Some(first.to_string()), extra)
+    } else {
+        (selected_run_id, Some(command_body.to_string()))
+    }
+}
+
+fn build_continuation_prompt(
+    transcript: &RunTranscript,
+    extra_instruction: Option<&str>,
+) -> String {
+    let assistant_message = transcript
+        .chat_turn
+        .as_ref()
+        .and_then(|turn| turn.assistant_message.as_deref())
+        .or(transcript.final_response.as_deref())
+        .unwrap_or("No assistant response was recorded.");
+    let assistant_excerpt = continuation_response_excerpt(assistant_message);
+    let tool_events = transcript
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_completed")
+        .count();
+    let artifact_paths = if transcript.evidence.artifact_paths.is_empty() {
+        "none".to_string()
+    } else {
+        transcript.evidence.artifact_paths.join("\n")
+    };
+    let extra_instruction = extra_instruction
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Continue the same task from the previous run using the persisted transcript, event evidence, workspace context, and current repository state.");
+
+    format!(
+        "Continue from Structure local run `{run_id}` in workspace `{workspace_id}`.\n\n\
+Previous user prompt:\n{previous_prompt}\n\n\
+Previous assistant response summary:\n{assistant_summary}\n\n\
+Previous run evidence:\n- status: {status}\n- events: {event_count}\n- completed tool calls: {tool_events}\n- core aligned: {core_aligned}\n- artifacts:\n{artifact_paths}\n\n\
+Continuation instruction:\n{extra_instruction}\n",
+        run_id = transcript.run.run_id,
+        workspace_id = transcript.run.workspace_id,
+        previous_prompt = truncate_for_prompt(&transcript.run.prompt, CONTINUATION_SNIPPET_MAX_CHARS),
+        assistant_summary = truncate_for_prompt(&assistant_excerpt, CONTINUATION_SNIPPET_MAX_CHARS),
+        status = transcript.run.status,
+        event_count = transcript.events.len(),
+        core_aligned = transcript.evidence.core_trace.core_aligned,
+    )
+}
+
+fn continuation_response_excerpt(response: &str) -> String {
+    let mut body = Vec::new();
+    let mut after_runtime_header = false;
+    for line in response.lines() {
+        if line.starts_with("## Tool Evidence Summary") {
+            break;
+        }
+        if after_runtime_header {
+            body.push(line);
+            continue;
+        }
+        if line.starts_with("- Mode:") {
+            after_runtime_header = true;
+        }
+    }
+
+    let excerpt = body.join("\n").trim().to_string();
+    if excerpt.is_empty() {
+        response.trim().to_string()
+    } else {
+        excerpt
+    }
+}
+
+fn truncate_for_prompt(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        output.push_str("\n...[truncated]");
+    }
+    output
+}
+
 fn parse_agent_mode(value: Option<&str>, chat_only: bool) -> Result<LocalAgentMode> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some("chat") => Ok(LocalAgentMode::Chat),
@@ -966,6 +1109,8 @@ fn print_chat_session_help() {
     println!("  /runs                 List recent runs in this workspace");
     println!("  /select <run_id>      Select a run for follow-up inspection");
     println!("  /last                 Show the selected or latest run summary");
+    println!("  /continue [run] [msg] Continue from a selected or explicit run");
+    println!("  /resume [run] [msg]   Alias for /continue");
     println!("  /events [run_id]      Show event stream for a run");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
@@ -1575,6 +1720,113 @@ mod tests {
                 selected: Some("art_1".to_string())
             }
         );
+    }
+
+    #[test]
+    fn cli_continue_args_use_selected_run_or_explicit_run_id() {
+        assert_eq!(
+            parse_continuation_args(Some("run_selected".to_string()), ""),
+            (Some("run_selected".to_string()), None)
+        );
+        assert_eq!(
+            parse_continuation_args(Some("run_selected".to_string()), "add tests"),
+            (
+                Some("run_selected".to_string()),
+                Some("add tests".to_string())
+            )
+        );
+        assert_eq!(
+            parse_continuation_args(Some("run_selected".to_string()), "run_other add docs"),
+            (Some("run_other".to_string()), Some("add docs".to_string()))
+        );
+        assert_eq!(parse_continuation_args(None, ""), (None, None));
+    }
+
+    #[test]
+    fn cli_continuation_prompt_preserves_run_evidence_and_instruction() {
+        let run = structure_local_runtime::RunSummary {
+            run_id: "run_continue".to_string(),
+            workspace_id: "default".to_string(),
+            prompt: "Investigate the local agent CLI".to_string(),
+            status: "finished".to_string(),
+            final_response: Some("Previous response".to_string()),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        };
+        let transcript = RunTranscript {
+            run: run.clone(),
+            chat_turn: Some(structure_local_runtime::ChatTurn {
+                run_id: run.run_id.clone(),
+                workspace_id: run.workspace_id.clone(),
+                mode: "code_agent".to_string(),
+                user_message: run.prompt.clone(),
+                assistant_message: Some("Assistant evidence summary".to_string()),
+                status: "finished".to_string(),
+                event_count: 3,
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            }),
+            events: vec![structure_local_runtime::LocalEvent {
+                sequence: 1,
+                event_id: "evt_tool".to_string(),
+                run_id: Some(run.run_id.clone()),
+                workspace_id: run.workspace_id.clone(),
+                kind: "tool_call_completed".to_string(),
+                canonical_flow_id: "event".to_string(),
+                primitive_id: "event_audit".to_string(),
+                payload: serde_json::json!({}),
+                created_at_ms: 1,
+            }],
+            evidence: structure_local_runtime::RunEvidenceSummary {
+                run,
+                event_count: 3,
+                tool_call_count: 1,
+                agent_instruction_paths: vec!["AGENTS.md".to_string()],
+                worktree: None,
+                prompt_references: vec![],
+                knowledge_sources: vec![],
+                artifact_paths: vec![".structure/local/artifacts/response.md".to_string()],
+                artifacts: vec![],
+                event_kinds: vec!["tool_call_completed".to_string()],
+                canonical_flow_ids: vec!["event".to_string()],
+                primitive_ids: vec!["event_audit".to_string()],
+                core_trace: structure_local_runtime::CoreExecutionTrace {
+                    manifest_schema_version: "2026.05".to_string(),
+                    event_count: 3,
+                    flow_ids: vec!["event".to_string()],
+                    primitive_ids: vec!["event_audit".to_string()],
+                    invalid_flow_ids: vec![],
+                    invalid_primitive_ids: vec![],
+                    core_aligned: true,
+                },
+                final_response_chars: 26,
+            },
+            final_response: Some("Previous response".to_string()),
+        };
+
+        let prompt = build_continuation_prompt(&transcript, Some("finish the CLI resume path"));
+
+        assert!(prompt.contains("run_continue"));
+        assert!(prompt.contains("Investigate the local agent CLI"));
+        assert!(prompt.contains("Assistant evidence summary"));
+        assert!(prompt.contains("completed tool calls: 1"));
+        assert!(prompt.contains("core aligned: true"));
+        assert!(prompt.contains("finish the CLI resume path"));
+    }
+
+    #[test]
+    fn cli_continuation_excerpt_strips_runtime_envelope() {
+        let response = "# Structure Local Agent Response\n\n\
+This response was produced by the embedded Structure event loop.\n\n\
+- Provider: `local_env_api`\n\
+- Mode: `chat`\n\n\
+User-facing continuation point.\n\n\
+## Tool Evidence Summary\n\n\
+- list_workspace: ok\n";
+
+        let excerpt = continuation_response_excerpt(response);
+
+        assert_eq!(excerpt, "User-facing continuation point.");
     }
 
     #[test]

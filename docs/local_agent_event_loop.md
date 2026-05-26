@@ -172,9 +172,13 @@ into runtime calls:
   summary, chat turn, ordered events, evidence summary, final response, and
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
-  `/last`, `/status`, `/transcript [run-id]`, `/inspect [run-id]`,
-  `/proposal`, and `/apply` make run inspection and proposal review part of
-  the live agent terminal instead of a separate dashboard workflow.
+  `/last`, `/continue [run-id] [instruction]`, `/resume`,
+  `/status`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`,
+  and `/apply` make run inspection, continuation, and proposal review part of
+  the live agent terminal instead of a separate dashboard workflow. `/continue`
+  starts a new Structure local run from the selected run's transcript and
+  evidence summary, preserving the event-sourced audit trail instead of editing
+  an old run in place.
   Interactive `/apply` defaults to dry-run; writing requires an explicit
   `--yes`.
 - CLI mode selection: noninteractive `uv run structure chat` and
