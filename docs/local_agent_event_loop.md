@@ -53,6 +53,12 @@ source reads, and allowlisted local verification commands through
 `run_local_command`. Command execution never uses a shell, resolves cwd under
 the repository root, clamps runtime/output limits, and records stdout, stderr,
 exit status, timeout state, and truncation metadata as ordinary tool evidence.
+The command allowlist is intentionally non-mutating for formatter/linter paths:
+`cargo fmt` is accepted only with `--check`, `uv run ruff format` is accepted
+only with `--check`, and fix/write/force-style arguments are refused. This keeps
+CLI/TUI/desktop code-agent runs in the Structure proposal-and-evidence loop
+instead of letting a model silently rewrite the working tree through a
+verification tool.
 At run start, the shared runtime also loads root-level `AGENTS.md` as
 workspace instructions when present. Those instructions are written into
 `WorkspaceContextLoaded`, passed into OpenAI-compatible planning and synthesis,

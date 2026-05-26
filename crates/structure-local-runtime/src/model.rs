@@ -603,7 +603,7 @@ fn local_tool_schemas(request: &ModelRequest) -> Vec<serde_json::Value> {
                         "argv": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Command argv. Allowed examples: cargo check --workspace, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings, uv run pytest tests/unit -q, uv run ruff check src tests, npm run build, npm run desktop:build, git status --short, git diff --stat, rg pattern path."
+                            "description": "Command argv. Allowed examples: cargo check --workspace, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings, cargo fmt --all -- --check, uv run pytest tests/unit -q, uv run ruff check src tests, uv run ruff format --check src tests, npm run build, npm run desktop:build, git status --short, git diff --stat, rg pattern path. Mutating format/fix commands are refused."
                         },
                         "cwd": {
                             "type": "string",

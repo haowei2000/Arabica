@@ -274,9 +274,7 @@ fn parse_command_argv(call: &LocalToolCall) -> Result<Vec<String>, String> {
 fn validate_local_command(argv: &[String]) -> Result<(), String> {
     let cmd = argv[0].as_str();
     let allowed = match cmd {
-        "cargo" => argv
-            .get(1)
-            .is_some_and(|sub| matches!(sub.as_str(), "check" | "test" | "clippy" | "fmt")),
+        "cargo" => cargo_command_allowed(argv),
         "npm" => {
             argv.get(1).is_some_and(|sub| sub == "run")
                 && argv.get(2).is_some_and(|script| {
@@ -286,12 +284,7 @@ fn validate_local_command(argv: &[String]) -> Result<(), String> {
                     )
                 })
         }
-        "uv" => {
-            argv.get(1).is_some_and(|sub| sub == "run")
-                && argv
-                    .get(2)
-                    .is_some_and(|tool| matches!(tool.as_str(), "pytest" | "ruff"))
-        }
+        "uv" => uv_command_allowed(argv),
         "git" => argv
             .get(1)
             .is_some_and(|sub| matches!(sub.as_str(), "status" | "diff" | "show" | "log")),
@@ -305,6 +298,29 @@ fn validate_local_command(argv: &[String]) -> Result<(), String> {
         return Err("local command includes a blocked destructive argument".to_string());
     }
     Ok(())
+}
+
+fn cargo_command_allowed(argv: &[String]) -> bool {
+    match argv.get(1).map(String::as_str) {
+        Some("check" | "test" | "clippy") => true,
+        Some("fmt") => argv.iter().any(|part| part == "--check"),
+        _ => false,
+    }
+}
+
+fn uv_command_allowed(argv: &[String]) -> bool {
+    if argv.get(1).is_none_or(|sub| sub != "run") {
+        return false;
+    }
+    match argv.get(2).map(String::as_str) {
+        Some("pytest") => true,
+        Some("ruff") => match argv.get(3).map(String::as_str) {
+            Some("check") => true,
+            Some("format") => argv.iter().any(|part| part == "--check"),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn is_dangerous_argument(value: &str) -> bool {
@@ -490,6 +506,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn command_validation_allows_non_mutating_format_checks() {
+        assert!(
+            validate_local_command(&strings(&["cargo", "fmt", "--all", "--", "--check"])).is_ok()
+        );
+        assert!(validate_local_command(&strings(&[
+            "uv", "run", "ruff", "format", "--check", "src", "tests"
+        ]))
+        .is_ok());
+    }
+
+    #[test]
+    fn command_validation_blocks_mutating_format_commands() {
+        assert!(validate_local_command(&strings(&["cargo", "fmt"])).is_err());
+        assert!(
+            validate_local_command(&strings(&["uv", "run", "ruff", "format", "src", "tests"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn command_validation_keeps_lint_checks_non_mutating() {
+        assert!(
+            validate_local_command(&strings(&["uv", "run", "ruff", "check", "src", "tests"]))
+                .is_ok()
+        );
+        assert!(validate_local_command(&strings(&[
+            "uv", "run", "ruff", "check", "--fix", "src", "tests"
+        ]))
+        .is_err());
+        assert!(validate_local_command(&strings(&["cargo", "check", "--workspace"])).is_ok());
+    }
+
+    #[test]
     fn builtin_registry_lists_workspace() {
         let root = unique_temp_dir("tools");
         fs::write(root.join("note.md"), "hello").unwrap();
@@ -590,6 +639,10 @@ mod tests {
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn strings(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| (*part).to_string()).collect()
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
