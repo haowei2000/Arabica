@@ -204,13 +204,23 @@ impl TuiState {
 
     fn run_custom_prompt(&mut self, repo_root: &Path, prompt: String) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-        let result = local_result(runtime.run_prompt(RunRequest {
+        let attempt = local_result(runtime.run_prompt_attempt(RunRequest {
             prompt,
             workspace_id: Some(self.active_workspace_id.clone()),
             mode: Some(self.agent_mode.clone()),
         }))?;
-        let notice = format!("Finished {}", result.run.run_id);
+        self.active_workspace_id = attempt.run.workspace_id.clone();
+        let preview = render_run_attempt(&attempt);
+        let notice = if attempt.result.is_some() {
+            format!("Finished {}", attempt.run.run_id)
+        } else {
+            format!("Failed {}", attempt.run.run_id)
+        };
         self.refresh(repo_root)?;
+        self.preview = Some(TuiPreview {
+            path: format!("run attempt / {}", attempt.run.run_id),
+            text: preview,
+        });
         self.notice = notice;
         Ok(())
     }
@@ -273,21 +283,27 @@ impl TuiState {
 
     fn run_workspace_check(&mut self, repo_root: &Path) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-        let result = local_result(
-            runtime.run_prompt(RunRequest {
+        let attempt = local_result(
+            runtime.run_prompt_attempt(RunRequest {
                 prompt: "Inspect the local workspace state and summarize the available context."
                     .to_string(),
                 workspace_id: Some(self.active_workspace_id.clone()),
                 mode: Some(self.agent_mode.clone()),
             }),
         )?;
-        self.runs = local_result(runtime.list_runs(Some(&self.active_workspace_id), 5))?;
-        self.run_evidence = collect_run_evidence(&runtime, &self.runs);
-        self.knowledge_sources =
-            local_result(runtime.knowledge_sources(Some(&self.active_workspace_id), 5))?;
-        self.artifacts =
-            local_result(runtime.list_artifacts(Some(&self.active_workspace_id), None, 5))?;
-        self.notice = format!("Finished {}", result.run.run_id);
+        self.active_workspace_id = attempt.run.workspace_id.clone();
+        let preview = render_run_attempt(&attempt);
+        let notice = if attempt.result.is_some() {
+            format!("Finished {}", attempt.run.run_id)
+        } else {
+            format!("Failed {}", attempt.run.run_id)
+        };
+        self.refresh(repo_root)?;
+        self.preview = Some(TuiPreview {
+            path: format!("workspace check / {}", attempt.run.run_id),
+            text: preview,
+        });
+        self.notice = notice;
         Ok(())
     }
 
@@ -1498,6 +1514,48 @@ mod tests {
                 .artifact_id,
             "proposal_latest"
         );
+    }
+
+    #[test]
+    fn tui_custom_prompt_opens_attempt_preview() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_openai = openai_env_keys()
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in openai_env_keys() {
+            std::env::remove_var(key);
+        }
+
+        let root = unique_repo("tui-attempt-preview");
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(
+            snapshot,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            "tui-preview".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let result = (|| -> Result<()> {
+            state.run_custom_prompt(&root, "Summarize this workspace.".to_string())?;
+
+            assert!(state.notice.starts_with("Finished run_"));
+            let preview = state.preview.as_ref().expect("run attempt preview");
+            assert!(preview.path.starts_with("run attempt / run_"));
+            assert!(preview.text.contains("Run Attempt"));
+            assert!(preview.text.contains("Events"));
+            assert!(!state.runs.is_empty());
+            Ok(())
+        })();
+
+        fs::remove_dir_all(root).ok();
+        for (key, value) in previous_openai {
+            restore_env(key, value);
+        }
+        result.unwrap();
     }
 
     #[test]
