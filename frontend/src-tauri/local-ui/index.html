@@ -981,6 +981,15 @@
         return invoke("read_local_artifact", { artifactId, maxBytes: 64000 });
       }
 
+      async function latestProposal(runId = null) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("latest_local_proposal", {
+          workspaceId: activeWorkspaceId(),
+          runId,
+          maxBytes: 64000,
+        });
+      }
+
       async function readKnowledgeSource(sourceId) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("read_local_knowledge_source", { sourceId, maxBytes: 64000 });
@@ -1519,12 +1528,25 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
 
         try {
           const artifactPreview = await readArtifact(artifact.artifact_id);
-          renderReportSummary(null);
-          previewEl.textContent = formatPreview(artifactPreview.preview, artifact.path);
+          renderArtifactPreview(artifactPreview);
         } catch (error) {
           renderReportSummary(null);
           previewEl.textContent = String(error);
         }
+      }
+
+      function renderArtifactPreview(artifactPreview) {
+        state.selectedPath = artifactPreview.artifact.artifact_id;
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        previewMetaEl.textContent = `${artifactPreview.artifact.kind} / ${formatBytes(artifactPreview.bytes_read)} read / ${artifactPreview.artifact.run_id}`;
+        renderReportSummary(null);
+        previewEl.textContent = formatPreview(
+          artifactPreview.preview,
+          artifactPreview.artifact.path,
+        );
+        renderReports();
       }
 
       function clearPreview() {
@@ -1661,6 +1683,15 @@ Artifact: ${result.artifact_path}
 Events
 ${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join("\n")}`;
           await refresh();
+          if (state.agentMode === "code_agent") {
+            try {
+              const proposal = await latestProposal(result.run.run_id);
+              renderArtifactPreview(proposal);
+              eventLogEl.textContent += "\n\nLatest proposal opened in Preview.";
+            } catch (error) {
+              eventLogEl.textContent += `\n\nNo proposal preview opened: ${error}`;
+            }
+          }
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {
@@ -1736,17 +1767,8 @@ ${preview.preview}`;
       previewProposalEl.addEventListener("click", async () => {
         setProposalBusy(true);
         try {
-          if (state.artifacts.length === 0) {
-            state.artifacts = await localArtifacts();
-          }
-          const proposal = state.artifacts.find(
-            (artifact) => artifact.kind === "code_change_proposal",
-          );
-          if (!proposal) {
-            eventLogEl.textContent = "No local code-change proposals indexed yet.";
-            return;
-          }
-          const preview = await readArtifact(proposal.artifact_id);
+          const preview = await latestProposal();
+          renderArtifactPreview(preview);
           eventLogEl.textContent = `Code Change Proposal
 ID: ${preview.artifact.artifact_id}
 Run: ${preview.artifact.run_id}
@@ -1754,7 +1776,7 @@ Path: ${preview.artifact.path}
 Read: ${formatBytes(preview.bytes_read)}
 Truncated: ${preview.truncated}
 
-${preview.preview}`;
+Opened in Preview.`;
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {

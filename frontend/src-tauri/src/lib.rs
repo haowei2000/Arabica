@@ -178,6 +178,21 @@ fn read_local_artifact(
     runtime.read_artifact(&artifact_id, max_bytes.unwrap_or(64_000))
 }
 
+#[tauri::command]
+fn latest_local_proposal(
+    workspace_id: Option<String>,
+    run_id: Option<String>,
+    max_bytes: Option<u64>,
+) -> Result<structure_local_runtime::ArtifactPreview, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    let proposal = runtime
+        .list_artifacts(workspace_id.as_deref(), run_id.as_deref(), 32)?
+        .into_iter()
+        .find(|artifact| artifact.kind == "code_change_proposal")
+        .ok_or_else(|| "No local code-change proposal found.".to_string())?;
+    runtime.read_artifact(&proposal.artifact_id, max_bytes.unwrap_or(64_000))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -203,6 +218,7 @@ pub fn run() {
             remove_local_knowledge,
             local_artifacts,
             read_local_artifact,
+            latest_local_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Structure desktop app");
@@ -259,6 +275,11 @@ mod tests {
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(50))?;
             let artifacts = local_artifacts(Some(workspace.workspace_id.clone()), None, Some(10))?;
+            let proposal_preview = latest_local_proposal(
+                Some(workspace.workspace_id.clone()),
+                Some(run.run.run_id.clone()),
+                Some(64_000),
+            )?;
             let chat_artifacts = local_artifacts(
                 Some(workspace.workspace_id.clone()),
                 Some(chat_run.run.run_id.clone()),
@@ -276,6 +297,8 @@ mod tests {
             assert!(artifacts
                 .iter()
                 .any(|artifact| artifact.kind == "code_change_proposal"));
+            assert_eq!(proposal_preview.artifact.kind, "code_change_proposal");
+            assert!(proposal_preview.preview.contains("Patch Sketch"));
             assert!(chat_artifacts
                 .iter()
                 .all(|artifact| artifact.kind != "code_change_proposal"));
