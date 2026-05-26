@@ -47,6 +47,13 @@ source reads, and allowlisted local verification commands through
 the repository root, clamps runtime/output limits, and records stdout, stderr,
 exit status, timeout state, and truncation metadata as ordinary tool evidence.
 
+Code-agent mode persists a reviewed code-change proposal artifact before any
+write. Applying that proposal parses its unified diff, verifies target context
+inside the repository root, refuses sensitive configuration targets, and records
+the explicit `code_change_applied` event. The deterministic offline proposal
+targets `docs/local-code-agent-proposal.md` so smoke tests and demos do not
+mutate inspected source files.
+
 Current event sequence:
 
 ```text

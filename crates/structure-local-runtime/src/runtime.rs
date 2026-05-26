@@ -334,8 +334,20 @@ impl LocalAgentRuntime {
             .map_err(|err| format!("failed to read proposal artifact: {err}"))?;
         let patch = parse_proposal_patch(&proposal)?;
         let target = safe_proposal_target_path(&self.repo_root, &patch.target_path)?;
-        let patch_text = render_apply_patch_text(&patch.added_lines);
-        let bytes_written = patch_text.len() as u64;
+        if patch.new_file && target.exists() {
+            return Err(format!(
+                "proposal patch creates {}, but the target already exists",
+                patch.target_path
+            ));
+        }
+        let current_text = if target.exists() {
+            fs::read_to_string(&target)
+                .map_err(|err| format!("failed to read proposal target: {err}"))?
+        } else {
+            String::new()
+        };
+        let patched_text = apply_parsed_patch(&current_text, &patch)?;
+        let bytes_written = patched_text.len() as u64;
 
         if !dry_run {
             if let Some(parent) = target.parent() {
@@ -344,10 +356,11 @@ impl LocalAgentRuntime {
             }
             let mut file = fs::OpenOptions::new()
                 .create(true)
-                .append(true)
+                .truncate(true)
+                .write(true)
                 .open(&target)
-                .map_err(|err| format!("failed to open proposal target for append: {err}"))?;
-            file.write_all(patch_text.as_bytes())
+                .map_err(|err| format!("failed to open proposal target for write: {err}"))?;
+            file.write_all(patched_text.as_bytes())
                 .map_err(|err| format!("failed to apply proposal patch: {err}"))?;
         }
 
@@ -356,9 +369,9 @@ impl LocalAgentRuntime {
             target_path: target.display().to_string(),
             applied: !dry_run,
             dry_run,
-            added_lines: patch.added_lines.len(),
+            added_lines: patch.added_line_count(),
             bytes_written: if dry_run { 0 } else { bytes_written },
-            preview: patch_text.chars().take(4000).collect(),
+            preview: patched_text.chars().take(4000).collect(),
         };
         self.store.append_event(
             &result.artifact.workspace_id,
@@ -789,10 +802,7 @@ fn push_unique_file(files: &mut Vec<String>, path: &str) {
 }
 
 fn render_code_change_proposal(run: &RunSummary, inspected_files: &[String]) -> String {
-    let target_file = inspected_files
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "docs/local-code-agent-proposal.md".to_string());
+    let target_file = "docs/local-code-agent-proposal.md";
     let inspected = if inspected_files.is_empty() {
         "- No concrete source files were selected by the local search tool.\n".to_string()
     } else {
@@ -827,7 +837,8 @@ approval/apply step can turn a reviewed proposal into an actual patch.
 
 ```diff
 diff --git a/{target_file} b/{target_file}
---- a/{target_file}
+new file mode 100644
+--- /dev/null
 +++ b/{target_file}
 @@
 +# Proposed Structure local code-agent change
@@ -859,13 +870,38 @@ fn extract_patch_sketch(proposal: &str) -> String {
 #[derive(Debug, Clone)]
 struct ParsedProposalPatch {
     target_path: String,
-    added_lines: Vec<String>,
+    new_file: bool,
+    hunks: Vec<PatchHunk>,
+}
+
+impl ParsedProposalPatch {
+    fn added_line_count(&self) -> usize {
+        self.hunks
+            .iter()
+            .flat_map(|hunk| &hunk.lines)
+            .filter(|line| matches!(line, PatchLine::Add(_)))
+            .count()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PatchHunk {
+    lines: Vec<PatchLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PatchLine {
+    Context(String),
+    Add(String),
+    Remove(String),
 }
 
 fn parse_proposal_patch(proposal: &str) -> Result<ParsedProposalPatch, String> {
     let mut target_path = None;
+    let mut new_file = false;
     let mut in_patch = false;
-    let mut added_lines = Vec::new();
+    let mut hunks = Vec::new();
+    let mut current_hunk: Option<PatchHunk> = None;
 
     for line in proposal.lines() {
         if let Some(rest) = line.strip_prefix("diff --git a/") {
@@ -884,35 +920,143 @@ fn parse_proposal_patch(proposal: &str) -> Result<ParsedProposalPatch, String> {
         if !in_patch {
             continue;
         }
-        if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+        if line == "new file mode 100644" {
+            new_file = true;
             continue;
         }
-        if let Some(added) = line.strip_prefix('+') {
-            added_lines.push(added.to_string());
+        if line == "--- /dev/null" {
+            new_file = true;
+            continue;
         }
+        if let Some(rest) = line.strip_prefix("+++ b/") {
+            target_path = Some(rest.trim().to_string());
+            continue;
+        }
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with("@@") {
+            if let Some(hunk) = current_hunk.take() {
+                hunks.push(hunk);
+            }
+            current_hunk = Some(PatchHunk { lines: Vec::new() });
+            continue;
+        }
+        let Some(hunk) = current_hunk.as_mut() else {
+            continue;
+        };
+        if let Some(added) = line.strip_prefix('+') {
+            hunk.lines.push(PatchLine::Add(added.to_string()));
+        } else if let Some(removed) = line.strip_prefix('-') {
+            hunk.lines.push(PatchLine::Remove(removed.to_string()));
+        } else if let Some(context) = line.strip_prefix(' ') {
+            hunk.lines.push(PatchLine::Context(context.to_string()));
+        } else if line == r"\ No newline at end of file" {
+            continue;
+        } else {
+            hunk.lines.push(PatchLine::Context(line.to_string()));
+        }
+    }
+    if let Some(hunk) = current_hunk.take() {
+        hunks.push(hunk);
     }
 
     let target_path = target_path.ok_or_else(|| {
         "proposal patch does not include a diff target path generated by Structure".to_string()
     })?;
-    if added_lines.is_empty() {
+    if hunks
+        .iter()
+        .flat_map(|hunk| &hunk.lines)
+        .all(|line| !matches!(line, PatchLine::Add(_)))
+    {
         return Err("proposal patch does not contain any added lines".to_string());
     }
 
     Ok(ParsedProposalPatch {
         target_path,
-        added_lines,
+        new_file,
+        hunks,
     })
 }
 
-fn render_apply_patch_text(lines: &[String]) -> String {
-    let mut text = String::new();
-    text.push('\n');
-    for line in lines {
-        text.push_str(line);
+fn apply_parsed_patch(current_text: &str, patch: &ParsedProposalPatch) -> Result<String, String> {
+    let source_lines = split_lines(current_text);
+    let mut output = Vec::new();
+    let mut cursor = 0usize;
+
+    for hunk in &patch.hunks {
+        let match_lines = hunk
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                PatchLine::Context(value) | PatchLine::Remove(value) => Some(value.as_str()),
+                PatchLine::Add(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let start = find_hunk_start(&source_lines, cursor, &match_lines).ok_or_else(|| {
+            format!(
+                "proposal patch did not match target context for {}",
+                patch.target_path
+            )
+        })?;
+        output.extend(source_lines[cursor..start].iter().cloned());
+
+        let mut source_index = start;
+        for line in &hunk.lines {
+            match line {
+                PatchLine::Context(value) => {
+                    if source_lines.get(source_index).map(String::as_str) != Some(value.as_str()) {
+                        return Err(format!(
+                            "proposal patch context mismatch for {}",
+                            patch.target_path
+                        ));
+                    }
+                    output.push(value.clone());
+                    source_index += 1;
+                }
+                PatchLine::Remove(value) => {
+                    if source_lines.get(source_index).map(String::as_str) != Some(value.as_str()) {
+                        return Err(format!(
+                            "proposal patch removal mismatch for {}",
+                            patch.target_path
+                        ));
+                    }
+                    source_index += 1;
+                }
+                PatchLine::Add(value) => output.push(value.clone()),
+            }
+        }
+        cursor = source_index;
+    }
+    output.extend(source_lines[cursor..].iter().cloned());
+
+    let mut text = output.join("\n");
+    if !text.is_empty() {
         text.push('\n');
     }
-    text
+    Ok(text)
+}
+
+fn split_lines(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    text.lines().map(str::to_string).collect()
+}
+
+fn find_hunk_start(source: &[String], cursor: usize, match_lines: &[&str]) -> Option<usize> {
+    if match_lines.is_empty() {
+        return Some(cursor);
+    }
+    if match_lines.len() > source.len() || cursor > source.len() - match_lines.len() {
+        return None;
+    }
+    (cursor..=source.len().saturating_sub(match_lines.len())).find(|start| {
+        source[*start..*start + match_lines.len()]
+            .iter()
+            .map(String::as_str)
+            .eq(match_lines.iter().copied())
+    })
 }
 
 fn safe_proposal_target_path(repo_root: &Path, relative_path: &str) -> Result<PathBuf, String> {
@@ -1281,12 +1425,65 @@ mod tests {
         assert!(applied.bytes_written > 0);
         let target_text = fs::read_to_string(&applied.target_path).unwrap();
         assert!(target_text.contains("Proposed Structure local code-agent change"));
+        assert!(applied
+            .target_path
+            .ends_with("docs/local-code-agent-proposal.md"));
         let events = runtime.run_events(&result.run.run_id).unwrap();
         assert!(events
             .iter()
             .any(|event| event.kind == "code_change_applied"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parsed_proposal_patch_replaces_existing_context() {
+        let proposal = r#"# Reviewed Proposal
+
+```diff
+diff --git a/docs/example.md b/docs/example.md
+--- a/docs/example.md
++++ b/docs/example.md
+@@
+ heading
+-old line
++new line
+ tail
+```
+"#;
+        let patch = parse_proposal_patch(proposal).unwrap();
+        let patched = apply_parsed_patch("heading\nold line\ntail\n", &patch).unwrap();
+
+        assert_eq!(patch.target_path, "docs/example.md");
+        assert!(!patch.new_file);
+        assert_eq!(patch.added_line_count(), 1);
+        assert_eq!(patched, "heading\nnew line\ntail\n");
+    }
+
+    #[test]
+    fn generated_proposal_targets_review_artifact_file() {
+        let run = RunSummary {
+            run_id: "run_test".to_string(),
+            workspace_id: "default".to_string(),
+            prompt: "Inspect core manifest".to_string(),
+            status: "finished".to_string(),
+            final_response: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let proposal = render_code_change_proposal(
+            &run,
+            &[
+                "core/structure_core.json".to_string(),
+                "src/main.rs".to_string(),
+            ],
+        );
+        let patch = parse_proposal_patch(&proposal).unwrap();
+
+        assert_eq!(patch.target_path, "docs/local-code-agent-proposal.md");
+        assert!(patch.new_file);
+        assert!(proposal.contains("core/structure_core.json"));
+        assert!(proposal.contains("new file mode 100644"));
     }
 
     #[test]

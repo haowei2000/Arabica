@@ -2248,7 +2248,7 @@ Opened in Preview.`;
           renderArtifactPreview(preview);
           const dryRun = await applyProposal(artifactId, true);
           const confirmed = window.confirm(
-            `Apply proposal to ${dryRun.target_path}?\n\n${dryRun.added_lines} lines will be appended.`,
+            `Apply proposal to ${dryRun.target_path}?\n\n${dryRun.added_lines} proposed lines will be written after patch context is verified.`,
           );
           if (!confirmed) {
             eventLogEl.textContent = `Proposal apply cancelled.
