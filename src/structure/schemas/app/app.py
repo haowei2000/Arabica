@@ -4,10 +4,11 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from structure.schemas.context.context_schema import ContextSchema
 from structure.schemas.llm.chat_llm import ChatLLM
+from structure.schemas.llm.runtime_config import assert_no_runtime_llm_api_config
 
 
 class AppCreate(BaseModel):
@@ -30,6 +31,11 @@ class AppCreate(BaseModel):
     )
     version: int = Field(default=1, ge=1, description="App version number")
 
+    @model_validator(mode="after")
+    def reject_runtime_llm_api_config(self) -> "AppCreate":
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        return self
+
 
 class AppUpdate(BaseModel):
     """Schema for updating an existing app."""
@@ -38,6 +44,11 @@ class AppUpdate(BaseModel):
     enabled: bool | None = Field(None, description="Whether the app is enabled")
     config: dict[str, Any] | None = Field(None, description="App configuration as JSON")
     version: int | None = Field(None, ge=1, description="App version number")
+
+    @model_validator(mode="after")
+    def reject_runtime_llm_api_config(self) -> "AppUpdate":
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        return self
 
 
 class AppResponse(BaseModel):

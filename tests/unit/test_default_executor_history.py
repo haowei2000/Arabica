@@ -117,7 +117,7 @@ def test_executor_uses_openai_env_contract_over_config_values():
     assert executor._api_key == "test-key"
     assert executor._base_url == "http://example.test/v1"
     assert executor.model_name == "test-model"
-    assert executor.model_provider == "openai"
+    assert not hasattr(executor, "model_provider")
 
 
 def test_prompt_calling_keeps_tools_prompt_out_of_stable_system_head():

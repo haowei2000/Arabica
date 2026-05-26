@@ -113,7 +113,12 @@ fn read_dotenv_openai_values(repo_root: &Path) -> Vec<(String, String)> {
     };
     text.lines()
         .filter_map(parse_dotenv_assignment)
-        .filter(|(key, value)| key.starts_with("OPENAI__") && !value.trim().is_empty())
+        .filter(|(key, value)| {
+            matches!(
+                key.as_str(),
+                "OPENAI__API_KEY" | "OPENAI__BASE_URL" | "OPENAI__MODEL"
+            ) && !value.trim().is_empty()
+        })
         .collect()
 }
 
@@ -237,6 +242,29 @@ mod tests {
         let json = snapshot_json(&snapshot).unwrap();
         assert!(!json.contains("dotenv-secret"));
         assert!(!json.contains("http://dotenv.test/v1"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn snapshot_ignores_non_contract_openai_dotenv_keys() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_temp_dir("snapshot-openai-extra-dotenv");
+        fs::create_dir_all(root.join("src/structure")).unwrap();
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::write(root.join("pyproject.toml"), "").unwrap();
+        fs::write(
+            root.join(".env"),
+            "OPENAI__API_KEY=dotenv-secret\nOPENAI__ORG=not-runtime-config\n",
+        )
+        .unwrap();
+
+        let dotenv = read_dotenv_openai_values(&root);
+
+        assert_eq!(
+            dotenv,
+            vec![("OPENAI__API_KEY".to_string(), "dotenv-secret".to_string())]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

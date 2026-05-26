@@ -155,11 +155,16 @@ def test_embedding_model_create_rejects_runtime_api_config():
 
 
 def test_model_schemas_reject_runtime_api_config_inside_config_maps():
-    with pytest.raises(ValidationError, match="OPENAI__ env vars"):
+    with pytest.raises(ValidationError, match="OPENAI__API_KEY"):
         ChatModelUpdate(config={"base_url": "http://custom.example/v1"})
 
-    with pytest.raises(ValidationError, match="OPENAI__ env vars"):
+    with pytest.raises(ValidationError, match="OPENAI__API_KEY"):
         EmbeddingModelUpdate(meta={"api_key": "custom-key"})
+
+
+def test_model_schemas_reject_nested_runtime_api_config_inside_maps():
+    with pytest.raises(ValidationError, match=r"config.router.openai_api_key"):
+        ChatModelUpdate(config={"router": {"openai_api_key": "custom-key"}})
 
 
 def test_system_embedding_model_response_masks_api_key():

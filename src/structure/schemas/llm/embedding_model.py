@@ -5,27 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from structure.schemas.llm.runtime_config import assert_no_runtime_llm_api_config
 from structure.utils.schema_mixins import ResponseMixin
-
-RUNTIME_API_CONFIG_KEYS = {
-    "api_key",
-    "api_key_ref",
-    "base_url",
-    "model",
-    "openai_api_base",
-    "openai_api_key",
-}
-
-
-def _assert_no_runtime_api_config(data: dict[str, Any] | None) -> None:
-    if not data:
-        return
-    blocked = RUNTIME_API_CONFIG_KEYS.intersection(data)
-    if blocked:
-        keys = ", ".join(sorted(blocked))
-        raise ValueError(
-            f"Runtime LLM API config is only allowed through OPENAI__ env vars: {keys}"
-        )
 
 
 class EmbeddingModelCreate(BaseModel):
@@ -66,8 +47,8 @@ class EmbeddingModelCreate(BaseModel):
 
     @model_validator(mode="after")
     def reject_runtime_api_config(self) -> "EmbeddingModelCreate":
-        _assert_no_runtime_api_config(self.config)
-        _assert_no_runtime_api_config(self.meta)
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        assert_no_runtime_llm_api_config(self.meta, location="meta")
         return self
 
 
@@ -95,8 +76,8 @@ class EmbeddingModelUpdate(BaseModel):
 
     @model_validator(mode="after")
     def reject_runtime_api_config(self) -> "EmbeddingModelUpdate":
-        _assert_no_runtime_api_config(self.config)
-        _assert_no_runtime_api_config(self.meta)
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        assert_no_runtime_llm_api_config(self.meta, location="meta")
         return self
 
 

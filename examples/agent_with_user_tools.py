@@ -133,8 +133,6 @@ result = {
         logger.info("\n[Step 3] Initializing agent with user tools...")
 
         agent_config = {
-            "model_provider": "tongyi",
-            "model_name": "qwen-plus",
             "enable_browser_tools": False,  # Disable browser tools for this demo
             "approval_tools": [],
         }

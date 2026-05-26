@@ -25,8 +25,6 @@ async def main():
 
     # Configure agent with browser tools enabled
     config = {
-        "model_provider": "tongyi",
-        "model_name": "qwen-plus",
         "enable_browser_tools": True,
         "server_tools": False,  # Disable server tools for this test
     }

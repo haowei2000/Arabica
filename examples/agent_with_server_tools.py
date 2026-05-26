@@ -29,8 +29,6 @@ async def example_1_all_server_tools():
     logger.info("=" * 80)
 
     config = {
-        "model_provider": "tongyi",
-        "model_name": "qwen-plus",
         "enable_browser_tools": False,
         "server_tools": True,  # Enable all server tools
     }
@@ -57,8 +55,6 @@ async def example_2_specific_groups():
     logger.info("=" * 80)
 
     config = {
-        "model_provider": "tongyi",
-        "model_name": "qwen-plus",
         "enable_browser_tools": False,
         "server_tools": ["context", "utility"],  # Only context and utility tools
     }
@@ -87,8 +83,6 @@ async def example_3_fine_grained_control():
     logger.info("=" * 80)
 
     config = {
-        "model_provider": "tongyi",
-        "model_name": "qwen-plus",
         "enable_browser_tools": False,
         "server_tools": {
             "context": True,  # Enable context tools
@@ -160,8 +154,6 @@ async def example_4_combined_tools():
 
         # Initialize agent with all tool types
         config = {
-            "model_provider": "tongyi",
-            "model_name": "qwen-plus",
             "enable_browser_tools": True,  # Browser tools
             "server_tools": ["utility"],  # Server utility tools
             # User tools loaded via ToolRegistry
@@ -213,8 +205,6 @@ async def example_5_workspace_query():
         logger.info(f"Using workspace: {workspace.name} ({workspace_id})")
 
         config = {
-            "model_provider": "tongyi",
-            "model_name": "qwen-plus",
             "enable_browser_tools": False,
             "server_tools": ["utility"],  # Includes get_workspace_info, get_run_history
         }
@@ -271,8 +261,6 @@ async def quick_demo():
 
     # Most common: Enable utility tools for time, workspace info, cache
     config = {
-        "model_provider": "tongyi",
-        "model_name": "qwen-plus",
         "enable_browser_tools": False,
         "server_tools": ["utility"],
     }

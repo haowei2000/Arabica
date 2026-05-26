@@ -62,10 +62,8 @@ from structure.frameworks.tool_calling import (
 )
 from structure.models.events.event import Event
 from structure.registries.core import register_executor
-from structure.schemas.app import AppConfig
 from structure.schemas.context.tools.execution import ReadContextResult
 from structure.schemas.events.event_payloads import EventType
-from structure.schemas.llm.chat_llm import ChatLLM
 
 logger = logging.getLogger(__name__)
 
@@ -849,14 +847,11 @@ class DefaultExecutor(Executor):
         "executor_name": "Default Agent",
         "enabled": True,
         "version": 1,
-        "config": AppConfig(
-            model=ChatLLM(provider="openai", name="OPENAI__MODEL"), context=None
-        ),
+        "config": {},
     }
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.model_provider = "openai"
         self.model_name = ""
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
