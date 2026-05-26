@@ -53,6 +53,12 @@ source reads, and allowlisted local verification commands through
 `run_local_command`. Command execution never uses a shell, resolves cwd under
 the repository root, clamps runtime/output limits, and records stdout, stderr,
 exit status, timeout state, and truncation metadata as ordinary tool evidence.
+At run start, the shared runtime also loads root-level `AGENTS.md` as
+workspace instructions when present. Those instructions are written into
+`WorkspaceContextLoaded`, passed into OpenAI-compatible planning and synthesis,
+and promoted into run evidence as instruction paths. That gives the CLI, TUI,
+and desktop app the same repository instruction semantics without each surface
+implementing its own prompt prelude.
 Prompts can also include Codex-style `@repo/relative/path`,
 `@repo/relative/path:line`, and `@repo/relative/path#Lline` references. The
 runtime resolves those references as `read_repo_file` tool calls before model
@@ -89,7 +95,7 @@ WorkspaceOpened
 RunCreated
 ChatMessageRecorded     # user prompt
 PromptReceived
-WorkspaceContextLoaded
+WorkspaceContextLoaded  # AGENTS.md instructions, recent turns, workspace meta
 KnowledgeRetrieved
 ModelRequested          # tool_planning
 ModelResponded          # planned LocalToolCall list

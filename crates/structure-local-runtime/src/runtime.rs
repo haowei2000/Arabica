@@ -4,10 +4,11 @@ use crate::model::{
 use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
-    ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, KnowledgeSource,
-    KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall,
-    LocalToolResult, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult,
-    RunStatus, RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
+    KnowledgeSource, KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle,
+    LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ProposalApplyResult, RunAttempt,
+    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -488,6 +489,7 @@ impl LocalAgentRuntime {
         let mut event_kinds = Vec::new();
         let mut canonical_flow_ids = Vec::new();
         let mut primitive_ids = Vec::new();
+        let mut agent_instruction_paths = Vec::new();
         let mut prompt_references = Vec::new();
         let mut tool_call_count = 0;
 
@@ -502,6 +504,26 @@ impl LocalAgentRuntime {
                 primitive_ids.push(event.primitive_id.clone());
             }
             match event.kind.as_str() {
+                "workspace_context_loaded" => {
+                    if let Some(instructions) = event
+                        .payload
+                        .get("agent_instructions")
+                        .and_then(|value| value.as_array())
+                    {
+                        for instruction in instructions {
+                            if let Some(path) =
+                                instruction.get("path").and_then(|value| value.as_str())
+                            {
+                                if !agent_instruction_paths
+                                    .iter()
+                                    .any(|existing| existing == path)
+                                {
+                                    agent_instruction_paths.push(path.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
                 "agent_step_planned" => {
                     if let Some(references) = event
                         .payload
@@ -568,6 +590,7 @@ impl LocalAgentRuntime {
             run,
             event_count: events.len(),
             tool_call_count,
+            agent_instruction_paths,
             prompt_references,
             knowledge_sources,
             artifact_paths,
@@ -629,6 +652,7 @@ impl LocalAgentRuntime {
         run: RunSummary,
         mode: LocalAgentMode,
     ) -> Result<RunResult, String> {
+        let agent_instructions = load_agent_instructions(&self.repo_root)?;
         let knowledge = self.store.list_knowledge_sources(&run.workspace_id, 8)?;
         let recent_turns = self
             .chat_turns(Some(&run.workspace_id), 8)?
@@ -643,6 +667,8 @@ impl LocalAgentRuntime {
                 "workspace_id": run.workspace_id,
                 "repo_root": self.repo_root,
                 "runtime_db": self.db_path(),
+                "agent_instruction_count": agent_instructions.len(),
+                "agent_instructions": agent_instructions.clone(),
                 "knowledge_sources": knowledge.len(),
                 "recent_turns": recent_turns.len(),
                 "context_replay_limit": 8,
@@ -661,6 +687,7 @@ impl LocalAgentRuntime {
         let model_request = ModelRequest {
             run: run.clone(),
             repo_root: self.repo_root.clone(),
+            agent_instructions,
             knowledge,
             recent_turns,
             mode: mode.clone(),
@@ -938,6 +965,30 @@ fn read_limited_text(
     let truncated = size_bytes > bytes_read;
     let preview = String::from_utf8_lossy(&buffer).into_owned();
     Ok((preview, bytes_read, truncated))
+}
+
+fn load_agent_instructions(repo_root: &Path) -> Result<Vec<AgentInstruction>, String> {
+    let mut instructions = Vec::new();
+    let path = repo_root.join("AGENTS.md");
+    if !path.exists() {
+        return Ok(instructions);
+    }
+    let metadata = fs::metadata(&path)
+        .map_err(|err| format!("failed to inspect AGENTS.md instructions: {err}"))?;
+    if !metadata.is_file() {
+        return Ok(instructions);
+    }
+    let (content_preview, _bytes_read, truncated) =
+        read_limited_text(&path, metadata.len(), 32_000)
+            .map_err(|err| format!("failed to read AGENTS.md instructions: {err}"))?;
+    instructions.push(AgentInstruction {
+        path: "AGENTS.md".to_string(),
+        title: "Repository Agent Instructions".to_string(),
+        size_bytes: metadata.len(),
+        content_preview,
+        truncated,
+    });
+    Ok(instructions)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1570,6 +1621,60 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn local_runtime_loads_agents_md_as_workspace_instructions() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("agent-instructions");
+        fs::write(
+            root.join("AGENTS.md"),
+            "Always keep local CLI and desktop behavior aligned with Structure core.",
+        )
+        .unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Summarize the workspace instructions.".to_string(),
+                workspace_id: None,
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        assert!(result.final_response.contains("Agent Instructions"));
+        assert!(result
+            .final_response
+            .contains("Always keep local CLI and desktop behavior aligned"));
+        assert!(result.events.iter().any(|event| {
+            event.kind == "workspace_context_loaded"
+                && event
+                    .payload
+                    .get("agent_instruction_count")
+                    .and_then(|value| value.as_u64())
+                    == Some(1)
+                && event
+                    .payload
+                    .get("agent_instructions")
+                    .and_then(|value| value.as_array())
+                    .is_some_and(|items| {
+                        items.iter().any(|item| {
+                            item.get("path").and_then(|value| value.as_str()) == Some("AGENTS.md")
+                        })
+                    })
+        }));
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        assert_eq!(
+            evidence.agent_instruction_paths,
+            vec!["AGENTS.md".to_string()]
+        );
+        let transcript = runtime.run_transcript(&result.run.run_id).unwrap();
+        assert_eq!(
+            transcript.evidence.agent_instruction_paths,
+            vec!["AGENTS.md".to_string()]
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

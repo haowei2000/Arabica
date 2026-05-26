@@ -224,6 +224,7 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     println!("  status:    {}", evidence.run.status);
     println!("  events:    {}", evidence.event_count);
     println!("  tools:     {}", evidence.tool_call_count);
+    println!("  instr:     {}", evidence.agent_instruction_paths.len());
     println!("  refs:      {}", evidence.prompt_references.len());
     println!("  knowledge: {}", evidence.knowledge_sources.len());
     println!("  response:  {} chars", evidence.final_response_chars);
@@ -257,6 +258,12 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
         println!("  prompt refs:");
         for reference in &evidence.prompt_references {
             println!("    @{reference}");
+        }
+    }
+    if !evidence.agent_instruction_paths.is_empty() {
+        println!("  instructions:");
+        for path in &evidence.agent_instruction_paths {
+            println!("    {path}");
         }
     }
     if !evidence.knowledge_sources.is_empty() {
@@ -300,6 +307,10 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
         transcript.evidence.core_trace.manifest_schema_version
     );
     println!("  tools:     {}", transcript.evidence.tool_call_count);
+    println!(
+        "  instr:     {}",
+        transcript.evidence.agent_instruction_paths.len()
+    );
     println!("  artifacts: {}", transcript.evidence.artifact_paths.len());
     if let Some(turn) = &transcript.chat_turn {
         println!();

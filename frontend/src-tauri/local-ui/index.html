@@ -1583,6 +1583,8 @@ Error: ${diagnostic.error ?? "none"}`;
               : `${payload.provider ?? "model"} synthesized ${payload.response_chars ?? 0} chars`);
           case "agent_step_planned":
             return withTaxonomy(`${payload.mode ?? "agent"} iteration ${payload.iteration ?? "?"} / ${payload.tool_call_count ?? 0} tool calls`);
+          case "workspace_context_loaded":
+            return withTaxonomy(`${payload.agent_instruction_count ?? 0} instructions / ${payload.knowledge_sources ?? 0} knowledge / ${payload.recent_turns ?? 0} turns`);
           case "tool_call_requested":
             return withTaxonomy(`${payload.name ?? "tool"} ${JSON.stringify(payload.input ?? {})}`);
           case "tool_call_completed":
@@ -1840,6 +1842,7 @@ The original file was not deleted.`;
             ? `Evidence
 Events: ${evidence.event_count}
 Tool calls: ${evidence.tool_call_count}
+Instructions: ${evidence.agent_instruction_paths?.length ?? 0}
 Prompt refs: ${evidence.prompt_references?.length ?? 0}
 Knowledge sources: ${evidence.knowledge_sources.length}
 Artifacts: ${evidence.artifact_paths.length}
@@ -1853,6 +1856,9 @@ ${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`
 
 Prompt References
 ${evidence.prompt_references?.map((path) => `- @${path}`).join("\n") || "No prompt file references used."}
+
+Agent Instructions
+${evidence.agent_instruction_paths?.map((path) => `- ${path}`).join("\n") || "No AGENTS.md instructions loaded."}
 
 Artifacts
 ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || evidence.artifact_paths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`
@@ -2014,6 +2020,7 @@ Run: ${evidence.run.run_id}
 Status: ${evidence.run.status}
 Events: ${evidence.event_count}
 Tools: ${evidence.tool_call_count}
+Instructions: ${evidence.agent_instruction_paths?.length ?? 0}
 Artifacts: ${evidence.artifact_paths.length}
 Flows: ${evidence.canonical_flow_ids.join(", ")}
 Primitives: ${evidence.primitive_ids.join(", ")}

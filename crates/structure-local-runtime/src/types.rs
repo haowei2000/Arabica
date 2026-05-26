@@ -142,6 +142,15 @@ pub struct KnowledgeSourcePreview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInstruction {
+    pub path: String,
+    pub title: String,
+    pub size_bytes: u64,
+    pub content_preview: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
     pub run_id: String,
     pub workspace_id: String,
@@ -216,6 +225,7 @@ pub struct RunEvidenceSummary {
     pub run: RunSummary,
     pub event_count: usize,
     pub tool_call_count: usize,
+    pub agent_instruction_paths: Vec<String>,
     pub prompt_references: Vec<String>,
     pub knowledge_sources: Vec<KnowledgeSource>,
     pub artifact_paths: Vec<String>,

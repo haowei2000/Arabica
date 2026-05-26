@@ -764,9 +764,10 @@ fn draw_reports(
             .find(|evidence| evidence.run.run_id == run.run_id)
             .map(|evidence| {
                 format!(
-                    "  [{} events, {} tools, {} sources, {} artifacts]",
+                    "  [{} events, {} tools, {} instr, {} sources, {} artifacts]",
                     evidence.event_count,
                     evidence.tool_call_count,
+                    evidence.agent_instruction_paths.len(),
                     evidence.knowledge_sources.len(),
                     evidence.artifacts.len()
                 )
@@ -1052,10 +1053,11 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
     } else {
         for evidence in &bundle.run_evidence {
             text.push_str(&format!(
-                "- {}: {} events, {} tools, {} sources, {} artifacts\n",
+                "- {}: {} events, {} tools, {} instr, {} sources, {} artifacts\n",
                 evidence.run.run_id,
                 evidence.event_count,
                 evidence.tool_call_count,
+                evidence.agent_instruction_paths.len(),
                 evidence.knowledge_sources.len(),
                 evidence.artifacts.len()
             ));
@@ -1086,9 +1088,21 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
     ));
     text.push_str(&format!("Tools: {}\n", transcript.evidence.tool_call_count));
     text.push_str(&format!(
+        "Instructions: {}\n",
+        transcript.evidence.agent_instruction_paths.len()
+    ));
+    text.push_str(&format!(
         "Artifacts: {}\n\n",
         transcript.evidence.artifact_paths.len()
     ));
+
+    if !transcript.evidence.agent_instruction_paths.is_empty() {
+        text.push_str("Agent Instructions\n");
+        for path in &transcript.evidence.agent_instruction_paths {
+            text.push_str(&format!("- {path}\n"));
+        }
+        text.push('\n');
+    }
 
     if let Some(turn) = &transcript.chat_turn {
         text.push_str("User\n");

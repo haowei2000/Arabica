@@ -1,7 +1,7 @@
 use crate::store::new_id;
 use crate::types::{
-    ChatTurn, KnowledgeSource, LocalAgentMode, LocalLlmDiagnostic, LocalToolCall, LocalToolResult,
-    RunSummary,
+    AgentInstruction, ChatTurn, KnowledgeSource, LocalAgentMode, LocalLlmDiagnostic, LocalToolCall,
+    LocalToolResult, RunSummary,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 pub struct ModelRequest {
     pub run: RunSummary,
     pub repo_root: PathBuf,
+    pub agent_instructions: Vec<AgentInstruction>,
     pub knowledge: Vec<KnowledgeSource>,
     pub recent_turns: Vec<ChatTurn>,
     pub mode: LocalAgentMode,
@@ -265,6 +266,10 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
             request.repo_root.display()
         ));
         response.push_str(&format!(
+            "- Agent instructions: `{}`\n",
+            request.agent_instructions.len()
+        ));
+        response.push_str(&format!(
             "- Knowledge sources: `{}`\n",
             request.knowledge.len()
         ));
@@ -281,7 +286,23 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
         response.push_str("2. Plan local tool calls through the shared Structure runtime.\n");
         response.push_str("3. Execute repository and knowledge tools inside the local process.\n");
         response.push_str("4. Persist the assistant response and evidence as immutable events.\n");
-        response.push_str("\n\n## Retrieved Context\n\n");
+        response.push_str("\n\n## Agent Instructions\n\n");
+        if request.agent_instructions.is_empty() {
+            response.push_str("No AGENTS.md instruction file was found for this workspace.\n");
+        } else {
+            for instruction in &request.agent_instructions {
+                response.push_str(&format!(
+                    "### {}\n\nPath: `{}` / {} bytes / truncated: {}\n\n{}\n\n",
+                    instruction.title,
+                    instruction.path,
+                    instruction.size_bytes,
+                    instruction.truncated,
+                    instruction.content_preview
+                ));
+            }
+        }
+
+        response.push_str("\n## Retrieved Context\n\n");
         if request.knowledge.is_empty() {
             response.push_str("No knowledge sources are registered for this workspace yet.\n");
         } else {
@@ -415,6 +436,10 @@ impl LocalModelProvider for EnvApiModelProvider {
         final_response.push_str(&format!("- Run: `{}`\n", request.run.run_id));
         final_response.push_str(&format!("- Workspace: `{}`\n", request.run.workspace_id));
         final_response.push_str(&format!(
+            "- Agent instructions: `{}`\n",
+            request.agent_instructions.len()
+        ));
+        final_response.push_str(&format!(
             "- Replayed chat turns: `{}`\n",
             request.recent_turns.len()
         ));
@@ -477,10 +502,11 @@ fn render_planning_prompt(request: &ModelRequest, tool_results: &[LocalToolResul
             .collect::<String>()
     };
     format!(
-        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
+        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
         prompt = request.run.prompt,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),
+        instructions = render_agent_instructions_for_api(&request.agent_instructions),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
     )
 }
@@ -634,11 +660,15 @@ fn parse_api_tool_calls(value: &serde_json::Value) -> Result<Vec<LocalToolCall>,
             .get("arguments")
             .and_then(|value| value.as_str())
             .filter(|arguments| !arguments.trim().is_empty())
-            .map(|arguments| {
-                serde_json::from_str::<serde_json::Value>(arguments)
-                    .map_err(|err| format!("failed to parse tool arguments for {name}: {err}"))
-            })
-            .transpose()?
+            .map(
+                |arguments| match serde_json::from_str::<serde_json::Value>(arguments) {
+                    Ok(input) => input,
+                    Err(error) => serde_json::json!({
+                        "_invalid_tool_arguments": arguments,
+                        "_parse_error": error.to_string(),
+                    }),
+                },
+            )
             .unwrap_or_else(|| serde_json::json!({}));
         calls.push(LocalToolCall {
             call_id: tool_call
@@ -660,15 +690,35 @@ fn render_api_prompt(
     let evidence = serde_json::to_string_pretty(tool_results)
         .map_err(|err| format!("failed to render tool evidence: {err}"))?;
     Ok(format!(
-        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nRecent workspace conversation:\n{recent_turns}\n\nTool evidence JSON:\n{evidence}",
+        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nRecent workspace conversation:\n{recent_turns}\n\nTool evidence JSON:\n{evidence}",
         prompt = request.run.prompt,
         run_id = request.run.run_id,
         workspace_id = request.run.workspace_id,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),
+        instructions = render_agent_instructions_for_api(&request.agent_instructions),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
         evidence = evidence.chars().take(20_000).collect::<String>()
     ))
+}
+
+fn render_agent_instructions_for_api(instructions: &[AgentInstruction]) -> String {
+    if instructions.is_empty() {
+        return "No AGENTS.md instruction file found.".to_string();
+    }
+    instructions
+        .iter()
+        .map(|instruction| {
+            format!(
+                "File: {}\nTitle: {}\nTruncated: {}\n{}",
+                instruction.path,
+                instruction.title,
+                instruction.truncated,
+                summarize_line(&instruction.content_preview, 4_000)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn render_recent_turns_for_api(turns: &[ChatTurn]) -> String {
@@ -792,6 +842,41 @@ mod tests {
     }
 
     #[test]
+    fn malformed_openai_tool_arguments_become_auditable_tool_input() {
+        let value = serde_json::json!({
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_bad_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_repo_file",
+                                    "arguments": "{\"path\":\"src/lib.rs\""
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let calls = parse_api_tool_calls(&value).unwrap();
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_repo_file");
+        assert_eq!(
+            calls[0].input["_invalid_tool_arguments"],
+            "{\"path\":\"src/lib.rs\""
+        );
+        assert!(calls[0].input["_parse_error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("EOF"));
+    }
+
+    #[test]
     fn planning_tool_schemas_include_knowledge_reader_only_with_sources() {
         let mut request = ModelRequest {
             run: RunSummary {
@@ -804,6 +889,7 @@ mod tests {
                 updated_at_ms: 0,
             },
             repo_root: PathBuf::from("/tmp/repo"),
+            agent_instructions: Vec::new(),
             knowledge: Vec::new(),
             recent_turns: Vec::new(),
             mode: LocalAgentMode::CodeAgent,
