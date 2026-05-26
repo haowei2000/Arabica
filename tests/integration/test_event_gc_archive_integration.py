@@ -49,6 +49,18 @@ _DEFAULT_DB_URL = (
 _TOKEN_RE = re.compile(r"\w+|[^\s\w]")
 
 
+@pytest.fixture(autouse=True)
+def openai_env_contract(monkeypatch):
+    monkeypatch.setenv("OPENAI__API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI__BASE_URL", "http://example.test/v1")
+    monkeypatch.setenv("OPENAI__MODEL", "test-model")
+    from structure.config.factory import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @dataclass(frozen=True)
 class DialogueEventSpec:
     event_type: EventType
@@ -855,8 +867,6 @@ async def test_context_batch_dialogue_metrics_track_tokens_cache_and_events(
             {
                 "workspace_id": str(workspace_id),
                 "run_id": str(current_run_id),
-                "api_key": "test-key",
-                "base_url": "http://example.test/v1",
             }
         )
 
@@ -972,8 +982,6 @@ async def test_open_source_agent_benchmarks_map_to_distilled_integration_cases(
             {
                 "workspace_id": str(workspace_id),
                 "run_id": str(bfcl_run_id),
-                "api_key": "test-key",
-                "base_url": "http://example.test/v1",
             }
         )
         messages, _ = executor.get_messages_and_tools_from_batch_plan(

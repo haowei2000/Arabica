@@ -64,6 +64,7 @@ from structure.models.events.event import Event
 from structure.registries.core import register_executor
 from structure.schemas.context.tools.execution import ReadContextResult
 from structure.schemas.events.event_payloads import EventType
+from structure.schemas.llm.runtime_config import assert_no_runtime_llm_api_config
 
 logger = logging.getLogger(__name__)
 
@@ -851,6 +852,7 @@ class DefaultExecutor(Executor):
     }
 
     def __init__(self, config: dict):
+        assert_no_runtime_llm_api_config(config, location="executor.config")
         super().__init__(config)
         self.model_name = ""
         self.max_history_messages = config.get("max_history_messages", 80)
