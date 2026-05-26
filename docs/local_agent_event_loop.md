@@ -98,6 +98,9 @@ Failure handling records `RunFailed` around model/tool execution boundaries.
 Individual tool failures are captured as `ToolCallCompleted` events with
 `success = false` so the model can still synthesize a grounded response from
 partial evidence.
+For desktop clients, `local_agent_run_attempt` returns the failed `RunSummary`
+and its events after a post-creation model/API failure, allowing the UI to show
+the same event trace that would be available for a successful run.
 
 ## Surface Responsibilities
 
@@ -130,16 +133,17 @@ into runtime calls:
   bound to `n`; `!` commands are persisted as workspace tool events. It also
   surfaces knowledge and artifact previews through the same runtime. Press `e`
   to inspect the same local evidence bundle.
-- Desktop app: Tauri commands such as `local_agent_run`, `local_runs`, and
-  `local_run_events`; `create_local_workspace` and `local_workspaces` back the
-  native workspace selector. `local_workspace_event_feed` powers the Poll Events
-  action and live in-flight run polling from a persisted cursor. Repository
-  tool controls call safe list/search/read commands plus `run_local_command` for
-  allowlisted local checks; those manual tool calls are persisted as workspace
-  events, and the UI renders both workspace feed events and an inspectable
-  latest-run trace from `local_run_events`. `local_evidence_bundle` exposes the
-  same reproducibility artifact as the CLI/TUI. Benchmark execution stays in
-  the dedicated Python adapters under `benchmarks/adapters/`.
+- Desktop app: Tauri commands such as `local_agent_run_attempt`, `local_runs`,
+  and `local_run_events`; `create_local_workspace` and `local_workspaces` back
+  the native workspace selector. `local_workspace_event_feed` powers the Poll
+  Events action and live in-flight run polling from a persisted cursor.
+  Repository tool controls call safe list/search/read commands plus
+  `run_local_command` for allowlisted local checks; those manual tool calls are
+  persisted as workspace events, and the UI renders both workspace feed events
+  and an inspectable latest-run trace from successful or failed attempts.
+  `local_evidence_bundle` exposes the same reproducibility artifact as the
+  CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
+  `benchmarks/adapters/`.
 
 This keeps the conceptual model aligned with the distributed web backend:
 event-sourced run lifecycle, workspace-scoped context, knowledge retrieval, and

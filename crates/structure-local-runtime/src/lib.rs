@@ -14,8 +14,8 @@ pub use tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 pub use types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalToolCall, LocalToolResult,
-    ProposalApplyResult, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
+    RunSummary, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 
 #[cfg(test)]

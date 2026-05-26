@@ -183,6 +183,14 @@ pub struct RunResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunAttempt {
+    pub run: RunSummary,
+    pub events: Vec<LocalEvent>,
+    pub result: Option<RunResult>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunEvidenceSummary {
     pub run: RunSummary,
     pub event_count: usize,

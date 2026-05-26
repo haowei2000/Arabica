@@ -97,6 +97,20 @@ fn local_agent_run(
 }
 
 #[tauri::command]
+fn local_agent_run_attempt(
+    prompt: String,
+    workspace_id: Option<String>,
+    mode: Option<String>,
+) -> Result<structure_local_runtime::RunAttempt, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_prompt_attempt(RunRequest {
+        prompt,
+        workspace_id,
+        mode: Some(parse_local_agent_mode(mode)),
+    })
+}
+
+#[tauri::command]
 fn local_chat_turns(
     workspace_id: Option<String>,
     limit: Option<usize>,
@@ -288,6 +302,7 @@ pub fn run() {
             read_local_repo_file,
             run_local_command,
             local_agent_run,
+            local_agent_run_attempt,
             local_chat_turns,
             local_runs,
             create_local_workspace,
@@ -397,6 +412,11 @@ mod tests {
                 Some(workspace.workspace_id.clone()),
                 Some("code_agent".to_string()),
             )?;
+            let attempt = local_agent_run_attempt(
+                "Inspect this desktop command workspace through attempt.".to_string(),
+                Some(workspace.workspace_id.clone()),
+                Some("code_agent".to_string()),
+            )?;
             let chat_run = local_agent_run(
                 "Reply conversationally without code inspection.".to_string(),
                 Some(workspace.workspace_id.clone()),
@@ -404,7 +424,7 @@ mod tests {
             )?;
             let turns = local_chat_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
-            let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(50))?;
+            let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
                 local_workspace_event_feed(Some(workspace.workspace_id.clone()), Some(0), Some(5))?;
             let artifacts = local_artifacts(Some(workspace.workspace_id.clone()), None, Some(10))?;
@@ -449,6 +469,13 @@ mod tests {
                 .contains(root.to_str().unwrap()));
             assert_eq!(run.run.workspace_id, "desktop-test");
             assert_eq!(run.run.status, "finished");
+            assert_eq!(attempt.run.status, "finished");
+            assert!(attempt.result.is_some());
+            assert!(attempt.error.is_none());
+            assert!(attempt
+                .events
+                .iter()
+                .any(|event| event.kind == "run_finished"));
             assert_eq!(chat_run.run.status, "finished");
             assert!(turns.iter().any(|item| item.run_id == run.run.run_id));
             assert!(turns.iter().any(|item| item.run_id == chat_run.run.run_id));

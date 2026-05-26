@@ -1012,9 +1012,9 @@
         return invoke("local_workspaces", { limit: 20 });
       }
 
-      async function runLocalAgent(prompt) {
+      async function runLocalAgentAttempt(prompt) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("local_agent_run", {
+        return invoke("local_agent_run_attempt", {
           prompt,
           workspaceId: activeWorkspaceId(),
           mode: state.agentMode,
@@ -2145,23 +2145,28 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         try {
           await primeWorkspaceEventCursor();
           startLiveEventPolling();
-          const result = await runLocalAgent(prompt);
+          const attempt = await runLocalAgentAttempt(prompt);
           await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
-          agentPromptEl.value = "";
+          const result = attempt.result;
           state.workspaceEventCursor = Math.max(
             state.workspaceEventCursor,
-            ...result.events.map((runEvent) => runEvent.sequence),
+            ...attempt.events.map((runEvent) => runEvent.sequence),
           );
-          renderEventTimeline(result.events, result.run.run_id, true);
-          eventLogEl.textContent = `Run: ${result.run.run_id}
-Workspace: ${result.run.workspace_id}
-Status: ${result.run.status}
+          renderEventTimeline(attempt.events, attempt.run.run_id, true);
+          eventLogEl.textContent = `Run: ${attempt.run.run_id}
+Workspace: ${attempt.run.workspace_id}
+Status: ${attempt.run.status}
 Mode: ${state.agentMode}
-Artifact: ${result.artifact_path}
+${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
 
 Events
-${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join("\n")}`;
+${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join("\n")}`;
           await refresh();
+          if (!result) {
+            eventLogEl.textContent += "\n\nThe failed run is still recorded and visible in the event trace.";
+            return;
+          }
+          agentPromptEl.value = "";
           if (state.agentMode === "code_agent") {
             try {
               const proposal = await latestProposal(result.run.run_id);

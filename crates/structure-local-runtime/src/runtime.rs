@@ -4,8 +4,8 @@ use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentMode, LocalEvidenceBundle, LocalToolCall, LocalToolResult, ProposalApplyResult,
-    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary,
+    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -78,6 +78,16 @@ impl LocalAgentRuntime {
     }
 
     pub fn run_prompt(&self, request: RunRequest) -> Result<RunResult, String> {
+        let attempt = self.run_prompt_attempt(request)?;
+        if let Some(result) = attempt.result {
+            return Ok(result);
+        }
+        Err(attempt
+            .error
+            .unwrap_or_else(|| "local run failed without an error message".to_string()))
+    }
+
+    pub fn run_prompt_attempt(&self, request: RunRequest) -> Result<RunAttempt, String> {
         if request.prompt.trim().is_empty() {
             return Err("prompt must not be empty".to_string());
         }
@@ -125,7 +135,12 @@ impl LocalAgentRuntime {
 
         run = self.store.update_run(&run_id, RunStatus::Running, None)?;
         match self.execute_running_run(run.clone(), mode) {
-            Ok(result) => Ok(result),
+            Ok(result) => Ok(RunAttempt {
+                run: result.run.clone(),
+                events: result.events.clone(),
+                result: Some(result),
+                error: None,
+            }),
             Err(error) => {
                 let failed_run = self
                     .store
@@ -139,7 +154,13 @@ impl LocalAgentRuntime {
                         "error": error,
                     }),
                 )?;
-                Err(error)
+                let events = self.store.run_events(&run_id)?;
+                Ok(RunAttempt {
+                    run: failed_run,
+                    events,
+                    result: None,
+                    error: Some(error),
+                })
             }
         }
     }
@@ -1690,6 +1711,48 @@ diff --git a/docs/example.md b/docs/example.md
                     == Some("local_env_api")
         }));
         assert!(events.iter().any(|event| event.kind == "run_failed"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_returns_failed_run_attempt_with_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("api-attempt-failure");
+        fs::write(
+            root.join(".env"),
+            "OPENAI__API_KEY=test-key\nOPENAI__BASE_URL=http://127.0.0.1:9/v1\nOPENAI__MODEL=test-model\n",
+        )
+        .unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let attempt = runtime
+            .run_prompt_attempt(RunRequest {
+                prompt: "Return a failed attempt with replayable events".to_string(),
+                workspace_id: Some("api-attempt-failure".to_string()),
+                mode: Some(LocalAgentMode::CodeAgent),
+            })
+            .unwrap();
+
+        assert_eq!(attempt.run.status, "failed");
+        assert!(attempt.result.is_none());
+        assert!(attempt
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local LLM API request failed"));
+        assert!(attempt.events.iter().any(|event| {
+            event.kind == "model_requested"
+                && event
+                    .payload
+                    .get("provider")
+                    .and_then(|value| value.as_str())
+                    == Some("local_env_api")
+        }));
+        assert!(attempt
+            .events
+            .iter()
+            .any(|event| event.kind == "run_failed"));
 
         fs::remove_dir_all(root).unwrap();
     }
