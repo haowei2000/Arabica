@@ -4,7 +4,7 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvent,
-    LocalEvidenceBundle, RunEvidenceSummary, RunResult, RunSummary, WorkspaceEventFeed,
+    LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, WorkspaceEventFeed,
     WorkspaceReplay, WorkspaceSummary,
 };
 
@@ -121,6 +121,33 @@ pub(crate) fn print_run_result(result: &RunResult) {
     println!("  events:    {}", result.events.len());
     println!();
     println!("{}", result.final_response);
+}
+
+pub(crate) fn print_run_attempt(attempt: &RunAttempt) {
+    if let Some(result) = &attempt.result {
+        print_run_result(result);
+        return;
+    }
+    println!("Structure local run");
+    println!("  run:       {}", attempt.run.run_id);
+    println!("  workspace: {}", attempt.run.workspace_id);
+    println!("  status:    {}", attempt.run.status);
+    println!("  events:    {}", attempt.events.len());
+    if let Some(error) = &attempt.error {
+        println!("  error:     {error}");
+    }
+    if !attempt.events.is_empty() {
+        println!();
+        println!("Event trace");
+        for event in &attempt.events {
+            println!(
+                "  #{:<4} {:<26} {}",
+                event.sequence,
+                event.kind,
+                event.run_id.as_deref().unwrap_or("workspace")
+            );
+        }
+    }
 }
 
 pub(crate) fn print_workspaces(workspaces: &[WorkspaceSummary]) {

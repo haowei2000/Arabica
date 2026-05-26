@@ -113,7 +113,9 @@ into runtime calls:
   explicit instead of relying only on implicit `--workspace` creation. Non-JSON
   `run` and `chat` commands poll the local cursor feed while the run executes,
   and interactive `/ls`, `/search`, `/read`, and `/cmd` calls are recorded as
-  workspace tool events.
+  workspace tool events. CLI `run` and one-shot `chat` return `RunAttempt` in
+  JSON mode, so successful and failed runs both keep the same inspectable event
+  trace contract as the desktop app.
 - CLI parity checks: `uv run structure parity --json` reads the shared
   capability matrix, while `uv run structure parity --verify --json` verifies
   surface coverage, primitive references, entrypoints, and evidence fields.

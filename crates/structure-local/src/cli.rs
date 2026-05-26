@@ -1,7 +1,7 @@
 use crate::text::{
     print_artifact_preview, print_artifacts, print_core_capabilities, print_core_manifest,
     print_events, print_knowledge_preview, print_knowledge_source, print_knowledge_sources,
-    print_local_evidence_bundle, print_run_evidence_summary, print_run_result, print_run_summary,
+    print_local_evidence_bundle, print_run_attempt, print_run_evidence_summary, print_run_summary,
     print_runs, print_snapshot, print_surface_parity_report, print_surfaces, print_workspace,
     print_workspace_event_feed, print_workspace_replay, print_workspaces,
 };
@@ -17,7 +17,7 @@ use structure_local_core::{
     collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
 };
 use structure_local_runtime::{
-    LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest, RunResult,
+    LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunAttempt, RunRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -429,18 +429,18 @@ fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
         workspace_id: args.workspace,
         mode: Some(LocalAgentMode::CodeAgent),
     };
-    let result = if args.json {
+    let attempt = if args.json {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-        local_result(runtime.run_prompt(request))?
+        local_result(runtime.run_prompt_attempt(request))?
     } else {
         run_prompt_with_live_events(repo_root, request)?
     };
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        println!("{}", serde_json::to_string_pretty(&attempt)?);
     } else {
-        print_run_result(&result);
+        print_run_attempt(&attempt);
     }
-    Ok(())
+    attempt_error(&attempt)
 }
 
 fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
@@ -461,17 +461,17 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
             workspace_id: state.workspace_id,
             mode: Some(state.mode),
         };
-        let result = if args.json {
-            local_result(runtime.run_prompt(request))?
+        let attempt = if args.json {
+            local_result(runtime.run_prompt_attempt(request))?
         } else {
             run_prompt_with_live_events(repo_root, request)?
         };
         if args.json {
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            println!("{}", serde_json::to_string_pretty(&attempt)?);
         } else {
-            print_chat_turn(&result);
+            print_chat_attempt(&attempt);
         }
-        return Ok(());
+        return attempt_error(&attempt);
     }
 
     println!("Structure local chat");
@@ -513,22 +513,22 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
             workspace_id: state.workspace_id.clone(),
             mode: Some(state.mode.clone()),
         };
-        let result = if args.json {
-            local_result(runtime.run_prompt(request))?
+        let attempt = if args.json {
+            local_result(runtime.run_prompt_attempt(request))?
         } else {
             run_prompt_with_live_events(repo_root, request)?
         };
-        state.last_run_id = Some(result.run.run_id.clone());
+        state.last_run_id = Some(attempt.run.run_id.clone());
         if args.json {
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            println!("{}", serde_json::to_string_pretty(&attempt)?);
         } else {
-            print_chat_turn(&result);
+            print_chat_attempt(&attempt);
         }
     }
     Ok(())
 }
 
-fn run_prompt_with_live_events(repo_root: &PathBuf, request: RunRequest) -> Result<RunResult> {
+fn run_prompt_with_live_events(repo_root: &PathBuf, request: RunRequest) -> Result<RunAttempt> {
     let workspace_id = request
         .workspace_id
         .clone()
@@ -540,8 +540,8 @@ fn run_prompt_with_live_events(repo_root: &PathBuf, request: RunRequest) -> Resu
     let (sender, receiver) = mpsc::channel();
 
     thread::spawn(move || {
-        let result =
-            LocalAgentRuntime::open(&repo_root).and_then(|runtime| runtime.run_prompt(request));
+        let result = LocalAgentRuntime::open(&repo_root)
+            .and_then(|runtime| runtime.run_prompt_attempt(request));
         let _ = sender.send(result);
     });
 
@@ -561,6 +561,13 @@ fn run_prompt_with_live_events(repo_root: &PathBuf, request: RunRequest) -> Resu
     let _ = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
     println!();
     local_result(run_result)
+}
+
+fn attempt_error(attempt: &RunAttempt) -> Result<()> {
+    if let Some(error) = &attempt.error {
+        return Err(anyhow!(error.clone()));
+    }
+    Ok(())
 }
 
 fn print_live_workspace_events(
@@ -985,7 +992,26 @@ fn print_tool_result(
     Ok(())
 }
 
-fn print_chat_turn(result: &structure_local_runtime::RunResult) {
+fn print_chat_attempt(attempt: &RunAttempt) {
+    let Some(result) = &attempt.result else {
+        println!(
+            "assistant [{} / {}]",
+            attempt.run.run_id, attempt.run.status
+        );
+        println!(
+            "{}",
+            attempt
+                .error
+                .as_deref()
+                .unwrap_or("local run failed without an error message")
+        );
+        println!(
+            "\n[event-sourced: {} events, failed run is inspectable with `runs events {}`]",
+            attempt.events.len(),
+            attempt.run.run_id
+        );
+        return;
+    };
     println!("assistant [{} / {}]", result.run.run_id, result.run.status);
     println!("{}", result.final_response);
     println!(
