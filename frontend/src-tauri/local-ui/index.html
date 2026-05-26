@@ -438,6 +438,17 @@
         border-radius: 8px;
         background: var(--surface);
         padding: 9px 10px;
+        text-align: left;
+      }
+
+      .event-item:hover {
+        border-color: var(--line-strong);
+        background: var(--surface-strong);
+      }
+
+      .event-item[aria-selected="true"] {
+        border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+        background: var(--accent-soft);
       }
 
       .event-seq {
@@ -955,6 +966,7 @@
         workspaces: [],
         activeWorkspaceId: "default",
         selectedRunId: null,
+        selectedEventKey: null,
         chatTurns: [],
         knowledge: [],
         artifacts: [],
@@ -1407,11 +1419,39 @@
         }
       }
 
-      function renderEventTimeline(events, runId = null) {
+      function eventKey(event) {
+        return `${event.run_id ?? event.workspace_id ?? "workspace"}:${event.sequence}`;
+      }
+
+      function selectEvent(event) {
+        state.selectedEventKey = eventKey(event);
+        for (const item of eventTimelineEl.querySelectorAll(".event-item")) {
+          item.setAttribute("aria-selected", item.dataset.eventKey === state.selectedEventKey ? "true" : "false");
+        }
+        const payload = JSON.stringify(event.payload ?? {}, null, 2);
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        renderReportSummary(null);
+        previewMetaEl.textContent = `${event.kind} / #${event.sequence} / ${event.run_id ?? event.workspace_id}`;
+        previewEl.textContent = payload;
+        eventLogEl.textContent = `Event
+Sequence: ${event.sequence}
+Kind: ${event.kind}
+Run: ${event.run_id ?? "workspace"}
+Workspace: ${event.workspace_id}
+Created: ${formatDate(Math.floor((event.created_at_ms ?? 0) / 1000))}
+
+Payload
+${payload}`;
+      }
+
+      function renderEventTimeline(events, runId = null, autoSelectLatest = false) {
         state.selectedRunId = runId;
         eventTimelineEl.replaceChildren();
         eventCountEl.textContent = events.length ? `${events.length} events` : "0";
         if (!events.length) {
+          state.selectedEventKey = null;
           const empty = document.createElement("div");
           empty.className = "empty";
           empty.textContent = "No run events selected.";
@@ -1419,9 +1459,18 @@
           return;
         }
 
+        const keys = new Set(events.map(eventKey));
+        if (!keys.has(state.selectedEventKey)) {
+          state.selectedEventKey = null;
+        }
+
         for (const event of events.slice(-14)) {
-          const item = document.createElement("div");
+          const item = document.createElement("button");
+          const key = eventKey(event);
           item.className = "event-item";
+          item.type = "button";
+          item.dataset.eventKey = key;
+          item.setAttribute("aria-selected", key === state.selectedEventKey ? "true" : "false");
 
           const seq = document.createElement("span");
           seq.className = "event-seq";
@@ -1437,9 +1486,13 @@
 
           body.append(kind, detail);
           item.append(seq, body);
+          item.addEventListener("click", () => selectEvent(event));
           eventTimelineEl.append(item);
         }
         eventTimelineEl.scrollTop = eventTimelineEl.scrollHeight;
+        if (autoSelectLatest) {
+          selectEvent(events[events.length - 1]);
+        }
       }
 
       function renderKnowledge(sources) {
@@ -1998,7 +2051,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         try {
           const result = await runLocalAgent(prompt);
           agentPromptEl.value = "";
-          renderEventTimeline(result.events, result.run.run_id);
+          renderEventTimeline(result.events, result.run.run_id, true);
           eventLogEl.textContent = `Run: ${result.run.run_id}
 Workspace: ${result.run.workspace_id}
 Status: ${result.run.status}
