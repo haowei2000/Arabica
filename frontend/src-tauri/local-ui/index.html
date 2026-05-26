@@ -337,6 +337,13 @@
         gap: 10px;
       }
 
+      .run-actions {
+        display: grid;
+        grid-template-columns: minmax(160px, 220px) auto;
+        gap: 10px;
+        align-items: center;
+      }
+
       select,
       textarea,
       .workspace-form input,
@@ -666,6 +673,7 @@
         }
 
         .workspace-form,
+        .run-actions,
         .knowledge-form {
           grid-template-columns: 1fr;
         }
@@ -751,7 +759,13 @@
                 id="agent-prompt"
                 placeholder="Ask the local Structure code agent to inspect, explain, or plan changes..."
               ></textarea>
-              <button id="run-agent" type="submit">Send</button>
+              <div class="run-actions">
+                <select id="agent-mode" aria-label="Agent mode">
+                  <option value="code_agent">Code Agent</option>
+                  <option value="chat">Chat</option>
+                </select>
+                <button id="run-agent" type="submit">Send</button>
+              </div>
             </form>
             <div id="chat-thread" class="chat-thread" aria-label="Local chat thread"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
@@ -836,6 +850,7 @@
       const createWorkspaceEl = document.querySelector("#create-workspace");
       const runFormEl = document.querySelector("#run-form");
       const runAgentEl = document.querySelector("#run-agent");
+      const agentModeEl = document.querySelector("#agent-mode");
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
@@ -863,6 +878,7 @@
         knowledge: [],
         artifacts: [],
         parityReport: null,
+        agentMode: "code_agent",
       };
 
       async function localSnapshot() {
@@ -902,7 +918,7 @@
         return invoke("local_agent_run", {
           prompt,
           workspaceId: activeWorkspaceId(),
-          mode: "code_agent",
+          mode: state.agentMode,
         });
       }
 
@@ -1026,7 +1042,11 @@
 
       function setAgentBusy(isBusy) {
         runAgentEl.disabled = isBusy;
-        runAgentEl.textContent = isBusy ? "Thinking" : "Send";
+        runAgentEl.textContent = isBusy
+          ? state.agentMode === "chat"
+            ? "Replying"
+            : "Working"
+          : "Send";
       }
 
       function setKnowledgeBusy(isBusy) {
@@ -1119,7 +1139,8 @@
         llmModeEl.title = llmConfig.configured
           ? `OPENAI__ sources: ${llmConfig.api_key.source}/${llmConfig.base_url.source}/${llmConfig.model.source}`
           : "Set OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL";
-        subtitleEl.textContent = `${activeWorkspaceId()} / ${state.runs.length} runs / ${state.artifacts.length} artifacts in local storage`;
+        const modeLabel = state.agentMode === "chat" ? "chat" : "code agent";
+        subtitleEl.textContent = `${activeWorkspaceId()} / ${modeLabel} / ${state.runs.length} runs / ${state.artifacts.length} artifacts in local storage`;
         renderSurfaces(snapshot.product_surfaces ?? []);
         applyFilter();
       }
@@ -1584,6 +1605,14 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
       }
 
       searchEl.addEventListener("input", applyFilter);
+      agentModeEl.addEventListener("change", () => {
+        state.agentMode = agentModeEl.value === "chat" ? "chat" : "code_agent";
+        eventLogEl.textContent =
+          state.agentMode === "chat"
+            ? "Mode: chat. The same local event loop will answer without code-change proposal artifacts."
+            : "Mode: code agent. The local event loop can inspect the repo and write proposal artifacts.";
+        if (state.snapshot) renderSnapshot(state.snapshot);
+      });
       refreshEl.addEventListener("click", refresh);
       clearPreviewEl.addEventListener("click", clearPreview);
       workspaceSelectEl.addEventListener("change", async () => {
@@ -1619,13 +1648,14 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
           return;
         }
         setAgentBusy(true);
-        eventLogEl.textContent = "Running Structure local event loop...";
+        eventLogEl.textContent = `Running Structure local event loop in ${state.agentMode} mode...`;
         try {
           const result = await runLocalAgent(prompt);
           agentPromptEl.value = "";
           eventLogEl.textContent = `Run: ${result.run.run_id}
 Workspace: ${result.run.workspace_id}
 Status: ${result.run.status}
+Mode: ${state.agentMode}
 Artifact: ${result.artifact_path}
 
 Events

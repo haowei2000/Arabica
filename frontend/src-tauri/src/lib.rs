@@ -250,20 +250,35 @@ mod tests {
                 Some(workspace.workspace_id.clone()),
                 Some("code_agent".to_string()),
             )?;
+            let chat_run = local_agent_run(
+                "Reply conversationally without code inspection.".to_string(),
+                Some(workspace.workspace_id.clone()),
+                Some("chat".to_string()),
+            )?;
             let turns = local_chat_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(50))?;
             let artifacts = local_artifacts(Some(workspace.workspace_id.clone()), None, Some(10))?;
+            let chat_artifacts = local_artifacts(
+                Some(workspace.workspace_id.clone()),
+                Some(chat_run.run.run_id.clone()),
+                Some(10),
+            )?;
 
             assert_eq!(workspace.workspace_id, "desktop-test");
             assert_eq!(run.run.workspace_id, "desktop-test");
             assert_eq!(run.run.status, "finished");
+            assert_eq!(chat_run.run.status, "finished");
             assert!(turns.iter().any(|item| item.run_id == run.run.run_id));
+            assert!(turns.iter().any(|item| item.run_id == chat_run.run.run_id));
             assert!(runs.iter().any(|item| item.run_id == run.run.run_id));
             assert!(!replay.events.is_empty());
             assert!(artifacts
                 .iter()
                 .any(|artifact| artifact.kind == "code_change_proposal"));
+            assert!(chat_artifacts
+                .iter()
+                .all(|artifact| artifact.kind != "code_change_proposal"));
             Ok::<(), String>(())
         })();
 

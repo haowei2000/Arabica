@@ -73,6 +73,7 @@ struct TuiState {
     active_workspace_id: String,
     knowledge_sources: Vec<KnowledgeSource>,
     artifacts: Vec<ArtifactRecord>,
+    agent_mode: LocalAgentMode,
     selected: usize,
     preview: Option<TuiPreview>,
     input: Option<TuiInput>,
@@ -97,6 +98,7 @@ impl TuiState {
             active_workspace_id,
             knowledge_sources,
             artifacts,
+            agent_mode: LocalAgentMode::CodeAgent,
             selected: 0,
             preview: None,
             input: None,
@@ -190,7 +192,7 @@ impl TuiState {
         let result = local_result(runtime.run_prompt(RunRequest {
             prompt,
             workspace_id: Some(self.active_workspace_id.clone()),
-            mode: Some(LocalAgentMode::CodeAgent),
+            mode: Some(self.agent_mode.clone()),
         }))?;
         let notice = format!("Finished {}", result.run.run_id);
         self.refresh(repo_root)?;
@@ -238,7 +240,7 @@ impl TuiState {
                 prompt: "Inspect the local workspace state and summarize the available context."
                     .to_string(),
                 workspace_id: Some(self.active_workspace_id.clone()),
-                mode: Some(LocalAgentMode::CodeAgent),
+                mode: Some(self.agent_mode.clone()),
             }),
         )?;
         self.runs = local_result(runtime.list_runs(Some(&self.active_workspace_id), 5))?;
@@ -344,6 +346,14 @@ impl TuiState {
         Ok(())
     }
 
+    fn toggle_agent_mode(&mut self) {
+        self.agent_mode = match &self.agent_mode {
+            LocalAgentMode::Chat => LocalAgentMode::CodeAgent,
+            LocalAgentMode::CodeAgent | LocalAgentMode::Benchmark => LocalAgentMode::Chat,
+        };
+        self.notice = format!("Agent mode: {}", agent_mode_label(&self.agent_mode));
+    }
+
     fn move_selection(&mut self, offset: isize) {
         let item_count = self
             .runs
@@ -409,6 +419,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     _ if state.input.is_some() => state.handle_input_key(key, repo_root)?,
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                     KeyCode::Char('r') => state.refresh(repo_root)?,
+                    KeyCode::Char('m') => state.toggle_agent_mode(),
                     KeyCode::Char('w') => state.cycle_workspace(repo_root)?,
                     KeyCode::Char('o') => state.begin_input(TuiInputKind::WorkspaceId),
                     KeyCode::Char('c') => state.begin_input(TuiInputKind::AgentPrompt),
@@ -480,9 +491,10 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
         0,
         6,
         &format!(
-            "Workspace: {} ({} registered) | LLM: {}",
+            "Workspace: {} ({} registered) | Agent: {} | LLM: {}",
             state.active_workspace_id,
             state.workspaces.len(),
+            agent_mode_label(&state.agent_mode),
             llm_status_label(&state.snapshot.llm_config)
         ),
         width,
@@ -499,7 +511,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "o open/create workspace  c custom prompt  s add knowledge path",
+            "m mode  o open/create workspace  c prompt  s add knowledge path",
             width,
         )?,
     }
@@ -544,6 +556,14 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
     Ok(())
 }
 
+fn agent_mode_label(mode: &LocalAgentMode) -> &'static str {
+    match mode {
+        LocalAgentMode::Chat => "chat",
+        LocalAgentMode::CodeAgent => "code_agent",
+        LocalAgentMode::Benchmark => "benchmark",
+    }
+}
+
 fn llm_status_label(config: &structure_local_core::LocalLlmConfigStatus) -> String {
     if config.configured {
         let model = config.model_name.as_deref().unwrap_or("configured model");
@@ -580,7 +600,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press w to switch workspace, n to run a local workspace check",
+        "press m to toggle chat/code_agent, w to switch workspace, n to run a local check",
         width,
     )?;
     let run_rows = usize::from(height.saturating_sub(3))
@@ -722,7 +742,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  o workspace  c prompt  s source  x remove  n run  a artifact  v parity  e bundle";
+    let controls = "q quit  r refresh  m mode  o workspace  c prompt  s source  x remove  n run  a artifact  v parity  e bundle";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
