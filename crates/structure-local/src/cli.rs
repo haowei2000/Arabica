@@ -1489,6 +1489,7 @@ fn render_proposal_apply_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1552,6 +1553,17 @@ mod tests {
                 selected: Some("art_1".to_string())
             }
         );
+    }
+
+    #[test]
+    fn cli_help_keeps_benchmarks_out_of_local_agent_surface() {
+        let mut command = Cli::command();
+        let mut help = Vec::new();
+        command.write_long_help(&mut help).unwrap();
+        let help = String::from_utf8(help).unwrap().to_lowercase();
+
+        assert!(!help.contains("benchmark"));
+        assert!(!help.contains("bench"));
     }
 
     #[test]

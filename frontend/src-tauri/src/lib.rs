@@ -624,6 +624,14 @@ mod tests {
         result.unwrap();
     }
 
+    #[test]
+    fn desktop_local_ui_keeps_benchmarks_out_of_agent_surface() {
+        let local_ui = include_str!("../local-ui/index.html").to_lowercase();
+
+        assert!(!local_ui.contains("benchmark"));
+        assert!(!local_ui.contains("bench"));
+    }
+
     fn restore_env(key: &str, value: Option<String>) {
         if let Some(value) = value {
             env::set_var(key, value);
