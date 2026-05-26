@@ -2437,6 +2437,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /usage [run_id]
 /source <absolute-path>
 /remember <text>
+/recall <source_id>
 /forget <source_id>
 /sources
 /search <query>
@@ -2627,6 +2628,21 @@ ${source.path}`;
 ${source.source_id}
 ${source.path}`;
             await refresh();
+            return true;
+          }
+          case "/recall": {
+            const sourceId = parts[0];
+            if (!sourceId) {
+              eventLogEl.textContent = "Usage: /recall <source_id>";
+              return true;
+            }
+            const result = await readKnowledgeSource(sourceId);
+            eventLogEl.textContent = `Knowledge Source
+${result.source.source_id}
+${result.source.path}
+Read: ${result.bytes_read} bytes / truncated: ${result.truncated}
+
+${result.preview}`;
             return true;
           }
           case "/sources": {

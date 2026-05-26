@@ -686,6 +686,7 @@ mod tests {
         assert!(local_ui.contains("function renderAgentContextText(context)"));
         assert!(local_ui.contains("case \"/context\":"));
         assert!(local_ui.contains("case \"/remember\":"));
+        assert!(local_ui.contains("case \"/recall\":"));
         assert!(local_ui.contains("case \"/forget\":"));
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
@@ -799,6 +800,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_session_status\""));
         assert!(local_ui.contains("invoke(\"local_agent_context\""));
         assert!(local_ui.contains("invoke(\"remember_local_knowledge\""));
+        assert!(local_ui.contains("invoke(\"read_local_knowledge_source\""));
         assert!(local_ui.contains("invoke(\"remove_local_knowledge\""));
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));

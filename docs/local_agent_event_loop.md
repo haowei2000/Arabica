@@ -207,8 +207,9 @@ into runtime calls:
   `/remember <text>` persists a short text note into the local workspace
   knowledge directory and registers it as a normal `KnowledgeSource`, so later
   runs retrieve it through the same Structure context path as file-backed
-  knowledge. `/forget <source-id>` removes a registered source and records the
-  same workspace context-change event path.
+  knowledge. `/recall <source-id>` previews the stored source, and `/forget
+  <source-id>` removes a registered source and records the same workspace
+  context-change event path.
 - CLI mode selection: noninteractive `uv run structure chat` and
   `uv run structure run` accept `--mode chat|code_agent` so scripts can choose
   conversational or code-agent behavior without bypassing the same
@@ -274,6 +275,8 @@ into runtime calls:
   Desktop `/remember <text>` mirrors the CLI knowledge-memory path and stores
   text as local workspace knowledge before refresh. Desktop `/forget
   <source-id>` removes the same `KnowledgeSource` from the app chat loop.
+  Desktop `/recall <source-id>` previews the source content through the same
+  Rust command used by the knowledge panel.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events. A `read_repo_file` preview can be attached to
