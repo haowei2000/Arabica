@@ -812,12 +812,8 @@ fn handle_chat_session_command(
         }
         "/apply" => {
             let args = parts.collect::<Vec<_>>();
-            let dry_run = args.contains(&"--dry-run");
-            let selected = args
-                .iter()
-                .find(|part| **part != "--dry-run")
-                .map(|part| (*part).to_string());
-            let (artifact_id, run_id) = match selected {
+            let apply_args = parse_session_apply_args(&args);
+            let (artifact_id, run_id) = match apply_args.selected {
                 Some(value) if value.starts_with("art_") => (value, None),
                 Some(value) => {
                     let preview = local_result(latest_proposal_preview(
@@ -838,7 +834,8 @@ fn handle_chat_session_command(
                     (preview.artifact.artifact_id, state.last_run_id.clone())
                 }
             };
-            let result = local_result(runtime.apply_code_change_proposal(&artifact_id, dry_run))?;
+            let result =
+                local_result(runtime.apply_code_change_proposal(&artifact_id, apply_args.dry_run))?;
             print!(
                 "{}",
                 render_proposal_apply_result(&result, result.dry_run, run_id.as_deref())
@@ -1321,6 +1318,25 @@ fn local_result<T>(result: std::result::Result<T, String>) -> Result<T> {
     result.map_err(|message| anyhow!(message))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct SessionApplyArgs {
+    dry_run: bool,
+    selected: Option<String>,
+}
+
+fn parse_session_apply_args(args: &[&str]) -> SessionApplyArgs {
+    let explicit_dry_run = args.contains(&"--dry-run");
+    let approved = args.contains(&"--yes");
+    let selected = args
+        .iter()
+        .find(|part| !matches!(**part, "--dry-run" | "--yes"))
+        .map(|part| (*part).to_string());
+    SessionApplyArgs {
+        dry_run: explicit_dry_run || !approved,
+        selected,
+    }
+}
+
 fn render_proposal_apply_result(
     result: &ProposalApplyResult,
     include_preview: bool,
@@ -1346,6 +1362,9 @@ fn render_proposal_apply_result(
     text.push_str(&format!("  dry run:     {}\n", result.dry_run));
     if include_preview {
         text.push('\n');
+        if result.dry_run {
+            text.push_str("Review this preview, then rerun /apply with --yes to write.\n\n");
+        }
         text.push_str(&result.preview);
         if !text.ends_with('\n') {
             text.push('\n');
@@ -1384,5 +1403,38 @@ mod tests {
         assert!(output.contains("run:         run_review"));
         assert!(output.contains("Patch preview"));
         assert!(output.contains("+Evidence line"));
+        assert!(output.contains("rerun /apply with --yes"));
+    }
+
+    #[test]
+    fn cli_session_apply_defaults_to_dry_run_until_yes() {
+        assert_eq!(
+            parse_session_apply_args(&[]),
+            SessionApplyArgs {
+                dry_run: true,
+                selected: None
+            }
+        );
+        assert_eq!(
+            parse_session_apply_args(&["run_1"]),
+            SessionApplyArgs {
+                dry_run: true,
+                selected: Some("run_1".to_string())
+            }
+        );
+        assert_eq!(
+            parse_session_apply_args(&["run_1", "--yes"]),
+            SessionApplyArgs {
+                dry_run: false,
+                selected: Some("run_1".to_string())
+            }
+        );
+        assert_eq!(
+            parse_session_apply_args(&["art_1", "--yes", "--dry-run"]),
+            SessionApplyArgs {
+                dry_run: true,
+                selected: Some("art_1".to_string())
+            }
+        );
     }
 }
