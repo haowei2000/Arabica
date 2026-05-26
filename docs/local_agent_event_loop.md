@@ -60,6 +60,9 @@ sequence number and receive `next_after_sequence`, which gives local app/TUI
 surfaces an in-process analogue of the service SSE replay cursor without
 starting an API server. The desktop shell uses this cursor both for manual Poll
 Events and for short-lived live polling while a local agent run is in flight.
+The human-readable CLI uses the same cursor to print live event progress during
+non-JSON `run` and `chat` execution while preserving machine-readable JSON
+output for scripts.
 
 Current event sequence:
 
@@ -94,7 +97,8 @@ into runtime calls:
 - CLI: `uv run structure run`, `uv run structure runs`, and
   `uv run structure knowledge` delegate to the Rust `structure-local` binary.
   `uv run structure workspace create/list/show/replay` makes workspace metadata
-  explicit instead of relying only on implicit `--workspace` creation.
+  explicit instead of relying only on implicit `--workspace` creation. Non-JSON
+  `run` and `chat` commands poll the local cursor feed while the run executes.
 - CLI parity checks: `uv run structure parity --json` reads the shared
   capability matrix, while `uv run structure parity --verify --json` verifies
   surface coverage, primitive references, entrypoints, and evidence fields.

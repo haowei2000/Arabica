@@ -10,12 +10,15 @@ use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 use structure_local_core::{
     collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
 };
 use structure_local_runtime::{
     BuiltinLocalToolRegistry, LocalAgentMode, LocalAgentRuntime, LocalToolCall, LocalToolRegistry,
-    RunRequest,
+    RunRequest, RunResult,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -422,12 +425,17 @@ fn run_parity(repo_root: &PathBuf, args: ParityArgs) -> Result<()> {
 }
 
 fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
-    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
-    let result = local_result(runtime.run_prompt(RunRequest {
+    let request = RunRequest {
         prompt: args.prompt,
         workspace_id: args.workspace,
         mode: Some(LocalAgentMode::CodeAgent),
-    }))?;
+    };
+    let result = if args.json {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        local_result(runtime.run_prompt(request))?
+    } else {
+        run_prompt_with_live_events(repo_root, request)?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
@@ -449,11 +457,16 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
         last_run_id: None,
     };
     if let Some(prompt) = args.prompt {
-        let result = local_result(runtime.run_prompt(RunRequest {
+        let request = RunRequest {
             prompt,
             workspace_id: state.workspace_id,
             mode: Some(state.mode),
-        }))?;
+        };
+        let result = if args.json {
+            local_result(runtime.run_prompt(request))?
+        } else {
+            run_prompt_with_live_events(repo_root, request)?
+        };
         if args.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
@@ -496,11 +509,16 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
             }
             continue;
         }
-        let result = local_result(runtime.run_prompt(RunRequest {
+        let request = RunRequest {
             prompt: prompt.to_string(),
             workspace_id: state.workspace_id.clone(),
             mode: Some(state.mode.clone()),
-        }))?;
+        };
+        let result = if args.json {
+            local_result(runtime.run_prompt(request))?
+        } else {
+            run_prompt_with_live_events(repo_root, request)?
+        };
         state.last_run_id = Some(result.run.run_id.clone());
         if args.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -509,6 +527,59 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn run_prompt_with_live_events(repo_root: &PathBuf, request: RunRequest) -> Result<RunResult> {
+    let workspace_id = request
+        .workspace_id
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    let feed_runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let replay = local_result(feed_runtime.workspace_replay(Some(&workspace_id), 1))?;
+    let mut cursor = replay.last_sequence.unwrap_or_default();
+    let repo_root = repo_root.clone();
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result =
+            LocalAgentRuntime::open(&repo_root).and_then(|runtime| runtime.run_prompt(request));
+        let _ = sender.send(result);
+    });
+
+    println!("Live event feed");
+    let run_result = loop {
+        match receiver.try_recv() {
+            Ok(result) => break result,
+            Err(mpsc::TryRecvError::Empty) => {
+                cursor = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
+                thread::sleep(Duration::from_millis(200));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(anyhow!("local run worker disconnected"));
+            }
+        }
+    };
+    let _ = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
+    println!();
+    local_result(run_result)
+}
+
+fn print_live_workspace_events(
+    runtime: &LocalAgentRuntime,
+    workspace_id: &str,
+    after_sequence: i64,
+) -> Result<i64> {
+    let feed =
+        local_result(runtime.workspace_event_feed(Some(workspace_id), Some(after_sequence), 50))?;
+    for event in &feed.events {
+        println!(
+            "  #{:<4} {:<26} {}",
+            event.sequence,
+            event.kind,
+            event.run_id.as_deref().unwrap_or("workspace")
+        );
+    }
+    Ok(feed.next_after_sequence)
 }
 
 fn handle_chat_session_command(
