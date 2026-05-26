@@ -62,13 +62,16 @@ starting an API server. The desktop shell uses this cursor both for manual Poll
 Events and for short-lived live polling while a local agent run is in flight.
 The human-readable CLI uses the same cursor to print live event progress during
 non-JSON `run` and `chat` execution while preserving machine-readable JSON
-output for scripts.
+output for scripts. Manual CLI session tools and desktop repository tools also
+append workspace-scoped `ToolCallRequested` and `ToolCallCompleted` events with
+no run id, so operator actions remain visible in the same local event log.
 
 Current event sequence:
 
 ```text
 WorkspaceOpened
 RunCreated
+ChatMessageRecorded     # user prompt
 PromptReceived
 WorkspaceContextLoaded
 KnowledgeRetrieved
@@ -80,7 +83,10 @@ ModelRequested          # optional next planning iteration with tool results
 ModelResponded          # optional additional LocalToolCall list or no-op
 ModelRequested          # response_synthesis
 ModelResponded          # final assistant response
-ArtifactWritten
+ChatMessageRecorded     # assistant response
+ArtifactWritten         # assistant response artifact
+CodeChangeProposed      # code-agent mode only
+ArtifactWritten         # proposal artifact in code-agent mode
 RunFinished
 ```
 
@@ -98,7 +104,9 @@ into runtime calls:
   `uv run structure knowledge` delegate to the Rust `structure-local` binary.
   `uv run structure workspace create/list/show/replay` makes workspace metadata
   explicit instead of relying only on implicit `--workspace` creation. Non-JSON
-  `run` and `chat` commands poll the local cursor feed while the run executes.
+  `run` and `chat` commands poll the local cursor feed while the run executes,
+  and interactive `/ls`, `/search`, `/read`, and `/cmd` calls are recorded as
+  workspace tool events.
 - CLI parity checks: `uv run structure parity --json` reads the shared
   capability matrix, while `uv run structure parity --verify --json` verifies
   surface coverage, primitive references, entrypoints, and evidence fields.
@@ -122,10 +130,11 @@ into runtime calls:
   native workspace selector. `local_workspace_event_feed` powers the Poll Events
   action and live in-flight run polling from a persisted cursor. Repository
   tool controls call safe list/search/read commands plus `run_local_command` for
-  allowlisted local checks, and the UI renders an inspectable latest-run event
-  trace from `local_run_events`. `local_evidence_bundle` exposes the same
-  reproducibility artifact as the CLI/TUI. Benchmark execution stays in the
-  dedicated Python adapters under `benchmarks/adapters/`.
+  allowlisted local checks; those manual tool calls are persisted as workspace
+  events, and the UI renders both workspace feed events and an inspectable
+  latest-run trace from `local_run_events`. `local_evidence_bundle` exposes the
+  same reproducibility artifact as the CLI/TUI. Benchmark execution stays in
+  the dedicated Python adapters under `benchmarks/adapters/`.
 
 This keeps the conceptual model aligned with the distributed web backend:
 event-sourced run lifecycle, workspace-scoped context, knowledge retrieval, and

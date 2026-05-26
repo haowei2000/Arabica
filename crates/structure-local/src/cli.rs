@@ -17,8 +17,7 @@ use structure_local_core::{
     collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
 };
 use structure_local_runtime::{
-    BuiltinLocalToolRegistry, LocalAgentMode, LocalAgentRuntime, LocalToolCall, LocalToolRegistry,
-    RunRequest, RunResult,
+    LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest, RunResult,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -644,6 +643,7 @@ fn handle_chat_session_command(
         "/ls" => {
             let result = execute_session_tool(
                 runtime,
+                state.workspace_id.clone(),
                 "list_workspace",
                 serde_json::json!({ "max_entries": 32 }),
             );
@@ -658,6 +658,7 @@ fn handle_chat_session_command(
             }
             let result = execute_session_tool(
                 runtime,
+                state.workspace_id.clone(),
                 "search_repo",
                 serde_json::json!({
                     "query": query,
@@ -674,6 +675,7 @@ fn handle_chat_session_command(
             };
             let result = execute_session_tool(
                 runtime,
+                state.workspace_id.clone(),
                 "read_repo_file",
                 serde_json::json!({
                     "path": path,
@@ -691,6 +693,7 @@ fn handle_chat_session_command(
             }
             let result = execute_session_tool(
                 runtime,
+                state.workspace_id.clone(),
                 "run_local_command",
                 serde_json::json!({
                     "argv": argv,
@@ -847,18 +850,25 @@ fn print_chat_session_help() {
 
 fn execute_session_tool(
     runtime: &LocalAgentRuntime,
+    workspace_id: Option<String>,
     name: &str,
     input: serde_json::Value,
-) -> structure_local_runtime::LocalToolResult {
-    let registry = BuiltinLocalToolRegistry::new(runtime.repo_root());
-    registry.execute(&LocalToolCall {
-        call_id: format!("session_{name}"),
-        name: name.to_string(),
-        input,
-    })
+) -> Result<structure_local_runtime::LocalToolResult, String> {
+    runtime.execute_workspace_tool(
+        workspace_id,
+        "cli_session",
+        LocalToolCall {
+            call_id: format!("session_{name}"),
+            name: name.to_string(),
+            input,
+        },
+    )
 }
 
-fn print_tool_result(result: structure_local_runtime::LocalToolResult) -> Result<()> {
+fn print_tool_result(
+    result: Result<structure_local_runtime::LocalToolResult, String>,
+) -> Result<()> {
+    let result = local_result(result)?;
     if !result.success {
         println!(
             "{} failed: {}",

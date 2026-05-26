@@ -1,8 +1,5 @@
 use structure_local_core::{collect_snapshot, default_repo_root, structure_core_manifest};
-use structure_local_runtime::{
-    BuiltinLocalToolRegistry, LocalAgentMode, LocalAgentRuntime, LocalToolCall, LocalToolRegistry,
-    RunRequest,
-};
+use structure_local_runtime::{LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest};
 
 #[tauri::command]
 fn local_snapshot() -> Result<structure_local_core::LocalSnapshot, String> {
@@ -23,9 +20,11 @@ fn core_parity_report() -> Result<structure_local_core::SurfaceParityReport, Str
 
 #[tauri::command]
 fn local_repo_entries(
+    workspace_id: Option<String>,
     max_entries: Option<u64>,
 ) -> Result<structure_local_runtime::LocalToolResult, String> {
     execute_local_repo_tool(
+        workspace_id,
         "list_workspace",
         serde_json::json!({ "max_entries": max_entries.unwrap_or(32) }),
     )
@@ -33,10 +32,12 @@ fn local_repo_entries(
 
 #[tauri::command]
 fn local_repo_search(
+    workspace_id: Option<String>,
     query: String,
     max_matches: Option<u64>,
 ) -> Result<structure_local_runtime::LocalToolResult, String> {
     execute_local_repo_tool(
+        workspace_id,
         "search_repo",
         serde_json::json!({
             "query": query,
@@ -47,10 +48,12 @@ fn local_repo_search(
 
 #[tauri::command]
 fn read_local_repo_file(
+    workspace_id: Option<String>,
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<structure_local_runtime::LocalToolResult, String> {
     execute_local_repo_tool(
+        workspace_id,
         "read_repo_file",
         serde_json::json!({
             "path": path,
@@ -61,12 +64,14 @@ fn read_local_repo_file(
 
 #[tauri::command]
 fn run_local_command(
+    workspace_id: Option<String>,
     argv: Vec<String>,
     cwd: Option<String>,
     timeout_ms: Option<u64>,
     max_output_chars: Option<u64>,
 ) -> Result<structure_local_runtime::LocalToolResult, String> {
     execute_local_repo_tool(
+        workspace_id,
         "run_local_command",
         serde_json::json!({
             "argv": argv,
@@ -316,16 +321,20 @@ fn parse_local_agent_mode(mode: Option<String>) -> LocalAgentMode {
 }
 
 fn execute_local_repo_tool(
+    workspace_id: Option<String>,
     name: &str,
     input: serde_json::Value,
 ) -> Result<structure_local_runtime::LocalToolResult, String> {
     let runtime = LocalAgentRuntime::open_default()?;
-    let registry = BuiltinLocalToolRegistry::new(runtime.repo_root());
-    Ok(registry.execute(&LocalToolCall {
-        call_id: format!("desktop_{name}"),
-        name: name.to_string(),
-        input,
-    }))
+    runtime.execute_workspace_tool(
+        workspace_id,
+        "desktop_app",
+        LocalToolCall {
+            call_id: format!("desktop_{name}"),
+            name: name.to_string(),
+            input,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -360,11 +369,29 @@ mod tests {
             fs::write(root.join("note.md"), "desktop local repo search").unwrap();
             fs::write(root.join(".env"), "LOCAL_SECRET=secret").unwrap();
             let workspace = create_local_workspace("desktop-test".to_string())?;
-            let entries = local_repo_entries(Some(16))?;
-            let search = local_repo_search("desktop local".to_string(), Some(8))?;
-            let read_note = read_local_repo_file("note.md".to_string(), Some(1_000))?;
-            let read_env = read_local_repo_file(".env".to_string(), Some(1_000))?;
-            let pwd = run_local_command(vec!["pwd".to_string()], None, Some(5_000), Some(2_000))?;
+            let entries = local_repo_entries(Some(workspace.workspace_id.clone()), Some(16))?;
+            let search = local_repo_search(
+                Some(workspace.workspace_id.clone()),
+                "desktop local".to_string(),
+                Some(8),
+            )?;
+            let read_note = read_local_repo_file(
+                Some(workspace.workspace_id.clone()),
+                "note.md".to_string(),
+                Some(1_000),
+            )?;
+            let read_env = read_local_repo_file(
+                Some(workspace.workspace_id.clone()),
+                ".env".to_string(),
+                Some(1_000),
+            )?;
+            let pwd = run_local_command(
+                Some(workspace.workspace_id.clone()),
+                vec!["pwd".to_string()],
+                None,
+                Some(5_000),
+                Some(2_000),
+            )?;
             let run = local_agent_run(
                 "Inspect this desktop command workspace.".to_string(),
                 Some(workspace.workspace_id.clone()),
@@ -428,6 +455,17 @@ mod tests {
             assert!(runs.iter().any(|item| item.run_id == run.run.run_id));
             assert!(!replay.events.is_empty());
             assert!(!feed.events.is_empty());
+            assert!(replay.events.iter().any(|event| {
+                event.run_id.is_none()
+                    && event.kind == "tool_call_requested"
+                    && event.payload["surface"] == "desktop_app"
+            }));
+            assert!(replay.events.iter().any(|event| {
+                event.run_id.is_none()
+                    && event.kind == "tool_call_completed"
+                    && event.payload["name"] == "run_local_command"
+                    && event.payload["surface"] == "desktop_app"
+            }));
             assert_eq!(
                 feed.next_after_sequence,
                 feed.events.last().unwrap().sequence

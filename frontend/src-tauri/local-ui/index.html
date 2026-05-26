@@ -1105,22 +1105,31 @@
 
       async function listRepoEntries() {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("local_repo_entries", { maxEntries: 32 });
+        return invoke("local_repo_entries", { workspaceId: activeWorkspaceId(), maxEntries: 32 });
       }
 
       async function searchRepo(query) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("local_repo_search", { query, maxMatches: 20 });
+        return invoke("local_repo_search", {
+          workspaceId: activeWorkspaceId(),
+          query,
+          maxMatches: 20,
+        });
       }
 
       async function readRepoFile(path) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
-        return invoke("read_local_repo_file", { path, maxBytes: 64000 });
+        return invoke("read_local_repo_file", {
+          workspaceId: activeWorkspaceId(),
+          path,
+          maxBytes: 64000,
+        });
       }
 
       async function runRepoCommand(argv) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("run_local_command", {
+          workspaceId: activeWorkspaceId(),
           argv,
           cwd: ".",
           timeoutMs: 30000,

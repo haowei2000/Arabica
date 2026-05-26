@@ -3,9 +3,9 @@ use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentMode, LocalEvidenceBundle, LocalToolResult, ProposalApplyResult, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceEventFeed, WorkspaceReplay,
-    WorkspaceSummary,
+    LocalAgentMode, LocalEvidenceBundle, LocalToolCall, LocalToolResult, ProposalApplyResult,
+    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceEventFeed,
+    WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -285,6 +285,43 @@ impl LocalAgentRuntime {
             last_sequence,
             next_after_sequence,
         })
+    }
+
+    pub fn execute_workspace_tool(
+        &self,
+        workspace_id: Option<String>,
+        surface: &str,
+        call: LocalToolCall,
+    ) -> Result<LocalToolResult, String> {
+        let workspace = self.store.ensure_workspace(workspace_id, &self.repo_root)?;
+        self.store.append_event(
+            &workspace.workspace_id,
+            None,
+            RunEventKind::ToolCallRequested,
+            &serde_json::json!({
+                "call_id": call.call_id.clone(),
+                "name": call.name.clone(),
+                "input": call.input.clone(),
+                "surface": surface,
+            }),
+        )?;
+
+        let registry = BuiltinLocalToolRegistry::new(&self.repo_root);
+        let result = registry.execute(&call);
+        self.store.append_event(
+            &workspace.workspace_id,
+            None,
+            RunEventKind::ToolCallCompleted,
+            &serde_json::json!({
+                "call_id": result.call_id.clone(),
+                "name": result.name.clone(),
+                "success": result.success,
+                "output": result.output.clone(),
+                "error": result.error.clone(),
+                "surface": surface,
+            }),
+        )?;
+        Ok(result)
     }
 
     pub fn local_evidence_bundle(
@@ -1383,6 +1420,46 @@ mod tests {
             .iter()
             .all(|event| event.sequence > feed.next_after_sequence));
         assert!(first.events.len() > feed.events.len());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_records_manual_workspace_tool_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("manual-tool-events");
+        fs::write(root.join("manual.md"), "manual event evidence").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let result = runtime
+            .execute_workspace_tool(
+                Some("ops".to_string()),
+                "cli_session",
+                LocalToolCall {
+                    call_id: "manual_search".to_string(),
+                    name: "search_repo".to_string(),
+                    input: serde_json::json!({
+                        "query": "manual event",
+                        "max_matches": 4,
+                    }),
+                },
+            )
+            .unwrap();
+        let feed = runtime
+            .workspace_event_feed(Some("ops"), Some(0), 10)
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.name, "search_repo");
+        assert_eq!(feed.events.len(), 2);
+        assert_eq!(feed.events[0].kind, "tool_call_requested");
+        assert_eq!(feed.events[0].run_id, None);
+        assert_eq!(feed.events[0].payload["surface"], "cli_session");
+        assert_eq!(feed.events[0].payload["name"], "search_repo");
+        assert_eq!(feed.events[1].kind, "tool_call_completed");
+        assert_eq!(feed.events[1].run_id, None);
+        assert_eq!(feed.events[1].payload["surface"], "cli_session");
+        assert_eq!(feed.events[1].payload["success"], true);
 
         fs::remove_dir_all(root).unwrap();
     }
