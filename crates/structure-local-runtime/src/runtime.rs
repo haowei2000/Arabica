@@ -479,6 +479,11 @@ impl LocalAgentRuntime {
         mode: LocalAgentMode,
     ) -> Result<RunResult, String> {
         let knowledge = self.store.list_knowledge_sources(&run.workspace_id, 8)?;
+        let recent_turns = self
+            .chat_turns(Some(&run.workspace_id), 8)?
+            .into_iter()
+            .filter(|turn| turn.run_id != run.run_id && turn.assistant_message.is_some())
+            .collect::<Vec<_>>();
         self.store.append_event(
             &run.workspace_id,
             Some(&run.run_id),
@@ -488,6 +493,8 @@ impl LocalAgentRuntime {
                 "repo_root": self.repo_root,
                 "runtime_db": self.db_path(),
                 "knowledge_sources": knowledge.len(),
+                "recent_turns": recent_turns.len(),
+                "context_replay_limit": 8,
             }),
         )?;
         self.store.append_event(
@@ -504,6 +511,7 @@ impl LocalAgentRuntime {
             run: run.clone(),
             repo_root: self.repo_root.clone(),
             knowledge,
+            recent_turns,
             mode: mode.clone(),
         };
         self.store.append_event(
@@ -1058,6 +1066,41 @@ mod tests {
         assert!(evidence
             .event_kinds
             .contains(&"knowledge_retrieved".to_string()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_replays_recent_chat_turns_into_next_run() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("recent-turns");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let first = runtime
+            .run_prompt(RunRequest {
+                prompt: "Remember the phrase blue circuit".to_string(),
+                workspace_id: Some("thread".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let second = runtime
+            .run_prompt(RunRequest {
+                prompt: "What did I ask you to remember?".to_string(),
+                workspace_id: Some("thread".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        assert!(second.final_response.contains("Replayed Conversation"));
+        assert!(second.final_response.contains("blue circuit"));
+        assert!(second.events.iter().any(|event| {
+            event.kind == "workspace_context_loaded"
+                && event
+                    .payload
+                    .get("recent_turns")
+                    .and_then(|value| value.as_u64())
+                    == Some(1)
+        }));
+        assert!(first.final_response.contains("blue circuit"));
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -44,6 +44,7 @@ import re
 from time import perf_counter
 from typing import Any, ClassVar
 
+from structure.config.factory import get_settings
 from structure.core.interfaces import (
     Executor,
     WaitingForTool,
@@ -855,9 +856,8 @@ class DefaultExecutor(Executor):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self._config = config  # kept for _resolve_llm_config
-        self.model_provider = config.get("model_provider", "openai")
-        self.model_name = config.get("model_name", "gpt-4.1-mini")
+        self.model_provider = "openai"
+        self.model_name = "gpt-4.1-mini"
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")
@@ -881,7 +881,7 @@ class DefaultExecutor(Executor):
 
         # ── Dependency-injected abstractions ─────────────────────
         # ── LLM connection info ──────────────────────────────────
-        self._api_key, self._base_url = self._resolve_llm_config()
+        self._api_key, self._base_url, self.model_name = self._resolve_llm_config()
 
         # ── Tool calling strategy ────────────────────────────────
         # Default: OpenAI-compatible native function calling.
@@ -1350,21 +1350,19 @@ class DefaultExecutor(Executor):
 
     # ── LLM config ────────────────────────────────────────────────
 
-    def _resolve_llm_config(self) -> tuple[str, str]:
-        """Return ``(api_key, base_url)`` from the database ChatModel config.
+    def _resolve_llm_config(self) -> tuple[str, str, str]:
+        """Return LLM API config exclusively from the OPENAI__ env contract."""
+        openai_settings = get_settings().openai
+        api_key = (openai_settings.api_key if openai_settings else "").strip()
+        base_url = (openai_settings.base_url if openai_settings else "").strip()
+        model = (openai_settings.model if openai_settings else "").strip()
 
-        Values are injected by the event worker from the default ChatModel
-        record, which is seeded from the three OPENAI__ environment variables.
-        """
-        api_key = self._config.get("api_key") or ""
-        base_url = self._config.get("base_url") or ""
-
-        if not api_key or not base_url:
+        if not api_key or not base_url or not model:
             raise ValueError(
-                "No LLM model configured. Please add a default chat model "
-                "seeded from OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL."
+                "No LLM API configured. Set OPENAI__API_KEY, OPENAI__BASE_URL, "
+                "and OPENAI__MODEL."
             )
-        return api_key, base_url
+        return api_key, base_url, model
 
     # Fields the executor always injects automatically — hide from the LLM.
     _AUTO_INJECTED_FIELDS: ClassVar[frozenset[str]] = frozenset(

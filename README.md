@@ -460,7 +460,7 @@ Key configuration sections:
 |---|---|---|
 | **Database** | `POSTGRES__*` | PostgreSQL host, port, database, and credentials |
 | **Redis** | `REDIS__*` | Redis host, port, database, and credentials |
-| **LLM API** | `OPENAI__API_KEY`, `OPENAI__BASE_URL`, `OPENAI__MODEL` | OpenAI-compatible chat endpoint |
+| **LLM API** | `OPENAI__API_KEY`, `OPENAI__BASE_URL`, `OPENAI__MODEL` | The only runtime LLM API configuration contract |
 | **Storage** | `RUSTFS__*` | S3-compatible storage credentials |
 
 See `.env.example` for the full list. Replace every `change-me-*` value before

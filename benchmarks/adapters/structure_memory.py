@@ -29,10 +29,16 @@ from benchmarks.baselines.memory_agents import (
 from benchmarks.core.types import BenchmarkCase, BenchmarkResult, CostLedger
 from structure.core.enums.events import ContextBatchLoadState, ContextBatchState
 from structure.core.enums.runs import RunStatus, TriggerType
+from structure.frameworks.tool_calling import ChatMessage
 from structure.models.events.event import Event
 from structure.models.events.event_batch import EventBatch
 from structure.models.runs.run import Run
-from structure.plugins.executors.default.concrete import DefaultExecutor
+from structure.plugins.executors.default.concrete import (
+    RUNTIME_CONTEXT_TEMPLATE,
+    SYSTEM_PROMPT,
+    _events_to_messages,
+    _is_tool_schema_context_result,
+)
 from structure.plugins.tools.context.read_context import ReadContextTool
 from structure.schemas.events.event_payloads import EventType
 from structure.services.context_service.manager import ContextManager
@@ -504,19 +510,32 @@ class StructureMemoryBenchmarkAgent:
         key_contents: list[str],
         load_all_events: list[Event],
     ) -> list[dict[str, Any]]:
-        executor = DefaultExecutor(
-            {
-                "workspace_id": str(run.workspace_id),
-                "run_id": str(run.id),
-                "api_key": self.api_key or "benchmark-noop",
-                "base_url": self.base_url,
-                "tools_info": [],
-            }
+        conv_events = [
+            event
+            for event in load_all_events
+            if not _is_tool_schema_context_result(event)
+        ]
+        messages = [
+            ChatMessage(role="system", content=SYSTEM_PROMPT),
+            *(
+                ChatMessage(role="system", content=f"Context batch key:\n{content}")
+                for content in key_contents
+            ),
+            *_events_to_messages(conv_events),
+        ]
+        runtime_context = ChatMessage(
+            role="system",
+            content=RUNTIME_CONTEXT_TEMPLATE.format(
+                workspace_id=str(run.workspace_id),
+                run_id=str(run.id),
+            ),
         )
-        messages, _tools = executor.get_messages_and_tools_from_batch_plan(
-            key_contents=key_contents,
-            load_all_events=load_all_events,
-        )
+        for idx in range(len(messages) - 1, 0, -1):
+            if messages[idx].role == "user":
+                messages = [*messages[:idx], runtime_context, *messages[idx:]]
+                break
+        else:
+            messages.append(runtime_context)
         return self._trim_api_messages(
             [message.to_openai_dict() for message in messages]
         )

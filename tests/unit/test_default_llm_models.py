@@ -10,8 +10,11 @@ import pytest
 from structure.core.bootstrap import ApplicationBootstrap, BootstrapConfig
 from structure.models.llm.chat_model import ChatModel
 from structure.models.llm.embedding_model import EmbeddingModel
-from structure.schemas.llm.chat_model import ChatModelResponse
-from structure.schemas.llm.embedding_model import EmbeddingModelResponse
+from structure.schemas.llm.chat_model import ChatModelCreate, ChatModelResponse
+from structure.schemas.llm.embedding_model import (
+    EmbeddingModelCreate,
+    EmbeddingModelResponse,
+)
 
 
 def _empty_scalar_result():
@@ -62,13 +65,15 @@ async def test_seed_default_llm_models_creates_system_models_from_openai_setting
     assert chat_model.is_default is True
     assert chat_model.provider == "openai"
     assert chat_model.model_id == "gpt-4.1-mini"
-    assert chat_model.api_key_ref == "sk-platform"
+    assert chat_model.base_url is None
+    assert chat_model.api_key_ref is None
 
     assert embedding_model.is_system is True
     assert embedding_model.is_default is True
     assert embedding_model.model_id == "text-embedding-3-small"
     assert embedding_model.dimension == 1536
-    assert embedding_model.api_key_ref == "sk-platform"
+    assert embedding_model.base_url is None
+    assert embedding_model.api_key_ref is None
     session.commit.assert_awaited_once()
 
 
@@ -120,6 +125,29 @@ def test_user_chat_model_response_keeps_owner_api_key():
     )
 
     assert response.api_key_ref == "sk-user"
+
+
+def test_chat_model_create_rejects_runtime_api_config():
+    with pytest.raises(ValueError, match="OPENAI__API_KEY"):
+        ChatModelCreate(
+            name="Custom",
+            provider="openai",
+            model_id="ignored",
+            base_url="http://custom.example/v1",
+            api_key_ref="custom-key",
+        )
+
+
+def test_embedding_model_create_rejects_runtime_api_config():
+    with pytest.raises(ValueError, match="OPENAI__API_KEY"):
+        EmbeddingModelCreate(
+            name="Custom Embeddings",
+            provider="openai",
+            model_id="text-embedding-3-small",
+            base_url="http://custom.example/v1",
+            api_key_ref="custom-key",
+            dimension=1536,
+        )
 
 
 def test_system_embedding_model_response_masks_api_key():

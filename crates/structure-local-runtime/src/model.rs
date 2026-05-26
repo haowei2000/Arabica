@@ -1,5 +1,7 @@
 use crate::store::new_id;
-use crate::types::{KnowledgeSource, LocalAgentMode, LocalToolCall, LocalToolResult, RunSummary};
+use crate::types::{
+    ChatTurn, KnowledgeSource, LocalAgentMode, LocalToolCall, LocalToolResult, RunSummary,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
@@ -10,6 +12,7 @@ pub struct ModelRequest {
     pub run: RunSummary,
     pub repo_root: PathBuf,
     pub knowledge: Vec<KnowledgeSource>,
+    pub recent_turns: Vec<ChatTurn>,
     pub mode: LocalAgentMode,
 }
 
@@ -142,6 +145,10 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
             "- Knowledge sources: `{}`\n",
             request.knowledge.len()
         ));
+        response.push_str(&format!(
+            "- Replayed chat turns: `{}`\n",
+            request.recent_turns.len()
+        ));
         response.push_str(&format!("- Tool results: `{}`\n\n", tool_results.len()));
 
         response.push_str("## Prompt\n\n");
@@ -159,6 +166,24 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
                 response.push_str(&format!(
                     "- {} ({} bytes): `{}`\n",
                     source.title, source.size_bytes, source.path
+                ));
+            }
+        }
+
+        response.push_str("\n## Replayed Conversation\n\n");
+        if request.recent_turns.is_empty() {
+            response.push_str("No previous chat turns were replayed for this workspace.\n");
+        } else {
+            for turn in request.recent_turns.iter().rev() {
+                response.push_str(&format!(
+                    "- User: {}\n  Assistant: {}\n",
+                    summarize_line(&turn.user_message, 240),
+                    summarize_line(
+                        turn.assistant_message
+                            .as_deref()
+                            .unwrap_or("<no assistant response>"),
+                        240
+                    )
                 ));
             }
         }
@@ -254,6 +279,10 @@ impl LocalModelProvider for EnvApiModelProvider {
         final_response.push_str(&format!("- Model: `{}`\n", self.model));
         final_response.push_str(&format!("- Run: `{}`\n", request.run.run_id));
         final_response.push_str(&format!("- Workspace: `{}`\n", request.run.workspace_id));
+        final_response.push_str(&format!(
+            "- Replayed chat turns: `{}`\n",
+            request.recent_turns.len()
+        ));
         final_response.push_str(&format!("- Mode: `{}`\n\n", request.mode.as_str()));
         final_response.push_str(content.trim());
         final_response.push_str("\n\n## Tool Evidence Summary\n\n");
@@ -287,14 +316,63 @@ fn render_api_prompt(
     let evidence = serde_json::to_string_pretty(tool_results)
         .map_err(|err| format!("failed to render tool evidence: {err}"))?;
     Ok(format!(
-        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nTool evidence JSON:\n{evidence}",
+        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nRecent workspace conversation:\n{recent_turns}\n\nTool evidence JSON:\n{evidence}",
         prompt = request.run.prompt,
         run_id = request.run.run_id,
         workspace_id = request.run.workspace_id,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),
+        recent_turns = render_recent_turns_for_api(&request.recent_turns),
         evidence = evidence.chars().take(20_000).collect::<String>()
     ))
+}
+
+fn render_recent_turns_for_api(turns: &[ChatTurn]) -> String {
+    if turns.is_empty() {
+        return "No previous turns replayed.".to_string();
+    }
+    turns
+        .iter()
+        .rev()
+        .map(|turn| {
+            format!(
+                "User: {}\nAssistant: {}",
+                summarize_line(&turn.user_message, 500),
+                summarize_line(
+                    turn.assistant_message
+                        .as_deref()
+                        .unwrap_or("<no assistant response>"),
+                    500
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn summarize_line(value: &str, max_chars: usize) -> String {
+    let clean = value
+        .chars()
+        .map(|character| {
+            if character.is_control() && character != '\n' && character != '\t' {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if clean.chars().count() <= max_chars {
+        return clean;
+    }
+    let mut summary = clean
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    summary.push_str("...");
+    summary
 }
 
 fn code_search_query(prompt: &str) -> String {

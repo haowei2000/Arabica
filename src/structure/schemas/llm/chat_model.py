@@ -55,6 +55,15 @@ class ChatModelCreate(BaseModel):
     config: dict[str, Any] | None = Field(None, description="Extra configuration")
     meta: dict[str, Any] | None = Field(None, description="Metadata")
 
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "ChatModelCreate":
+        if self.base_url or self.api_key_ref:
+            raise ValueError(
+                "LLM API configuration is process-level. Use OPENAI__API_KEY, "
+                "OPENAI__BASE_URL, and OPENAI__MODEL."
+            )
+        return self
+
 
 class ChatModelUpdate(BaseModel):
     """Schema for updating an existing chat model configuration."""
@@ -80,6 +89,15 @@ class ChatModelUpdate(BaseModel):
     enabled: bool | None = None
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "ChatModelUpdate":
+        if self.base_url or self.api_key_ref:
+            raise ValueError(
+                "LLM API configuration is process-level. Use OPENAI__API_KEY, "
+                "OPENAI__BASE_URL, and OPENAI__MODEL."
+            )
+        return self
 
 
 class ChatModelResponse(ResponseMixin, BaseModel):

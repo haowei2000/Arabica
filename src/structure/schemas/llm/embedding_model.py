@@ -46,6 +46,15 @@ class EmbeddingModelCreate(BaseModel):
     config: dict[str, Any] | None = Field(None, description="Extra configuration")
     meta: dict[str, Any] | None = Field(None, description="Metadata")
 
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "EmbeddingModelCreate":
+        if self.base_url or self.api_key_ref:
+            raise ValueError(
+                "LLM API configuration is process-level. Use OPENAI__API_KEY, "
+                "OPENAI__BASE_URL, and OPENAI__MODEL."
+            )
+        return self
+
 
 class EmbeddingModelUpdate(BaseModel):
     """Schema for updating an existing embedding model configuration."""
@@ -68,6 +77,15 @@ class EmbeddingModelUpdate(BaseModel):
     enabled: bool | None = None
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "EmbeddingModelUpdate":
+        if self.base_url or self.api_key_ref:
+            raise ValueError(
+                "LLM API configuration is process-level. Use OPENAI__API_KEY, "
+                "OPENAI__BASE_URL, and OPENAI__MODEL."
+            )
+        return self
 
 
 class EmbeddingModelResponse(ResponseMixin, BaseModel):

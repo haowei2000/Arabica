@@ -17,21 +17,32 @@ _llm_cache: dict[tuple[str, str, bool], BaseChatModel] = {}
 def get_llm(
     name: str, provider: str = "openai", add_cache: bool = False
 ) -> BaseChatModel:
-    """Return a cached LangChain model instance.
+    """Return a cached LangChain model instance from the OPENAI__ env contract.
 
-    Instances are cached by ``(name, provider, add_cache)`` so repeated
+    Instances are cached by the resolved ``OPENAI__MODEL`` and provider so repeated
     calls with the same arguments reuse the underlying HTTP connection
     pool instead of creating a new one each time.
 
     Args:
-        name: Model name.
-        provider: Model provider. Defaults to ``"openai"``.
+        name: Deprecated model hint. The effective model is always ``OPENAI__MODEL``.
+        provider: Model provider. Only OpenAI-compatible providers are supported.
         add_cache: Whether to attach a Redis response cache.
 
     Returns:
         Cached ``BaseChatModel`` instance.
     """
-    cache_key = (name, provider, add_cache)
+    _ = name
+    settings = get_settings()
+    openai_settings = settings.openai
+    api_key = (openai_settings.api_key if openai_settings else "").strip()
+    base_url = (openai_settings.base_url if openai_settings else "").strip()
+    model = (openai_settings.model if openai_settings else "").strip()
+    if not api_key or not base_url or not model:
+        raise ValueError(
+            "OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL must be set"
+        )
+
+    cache_key = (model, provider, add_cache)
     if cache_key in _llm_cache:
         return _llm_cache[cache_key]
 
@@ -39,27 +50,20 @@ def get_llm(
         try:
             redis_client = get_redis_client(is_async=False)
             redis_cache = RedisCache(redis_client)
-            logger.info("%s %s Redis cache initialized successfully", name, provider)
+            logger.info("%s %s Redis cache initialized successfully", model, provider)
         except RuntimeError:
-            logger.warning("%s %s Redis cache not initialized", name, provider)
+            logger.warning("%s %s Redis cache not initialized", model, provider)
             redis_cache = None
         except Exception:
-            logger.error("%s %s Redis cache initialization failed", name, provider)
+            logger.error("%s %s Redis cache initialization failed", model, provider)
             redis_cache = None
     else:
         redis_cache = None
 
-    settings = get_settings()
     match provider:
         case "openai" | "custom":
-            api_key = settings.openai.api_key if settings.openai else ""
-            base_url = (
-                settings.openai.base_url
-                if settings.openai
-                else "https://api.openai.com/v1"
-            )
             llm = ChatOpenAI(
-                model=name,
+                model=model,
                 api_key=api_key,  # type: ignore
                 base_url=base_url,
                 cache=redis_cache,
