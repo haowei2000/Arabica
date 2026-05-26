@@ -647,6 +647,46 @@ impl LocalAgentRuntime {
         };
         let registry = BuiltinLocalToolRegistry::new(&self.repo_root);
         let mut tool_results = Vec::new();
+        let prompt_references = prompt_path_references(&run.prompt);
+        if !prompt_references.is_empty() {
+            self.store.append_event(
+                &run.workspace_id,
+                Some(&run.run_id),
+                RunEventKind::AgentStepPlanned,
+                &serde_json::json!({
+                    "mode": mode.as_str(),
+                    "planner": "structure_local_runtime",
+                    "steps": ["prompt_reference_resolution"],
+                    "tool_call_count": prompt_references.len(),
+                    "total_tool_results": tool_results.len(),
+                    "prompt_references": prompt_references,
+                }),
+            )?;
+            for path in &prompt_references {
+                let call = LocalToolCall {
+                    call_id: new_id("tool"),
+                    name: "read_repo_file".to_string(),
+                    input: serde_json::json!({
+                        "path": path,
+                        "max_bytes": 8192,
+                    }),
+                };
+                self.store.append_event(
+                    &run.workspace_id,
+                    Some(&run.run_id),
+                    RunEventKind::ToolCallRequested,
+                    &call,
+                )?;
+                let result = registry.execute(&call);
+                self.store.append_event(
+                    &run.workspace_id,
+                    Some(&run.run_id),
+                    RunEventKind::ToolCallCompleted,
+                    &result,
+                )?;
+                tool_results.push(result);
+            }
+        }
         let mut seen_tool_calls = Vec::new();
         let mut planning_iterations = 0usize;
         for iteration in 1..=3 {
@@ -874,6 +914,36 @@ fn read_limited_text(
     let truncated = size_bytes > bytes_read;
     let preview = String::from_utf8_lossy(&buffer).into_owned();
     Ok((preview, bytes_read, truncated))
+}
+
+fn prompt_path_references(prompt: &str) -> Vec<String> {
+    let mut references = Vec::new();
+    for raw_token in prompt.split_whitespace() {
+        let Some(reference) = raw_token.strip_prefix('@') else {
+            continue;
+        };
+        let reference = reference.trim_matches(|ch: char| {
+            matches!(ch, ',' | '.' | ':' | ';' | ')' | ']' | '}' | '"' | '\'')
+        });
+        if !looks_like_repo_path_reference(reference) {
+            continue;
+        }
+        if !references.iter().any(|existing| existing == reference) {
+            references.push(reference.to_string());
+        }
+    }
+    references
+}
+
+fn looks_like_repo_path_reference(reference: &str) -> bool {
+    !reference.is_empty()
+        && !reference.starts_with('/')
+        && !reference.contains("..")
+        && !reference.contains("://")
+        && reference
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/'))
+        && (reference.contains('/') || reference.contains('.'))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1360,6 +1430,55 @@ mod tests {
         assert!(artifacts
             .iter()
             .any(|artifact| artifact.kind == "code_change_proposal"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_resolves_prompt_path_references_before_planning() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("prompt-references");
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(
+            root.join("docs/local-agent.md"),
+            "Structure local agent path reference evidence.",
+        )
+        .unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Use @docs/local-agent.md in the answer.".to_string(),
+                workspace_id: None,
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        assert!(result
+            .events
+            .iter()
+            .any(|event| event.kind == "agent_step_planned"
+                && event
+                    .payload
+                    .get("steps")
+                    .and_then(|steps| steps.as_array())
+                    .is_some_and(|steps| steps
+                        .iter()
+                        .any(|step| step.as_str() == Some("prompt_reference_resolution")))));
+        assert!(result.events.iter().any(|event| {
+            event.kind == "tool_call_completed"
+                && event.payload.get("name").and_then(|value| value.as_str())
+                    == Some("read_repo_file")
+                && event
+                    .payload
+                    .get("output")
+                    .and_then(|output| output.get("path"))
+                    .and_then(|path| path.as_str())
+                    == Some("docs/local-agent.md")
+        }));
+        assert!(result
+            .final_response
+            .contains("Structure local agent path reference evidence."));
 
         fs::remove_dir_all(root).unwrap();
     }
