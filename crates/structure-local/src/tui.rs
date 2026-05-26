@@ -276,10 +276,32 @@ impl TuiState {
     }
 
     fn preview_latest_artifact(&mut self, repo_root: &Path) -> Result<()> {
-        let Some(artifact) = self.artifacts.first() else {
+        let Some(artifact) = self.artifacts.first().cloned() else {
             self.notice = "No artifact to preview".to_string();
             return Ok(());
         };
+        self.preview_artifact_record(repo_root, &artifact, "Previewing latest artifact")
+    }
+
+    fn preview_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(artifact) = self
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "code_change_proposal")
+            .cloned()
+        else {
+            self.notice = "No code-change proposal to preview".to_string();
+            return Ok(());
+        };
+        self.preview_artifact_record(repo_root, &artifact, "Previewing latest proposal")
+    }
+
+    fn preview_artifact_record(
+        &mut self,
+        repo_root: &Path,
+        artifact: &ArtifactRecord,
+        notice: &str,
+    ) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let preview = local_result(runtime.read_artifact(&artifact.artifact_id, 64_000))?;
         self.preview = Some(TuiPreview {
@@ -295,7 +317,7 @@ impl TuiState {
                 preview.preview
             ),
         });
-        self.notice = "Previewing latest artifact".to_string();
+        self.notice = notice.to_string();
         Ok(())
     }
 
@@ -428,6 +450,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
+                    KeyCode::Char('g') => state.preview_latest_proposal(repo_root)?,
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
@@ -692,7 +715,7 @@ fn draw_reports(
             out,
             x,
             artifacts_y + 1,
-            "press a to preview latest artifact",
+            "press a for latest artifact, g for latest proposal",
             width,
         )?;
         write_at(out, x, artifacts_y + 2, &artifact_text, width)?;
@@ -742,7 +765,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  m mode  o workspace  c prompt  s source  x remove  n run  a artifact  v parity  e bundle";
+    let controls = "q quit  r refresh  m mode  o workspace  c prompt  s source  x remove  n run  a artifact  g proposal  v parity  e bundle";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {

@@ -246,6 +246,7 @@ enum ArtifactsCommand {
 #[derive(Debug, Subcommand)]
 enum ProposalsCommand {
     List(ListProposalsArgs),
+    Latest(LatestProposalArgs),
     Show(ShowProposalArgs),
 }
 
@@ -283,6 +284,18 @@ struct ListProposalsArgs {
     run: Option<String>,
     #[arg(long, default_value_t = 20)]
     limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct LatestProposalArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long)]
+    run: Option<String>,
+    #[arg(long, default_value_t = PREVIEW_MAX_BYTES)]
+    max_bytes: u64,
     #[arg(long)]
     json: bool,
 }
@@ -429,7 +442,9 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
         state.workspace_id.as_deref().unwrap_or("default")
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
-    println!("  commands:  /help, /mode, /workspace, /source, /sources, /runs, /events, /quit");
+    println!(
+        "  commands:  /help, /mode, /workspace, /source, /sources, /runs, /events, /proposal, /quit"
+    );
     println!();
 
     let stdin = io::stdin();
@@ -560,6 +575,31 @@ fn handle_chat_session_command(
             print_run_evidence_summary(&evidence);
             Ok(true)
         }
+        "/artifacts" => {
+            let artifacts = local_result(runtime.list_artifacts(
+                state.workspace_id.as_deref(),
+                state.last_run_id.as_deref(),
+                8,
+            ))?;
+            print_artifacts(&artifacts);
+            Ok(true)
+        }
+        "/proposal" | "/diff" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            match latest_proposal_preview(
+                runtime,
+                state.workspace_id.as_deref(),
+                run_id.as_deref(),
+                PREVIEW_MAX_BYTES,
+            ) {
+                Ok(preview) => print_artifact_preview(&preview),
+                Err(error) => println!("{error}"),
+            }
+            Ok(true)
+        }
         "/replay" => {
             let replay = local_result(runtime.workspace_replay(state.workspace_id.as_deref(), 40))?;
             print_workspace_replay(&replay);
@@ -590,6 +630,8 @@ fn print_chat_session_help() {
     println!("  /runs                 List recent runs in this workspace");
     println!("  /events [run_id]      Show event stream for a run");
     println!("  /evidence [run_id]    Show run evidence summary");
+    println!("  /artifacts            List recent artifacts");
+    println!("  /proposal [run_id]    Show the latest code-change proposal");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
 }
@@ -772,6 +814,19 @@ fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
                 print_artifacts(&proposals);
             }
         }
+        ProposalsCommand::Latest(args) => {
+            let preview = local_result(latest_proposal_preview(
+                &runtime,
+                args.workspace.as_deref(),
+                args.run.as_deref(),
+                args.max_bytes,
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&preview)?);
+            } else {
+                print_artifact_preview(&preview);
+            }
+        }
         ProposalsCommand::Show(args) => {
             let preview = local_result(runtime.read_artifact(&args.artifact_id, args.max_bytes))?;
             if preview.artifact.kind != "code_change_proposal" {
@@ -789,6 +844,20 @@ fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn latest_proposal_preview(
+    runtime: &LocalAgentRuntime,
+    workspace_id: Option<&str>,
+    run_id: Option<&str>,
+    max_bytes: u64,
+) -> std::result::Result<structure_local_runtime::ArtifactPreview, String> {
+    let proposal = runtime
+        .list_artifacts(workspace_id, run_id, 32)?
+        .into_iter()
+        .find(|artifact| artifact.kind == "code_change_proposal")
+        .ok_or_else(|| "No local code-change proposal found.".to_string())?;
+    runtime.read_artifact(&proposal.artifact_id, max_bytes)
 }
 
 fn run_evidence(repo_root: &PathBuf, command: EvidenceCommand) -> Result<()> {
