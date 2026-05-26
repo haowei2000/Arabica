@@ -56,6 +56,12 @@ fn local_session_status(
 }
 
 #[tauri::command]
+fn local_llm_diagnostic() -> Result<structure_local_runtime::LocalLlmDiagnostic, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    Ok(runtime.llm_diagnostic())
+}
+
+#[tauri::command]
 fn core_manifest() -> Result<structure_local_core::StructureCoreManifest, String> {
     structure_core_manifest()
 }
@@ -350,6 +356,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             local_snapshot,
             local_session_status,
+            local_llm_diagnostic,
             core_manifest,
             core_parity_report,
             local_repo_entries,
@@ -502,6 +509,7 @@ mod tests {
                 Some(run.run.run_id.clone()),
                 Some("code_agent".to_string()),
             )?;
+            let llm_diagnostic = local_llm_diagnostic()?;
 
             assert_eq!(workspace.workspace_id, "desktop-test");
             assert!(entries.success);
@@ -601,6 +609,9 @@ mod tests {
             assert!(session_status.recent_event_count > 0);
             assert!(session_status.last_event_sequence.is_some());
             assert!(!session_status.llm_config.configured);
+            assert!(!llm_diagnostic.configured);
+            assert!(!llm_diagnostic.ok);
+            assert!(llm_diagnostic.error.is_some());
             Ok::<(), String>(())
         })();
 

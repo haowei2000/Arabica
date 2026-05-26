@@ -277,6 +277,18 @@ pub struct LocalEvidenceBundle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalLlmDiagnostic {
+    pub provider: String,
+    pub configured: bool,
+    pub ok: bool,
+    pub model: Option<String>,
+    pub endpoint: Option<String>,
+    pub elapsed_ms: u128,
+    pub response_preview: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalToolCall {
     pub call_id: String,
     pub name: String,

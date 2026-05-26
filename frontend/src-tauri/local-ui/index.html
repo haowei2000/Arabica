@@ -1041,6 +1041,11 @@
         });
       }
 
+      async function localLlmDiagnostic() {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_llm_diagnostic");
+      }
+
       async function localChatTurns() {
         if (!invoke) return [];
         return invoke("local_chat_turns", { workspaceId: activeWorkspaceId(), limit: 20 });
@@ -1400,6 +1405,18 @@ Database: ${status.runtime_db}
 LLM: ${llm.configured ? "OPENAI__ configured" : "OPENAI__ missing"}
 Sources: ${llm.api_key.source}/${llm.base_url.source}/${llm.model.source}
 Model: ${llm.model_name ?? "not set"}`;
+      }
+
+      function renderLlmDiagnostic(diagnostic) {
+        return `Structure Local LLM Diagnostic
+Provider: ${diagnostic.provider}
+Configured: ${diagnostic.configured}
+OK: ${diagnostic.ok}
+Model: ${diagnostic.model ?? "not set"}
+Endpoint: ${diagnostic.endpoint ?? "not set"}
+Elapsed: ${diagnostic.elapsed_ms} ms
+Response: ${diagnostic.response_preview ?? "none"}
+Error: ${diagnostic.error ?? "none"}`;
       }
 
       function renderWorkspaces(workspaces) {
@@ -1864,6 +1881,7 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
       function renderDesktopCommandHelp() {
         eventLogEl.textContent = `Desktop Agent Commands
 /status
+/llm
 /mode chat|code
 /workspace <id>
 /runs
@@ -1893,6 +1911,11 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
           case "/status": {
             const status = await localSessionStatus();
             eventLogEl.textContent = renderSessionStatus(status);
+            return true;
+          }
+          case "/llm": {
+            const diagnostic = await localLlmDiagnostic();
+            eventLogEl.textContent = renderLlmDiagnostic(diagnostic);
             return true;
           }
           case "/mode": {

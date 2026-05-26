@@ -18,7 +18,8 @@ use structure_local_core::{
     LocalSnapshot,
 };
 use structure_local_runtime::{
-    LocalAgentMode, LocalAgentRuntime, LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest,
+    LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic, LocalToolCall, ProposalApplyResult,
+    RunAttempt, RunRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -39,6 +40,10 @@ enum Command {
     Surfaces(SurfacesArgs),
     Core(CoreArgs),
     Parity(ParityArgs),
+    Llm {
+        #[command(subcommand)]
+        command: LlmCommand,
+    },
     Chat(ChatArgs),
     Run(RunArgs),
     Runs {
@@ -90,6 +95,17 @@ struct CoreArgs {
 struct ParityArgs {
     #[arg(long)]
     verify: bool,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum LlmCommand {
+    Check(LlmCheckArgs),
+}
+
+#[derive(Debug, Args)]
+struct LlmCheckArgs {
     #[arg(long)]
     json: bool,
 }
@@ -368,6 +384,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Surfaces(args) => run_surfaces(args)?,
         Command::Core(args) => run_core(args)?,
         Command::Parity(args) => run_parity(&repo_root, args)?,
+        Command::Llm { command } => run_llm(&repo_root, command)?,
         Command::Chat(args) => run_chat_agent(&repo_root, args)?,
         Command::Run(args) => run_local_agent(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
@@ -381,6 +398,27 @@ pub(crate) fn run() -> Result<()> {
     Ok(())
 }
 
+fn run_llm(repo_root: &PathBuf, command: LlmCommand) -> Result<()> {
+    match command {
+        LlmCommand::Check(args) => {
+            let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+            let diagnostic = runtime.llm_diagnostic();
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&diagnostic)?);
+            } else {
+                print!("{}", render_llm_diagnostic(&diagnostic));
+            }
+            if !diagnostic.ok {
+                return Err(anyhow!(diagnostic
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "LLM diagnostic failed".to_string())));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_status(repo_root: &PathBuf, args: StatusArgs) -> Result<()> {
     let snapshot = local_result(collect_snapshot(repo_root))?;
     if args.json {
@@ -389,6 +427,30 @@ fn run_status(repo_root: &PathBuf, args: StatusArgs) -> Result<()> {
         print_snapshot(&snapshot);
     }
     Ok(())
+}
+
+fn render_llm_diagnostic(diagnostic: &LocalLlmDiagnostic) -> String {
+    let mut text = String::new();
+    text.push_str("Structure local LLM diagnostic\n");
+    text.push_str(&format!("  provider:   {}\n", diagnostic.provider));
+    text.push_str(&format!("  configured: {}\n", diagnostic.configured));
+    text.push_str(&format!("  ok:         {}\n", diagnostic.ok));
+    text.push_str(&format!(
+        "  model:      {}\n",
+        diagnostic.model.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!(
+        "  endpoint:   {}\n",
+        diagnostic.endpoint.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!("  elapsed:    {} ms\n", diagnostic.elapsed_ms));
+    if let Some(response) = &diagnostic.response_preview {
+        text.push_str(&format!("  response:   {}\n", response));
+    }
+    if let Some(error) = &diagnostic.error {
+        text.push_str(&format!("  error:      {}\n", error));
+    }
+    text
 }
 
 fn run_surfaces(args: SurfacesArgs) -> Result<()> {
@@ -1508,6 +1570,30 @@ mod tests {
         assert!(output.contains("model:        "));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cli_llm_diagnostic_output_uses_openai_contract_without_secret() {
+        let diagnostic = LocalLlmDiagnostic {
+            provider: "local_env_api".to_string(),
+            configured: true,
+            ok: true,
+            model: Some("test-model".to_string()),
+            endpoint: Some("http://example.test/v1/chat/completions".to_string()),
+            elapsed_ms: 12,
+            response_preview: Some("structure-local-ok".to_string()),
+            error: None,
+        };
+
+        let output = render_llm_diagnostic(&diagnostic);
+
+        assert!(output.contains("Structure local LLM diagnostic"));
+        assert!(output.contains("provider:   local_env_api"));
+        assert!(output.contains("configured: true"));
+        assert!(output.contains("ok:         true"));
+        assert!(output.contains("model:      test-model"));
+        assert!(output.contains("structure-local-ok"));
+        assert!(!output.contains("OPENAI__API_KEY"));
     }
 
     fn unique_repo(label: &str) -> PathBuf {

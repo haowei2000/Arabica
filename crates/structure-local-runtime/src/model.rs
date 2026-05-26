@@ -1,11 +1,12 @@
 use crate::store::new_id;
 use crate::types::{
-    ChatTurn, KnowledgeSource, LocalAgentMode, LocalToolCall, LocalToolResult, RunSummary,
+    ChatTurn, KnowledgeSource, LocalAgentMode, LocalLlmDiagnostic, LocalToolCall, LocalToolResult,
+    RunSummary,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct ModelRequest {
@@ -112,6 +113,89 @@ impl EnvApiModelProvider {
         }
         serde_json::from_str::<serde_json::Value>(&body)
             .map_err(|err| format!("failed to parse API response JSON: {err}"))
+    }
+
+    pub fn diagnose_from_env() -> LocalLlmDiagnostic {
+        let started = Instant::now();
+        let provider = "local_env_api".to_string();
+        let configured = env::var("OPENAI__API_KEY")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+            && env::var("OPENAI__BASE_URL")
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+            && env::var("OPENAI__MODEL")
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+        let model = env::var("OPENAI__MODEL")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let endpoint = env::var("OPENAI__BASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|base_url| format!("{}/chat/completions", base_url.trim_end_matches('/')));
+        let provider_instance = match Self::from_env() {
+            Ok(provider_instance) => provider_instance,
+            Err(error) => {
+                return LocalLlmDiagnostic {
+                    provider,
+                    configured,
+                    ok: false,
+                    model,
+                    endpoint,
+                    elapsed_ms: started.elapsed().as_millis(),
+                    response_preview: None,
+                    error: Some(error),
+                };
+            }
+        };
+        let result = provider_instance.chat_completion(serde_json::json!({
+            "model": provider_instance.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a Structure local runtime health check. Reply with a short plain-text acknowledgement."
+                },
+                {
+                    "role": "user",
+                    "content": "Reply with: structure-local-ok"
+                }
+            ],
+            "temperature": 0.0,
+            "max_tokens": 16
+        }));
+        match result {
+            Ok(value) => {
+                let response_preview = value
+                    .get("choices")
+                    .and_then(|choices| choices.as_array())
+                    .and_then(|choices| choices.first())
+                    .and_then(|choice| choice.get("message"))
+                    .and_then(|message| message.get("content"))
+                    .and_then(|content| content.as_str())
+                    .map(|content| content.chars().take(240).collect::<String>());
+                LocalLlmDiagnostic {
+                    provider,
+                    configured,
+                    ok: response_preview.is_some(),
+                    model,
+                    endpoint,
+                    elapsed_ms: started.elapsed().as_millis(),
+                    response_preview,
+                    error: None,
+                }
+            }
+            Err(error) => LocalLlmDiagnostic {
+                provider,
+                configured,
+                ok: false,
+                model,
+                endpoint,
+                elapsed_ms: started.elapsed().as_millis(),
+                response_preview: None,
+                error: Some(error),
+            },
+        }
     }
 }
 

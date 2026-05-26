@@ -1,11 +1,13 @@
-use crate::model::{selected_planning_provider, selected_synthesis_provider, ModelRequest};
+use crate::model::{
+    selected_planning_provider, selected_synthesis_provider, EnvApiModelProvider, ModelRequest,
+};
 use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, KnowledgeSource,
-    KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle, LocalToolCall, LocalToolResult,
-    ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
-    RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall,
+    LocalToolResult, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult,
+    RunStatus, RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -370,6 +372,10 @@ impl LocalAgentRuntime {
             workspace_replay,
             run_evidence,
         })
+    }
+
+    pub fn llm_diagnostic(&self) -> LocalLlmDiagnostic {
+        EnvApiModelProvider::diagnose_from_env()
     }
 
     pub fn list_artifacts(
@@ -1779,6 +1785,66 @@ diff --git a/docs/example.md b/docs/example.md
         );
         assert_eq!(env::var("OPENAI__MODEL").unwrap(), "shell-model");
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_reports_missing_llm_diagnostic_without_network() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("llm-diagnostic-missing");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let diagnostic = runtime.llm_diagnostic();
+
+        assert_eq!(diagnostic.provider, "local_env_api");
+        assert!(!diagnostic.configured);
+        assert!(!diagnostic.ok);
+        assert!(diagnostic.error.unwrap().contains("OPENAI__BASE_URL"));
+        assert!(diagnostic.endpoint.is_none());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_checks_configured_llm_api() {
+        let _env = OpenAiEnvGuard::clear();
+        let server = MockOpenAiServer::start(vec![serde_json::json!({
+            "id": "chatcmpl-diagnostic",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "structure-local-ok"
+                    },
+                    "finish_reason": "stop"
+                }
+            ]
+        })]);
+        env::set_var("OPENAI__API_KEY", "mock-key");
+        env::set_var("OPENAI__BASE_URL", server.base_url());
+        env::set_var("OPENAI__MODEL", "mock-openai-model");
+        let root = unique_repo("llm-diagnostic-ok");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let diagnostic = runtime.llm_diagnostic();
+
+        assert!(diagnostic.configured);
+        assert!(diagnostic.ok);
+        assert_eq!(diagnostic.model.as_deref(), Some("mock-openai-model"));
+        assert!(diagnostic
+            .endpoint
+            .as_deref()
+            .unwrap_or_default()
+            .ends_with("/chat/completions"));
+        assert_eq!(
+            diagnostic.response_preview.as_deref(),
+            Some("structure-local-ok")
+        );
+        assert!(diagnostic.error.is_none());
+
+        server.join();
         fs::remove_dir_all(root).unwrap();
     }
 
