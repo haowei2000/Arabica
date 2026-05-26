@@ -2437,6 +2437,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /usage [run_id]
 /source <absolute-path>
 /remember <text>
+/forget <source_id>
 /sources
 /search <query>
 /read <repo-relative-path>
@@ -2610,6 +2611,19 @@ ${source.path}`;
             }
             const source = await rememberKnowledge(text);
             eventLogEl.textContent = `Workspace Knowledge Remembered
+${source.source_id}
+${source.path}`;
+            await refresh();
+            return true;
+          }
+          case "/forget": {
+            const sourceId = parts[0];
+            if (!sourceId) {
+              eventLogEl.textContent = "Usage: /forget <source_id>";
+              return true;
+            }
+            const source = await removeKnowledgeSource(sourceId);
+            eventLogEl.textContent = `Workspace Knowledge Removed
 ${source.source_id}
 ${source.path}`;
             await refresh();

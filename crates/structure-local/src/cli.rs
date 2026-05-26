@@ -856,6 +856,17 @@ fn handle_chat_session_command(
             println!("  file: {}", source.path);
             Ok(true)
         }
+        "/forget" => {
+            let Some(source_id) = parts.next() else {
+                println!("Usage: /forget <source_id>");
+                return Ok(true);
+            };
+            let source = local_result(runtime.remove_knowledge_source(source_id))?;
+            println!("Forgot workspace knowledge");
+            println!("  id:   {}", source.source_id);
+            println!("  file: {}", source.path);
+            Ok(true)
+        }
         "/sources" => {
             let sources =
                 local_result(runtime.knowledge_sources(state.workspace_id.as_deref(), 8))?;
@@ -1171,6 +1182,7 @@ fn print_chat_session_help() {
     println!("  /cmd <argv...>        Run an allowlisted local check command");
     println!("  /source <path>        Register a knowledge file for this workspace");
     println!("  /remember <text>      Persist text as local workspace knowledge");
+    println!("  /forget <source_id>   Remove a workspace knowledge source");
     println!("  /sources              List workspace knowledge sources");
     println!("  /runs                 List recent runs in this workspace");
     println!("  /select <run_id>      Select a run for follow-up inspection");
@@ -1190,7 +1202,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
+    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /forget, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1846,6 +1858,7 @@ mod tests {
         assert!(summary.contains("/continue"));
         assert!(summary.contains("/usage"));
         assert!(summary.contains("/remember"));
+        assert!(summary.contains("/forget"));
         assert!(!summary.contains("benchmark"));
     }
 
