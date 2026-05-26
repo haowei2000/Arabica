@@ -493,6 +493,11 @@
         text-align: left;
       }
 
+      .run-item[aria-selected="true"] {
+        border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+        background: var(--accent-soft);
+      }
+
       .knowledge-item {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
@@ -1380,6 +1385,10 @@
           const button = document.createElement("button");
           button.type = "button";
           button.className = "run-item";
+          button.setAttribute(
+            "aria-selected",
+            run.run_id === state.selectedRunId ? "true" : "false",
+          );
 
           const title = document.createElement("strong");
           title.textContent = `${run.status} / ${run.run_id}`;
@@ -1714,7 +1723,9 @@ The original file was not deleted.`;
           const freshRun = transcript?.run ?? await localRun(run.run_id);
           const events = transcript?.events ?? await localRunEvents(run.run_id);
           const evidence = transcript?.evidence ?? await localRunEvidence(run.run_id);
-          renderEventTimeline(events, freshRun?.run_id ?? run.run_id);
+          state.selectedRunId = freshRun?.run_id ?? run.run_id;
+          renderRuns(state.runs);
+          renderEventTimeline(events, state.selectedRunId);
           const eventText = events
             .map((event) => {
               const payload = JSON.stringify(event.payload);
@@ -2331,6 +2342,9 @@ Stderr truncated: ${result.output.stderr_truncated}`;
             localArtifacts(),
             coreParityReport(),
           ]);
+          if (!runs.some((run) => run.run_id === state.selectedRunId)) {
+            state.selectedRunId = runs[0]?.run_id ?? null;
+          }
           renderRuns(runs);
           renderChat(turns);
           renderKnowledge(knowledge);
@@ -2339,7 +2353,10 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           renderSnapshot(snapshot);
           if (runs[0]) {
             try {
-              renderEventTimeline(await localRunEvents(runs[0].run_id), runs[0].run_id);
+              renderEventTimeline(
+                await localRunEvents(state.selectedRunId ?? runs[0].run_id),
+                state.selectedRunId ?? runs[0].run_id,
+              );
             } catch {
               renderEventTimeline([]);
             }
