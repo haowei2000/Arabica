@@ -4,7 +4,8 @@ use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentMode, LocalEvidenceBundle, LocalToolResult, ProposalApplyResult, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceReplay, WorkspaceSummary,
+    RunEvidenceSummary, RunResult, RunStatus, RunSummary, WorkspaceEventFeed, WorkspaceReplay,
+    WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -259,6 +260,30 @@ impl LocalAgentRuntime {
             knowledge_sources,
             artifacts,
             last_sequence,
+        })
+    }
+
+    pub fn workspace_event_feed(
+        &self,
+        workspace_id: Option<&str>,
+        after_sequence: Option<i64>,
+        limit: usize,
+    ) -> Result<WorkspaceEventFeed, String> {
+        let workspace_id = workspace_id.unwrap_or("default");
+        let after_sequence = after_sequence.unwrap_or_default().max(0);
+        let limit = limit.clamp(1, 500);
+        let events = self
+            .store
+            .workspace_events_after(workspace_id, after_sequence, limit)?;
+        let last_sequence = events.last().map(|event| event.sequence);
+        let next_after_sequence = last_sequence.unwrap_or(after_sequence);
+
+        Ok(WorkspaceEventFeed {
+            workspace_id: workspace_id.to_string(),
+            after_sequence,
+            events,
+            last_sequence,
+            next_after_sequence,
         })
     }
 
@@ -1328,6 +1353,41 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_exposes_workspace_event_feed_cursor() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("event-feed");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let first = runtime
+            .run_prompt(RunRequest {
+                prompt: "Create cursor events".to_string(),
+                workspace_id: Some("feed".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let feed = runtime
+            .workspace_event_feed(Some("feed"), Some(0), 4)
+            .unwrap();
+        let next = runtime
+            .workspace_event_feed(Some("feed"), Some(feed.next_after_sequence), 100)
+            .unwrap();
+
+        assert_eq!(feed.workspace_id, "feed");
+        assert_eq!(feed.after_sequence, 0);
+        assert_eq!(feed.events.len(), 4);
+        assert_eq!(
+            feed.next_after_sequence,
+            feed.events.last().unwrap().sequence
+        );
+        assert!(next
+            .events
+            .iter()
+            .all(|event| event.sequence > feed.next_after_sequence));
+        assert!(first.events.len() > feed.events.len());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_builds_evidence_bundle() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("bundle");
@@ -1575,7 +1635,7 @@ diff --git a/docs/example.md b/docs/example.md
             run_core run_surfaces run_chat_agent run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events WorkspaceCommand::Replay
+            RunsCommand::Events WorkspaceCommand::Events WorkspaceCommand::Replay
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -1590,7 +1650,8 @@ diff --git a/docs/example.md b/docs/example.md
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
-            fn local_run_events() {} fn local_workspace_replay() {} local_workspace_replay,
+            fn local_run_events() {} fn local_workspace_event_feed() {} local_workspace_event_feed,
+            fn local_workspace_replay() {} local_workspace_replay,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,
             fn apply_local_proposal() {}
             "#,

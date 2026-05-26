@@ -830,6 +830,7 @@
             </div>
             <div id="event-timeline" class="event-timeline" aria-label="Latest local run event trace"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
+            <button id="poll-events" type="button">Poll Events</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Latest Proposal</button>
             <button id="apply-proposal" type="button">Apply Proposal</button>
@@ -930,6 +931,7 @@
       const runAgentEl = document.querySelector("#run-agent");
       const agentModeEl = document.querySelector("#agent-mode");
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
+      const pollEventsEl = document.querySelector("#poll-events");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
       const applyProposalEl = document.querySelector("#apply-proposal");
@@ -967,6 +969,7 @@
         activeWorkspaceId: "default",
         selectedRunId: null,
         selectedEventKey: null,
+        workspaceEventCursor: 0,
         chatTurns: [],
         knowledge: [],
         artifacts: [],
@@ -1043,6 +1046,15 @@
       async function localWorkspaceReplay() {
         if (!invoke) return null;
         return invoke("local_workspace_replay", { workspaceId: activeWorkspaceId(), limit: 60 });
+      }
+
+      async function localWorkspaceEventFeed(afterSequence = state.workspaceEventCursor) {
+        if (!invoke) return null;
+        return invoke("local_workspace_event_feed", {
+          workspaceId: activeWorkspaceId(),
+          afterSequence,
+          limit: 60,
+        });
       }
 
       async function localEvidenceBundle() {
@@ -1214,6 +1226,11 @@
       function setReplayBusy(isBusy) {
         replayWorkspaceEl.disabled = isBusy;
         replayWorkspaceEl.textContent = isBusy ? "Replaying" : "Replay Workspace";
+      }
+
+      function setPollEventsBusy(isBusy) {
+        pollEventsEl.disabled = isBusy;
+        pollEventsEl.textContent = isBusy ? "Polling" : "Poll Events";
       }
 
       function setArtifactBusy(isBusy) {
@@ -2016,6 +2033,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
       clearPreviewEl.addEventListener("click", clearPreview);
       workspaceSelectEl.addEventListener("change", async () => {
         state.activeWorkspaceId = workspaceSelectEl.value || "default";
+        state.workspaceEventCursor = 0;
         eventLogEl.textContent = `Workspace selected: ${activeWorkspaceId()}`;
         await refresh();
       });
@@ -2030,6 +2048,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         try {
           const workspace = await createLocalWorkspace(workspaceId);
           state.activeWorkspaceId = workspace.workspace_id;
+          state.workspaceEventCursor = 0;
           workspaceIdEl.value = "";
           eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
           await refresh();
@@ -2051,6 +2070,10 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         try {
           const result = await runLocalAgent(prompt);
           agentPromptEl.value = "";
+          state.workspaceEventCursor = Math.max(
+            state.workspaceEventCursor,
+            ...result.events.map((runEvent) => runEvent.sequence),
+          );
           renderEventTimeline(result.events, result.run.run_id, true);
           eventLogEl.textContent = `Run: ${result.run.run_id}
 Workspace: ${result.run.workspace_id}
@@ -2164,6 +2187,7 @@ ${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join
         eventLogEl.textContent = "Replaying workspace event stream...";
         try {
           const replay = await localWorkspaceReplay();
+          state.workspaceEventCursor = replay.last_sequence ?? state.workspaceEventCursor;
           const events = replay.events
             .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
             .join("\n");
@@ -2181,6 +2205,31 @@ ${events || "No events recorded."}`;
           eventLogEl.textContent = String(error);
         } finally {
           setReplayBusy(false);
+        }
+      });
+      pollEventsEl.addEventListener("click", async () => {
+        setPollEventsBusy(true);
+        eventLogEl.textContent = `Polling workspace events after #${state.workspaceEventCursor}...`;
+        try {
+          const feed = await localWorkspaceEventFeed();
+          state.workspaceEventCursor = feed.next_after_sequence;
+          if (feed.events.length > 0) {
+            renderEventTimeline(feed.events, null, true);
+          }
+          const events = feed.events
+            .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
+            .join("\n");
+          eventLogEl.textContent = `Workspace Event Feed
+Workspace: ${feed.workspace_id}
+After sequence: ${feed.after_sequence}
+Events: ${feed.events.length}
+Next after: ${feed.next_after_sequence}
+
+${events || "No new events."}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setPollEventsBusy(false);
         }
       });
       previewArtifactEl.addEventListener("click", async () => {

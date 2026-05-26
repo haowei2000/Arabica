@@ -163,6 +163,16 @@ fn local_workspace_replay(
 }
 
 #[tauri::command]
+fn local_workspace_event_feed(
+    workspace_id: Option<String>,
+    after_sequence: Option<i64>,
+    limit: Option<usize>,
+) -> Result<structure_local_runtime::WorkspaceEventFeed, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.workspace_event_feed(workspace_id.as_deref(), after_sequence, limit.unwrap_or(50))
+}
+
+#[tauri::command]
 fn local_evidence_bundle(
     workspace_id: Option<String>,
     limit: Option<usize>,
@@ -282,6 +292,7 @@ pub fn run() {
             local_run_events,
             local_run_evidence,
             local_workspace_replay,
+            local_workspace_event_feed,
             local_evidence_bundle,
             add_local_knowledge,
             local_knowledge,
@@ -367,6 +378,8 @@ mod tests {
             let turns = local_chat_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(50))?;
+            let feed =
+                local_workspace_event_feed(Some(workspace.workspace_id.clone()), Some(0), Some(5))?;
             let artifacts = local_artifacts(Some(workspace.workspace_id.clone()), None, Some(10))?;
             let proposal_preview = latest_local_proposal(
                 Some(workspace.workspace_id.clone()),
@@ -414,6 +427,11 @@ mod tests {
             assert!(turns.iter().any(|item| item.run_id == chat_run.run.run_id));
             assert!(runs.iter().any(|item| item.run_id == run.run.run_id));
             assert!(!replay.events.is_empty());
+            assert!(!feed.events.is_empty());
+            assert_eq!(
+                feed.next_after_sequence,
+                feed.events.last().unwrap().sequence
+            );
             assert!(artifacts
                 .iter()
                 .any(|artifact| artifact.kind == "code_change_proposal"));

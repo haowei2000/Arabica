@@ -204,6 +204,15 @@ pub struct WorkspaceReplay {
     pub last_sequence: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceEventFeed {
+    pub workspace_id: String,
+    pub after_sequence: i64,
+    pub events: Vec<LocalEvent>,
+    pub last_sequence: Option<i64>,
+    pub next_after_sequence: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LocalEvidenceBundle {
     pub schema_version: String,

@@ -15,7 +15,7 @@ pub use types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalToolCall, LocalToolResult,
     ProposalApplyResult, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary,
-    WorkspaceReplay, WorkspaceSummary,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 
 #[cfg(test)]

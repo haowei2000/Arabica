@@ -460,6 +460,28 @@ impl SqliteLocalStore {
         })
     }
 
+    pub fn workspace_events_after(
+        &self,
+        workspace_id: &str,
+        after_sequence: i64,
+        limit: usize,
+    ) -> Result<Vec<LocalEvent>, String> {
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT sequence, event_id, run_id, workspace_id, kind, payload_json, created_at_ms
+                     FROM events
+                     WHERE workspace_id = ?1 AND sequence > ?2
+                     ORDER BY sequence ASC LIMIT ?3",
+                )
+                .map_err(sql_error)?;
+            let rows = statement
+                .query_map(params![workspace_id, after_sequence, limit as i64], event_from_row)
+                .map_err(sql_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+        })
+    }
+
     fn run_by_id_with(&self, connection: &Connection, run_id: &str) -> Result<RunSummary, String> {
         let mut statement = connection
             .prepare(
@@ -747,6 +769,41 @@ mod tests {
         assert_eq!(artifacts[0].artifact_id, artifact.artifact_id);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].run_id.as_deref(), Some("run_artifact"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn store_reads_workspace_events_after_cursor() {
+        let root = unique_temp_dir("event-feed");
+        let store = SqliteLocalStore::open(&root).unwrap();
+        let workspace = store.ensure_workspace(None, &root).unwrap();
+        let run = store
+            .create_run("run_feed", &workspace.workspace_id, "hello")
+            .unwrap();
+        let first = store
+            .append_event(
+                &workspace.workspace_id,
+                Some(&run.run_id),
+                RunEventKind::PromptReceived,
+                &serde_json::json!({"step": 1}),
+            )
+            .unwrap();
+        let second = store
+            .append_event(
+                &workspace.workspace_id,
+                Some(&run.run_id),
+                RunEventKind::RunFinished,
+                &serde_json::json!({"step": 2}),
+            )
+            .unwrap();
+
+        let events = store
+            .workspace_events_after(&workspace.workspace_id, first.sequence, 10)
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sequence, second.sequence);
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -3,7 +3,7 @@ use crate::text::{
     print_events, print_knowledge_preview, print_knowledge_source, print_knowledge_sources,
     print_local_evidence_bundle, print_run_evidence_summary, print_run_result, print_run_summary,
     print_runs, print_snapshot, print_surface_parity_report, print_surfaces, print_workspace,
-    print_workspace_replay, print_workspaces,
+    print_workspace_event_feed, print_workspace_replay, print_workspaces,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -132,6 +132,7 @@ enum WorkspaceCommand {
     List(ListWorkspacesArgs),
     Show(ShowWorkspaceArgs),
     Replay(WorkspaceReplayArgs),
+    Events(WorkspaceEventsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -191,6 +192,18 @@ struct ShowWorkspaceArgs {
 struct WorkspaceReplayArgs {
     #[arg(long)]
     workspace: Option<String>,
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceEventsArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long, default_value_t = 0)]
+    after: i64,
     #[arg(long, default_value_t = 50)]
     limit: usize,
     #[arg(long)]
@@ -974,6 +987,18 @@ fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&replay)?);
             } else {
                 print_workspace_replay(&replay);
+            }
+        }
+        WorkspaceCommand::Events(args) => {
+            let feed = local_result(runtime.workspace_event_feed(
+                args.workspace.as_deref(),
+                Some(args.after),
+                args.limit,
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&feed)?);
+            } else {
+                print_workspace_event_feed(&feed);
             }
         }
     }

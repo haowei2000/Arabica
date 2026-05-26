@@ -4,8 +4,8 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvent,
-    LocalEvidenceBundle, RunEvidenceSummary, RunResult, RunSummary, WorkspaceReplay,
-    WorkspaceSummary,
+    LocalEvidenceBundle, RunEvidenceSummary, RunResult, RunSummary, WorkspaceEventFeed,
+    WorkspaceReplay, WorkspaceSummary,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -304,6 +304,28 @@ pub(crate) fn print_workspace_replay(replay: &WorkspaceReplay) {
     if !replay.events.is_empty() {
         println!("  event stream:");
         for event in &replay.events {
+            println!(
+                "    #{:<4} {:<26} {}",
+                event.sequence,
+                event.kind,
+                event.run_id.as_deref().unwrap_or("workspace")
+            );
+        }
+    }
+}
+
+pub(crate) fn print_workspace_event_feed(feed: &WorkspaceEventFeed) {
+    println!("Workspace event feed");
+    println!("  workspace:  {}", feed.workspace_id);
+    println!("  after seq:  {}", feed.after_sequence);
+    println!("  events:     {}", feed.events.len());
+    println!("  next after: {}", feed.next_after_sequence);
+    if let Some(sequence) = feed.last_sequence {
+        println!("  last seq:   {sequence}");
+    }
+    if !feed.events.is_empty() {
+        println!("  event stream:");
+        for event in &feed.events {
             println!(
                 "    #{:<4} {:<26} {}",
                 event.sequence,
