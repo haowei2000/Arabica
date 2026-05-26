@@ -117,7 +117,7 @@
           "surface_id": "cli_tui",
           "status": "native",
           "entrypoint": "structure-local chat / structure-local run / structure-local proposals list/show/apply / structure-local tui",
-          "evidence": "CLI offers a Codex/OpenCode-style local chat command, streams human-readable live workspace events during non-JSON local runs, exposes /cmd for allowlisted local verification commands without a shell, records manual session tool calls as workspace events, returns JSON RunResult with replayed recent workspace turns and iterative model-planned local tool calls when OPENAI__ is configured, exposes proposed code-change artifacts, can apply context-verified reviewed proposal patches with a code_change_applied event, and TUI can run prompts, execute the same allowlisted local command tool with !, and dry-run/apply the latest reviewed proposal through the same Rust runtime."
+          "evidence": "CLI offers a Codex/OpenCode-style local chat command, streams human-readable live workspace events during non-JSON local runs, exposes /cmd for allowlisted local verification commands without a shell, records manual session tool calls as workspace events, returns JSON RunResult with replayed recent workspace turns and iterative model-planned local tool calls when OPENAI__ is configured, exposes proposed code-change artifacts, can apply context-verified reviewed proposal patches with a code_change_applied event, and TUI can run prompts, execute the same event-persisted allowlisted local command tool with !, and dry-run/apply the latest reviewed proposal through the same Rust runtime."
         },
         {
           "surface_id": "desktop_app",

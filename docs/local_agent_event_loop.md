@@ -62,9 +62,10 @@ starting an API server. The desktop shell uses this cursor both for manual Poll
 Events and for short-lived live polling while a local agent run is in flight.
 The human-readable CLI uses the same cursor to print live event progress during
 non-JSON `run` and `chat` execution while preserving machine-readable JSON
-output for scripts. Manual CLI session tools and desktop repository tools also
-append workspace-scoped `ToolCallRequested` and `ToolCallCompleted` events with
-no run id, so operator actions remain visible in the same local event log.
+output for scripts. Manual CLI session tools, TUI commands, and desktop
+repository tools also append workspace-scoped `ToolCallRequested` and
+`ToolCallCompleted` events with no run id, so operator actions remain visible in
+the same local event log.
 
 Current event sequence:
 
@@ -123,8 +124,9 @@ into runtime calls:
   create/open input bound to `o`, custom prompt input bound to `c`, knowledge
   path registration bound to `s`, knowledge registration removal bound to `x`,
   allowlisted local command execution bound to `!`, and a local workspace check
-  bound to `n`; it also surfaces knowledge and artifact previews through the
-  same runtime. Press `e` to inspect the same local evidence bundle.
+  bound to `n`; `!` commands are persisted as workspace tool events. It also
+  surfaces knowledge and artifact previews through the same runtime. Press `e`
+  to inspect the same local evidence bundle.
 - Desktop app: Tauri commands such as `local_agent_run`, `local_runs`, and
   `local_run_events`; `create_local_workspace` and `local_workspaces` back the
   native workspace selector. `local_workspace_event_feed` powers the Poll Events

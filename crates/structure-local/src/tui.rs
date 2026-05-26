@@ -11,9 +11,9 @@ use structure_local_core::{
     collect_snapshot, verify_structure_core_parity_for_repo, LocalSnapshot, SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactRecord, BuiltinLocalToolRegistry, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
-    LocalEvidenceBundle, LocalToolCall, LocalToolRegistry, ProposalApplyResult, RunEvidenceSummary,
-    RunRequest, RunSummary, WorkspaceSummary,
+    ArtifactRecord, KnowledgeSource, LocalAgentMode, LocalAgentRuntime, LocalEvidenceBundle,
+    LocalToolCall, ProposalApplyResult, RunEvidenceSummary, RunRequest, RunSummary,
+    WorkspaceSummary,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -272,17 +272,20 @@ impl TuiState {
             return Ok(());
         }
 
-        let registry = BuiltinLocalToolRegistry::new(runtime.repo_root());
-        let result = registry.execute(&LocalToolCall {
-            call_id: "tui_run_local_command".to_string(),
-            name: "run_local_command".to_string(),
-            input: serde_json::json!({
-                "argv": argv,
-                "cwd": ".",
-                "timeout_ms": 30_000,
-                "max_output_chars": 12_000,
-            }),
-        });
+        let result = local_result(runtime.execute_workspace_tool(
+            Some(self.active_workspace_id.clone()),
+            "tui",
+            LocalToolCall {
+                call_id: "tui_run_local_command".to_string(),
+                name: "run_local_command".to_string(),
+                input: serde_json::json!({
+                    "argv": argv,
+                    "cwd": ".",
+                    "timeout_ms": 30_000,
+                    "max_output_chars": 12_000,
+                }),
+            },
+        ))?;
         let notice = if result.success {
             let ok = result
                 .output
@@ -1147,4 +1150,65 @@ fn collect_run_evidence(
     runs.iter()
         .filter_map(|run| runtime.run_evidence_summary(&run.run_id).ok())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn tui_local_command_records_workspace_tool_events() {
+        let root = unique_repo("tui-local-command-events");
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(
+            snapshot,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            "tui-events".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        state.run_local_command(&root, "pwd".to_string()).unwrap();
+
+        let runtime = local_result(LocalAgentRuntime::open(&root)).unwrap();
+        let feed =
+            local_result(runtime.workspace_event_feed(Some("tui-events"), Some(0), 10)).unwrap();
+
+        assert!(state.notice.contains("Local command passed"));
+        assert!(state
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.text.contains("Local Command")));
+        assert_eq!(feed.events.len(), 2);
+        assert_eq!(feed.events[0].kind, "tool_call_requested");
+        assert_eq!(feed.events[0].run_id, None);
+        assert_eq!(feed.events[0].payload["surface"], "tui");
+        assert_eq!(feed.events[0].payload["name"], "run_local_command");
+        assert_eq!(feed.events[1].kind, "tool_call_completed");
+        assert_eq!(feed.events[1].run_id, None);
+        assert_eq!(feed.events[1].payload["surface"], "tui");
+        assert_eq!(feed.events[1].payload["success"], true);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn unique_repo(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "structure-tui-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src/structure")).unwrap();
+        fs::create_dir_all(root.join("frontend")).unwrap();
+        fs::write(root.join("pyproject.toml"), "").unwrap();
+        root.canonicalize().unwrap()
+    }
 }
