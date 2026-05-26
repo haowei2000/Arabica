@@ -148,8 +148,8 @@
         {
           "surface_id": "desktop_app",
           "status": "native",
-          "entrypoint": "create_local_workspace / local_workspaces / add_local_knowledge / read_local_knowledge_source / remove_local_knowledge",
-          "evidence": "Desktop UI supports workspace selection/creation plus knowledge source add, preview, and metadata removal through the local runtime."
+          "entrypoint": "create_local_workspace / local_workspaces / local_repo_entries / local_repo_search / read_local_repo_file / add_local_knowledge / read_local_knowledge_source / remove_local_knowledge",
+          "evidence": "Desktop UI supports workspace selection/creation, safe repository list/search/read tools, plus knowledge source add, preview, and metadata removal through the local runtime."
         },
         {
           "surface_id": "web_app",

@@ -367,6 +367,9 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             &[
                 "fn create_local_workspace",
                 "fn local_workspaces",
+                "fn local_repo_entries",
+                "fn local_repo_search",
+                "fn read_local_repo_file",
                 "fn add_local_knowledge",
                 "fn read_local_knowledge_source",
                 "fn remove_local_knowledge",

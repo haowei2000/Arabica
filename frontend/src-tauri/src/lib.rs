@@ -1,5 +1,8 @@
 use structure_local_core::{collect_snapshot, default_repo_root, structure_core_manifest};
-use structure_local_runtime::{LocalAgentMode, LocalAgentRuntime, RunRequest};
+use structure_local_runtime::{
+    BuiltinLocalToolRegistry, LocalAgentMode, LocalAgentRuntime, LocalToolCall, LocalToolRegistry,
+    RunRequest,
+};
 
 #[tauri::command]
 fn local_snapshot() -> Result<structure_local_core::LocalSnapshot, String> {
@@ -16,6 +19,44 @@ fn core_manifest() -> Result<structure_local_core::StructureCoreManifest, String
 fn core_parity_report() -> Result<structure_local_core::SurfaceParityReport, String> {
     let repo_root = default_repo_root()?;
     structure_local_core::verify_structure_core_parity_for_repo(repo_root)
+}
+
+#[tauri::command]
+fn local_repo_entries(
+    max_entries: Option<u64>,
+) -> Result<structure_local_runtime::LocalToolResult, String> {
+    execute_local_repo_tool(
+        "list_workspace",
+        serde_json::json!({ "max_entries": max_entries.unwrap_or(32) }),
+    )
+}
+
+#[tauri::command]
+fn local_repo_search(
+    query: String,
+    max_matches: Option<u64>,
+) -> Result<structure_local_runtime::LocalToolResult, String> {
+    execute_local_repo_tool(
+        "search_repo",
+        serde_json::json!({
+            "query": query,
+            "max_matches": max_matches.unwrap_or(20),
+        }),
+    )
+}
+
+#[tauri::command]
+fn read_local_repo_file(
+    path: String,
+    max_bytes: Option<u64>,
+) -> Result<structure_local_runtime::LocalToolResult, String> {
+    execute_local_repo_tool(
+        "read_repo_file",
+        serde_json::json!({
+            "path": path,
+            "max_bytes": max_bytes.unwrap_or(64_000),
+        }),
+    )
 }
 
 #[tauri::command]
@@ -209,6 +250,9 @@ pub fn run() {
             local_snapshot,
             core_manifest,
             core_parity_report,
+            local_repo_entries,
+            local_repo_search,
+            read_local_repo_file,
             local_agent_run,
             local_chat_turns,
             local_runs,
@@ -241,6 +285,19 @@ fn parse_local_agent_mode(mode: Option<String>) -> LocalAgentMode {
     }
 }
 
+fn execute_local_repo_tool(
+    name: &str,
+    input: serde_json::Value,
+) -> Result<structure_local_runtime::LocalToolResult, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    let registry = BuiltinLocalToolRegistry::new(runtime.repo_root());
+    Ok(registry.execute(&LocalToolCall {
+        call_id: format!("desktop_{name}"),
+        name: name.to_string(),
+        input,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,7 +327,13 @@ mod tests {
         }
 
         let result = (|| {
+            fs::write(root.join("note.md"), "desktop local repo search").unwrap();
+            fs::write(root.join(".env"), "LOCAL_SECRET=secret").unwrap();
             let workspace = create_local_workspace("desktop-test".to_string())?;
+            let entries = local_repo_entries(Some(16))?;
+            let search = local_repo_search("desktop local".to_string(), Some(8))?;
+            let read_note = read_local_repo_file("note.md".to_string(), Some(1_000))?;
+            let read_env = read_local_repo_file(".env".to_string(), Some(1_000))?;
             let run = local_agent_run(
                 "Inspect this desktop command workspace.".to_string(),
                 Some(workspace.workspace_id.clone()),
@@ -299,6 +362,25 @@ mod tests {
             )?;
 
             assert_eq!(workspace.workspace_id, "desktop-test");
+            assert!(entries.success);
+            let entries_array = entries.output["entries"].as_array().unwrap();
+            assert!(!entries_array
+                .iter()
+                .any(
+                    |entry| entry.get("name").and_then(serde_json::Value::as_str) == Some(".env")
+                ));
+            assert!(search.success);
+            assert_eq!(search.output["match_count"], 1);
+            assert!(read_note.success);
+            assert!(read_note.output["preview"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("desktop local repo search"));
+            assert!(!read_env.success);
+            assert_eq!(
+                read_env.error.as_deref(),
+                Some("refusing to read sensitive local configuration file")
+            );
             assert_eq!(run.run.workspace_id, "desktop-test");
             assert_eq!(run.run.status, "finished");
             assert_eq!(chat_run.run.status, "finished");

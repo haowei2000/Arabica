@@ -1305,6 +1305,7 @@ mod tests {
             fn local_snapshot() {} fn core_manifest() {} core_manifest,
             fn local_agent_run() {} fn local_chat_turns() {} local_chat_turns,
             fn create_local_workspace() {} fn local_workspaces() {}
+            fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
             fn local_run_events() {} fn local_workspace_replay() {} local_workspace_replay,

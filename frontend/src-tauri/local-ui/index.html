@@ -790,6 +790,18 @@
             </form>
             <div id="knowledge-list" class="knowledge-list"></div>
             <div class="panel-heading">
+              <h3>Repository Tools</h3>
+            </div>
+            <button id="repo-list" type="button">List Root</button>
+            <form id="repo-search-form" class="knowledge-form">
+              <input id="repo-search-query" type="search" placeholder="Search repository text" />
+              <button id="repo-search" type="submit">Search</button>
+            </form>
+            <form id="repo-read-form" class="knowledge-form">
+              <input id="repo-read-path" type="text" placeholder="repo-relative/path.rs" />
+              <button id="repo-read" type="submit">Read</button>
+            </form>
+            <div class="panel-heading">
               <h3>Recent Runs</h3>
               <span id="run-count" class="count">0</span>
             </div>
@@ -867,6 +879,13 @@
       const knowledgePathEl = document.querySelector("#knowledge-path");
       const addKnowledgeEl = document.querySelector("#add-knowledge");
       const knowledgeListEl = document.querySelector("#knowledge-list");
+      const repoListEl = document.querySelector("#repo-list");
+      const repoSearchFormEl = document.querySelector("#repo-search-form");
+      const repoSearchQueryEl = document.querySelector("#repo-search-query");
+      const repoSearchEl = document.querySelector("#repo-search");
+      const repoReadFormEl = document.querySelector("#repo-read-form");
+      const repoReadPathEl = document.querySelector("#repo-read-path");
+      const repoReadEl = document.querySelector("#repo-read");
       const invoke = window.__TAURI__?.core?.invoke;
 
       const state = {
@@ -997,6 +1016,21 @@
         return invoke("apply_local_proposal", { artifactId, dryRun });
       }
 
+      async function listRepoEntries() {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_repo_entries", { maxEntries: 32 });
+      }
+
+      async function searchRepo(query) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_repo_search", { query, maxMatches: 20 });
+      }
+
+      async function readRepoFile(path) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("read_local_repo_file", { path, maxBytes: 64000 });
+      }
+
       async function readKnowledgeSource(sourceId) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("read_local_knowledge_source", { sourceId, maxBytes: 64000 });
@@ -1068,6 +1102,21 @@
       function setKnowledgeBusy(isBusy) {
         addKnowledgeEl.disabled = isBusy;
         addKnowledgeEl.textContent = isBusy ? "Adding" : "Add";
+      }
+
+      function setRepoListBusy(isBusy) {
+        repoListEl.disabled = isBusy;
+        repoListEl.textContent = isBusy ? "Listing" : "List Root";
+      }
+
+      function setRepoSearchBusy(isBusy) {
+        repoSearchEl.disabled = isBusy;
+        repoSearchEl.textContent = isBusy ? "Searching" : "Search";
+      }
+
+      function setRepoReadBusy(isBusy) {
+        repoReadEl.disabled = isBusy;
+        repoReadEl.textContent = isBusy ? "Reading" : "Read";
       }
 
       function setWorkspaceBusy(isBusy) {
@@ -1561,6 +1610,52 @@ ${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).
         renderReports();
       }
 
+      function renderRepoToolResult(result) {
+        renderReportSummary(null);
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        state.selectedPath = null;
+        if (!result.success) {
+          previewMetaEl.textContent = `${result.name} failed`;
+          previewEl.textContent = result.error ?? "Tool failed.";
+          eventLogEl.textContent = `${result.name} failed: ${result.error ?? "unknown error"}`;
+          renderReports();
+          return;
+        }
+
+        if (result.name === "list_workspace") {
+          const entries = result.output.entries ?? [];
+          previewMetaEl.textContent = `${entries.length} repository entries`;
+          previewEl.textContent = entries
+            .map((entry) => `${entry.kind.padEnd(9)} ${String(entry.size_bytes).padStart(8)}  ${entry.name}`)
+            .join("\n");
+          eventLogEl.textContent = `Repository root
+${result.output.repo_root}
+
+${entries.length} visible entries. Sensitive local config files are filtered.`;
+        } else if (result.name === "search_repo") {
+          const matches = result.output.matches ?? [];
+          previewMetaEl.textContent = `${matches.length} matches for ${result.output.query}`;
+          previewEl.textContent =
+            matches.map((item) => `${item.path}:${item.line}: ${item.text}`).join("\n") ||
+            "No matches.";
+          eventLogEl.textContent = `Search: ${result.output.query}
+Matches: ${matches.length}`;
+        } else if (result.name === "read_repo_file") {
+          previewMetaEl.textContent = `${result.output.path} / ${result.output.chars_returned} chars`;
+          previewEl.textContent = formatPreview(result.output.preview ?? "", result.output.path ?? "");
+          eventLogEl.textContent = `Repo File
+Path: ${result.output.path}
+Read: ${result.output.chars_returned} chars
+Truncated: ${result.output.truncated}`;
+        } else {
+          previewMetaEl.textContent = result.name;
+          previewEl.textContent = JSON.stringify(result.output, null, 2);
+        }
+        renderReports();
+      }
+
       function clearPreview() {
         state.selectedPath = null;
         previewMetaEl.textContent = "No file selected";
@@ -1723,6 +1818,51 @@ ${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join
           eventLogEl.textContent = String(error);
         } finally {
           setKnowledgeBusy(false);
+        }
+      });
+      repoListEl.addEventListener("click", async () => {
+        setRepoListBusy(true);
+        eventLogEl.textContent = "Listing repository root...";
+        try {
+          renderRepoToolResult(await listRepoEntries());
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setRepoListBusy(false);
+        }
+      });
+      repoSearchFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const query = repoSearchQueryEl.value.trim();
+        if (!query) {
+          eventLogEl.textContent = "Search query is required.";
+          return;
+        }
+        setRepoSearchBusy(true);
+        eventLogEl.textContent = `Searching repository for ${query}...`;
+        try {
+          renderRepoToolResult(await searchRepo(query));
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setRepoSearchBusy(false);
+        }
+      });
+      repoReadFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const path = repoReadPathEl.value.trim();
+        if (!path) {
+          eventLogEl.textContent = "Repo-relative path is required.";
+          return;
+        }
+        setRepoReadBusy(true);
+        eventLogEl.textContent = `Reading ${path}...`;
+        try {
+          renderRepoToolResult(await readRepoFile(path));
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setRepoReadBusy(false);
         }
       });
       replayWorkspaceEl.addEventListener("click", async () => {
