@@ -41,6 +41,12 @@ and can iterate over prior tool results before the final synthesis. Without
 those variables, the runtime falls back to a deterministic planner/synthesizer
 for offline development and tests.
 
+Local tool execution includes safe repository listing/search/reads, knowledge
+source reads, and allowlisted local verification commands through
+`run_local_command`. Command execution never uses a shell, resolves cwd under
+the repository root, clamps runtime/output limits, and records stdout, stderr,
+exit status, timeout state, and truncation metadata as ordinary tool evidence.
+
 Current event sequence:
 
 ```text
@@ -92,9 +98,11 @@ into runtime calls:
   local evidence bundle.
 - Desktop app: Tauri commands such as `local_agent_run`, `local_runs`, and
   `local_run_events`; `create_local_workspace` and `local_workspaces` back the
-  native workspace selector, and `local_evidence_bundle` exposes the same
-  reproducibility artifact as the CLI/TUI. Benchmark execution stays in the
-  dedicated Python adapters under `benchmarks/adapters/`.
+  native workspace selector. Repository tool controls call safe list/search/read
+  commands plus `run_local_command` for allowlisted local checks, and
+  `local_evidence_bundle` exposes the same reproducibility artifact as the
+  CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
+  `benchmarks/adapters/`.
 
 This keeps the conceptual model aligned with the distributed web backend:
 event-sourced run lifecycle, workspace-scoped context, knowledge retrieval, and

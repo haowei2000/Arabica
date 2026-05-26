@@ -111,19 +111,19 @@
       "id": "local_agent_run_loop",
       "name": "Local Chat And Code-Agent Loop",
       "primitive_id": "event_audit",
-      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, recent-turn context replay, bounded iterative OpenAI-compatible or deterministic tool planning, code search, knowledge loading, tool execution, synthesis, proposed code-change artifacts, reviewed proposal application, artifact writing, and terminal status.",
+      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, recent-turn context replay, bounded iterative OpenAI-compatible or deterministic tool planning, code search, allowlisted local command checks, knowledge loading, tool execution, synthesis, proposed code-change artifacts, reviewed proposal application, artifact writing, and terminal status.",
       "surface_status": [
         {
           "surface_id": "cli_tui",
           "status": "native",
           "entrypoint": "structure-local chat / structure-local run / structure-local proposals list/show/apply / structure-local tui",
-          "evidence": "CLI offers a Codex/OpenCode-style local chat command, returns JSON RunResult with replayed recent workspace turns and iterative model-planned local tool calls when OPENAI__ is configured, exposes proposed code-change artifacts, can apply reviewed proposals with a code_change_applied event, and TUI can run prompts plus dry-run/apply the latest reviewed proposal through the same Rust runtime."
+          "evidence": "CLI offers a Codex/OpenCode-style local chat command, exposes /cmd for allowlisted local verification commands without a shell, returns JSON RunResult with replayed recent workspace turns and iterative model-planned local tool calls when OPENAI__ is configured, exposes proposed code-change artifacts, can apply reviewed proposals with a code_change_applied event, and TUI can run prompts plus dry-run/apply the latest reviewed proposal through the same Rust runtime."
         },
         {
           "surface_id": "desktop_app",
           "status": "native",
-          "entrypoint": "local_agent_run / local_chat_turns / apply_local_proposal",
-          "evidence": "Tauri commands invoke structure-local-runtime directly, render chat turns, replay recent workspace turns into new runs, use the same model-planned local tool loop as CLI, and expose run events/final responses plus proposed code-change artifacts and reviewed proposal application without a backend service."
+          "entrypoint": "local_agent_run / local_chat_turns / run_local_command / apply_local_proposal",
+          "evidence": "Tauri commands invoke structure-local-runtime directly, render chat turns, replay recent workspace turns into new runs, expose an allowlisted local command panel backed by the same no-shell tool as CLI, use the same model-planned local tool loop as CLI, and expose run events/final responses plus proposed code-change artifacts and reviewed proposal application without a backend service."
         },
         {
           "surface_id": "web_app",
@@ -148,8 +148,8 @@
         {
           "surface_id": "desktop_app",
           "status": "native",
-          "entrypoint": "create_local_workspace / local_workspaces / local_repo_entries / local_repo_search / read_local_repo_file / add_local_knowledge / read_local_knowledge_source / remove_local_knowledge",
-          "evidence": "Desktop UI supports workspace selection/creation, safe repository list/search/read tools, plus knowledge source add, preview, and metadata removal through the local runtime."
+          "entrypoint": "create_local_workspace / local_workspaces / local_repo_entries / local_repo_search / read_local_repo_file / run_local_command / add_local_knowledge / read_local_knowledge_source / remove_local_knowledge",
+          "evidence": "Desktop UI supports workspace selection/creation, safe repository list/search/read and allowlisted command tools, plus knowledge source add, preview, and metadata removal through the local runtime."
         },
         {
           "surface_id": "web_app",

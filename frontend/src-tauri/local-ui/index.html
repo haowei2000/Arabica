@@ -801,6 +801,10 @@
               <input id="repo-read-path" type="text" placeholder="repo-relative/path.rs" />
               <button id="repo-read" type="submit">Read</button>
             </form>
+            <form id="repo-command-form" class="knowledge-form">
+              <input id="repo-command-argv" type="text" placeholder="pwd or cargo check --workspace" />
+              <button id="repo-command" type="submit">Run</button>
+            </form>
             <div class="panel-heading">
               <h3>Recent Runs</h3>
               <span id="run-count" class="count">0</span>
@@ -886,6 +890,9 @@
       const repoReadFormEl = document.querySelector("#repo-read-form");
       const repoReadPathEl = document.querySelector("#repo-read-path");
       const repoReadEl = document.querySelector("#repo-read");
+      const repoCommandFormEl = document.querySelector("#repo-command-form");
+      const repoCommandArgvEl = document.querySelector("#repo-command-argv");
+      const repoCommandEl = document.querySelector("#repo-command");
       const invoke = window.__TAURI__?.core?.invoke;
 
       const state = {
@@ -1031,6 +1038,16 @@
         return invoke("read_local_repo_file", { path, maxBytes: 64000 });
       }
 
+      async function runRepoCommand(argv) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("run_local_command", {
+          argv,
+          cwd: ".",
+          timeoutMs: 30000,
+          maxOutputChars: 12000,
+        });
+      }
+
       async function readKnowledgeSource(sourceId) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("read_local_knowledge_source", { sourceId, maxBytes: 64000 });
@@ -1117,6 +1134,11 @@
       function setRepoReadBusy(isBusy) {
         repoReadEl.disabled = isBusy;
         repoReadEl.textContent = isBusy ? "Reading" : "Read";
+      }
+
+      function setRepoCommandBusy(isBusy) {
+        repoCommandEl.disabled = isBusy;
+        repoCommandEl.textContent = isBusy ? "Running" : "Run";
       }
 
       function setWorkspaceBusy(isBusy) {
@@ -1649,6 +1671,31 @@ Matches: ${matches.length}`;
 Path: ${result.output.path}
 Read: ${result.output.chars_returned} chars
 Truncated: ${result.output.truncated}`;
+        } else if (result.name === "run_local_command") {
+          const argv = result.output.argv ?? [];
+          const stdout = result.output.stdout ?? "";
+          const stderr = result.output.stderr ?? "";
+          previewMetaEl.textContent = `${argv.join(" ")} / exit ${result.output.exit_code ?? "signal"}`;
+          previewEl.textContent = [
+            `Command: ${argv.join(" ")}`,
+            `CWD: ${result.output.cwd}`,
+            `Success: ${result.output.success}`,
+            `Timed out: ${result.output.timed_out}`,
+            `Duration: ${result.output.duration_ms} ms`,
+            "",
+            "STDOUT",
+            stdout || "(empty)",
+            "",
+            "STDERR",
+            stderr || "(empty)",
+          ].join("\n");
+          eventLogEl.textContent = `Local Command
+Command: ${argv.join(" ")}
+Exit: ${result.output.exit_code ?? "signal"}
+Success: ${result.output.success}
+Timed out: ${result.output.timed_out}
+Stdout truncated: ${result.output.stdout_truncated}
+Stderr truncated: ${result.output.stderr_truncated}`;
         } else {
           previewMetaEl.textContent = result.name;
           previewEl.textContent = JSON.stringify(result.output, null, 2);
@@ -1694,6 +1741,48 @@ Truncated: ${result.output.truncated}`;
         renderKnowledge([]);
         state.artifacts = [];
         eventLogEl.textContent = String(error);
+      }
+
+      function parseCommandLine(value) {
+        const argv = [];
+        let current = "";
+        let quote = null;
+        let escaped = false;
+        for (const char of value.trim()) {
+          if (escaped) {
+            current += char;
+            escaped = false;
+            continue;
+          }
+          if (char === "\\") {
+            escaped = true;
+            continue;
+          }
+          if (quote) {
+            if (char === quote) {
+              quote = null;
+            } else {
+              current += char;
+            }
+            continue;
+          }
+          if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+          }
+          if (/\s/.test(char)) {
+            if (current) {
+              argv.push(current);
+              current = "";
+            }
+            continue;
+          }
+          current += char;
+        }
+        if (escaped) current += "\\";
+        if (quote) throw new Error("Unclosed quote in command.");
+        if (current) argv.push(current);
+        return argv;
       }
 
       async function refresh() {
@@ -1863,6 +1952,29 @@ ${result.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join
           eventLogEl.textContent = String(error);
         } finally {
           setRepoReadBusy(false);
+        }
+      });
+      repoCommandFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        let argv = [];
+        try {
+          argv = parseCommandLine(repoCommandArgvEl.value);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          return;
+        }
+        if (argv.length === 0) {
+          eventLogEl.textContent = "Command argv is required.";
+          return;
+        }
+        setRepoCommandBusy(true);
+        eventLogEl.textContent = `Running local command: ${argv.join(" ")}`;
+        try {
+          renderRepoToolResult(await runRepoCommand(argv));
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setRepoCommandBusy(false);
         }
       });
       replayWorkspaceEl.addEventListener("click", async () => {

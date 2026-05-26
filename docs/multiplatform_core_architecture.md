@@ -98,7 +98,7 @@ contract for experiments.
 | Paper contract | `paper/sections/*.tex` | Explains the research primitives and references the manifest as the artifact contract. |
 | Canonical manifest | `core/structure_core.json` | Language-neutral shared vocabulary and surface map. |
 | Rust local core | `crates/structure-local-core/src/` | Local filesystem model, manifest parsing, repo discovery, reports, and snapshots. |
-| Rust local runtime | `crates/structure-local-runtime/src/` | Embedded SQLite event loop, local workspace context, knowledge registry, and artifacts. |
+| Rust local runtime | `crates/structure-local-runtime/src/` | Embedded SQLite event loop, local workspace context, knowledge registry, allowlisted no-shell command tools, and artifacts. |
 | Rust CLI/TUI | `crates/structure-local/src/` | Operator commands and terminal UI backed by local core/runtime. |
 | Desktop app | `frontend/src-tauri/` | Tauri shell invoking Rust local core/runtime for local-first agent work. |
 | Web app | `frontend/src/` | Service-backed React app that imports the manifest without replacing its API runtime. |
@@ -128,6 +128,8 @@ runtime code.
   workspace listing/lookup, and knowledge source metadata.
 - `runtime.rs`: local run lifecycle, context loading, artifact writing,
   event sequencing, workspace replay, and local evidence bundle creation.
+- `tools.rs`: safe local repository tools, knowledge source reads, and
+  allowlisted command execution used by both the CLI/TUI and desktop app.
 - `types.rs`: serializable contracts shared by CLI/TUI and Tauri commands.
 
 This crate must not depend on TUI drawing code, Tauri window code, React,
