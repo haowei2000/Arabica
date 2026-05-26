@@ -211,6 +211,9 @@ into runtime calls:
   Normal prompt submissions appear immediately as in-flight local chat turns
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
+  Persisted chat turns carry their originating run id and mode, and the desktop
+  thread exposes per-turn inspect/proposal actions so chat history remains a
+  navigable view over run evidence rather than a detached transcript.
   Command results are appended to the desktop chat thread as local interaction
   turns while
   persisted agent runs still come from the Rust runtime event store.

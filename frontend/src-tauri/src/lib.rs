@@ -655,6 +655,15 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_links_chat_turns_to_run_evidence() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("className = \"chat-actions\""));
+        assert!(local_ui.contains("inspect.addEventListener(\"click\", () => selectRun(turn));"));
+        assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
+    }
+
+    #[test]
     fn desktop_app_uses_local_ui_and_runtime_entrypoints() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();

@@ -481,6 +481,32 @@
         overflow-wrap: anywhere;
       }
 
+      .chat-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-top: 10px;
+      }
+
+      .chat-actions span {
+        min-width: 0;
+        flex: 1 1 160px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .chat-actions button {
+        min-height: 34px;
+        padding: 6px 10px;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
       .event-timeline {
         max-height: 320px;
         overflow: auto;
@@ -1596,7 +1622,25 @@ Error: ${diagnostic.error ?? "none"}`;
           const assistantText = document.createElement("p");
           assistantText.textContent =
             turn.assistant_message?.slice(0, 2400) || "No assistant response recorded.";
-          assistant.append(assistantRole, assistantText);
+          const actions = document.createElement("div");
+          actions.className = "chat-actions";
+          const meta = document.createElement("span");
+          meta.textContent = `${turn.mode ?? "code_agent"} / ${turn.run_id}`;
+          const inspect = document.createElement("button");
+          inspect.type = "button";
+          inspect.textContent = "Inspect";
+          inspect.addEventListener("click", () => selectRun(turn));
+          const proposal = document.createElement("button");
+          proposal.type = "button";
+          proposal.textContent = "Proposal";
+          proposal.disabled = turn.mode !== "code_agent";
+          proposal.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewProposalForRun(turn.run_id);
+          });
+          actions.append(meta, inspect, proposal);
+          assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
         }
@@ -1982,6 +2026,24 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
             ? `Final Response\n${finalResponse}`
             : "Final Response\nNo final response recorded.";
           eventLogEl.textContent = `${evidenceText}\n\n${turn}\n\n${response}\n\nEvents\n${eventText}`;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
+      async function previewProposalForRun(runId) {
+        eventLogEl.textContent = "Loading code-change proposal...";
+        try {
+          const preview = await latestProposal(runId);
+          renderArtifactPreview(preview);
+          eventLogEl.textContent = `Code Change Proposal
+ID: ${preview.artifact.artifact_id}
+Run: ${preview.artifact.run_id}
+Path: ${preview.artifact.path}
+Read: ${formatBytes(preview.bytes_read)}
+Truncated: ${preview.truncated}
+
+Opened in Preview for the selected run.`;
         } catch (error) {
           eventLogEl.textContent = String(error);
         }

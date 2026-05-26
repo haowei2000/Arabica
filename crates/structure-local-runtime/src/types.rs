@@ -180,6 +180,7 @@ pub struct RunSummary {
 pub struct ChatTurn {
     pub run_id: String,
     pub workspace_id: String,
+    pub mode: String,
     pub user_message: String,
     pub assistant_message: Option<String>,
     pub status: String,

@@ -5,7 +5,7 @@ use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
-    KnowledgeSource, KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle,
+    KnowledgeSource, KnowledgeSourcePreview, LocalAgentMode, LocalEvent, LocalEvidenceBundle,
     LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ProposalApplyResult, RunAttempt,
     RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
     WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
@@ -253,9 +253,12 @@ impl LocalAgentRuntime {
         let mut turns = Vec::new();
         for run in runs {
             let events = self.store.run_events(&run.run_id)?;
+            let mode = run_mode_from_events(&events)
+                .unwrap_or_else(|| LocalAgentMode::CodeAgent.as_str().to_string());
             turns.push(ChatTurn {
                 run_id: run.run_id,
                 workspace_id: run.workspace_id,
+                mode,
                 user_message: run.prompt,
                 assistant_message: run.final_response,
                 status: run.status,
@@ -944,6 +947,17 @@ impl LocalAgentRuntime {
             artifact,
         })
     }
+}
+
+fn run_mode_from_events(events: &[LocalEvent]) -> Option<String> {
+    events.iter().find_map(|event| match event.kind.as_str() {
+        "prompt_received" | "chat_message_recorded" | "agent_step_planned" => event
+            .payload
+            .get("mode")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
+        _ => None,
+    })
 }
 
 fn load_openai_env_file(repo_root: &Path) -> Result<(), String> {
@@ -1968,6 +1982,13 @@ mod tests {
 
         assert!(second.final_response.contains("Replayed Conversation"));
         assert!(second.final_response.contains("blue circuit"));
+        let turns = runtime.chat_turns(Some("thread"), 8).unwrap();
+        assert!(turns.iter().any(|turn| {
+            turn.run_id == first.run.run_id && turn.mode == LocalAgentMode::Chat.as_str()
+        }));
+        assert!(turns.iter().any(|turn| {
+            turn.run_id == second.run.run_id && turn.mode == LocalAgentMode::Chat.as_str()
+        }));
         assert!(second.events.iter().any(|event| {
             event.kind == "workspace_context_loaded"
                 && event
