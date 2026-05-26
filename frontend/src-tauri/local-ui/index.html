@@ -339,9 +339,64 @@
 
       .run-actions {
         display: grid;
-        grid-template-columns: minmax(160px, 220px) auto;
+        grid-template-columns: minmax(260px, 1fr) auto;
         gap: 10px;
         align-items: center;
+      }
+
+      .mode-segmented {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        min-width: 0;
+        min-height: 44px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+
+      .mode-option {
+        min-width: 0;
+        min-height: 44px;
+        border: 0;
+        border-radius: 0;
+        border-right: 1px solid var(--line);
+        background: transparent;
+        padding: 7px 10px;
+        text-align: left;
+      }
+
+      .mode-option:last-child {
+        border-right: 0;
+      }
+
+      .mode-option span,
+      .mode-option small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mode-option span {
+        font-size: 13px;
+        line-height: 17px;
+      }
+
+      .mode-option small {
+        margin-top: 1px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 14px;
+      }
+
+      .mode-option.is-active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .mode-option.is-active small {
+        color: var(--accent);
       }
 
       select,
@@ -825,10 +880,28 @@
                 placeholder="Ask the local Structure code agent... mention @core/structure_core.json:1 for file context"
               ></textarea>
               <div class="run-actions">
-                <select id="agent-mode" aria-label="Agent mode">
-                  <option value="code_agent">Code Agent</option>
-                  <option value="chat">Chat</option>
-                </select>
+                <div id="agent-mode" class="mode-segmented" role="radiogroup" aria-label="Agent mode">
+                  <button
+                    class="mode-option is-active"
+                    type="button"
+                    role="radio"
+                    aria-checked="true"
+                    data-agent-mode="code_agent"
+                  >
+                    <span>Code Agent</span>
+                    <small>Inspect + propose</small>
+                  </button>
+                  <button
+                    class="mode-option"
+                    type="button"
+                    role="radio"
+                    aria-checked="false"
+                    data-agent-mode="chat"
+                  >
+                    <span>Chat</span>
+                    <small>Answer only</small>
+                  </button>
+                </div>
                 <button id="run-agent" type="submit">Send</button>
               </div>
             </form>
@@ -938,7 +1011,7 @@
       const createWorkspaceEl = document.querySelector("#create-workspace");
       const runFormEl = document.querySelector("#run-form");
       const runAgentEl = document.querySelector("#run-agent");
-      const agentModeEl = document.querySelector("#agent-mode");
+      const agentModeButtons = Array.from(document.querySelectorAll("[data-agent-mode]"));
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const pollEventsEl = document.querySelector("#poll-events");
       const previewArtifactEl = document.querySelector("#preview-artifact");
@@ -1257,6 +1330,26 @@
             ? "Replying"
             : "Working"
           : "Send";
+      }
+
+      function modeNotice(mode) {
+        return mode === "chat"
+          ? "Mode: chat. The same local event loop will answer without code-change proposal artifacts."
+          : "Mode: code agent. The local event loop can inspect the repo and write proposal artifacts.";
+      }
+
+      function setAgentMode(mode, announce = true) {
+        state.agentMode = mode === "chat" ? "chat" : "code_agent";
+        for (const button of agentModeButtons) {
+          const isActive = button.dataset.agentMode === state.agentMode;
+          button.classList.toggle("is-active", isActive);
+          button.setAttribute("aria-checked", String(isActive));
+          button.tabIndex = isActive ? 0 : -1;
+        }
+        if (announce) {
+          eventLogEl.textContent = modeNotice(state.agentMode);
+        }
+        if (state.snapshot) renderSnapshot(state.snapshot);
       }
 
       function setKnowledgeBusy(isBusy) {
@@ -1946,14 +2039,12 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
           case "/mode": {
             const mode = parts[0];
             if (mode === "chat") {
-              state.agentMode = "chat";
-              agentModeEl.value = "chat";
-            } else if (mode === "code" || mode === "code_agent") {
-              state.agentMode = "code_agent";
-              agentModeEl.value = "code_agent";
+              setAgentMode("chat");
+            } else if (mode === "code" || mode === "code_agent" || mode === "code-agent") {
+              setAgentMode("code_agent");
+            } else {
+              eventLogEl.textContent = "Use /mode chat or /mode code.";
             }
-            eventLogEl.textContent = `Mode: ${state.agentMode === "chat" ? "chat" : "code agent"}`;
-            if (state.snapshot) renderSnapshot(state.snapshot);
             return true;
           }
           case "/workspace":
@@ -2553,13 +2644,25 @@ Stderr truncated: ${result.output.stderr_truncated}`;
       }
 
       searchEl.addEventListener("input", applyFilter);
-      agentModeEl.addEventListener("change", () => {
-        state.agentMode = agentModeEl.value === "chat" ? "chat" : "code_agent";
-        eventLogEl.textContent =
-          state.agentMode === "chat"
-            ? "Mode: chat. The same local event loop will answer without code-change proposal artifacts."
-            : "Mode: code agent. The local event loop can inspect the repo and write proposal artifacts.";
-        if (state.snapshot) renderSnapshot(state.snapshot);
+      agentModeButtons.forEach((button, index) => {
+        button.addEventListener("click", () => {
+          setAgentMode(button.dataset.agentMode);
+        });
+        button.addEventListener("keydown", (event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const nextIndex =
+            event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? agentModeButtons.length - 1
+                : event.key === "ArrowLeft"
+                  ? Math.max(0, index - 1)
+                  : Math.min(agentModeButtons.length - 1, index + 1);
+          const nextButton = agentModeButtons[nextIndex];
+          setAgentMode(nextButton.dataset.agentMode);
+          nextButton.focus();
+        });
       });
       refreshEl.addEventListener("click", refresh);
       clearPreviewEl.addEventListener("click", clearPreview);
@@ -2947,6 +3050,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
         }
       });
 
+      setAgentMode("code_agent", false);
       refresh();
     </script>
   </body>

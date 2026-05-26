@@ -199,6 +199,9 @@ into runtime calls:
   `local_agent_run_attempt`, `local_runs`,
   `local_run_transcript`, and `local_run_events`; `create_local_workspace` and
   `local_workspaces` back the native workspace selector.
+  A segmented `Chat` / `Code Agent` mode control drives the same `mode` field
+  passed to the Rust runtime as `/mode`, keeping visible desktop interaction and
+  command-style interaction on one event loop.
   `local_workspace_event_feed` powers the Poll Events action and live in-flight
   run polling from a persisted cursor.
   The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,

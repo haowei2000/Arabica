@@ -644,6 +644,17 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_exposes_segmented_agent_mode_control() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("role=\"radiogroup\" aria-label=\"Agent mode\""));
+        assert!(local_ui.contains("data-agent-mode=\"code_agent\""));
+        assert!(local_ui.contains("data-agent-mode=\"chat\""));
+        assert!(local_ui.contains("function setAgentMode(mode, announce = true)"));
+        assert!(local_ui.contains("mode: state.agentMode"));
+    }
+
+    #[test]
     fn desktop_app_uses_local_ui_and_runtime_entrypoints() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
