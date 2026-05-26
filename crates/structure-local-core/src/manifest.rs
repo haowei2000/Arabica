@@ -106,6 +106,7 @@ pub fn fallback_product_surfaces() -> Vec<ProductSurface> {
             "Local Rust binary; no backend service required",
             &[
                 "Codex-style chat and code-agent runs",
+                "Scriptable continuation from prior run evidence",
                 "Workspace and knowledge inspection",
                 "Proposal review and application from the terminal",
             ],

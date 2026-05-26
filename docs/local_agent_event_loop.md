@@ -148,6 +148,11 @@ into runtime calls:
   workspace tool events. CLI `run` and one-shot `chat` return `RunAttempt` in
   JSON mode, so successful and failed runs both keep the same inspectable event
   trace contract as the desktop app.
+- Noninteractive CLI continuation: `uv run structure continue <run-id>
+  [instruction]` is the scriptable counterpart to interactive `/continue`,
+  TUI `f`, and desktop Continue. It loads the source run transcript/evidence,
+  creates a fresh run through the shared `ContinuationRequest`, and can emit the
+  same `RunAttempt` JSON envelope for automation.
 - CLI parity checks: `uv run structure parity --json` reads the shared
   capability matrix, while `uv run structure parity --verify --json` verifies
   surface coverage, primitive references, entrypoints, and evidence fields.

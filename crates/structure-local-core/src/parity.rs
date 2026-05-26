@@ -326,9 +326,11 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             &[
                 "Command::Chat",
                 "Command::Run",
+                "Command::Continue",
                 "Command::Proposals",
                 "Command::Tui",
                 "run_chat_agent",
+                "run_continue_agent",
                 "run_continuation_from_session",
                 "ProposalsCommand::Apply",
             ],

@@ -2862,8 +2862,8 @@ User-facing follow-up.\n\n\
             root,
             "crates/structure-local/src/cli.rs",
             r#"
-            Command::Core Command::Surfaces Command::Chat Command::Run Command::Proposals Command::Tui
-            run_core run_surfaces run_chat_agent run_continuation_from_session run_local_agent
+            Command::Core Command::Surfaces Command::Chat Command::Run Command::Continue Command::Proposals Command::Tui
+            run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
             RunsCommand::Events RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay

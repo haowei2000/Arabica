@@ -46,6 +46,7 @@ enum Command {
     },
     Chat(ChatArgs),
     Run(RunArgs),
+    Continue(ContinueArgs),
     Runs {
         #[command(subcommand)]
         command: RunsCommand,
@@ -135,6 +136,17 @@ struct RunArgs {
     prompt: String,
     #[arg(long)]
     workspace: Option<String>,
+    #[arg(long, value_name = "chat|code_agent")]
+    mode: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ContinueArgs {
+    run_id: String,
+    #[arg(value_name = "instruction")]
+    instruction: Vec<String>,
     #[arg(long, value_name = "chat|code_agent")]
     mode: Option<String>,
     #[arg(long)]
@@ -392,6 +404,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Llm { command } => run_llm(&repo_root, command)?,
         Command::Chat(args) => run_chat_agent(&repo_root, args)?,
         Command::Run(args) => run_local_agent(&repo_root, args)?,
+        Command::Continue(args) => run_continue_agent(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
         Command::Workspace { command } => run_workspace(&repo_root, command)?,
         Command::Knowledge { command } => run_knowledge(&repo_root, command)?,
@@ -511,6 +524,30 @@ fn run_local_agent(repo_root: &PathBuf, args: RunArgs) -> Result<()> {
         local_result(runtime.run_prompt_attempt(request))?
     } else {
         run_prompt_with_live_events(repo_root, request)?
+    };
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&attempt)?);
+    } else {
+        print_run_attempt(&attempt);
+    }
+    attempt_error(&attempt)
+}
+
+fn run_continue_agent(repo_root: &PathBuf, args: ContinueArgs) -> Result<()> {
+    let mode = parse_agent_mode(args.mode.as_deref(), false)?;
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let transcript = local_result(runtime.run_transcript(&args.run_id))?;
+    let instruction = args.instruction.join(" ").trim().to_string();
+    let request = ContinuationRequest {
+        run_id: transcript.run.run_id.clone(),
+        extra_instruction: (!instruction.is_empty()).then_some(instruction),
+        mode: Some(mode),
+    };
+    let workspace_id = transcript.run.workspace_id;
+    let attempt = if args.json {
+        local_result(runtime.run_continuation_attempt(request))?
+    } else {
+        run_continuation_with_live_events(repo_root, workspace_id, request)?
     };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&attempt)?);
@@ -1700,6 +1737,29 @@ mod tests {
             (Some("run_other".to_string()), Some("add docs".to_string()))
         );
         assert_eq!(parse_continuation_args(None, ""), (None, None));
+    }
+
+    #[test]
+    fn cli_continue_command_accepts_noninteractive_instruction_and_mode() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "continue",
+            "run_1",
+            "write",
+            "tests",
+            "--mode",
+            "chat",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Continue(args) = cli.command else {
+            panic!("expected continue command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert_eq!(args.instruction, vec!["write", "tests"]);
+        assert_eq!(args.mode.as_deref(), Some("chat"));
+        assert!(args.json);
     }
 
     #[test]
