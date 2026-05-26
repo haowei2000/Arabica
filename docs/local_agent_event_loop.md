@@ -93,9 +93,9 @@ into runtime calls:
 - TUI: operator view plus active workspace switching bound to `w`, workspace
   create/open input bound to `o`, custom prompt input bound to `c`, knowledge
   path registration bound to `s`, knowledge registration removal bound to `x`,
-  and a local workspace check bound to `n`; it also surfaces knowledge and
-  artifact previews through the same runtime. Press `e` to inspect the same
-  local evidence bundle.
+  allowlisted local command execution bound to `!`, and a local workspace check
+  bound to `n`; it also surfaces knowledge and artifact previews through the
+  same runtime. Press `e` to inspect the same local evidence bundle.
 - Desktop app: Tauri commands such as `local_agent_run`, `local_runs`, and
   `local_run_events`; `create_local_workspace` and `local_workspaces` back the
   native workspace selector. Repository tool controls call safe list/search/read

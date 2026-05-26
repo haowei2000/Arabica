@@ -11,8 +11,9 @@ use structure_local_core::{
     collect_snapshot, verify_structure_core_parity_for_repo, LocalSnapshot, SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactRecord, KnowledgeSource, LocalAgentMode, LocalAgentRuntime, LocalEvidenceBundle,
-    ProposalApplyResult, RunEvidenceSummary, RunRequest, RunSummary, WorkspaceSummary,
+    ArtifactRecord, BuiltinLocalToolRegistry, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
+    LocalEvidenceBundle, LocalToolCall, LocalToolRegistry, ProposalApplyResult, RunEvidenceSummary,
+    RunRequest, RunSummary, WorkspaceSummary,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -38,6 +39,7 @@ enum TuiInputKind {
     AgentPrompt,
     KnowledgePath,
     WorkspaceId,
+    LocalCommand,
 }
 
 impl TuiInputKind {
@@ -46,6 +48,7 @@ impl TuiInputKind {
             Self::AgentPrompt => "Custom agent prompt",
             Self::KnowledgePath => "Knowledge file path",
             Self::WorkspaceId => "Workspace id",
+            Self::LocalCommand => "Local command argv",
         }
     }
 
@@ -54,6 +57,7 @@ impl TuiInputKind {
             Self::AgentPrompt => "Type a prompt and press Enter",
             Self::KnowledgePath => "Type an absolute or repo-relative file path",
             Self::WorkspaceId => "Type a workspace id to create or open",
+            Self::LocalCommand => "Type an allowlisted command, e.g. cargo check --workspace",
         }
     }
 }
@@ -187,6 +191,7 @@ impl TuiState {
             TuiInputKind::AgentPrompt => self.run_custom_prompt(repo_root, value),
             TuiInputKind::KnowledgePath => self.add_knowledge_path(repo_root, value),
             TuiInputKind::WorkspaceId => self.open_or_create_workspace(repo_root, value),
+            TuiInputKind::LocalCommand => self.run_local_command(repo_root, value),
         }
     }
 
@@ -253,6 +258,51 @@ impl TuiState {
         self.artifacts =
             local_result(runtime.list_artifacts(Some(&self.active_workspace_id), None, 5))?;
         self.notice = format!("Finished {}", result.run.run_id);
+        Ok(())
+    }
+
+    fn run_local_command(&mut self, repo_root: &Path, command: String) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let argv = command
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if argv.is_empty() {
+            self.notice = "Local command argv was empty".to_string();
+            return Ok(());
+        }
+
+        let registry = BuiltinLocalToolRegistry::new(runtime.repo_root());
+        let result = registry.execute(&LocalToolCall {
+            call_id: "tui_run_local_command".to_string(),
+            name: "run_local_command".to_string(),
+            input: serde_json::json!({
+                "argv": argv,
+                "cwd": ".",
+                "timeout_ms": 30_000,
+                "max_output_chars": 12_000,
+            }),
+        });
+        let notice = if result.success {
+            let ok = result
+                .output
+                .get("success")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if ok {
+                "Local command passed".to_string()
+            } else {
+                "Local command completed with a non-zero result".to_string()
+            }
+        } else {
+            "Local command was rejected or failed".to_string()
+        };
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: "run_local_command".to_string(),
+            text: render_local_command_result(&result),
+        });
+        self.notice = notice;
         Ok(())
     }
 
@@ -488,6 +538,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('o') => state.begin_input(TuiInputKind::WorkspaceId),
                     KeyCode::Char('c') => state.begin_input(TuiInputKind::AgentPrompt),
                     KeyCode::Char('s') => state.begin_input(TuiInputKind::KnowledgePath),
+                    KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
@@ -578,7 +629,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o open/create workspace  c prompt  s add knowledge path",
+            "m mode  o workspace  c prompt  s knowledge path  ! local command",
             width,
         )?,
     }
@@ -808,7 +859,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  m mode  o workspace  c prompt  s source  n run  g proposal  u dry-run  y apply  e bundle";
+    let controls = "q quit  r refresh  m mode  o workspace  c prompt  ! cmd  n run  g proposal  u dry-run  y apply  e bundle";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -993,6 +1044,99 @@ fn render_proposal_apply_result(result: &ProposalApplyResult) -> String {
         text.push_str("The apply action was recorded as code_change_applied.\n\n");
     }
     text.push_str(&result.preview);
+    text
+}
+
+fn render_local_command_result(result: &structure_local_runtime::LocalToolResult) -> String {
+    let mut text = String::new();
+    text.push_str("Local Command\n");
+    text.push_str(&format!("Tool success: {}\n", result.success));
+    if let Some(error) = &result.error {
+        text.push_str(&format!("Error: {error}\n"));
+        return text;
+    }
+
+    let argv = result
+        .output
+        .get("argv")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_else(|| "<unknown command>".to_string());
+    let cwd = result
+        .output
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(".");
+    let exit_code = result
+        .output
+        .get("exit_code")
+        .and_then(serde_json::Value::as_i64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "signal".to_string());
+    let passed = result
+        .output
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let timed_out = result
+        .output
+        .get("timed_out")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let duration_ms = result
+        .output
+        .get("duration_ms")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let stdout = result
+        .output
+        .get("stdout")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let stderr = result
+        .output
+        .get("stderr")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let stdout_truncated = result
+        .output
+        .get("stdout_truncated")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let stderr_truncated = result
+        .output
+        .get("stderr_truncated")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    text.push_str(&format!("$ {argv}\n"));
+    text.push_str(&format!("Cwd: {cwd}\n"));
+    text.push_str(&format!("Passed: {passed}\n"));
+    text.push_str(&format!("Exit: {exit_code}\n"));
+    text.push_str(&format!("Timed out: {timed_out}\n"));
+    text.push_str(&format!("Duration: {duration_ms} ms\n"));
+    text.push_str(&format!("Stdout truncated: {stdout_truncated}\n"));
+    text.push_str(&format!("Stderr truncated: {stderr_truncated}\n\n"));
+    if stdout.is_empty() {
+        text.push_str("Stdout: <empty>\n");
+    } else {
+        text.push_str("Stdout:\n");
+        text.push_str(stdout);
+        text.push('\n');
+    }
+    if stderr.is_empty() {
+        text.push_str("\nStderr: <empty>\n");
+    } else {
+        text.push_str("\nStderr:\n");
+        text.push_str(stderr);
+        text.push('\n');
+    }
     text
 }
 
