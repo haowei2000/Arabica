@@ -143,8 +143,9 @@ into runtime calls:
   path registration bound to `s`, knowledge registration removal bound to `x`,
   allowlisted local command execution bound to `!`, and a local workspace check
   bound to `n`; `!` commands are persisted as workspace tool events. It also
-  surfaces knowledge and artifact previews through the same runtime. Press `e`
-  to inspect the same local evidence bundle.
+  surfaces knowledge and artifact previews through the same runtime. Press `t`
+  to inspect the selected run transcript and `e` to inspect the same local
+  evidence bundle.
 - Desktop app: Tauri commands such as `local_agent_run_attempt`, `local_runs`,
   `local_run_transcript`, and `local_run_events`; `create_local_workspace` and
   `local_workspaces` back the native workspace selector.

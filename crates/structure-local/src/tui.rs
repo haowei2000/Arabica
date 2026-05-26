@@ -12,7 +12,7 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, KnowledgeSource, LocalAgentMode, LocalAgentRuntime, LocalEvidenceBundle,
-    LocalToolCall, ProposalApplyResult, RunEvidenceSummary, RunRequest, RunSummary,
+    LocalToolCall, ProposalApplyResult, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
     WorkspaceSummary,
 };
 
@@ -341,6 +341,22 @@ impl TuiState {
         self.preview_artifact_record(repo_root, &artifact, "Previewing latest artifact")
     }
 
+    fn preview_selected_run_transcript(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let transcript = local_result(runtime.run_transcript(&run.run_id))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("run transcript / {}", transcript.run.run_id),
+            text: render_run_transcript(&transcript),
+        });
+        self.notice = format!("Transcript: {}", run.run_id);
+        Ok(())
+    }
+
     fn preview_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
         let Some(artifact) = self.latest_proposal_artifact() else {
             self.notice = "No code-change proposal to preview".to_string();
@@ -544,6 +560,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
+                    KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
                     KeyCode::Char('g') => state.preview_latest_proposal(repo_root)?,
@@ -720,7 +737,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press m to toggle chat/code_agent, w to switch workspace, n to run a local check",
+        "press j/k to select, t transcript, n to run a local check",
         width,
     )?;
     let run_rows = usize::from(height.saturating_sub(3))
@@ -747,8 +764,12 @@ fn draw_reports(
             x,
             y + 3 + u16::try_from(index).unwrap_or_default(),
             &format!(
-                "{}  {}  {}{}",
-                run.status, run.workspace_id, run.prompt, suffix
+                "{}{}  {}  {}{}",
+                if index == state.selected { "> " } else { "  " },
+                run.status,
+                run.workspace_id,
+                run.prompt,
+                suffix
             ),
             width,
         )?;
@@ -862,7 +883,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  m mode  o workspace  c prompt  ! cmd  n run  g proposal  u dry-run  y apply  e bundle";
+    let controls = "q quit  r refresh  m mode  o workspace  c prompt  ! cmd  n run  t transcript  g proposal  u dry-run  y apply";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1026,6 +1047,55 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
                 evidence.artifacts.len()
             ));
         }
+    }
+    text
+}
+
+fn render_run_transcript(transcript: &RunTranscript) -> String {
+    let mut text = String::new();
+    text.push_str("Run Transcript\n");
+    text.push_str(&format!("Run: {}\n", transcript.run.run_id));
+    text.push_str(&format!("Workspace: {}\n", transcript.run.workspace_id));
+    text.push_str(&format!("Status: {}\n", transcript.run.status));
+    text.push_str(&format!("Events: {}\n", transcript.events.len()));
+    text.push_str(&format!(
+        "Flows: {}\n",
+        transcript.evidence.canonical_flow_ids.join(", ")
+    ));
+    text.push_str(&format!(
+        "Primitives: {}\n",
+        transcript.evidence.primitive_ids.join(", ")
+    ));
+    text.push_str(&format!("Tools: {}\n", transcript.evidence.tool_call_count));
+    text.push_str(&format!(
+        "Artifacts: {}\n\n",
+        transcript.evidence.artifact_paths.len()
+    ));
+
+    if let Some(turn) = &transcript.chat_turn {
+        text.push_str("User\n");
+        text.push_str(&turn.user_message);
+        text.push_str("\n\nStructure\n");
+        text.push_str(
+            turn.assistant_message
+                .as_deref()
+                .unwrap_or("No assistant message recorded."),
+        );
+        text.push_str("\n\n");
+    }
+
+    if let Some(response) = &transcript.final_response {
+        text.push_str("Final Response\n");
+        text.push_str(response);
+        text.push_str("\n\n");
+    }
+
+    text.push_str("Events\n");
+    for event in transcript.events.iter().rev().take(18).rev() {
+        text.push_str(&format!(
+            "#{} {} / {} / {}\n",
+            event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
+        ));
     }
     text
 }
