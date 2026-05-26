@@ -632,6 +632,17 @@ mod tests {
         assert!(!local_ui.contains("bench"));
     }
 
+    #[test]
+    fn desktop_local_ui_evidence_command_renders_agent_context() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("function renderEvidenceText(evidence)"));
+        assert!(local_ui.contains("Prompt References"));
+        assert!(local_ui.contains("Agent Instructions"));
+        assert!(local_ui.contains("Worktree Changes"));
+        assert!(local_ui.contains("eventLogEl.textContent = renderEvidenceText(evidence);"));
+    }
+
     fn restore_env(key: &str, value: Option<String>) {
         if let Some(value) = value {
             env::set_var(key, value);

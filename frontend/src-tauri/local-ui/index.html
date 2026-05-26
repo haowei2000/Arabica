@@ -1822,6 +1822,45 @@ The original file was not deleted.`;
         }
       }
 
+      function renderEvidenceText(evidence) {
+        if (!evidence) return "Evidence unavailable.";
+        const knowledgeSources = evidence.knowledge_sources ?? [];
+        const promptReferences = evidence.prompt_references ?? [];
+        const agentInstructionPaths = evidence.agent_instruction_paths ?? [];
+        const worktreeChanges = evidence.worktree?.changed_files ?? [];
+        const artifacts = evidence.artifacts ?? [];
+        const artifactPaths = evidence.artifact_paths ?? [];
+        return `Evidence
+Run: ${evidence.run?.run_id ?? "unknown"}
+Status: ${evidence.run?.status ?? "unknown"}
+Events: ${evidence.event_count}
+Tool calls: ${evidence.tool_call_count}
+Instructions: ${agentInstructionPaths.length}
+Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} / ${worktreeChanges.length} changes` : "unavailable"}
+Prompt refs: ${promptReferences.length}
+Knowledge sources: ${knowledgeSources.length}
+Artifacts: ${artifactPaths.length}
+Response chars: ${evidence.final_response_chars}
+Flows: ${evidence.canonical_flow_ids?.join(", ") || "none"}
+Primitives: ${evidence.primitive_ids?.join(", ") || "none"}
+Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}
+
+Sources
+${knowledgeSources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources used."}
+
+Prompt References
+${promptReferences.map((path) => `- @${path}`).join("\n") || "No prompt file references used."}
+
+Agent Instructions
+${agentInstructionPaths.map((path) => `- ${path}`).join("\n") || "No AGENTS.md instructions loaded."}
+
+Worktree Changes
+${worktreeChanges.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No worktree changes recorded."}
+
+Artifacts
+${artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || artifactPaths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`;
+      }
+
       async function selectRun(run) {
         eventLogEl.textContent = "Loading transcript...";
         try {
@@ -1838,35 +1877,7 @@ The original file was not deleted.`;
               return `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}\n${payload}`;
             })
             .join("\n\n");
-          const evidenceText = evidence
-            ? `Evidence
-Events: ${evidence.event_count}
-Tool calls: ${evidence.tool_call_count}
-Instructions: ${evidence.agent_instruction_paths?.length ?? 0}
-Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} / ${evidence.worktree.changed_files?.length ?? 0} changes` : "unavailable"}
-Prompt refs: ${evidence.prompt_references?.length ?? 0}
-Knowledge sources: ${evidence.knowledge_sources.length}
-Artifacts: ${evidence.artifact_paths.length}
-Response chars: ${evidence.final_response_chars}
-Flows: ${evidence.canonical_flow_ids?.join(", ") || "none"}
-Primitives: ${evidence.primitive_ids?.join(", ") || "none"}
-Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}
-
-Sources
-${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources used."}
-
-Prompt References
-${evidence.prompt_references?.map((path) => `- @${path}`).join("\n") || "No prompt file references used."}
-
-Agent Instructions
-${evidence.agent_instruction_paths?.map((path) => `- ${path}`).join("\n") || "No AGENTS.md instructions loaded."}
-
-Worktree Changes
-${evidence.worktree?.changed_files?.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No worktree changes recorded."}
-
-Artifacts
-${evidence.artifacts?.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || evidence.artifact_paths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`
-            : "Evidence unavailable.";
+          const evidenceText = renderEvidenceText(evidence);
           const turn = transcript?.chat_turn
             ? `Chat Turn
 You: ${transcript.chat_turn.user_message}
@@ -2019,17 +2030,7 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               return true;
             }
             const evidence = await localRunEvidence(runId);
-            eventLogEl.textContent = `Evidence
-Run: ${evidence.run.run_id}
-Status: ${evidence.run.status}
-Events: ${evidence.event_count}
-Tools: ${evidence.tool_call_count}
-Instructions: ${evidence.agent_instruction_paths?.length ?? 0}
-Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} / ${evidence.worktree.changed_files?.length ?? 0} changes` : "unavailable"}
-Artifacts: ${evidence.artifact_paths.length}
-Flows: ${evidence.canonical_flow_ids.join(", ")}
-Primitives: ${evidence.primitive_ids.join(", ")}
-Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}`;
+            eventLogEl.textContent = renderEvidenceText(evidence);
             return true;
           }
           case "/source":
