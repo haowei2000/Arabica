@@ -221,6 +221,8 @@ into runtime calls:
   command-style interaction on one event loop.
   `local_workspace_event_feed` powers the Poll Events action and live in-flight
   run polling from a persisted cursor.
+  In-flight chat bubbles consume that same feed to show the current live event
+  count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
   `/read`, `/source`, `/artifacts`, `/proposal`, and `/apply --dry-run`, so

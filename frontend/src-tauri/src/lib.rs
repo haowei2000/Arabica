@@ -736,6 +736,18 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_streams_live_events_into_inflight_chat() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("function updateInFlightRunEvents(events)"));
+        assert!(local_ui.contains("function describeInFlightEvent(event)"));
+        assert!(local_ui.contains("updateInFlightRunEvents(feed.events);"));
+        assert!(local_ui.contains("state.inFlightRun.eventCount"));
+        assert!(local_ui.contains("Latest event:"));
+        assert!(local_ui.contains("preserveLive: true"));
+    }
+
+    #[test]
     fn desktop_app_uses_local_ui_and_runtime_entrypoints() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();

@@ -1813,9 +1813,13 @@ Error: ${diagnostic.error ?? "none"}`;
           assistant.className = "chat-message";
           assistant.dataset.role = "assistant";
           const assistantRole = document.createElement("strong");
-          assistantRole.textContent = `Structure / ${state.inFlightRun.status}`;
+          assistantRole.textContent = `Structure / ${state.inFlightRun.status}${
+            state.inFlightRun.eventCount ? ` / ${state.inFlightRun.eventCount} live events` : ""
+          }`;
           const assistantText = document.createElement("p");
-          assistantText.textContent = state.inFlightRun.message;
+          assistantText.textContent = state.inFlightRun.currentEvent
+            ? `${state.inFlightRun.message}\n\nLatest event: ${describeInFlightEvent(state.inFlightRun.currentEvent)}`
+            : state.inFlightRun.message;
           assistant.append(assistantRole, assistantText);
 
           chatThreadEl.append(user, assistant);
@@ -1839,13 +1843,41 @@ Error: ${diagnostic.error ?? "none"}`;
         renderChatThread();
       }
 
-      function setInFlightRun(prompt, status, message) {
-        state.inFlightRun = { prompt, status, message };
+      function setInFlightRun(prompt, status, message, options = {}) {
+        const preserveLive = options.preserveLive === true;
+        const existingKeys = preserveLive ? state.inFlightRun?.eventKeys ?? [] : [];
+        state.inFlightRun = {
+          prompt,
+          status,
+          message,
+          eventCount: preserveLive ? state.inFlightRun?.eventCount ?? 0 : 0,
+          currentEvent: preserveLive ? state.inFlightRun?.currentEvent ?? null : null,
+          eventKeys: new Set(existingKeys),
+        };
         renderChatThread();
       }
 
       function clearInFlightRun() {
         state.inFlightRun = null;
+        renderChatThread();
+      }
+
+      function describeInFlightEvent(event) {
+        return `#${event.sequence} ${event.kind.replaceAll("_", " ")} - ${eventDetail(event)}`;
+      }
+
+      function updateInFlightRunEvents(events) {
+        if (!state.inFlightRun || !events.length) return;
+        const eventKeys = new Set(state.inFlightRun.eventKeys ?? []);
+        for (const event of events) {
+          eventKeys.add(eventKey(event));
+        }
+        state.inFlightRun = {
+          ...state.inFlightRun,
+          eventCount: eventKeys.size,
+          currentEvent: events[events.length - 1],
+          eventKeys,
+        };
         renderChatThread();
       }
 
@@ -1919,6 +1951,7 @@ Error: ${diagnostic.error ?? "none"}`;
           const feed = await localWorkspaceEventFeed();
           state.workspaceEventCursor = feed.next_after_sequence;
           appendWorkspaceFeedEvents(feed.events, autoSelectLatest);
+          updateInFlightRunEvents(feed.events);
           if (!silent) {
             const events = feed.events
               .map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.run_id ?? "workspace"}`)
@@ -2286,6 +2319,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           result
             ? result.final_response.slice(0, 2400)
             : `Continuation failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+          { preserveLive: true },
         );
         await refresh();
         clearInFlightRun();
@@ -3207,6 +3241,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
             result
               ? result.final_response.slice(0, 2400)
               : `Run failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+            { preserveLive: true },
           );
           await refresh();
           clearInFlightRun();
@@ -3226,7 +3261,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           }
         } catch (error) {
           eventLogEl.textContent = String(error);
-          setInFlightRun(prompt, "failed", String(error));
+          setInFlightRun(prompt, "failed", String(error), { preserveLive: true });
         } finally {
           stopLiveEventPolling();
           setAgentBusy(false);
