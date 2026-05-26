@@ -552,7 +552,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
     println!(
-        "  commands:  /help, /status, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
+        "  commands:  /help, /status, /llm, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
     );
     println!();
 
@@ -676,6 +676,11 @@ fn handle_chat_session_command(
         "/status" => {
             let snapshot = local_result(collect_snapshot(runtime.repo_root()))?;
             print!("{}", render_chat_session_status(state, &snapshot));
+            Ok(true)
+        }
+        "/llm" => {
+            let diagnostic = runtime.llm_diagnostic();
+            print!("{}", render_llm_diagnostic(&diagnostic));
             Ok(true)
         }
         "/mode" => {
@@ -933,6 +938,7 @@ fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
 fn print_chat_session_help() {
     println!("Structure local session commands");
     println!("  /status               Show workspace, mode, selected run, and LLM env");
+    println!("  /llm                  Check the configured OPENAI__ API endpoint");
     println!("  /mode chat|code       Switch between chat and code-agent mode");
     println!("  /workspace [id]       Show or open/create a workspace");
     println!("  /ls                   List top-level workspace entries");

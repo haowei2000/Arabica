@@ -43,9 +43,10 @@ for offline development and tests. The Rust test suite also runs the env-selecte
 API path against a local OpenAI-compatible mock server, covering tool planning,
 local tool execution, response synthesis, event persistence, and artifact
 creation without requiring a paid external account.
-`uv run structure llm check` and the desktop `/llm` command issue a small
-chat-completions request through the same Rust runtime, so environment-backed
-API connectivity is tested without exposing the API key.
+`uv run structure llm check`, the interactive CLI `/llm` command, and the
+desktop `/llm` command issue a small chat-completions request through the same
+Rust runtime, so environment-backed API connectivity is tested without exposing
+the API key.
 
 Local tool execution includes safe repository listing/search/reads, knowledge
 source reads, and allowlisted local verification commands through
