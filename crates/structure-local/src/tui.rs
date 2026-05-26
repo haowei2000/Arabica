@@ -13,7 +13,7 @@ use structure_local_core::{
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
     LocalEvidenceBundle, LocalToolCall, ProposalApplyResult, RunAttempt, RunEvidenceSummary,
-    RunRequest, RunSummary, RunTranscript, WorkspaceSummary,
+    RunRequest, RunSummary, RunTranscript, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -80,6 +80,7 @@ struct TuiState {
     active_workspace_id: String,
     knowledge_sources: Vec<KnowledgeSource>,
     artifacts: Vec<ArtifactRecord>,
+    worktree: WorktreeSnapshot,
     agent_mode: LocalAgentMode,
     selected: usize,
     preview: Option<TuiPreview>,
@@ -106,6 +107,7 @@ impl TuiState {
             active_workspace_id,
             knowledge_sources,
             artifacts,
+            worktree: unavailable_worktree_snapshot(),
             agent_mode: LocalAgentMode::CodeAgent,
             selected: 0,
             preview: None,
@@ -138,6 +140,7 @@ impl TuiState {
         self.run_evidence = collect_run_evidence(&runtime, &self.runs);
         self.knowledge_sources = local_result(runtime.knowledge_sources(Some(workspace_id), 5))?;
         self.artifacts = local_result(runtime.list_artifacts(Some(workspace_id), None, 5))?;
+        self.worktree = runtime.worktree_snapshot();
         self.pending_apply_artifact_id = None;
         self.notice = "Snapshot refreshed".to_string();
         Ok(())
@@ -502,6 +505,22 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_worktree_snapshot(&mut self, repo_root: &Path) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let worktree = runtime.worktree_snapshot();
+        self.worktree = worktree.clone();
+        self.preview = Some(TuiPreview {
+            path: "current git worktree".to_string(),
+            text: render_worktree_snapshot(&worktree),
+        });
+        self.notice = format!(
+            "Worktree: {} / {} changes",
+            if worktree.clean { "clean" } else { "dirty" },
+            worktree.changed_files.len()
+        );
+        Ok(())
+    }
+
     fn cycle_workspace(&mut self, repo_root: &Path) -> Result<()> {
         if self.workspaces.is_empty() {
             self.notice = "No workspace registered".to_string();
@@ -575,6 +594,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
     let run_evidence = collect_run_evidence(&runtime, &runs);
     let knowledge_sources = local_result(runtime.knowledge_sources(Some(&active_workspace_id), 5))?;
     let artifacts = local_result(runtime.list_artifacts(Some(&active_workspace_id), None, 5))?;
+    let worktree = runtime.worktree_snapshot();
     let mut state = TuiState::new(
         snapshot,
         runs,
@@ -584,6 +604,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
         knowledge_sources,
         artifacts,
     );
+    state.worktree = worktree;
     loop {
         draw_tui(out, &state)?;
         if event::poll(Duration::from_millis(500))? {
@@ -601,6 +622,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
+                    KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
@@ -690,7 +712,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  s knowledge path  ! local command",
+            "m mode  o workspace  c prompt  f follow-up  d worktree  s knowledge  ! command",
             width,
         )?,
     }
@@ -779,6 +801,22 @@ fn draw_reports(
         x,
         y + 1,
         "press j/k to select, t transcript, f follow-up, n to run a local check",
+        width,
+    )?;
+    muted_at(
+        out,
+        x,
+        y + 2,
+        &format!(
+            "worktree: {} / {} changes on {}",
+            if state.worktree.clean {
+                "clean"
+            } else {
+                "dirty"
+            },
+            state.worktree.changed_files.len(),
+            state.worktree.branch.as_deref().unwrap_or("unknown")
+        ),
         width,
     )?;
     let run_rows = usize::from(height.saturating_sub(3))
@@ -930,7 +968,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  m mode  c prompt  f follow-up  ! cmd  t transcript  g proposal  u dry-run  y apply";
+    let controls = "q quit  r refresh  d worktree  c prompt  f follow-up  ! cmd  t transcript  g proposal  u dry-run  y apply";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1099,6 +1137,31 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
                 evidence.knowledge_sources.len(),
                 evidence.artifacts.len()
             ));
+        }
+    }
+    text
+}
+
+fn render_worktree_snapshot(worktree: &WorktreeSnapshot) -> String {
+    let mut text = String::new();
+    text.push_str("Current Worktree\n");
+    text.push_str(&format!("Available: {}\n", worktree.available));
+    text.push_str(&format!(
+        "Status: {}\n",
+        if worktree.clean { "clean" } else { "dirty" }
+    ));
+    text.push_str(&format!(
+        "Branch: {}\n",
+        worktree.branch.as_deref().unwrap_or("unknown")
+    ));
+    text.push_str(&format!("Changes: {}\n", worktree.changed_files.len()));
+    if let Some(error) = &worktree.error {
+        text.push_str(&format!("Error: {error}\n"));
+    }
+    if !worktree.changed_files.is_empty() {
+        text.push_str("\nChanged Files\n");
+        for change in worktree.changed_files.iter().take(64) {
+            text.push_str(&format!("- {} {}\n", change.status, change.path));
         }
     }
     text
@@ -1336,6 +1399,16 @@ fn collect_run_evidence(
     runs.iter()
         .filter_map(|run| runtime.run_evidence_summary(&run.run_id).ok())
         .collect()
+}
+
+fn unavailable_worktree_snapshot() -> WorktreeSnapshot {
+    WorktreeSnapshot {
+        available: false,
+        clean: true,
+        branch: None,
+        changed_files: Vec::new(),
+        error: Some("worktree snapshot has not been loaded".to_string()),
+    }
 }
 
 fn select_proposal_artifact<'a>(

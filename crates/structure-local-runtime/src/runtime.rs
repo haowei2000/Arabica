@@ -74,6 +74,10 @@ impl LocalAgentRuntime {
         &self.repo_root
     }
 
+    pub fn worktree_snapshot(&self) -> WorktreeSnapshot {
+        collect_worktree_snapshot(&self.repo_root)
+    }
+
     pub fn ensure_workspace(
         &self,
         workspace_id: Option<String>,
@@ -1960,6 +1964,50 @@ mod tests {
             .iter()
             .any(|change| change.path == "new-note.md"));
         assert!(result.final_response.contains("Worktree"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_exposes_current_worktree_snapshot() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("worktree-snapshot");
+        run_git(&root, &["init"]);
+        run_git(&root, &["checkout", "-b", "feature/worktree-snapshot"]);
+        fs::write(root.join("tracked.md"), "tracked\n").unwrap();
+        run_git(&root, &["add", "tracked.md"]);
+        run_git(
+            &root,
+            &[
+                "-c",
+                "user.name=Structure Test",
+                "-c",
+                "user.email=structure@example.test",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        fs::write(root.join("tracked.md"), "tracked\nchanged\n").unwrap();
+        fs::write(root.join("untracked.md"), "new\n").unwrap();
+
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let worktree = runtime.worktree_snapshot();
+
+        assert!(worktree.available);
+        assert!(!worktree.clean);
+        assert_eq!(
+            worktree.branch.as_deref(),
+            Some("feature/worktree-snapshot")
+        );
+        assert!(worktree
+            .changed_files
+            .iter()
+            .any(|change| change.path == "tracked.md"));
+        assert!(worktree
+            .changed_files
+            .iter()
+            .any(|change| change.path == "untracked.md"));
 
         fs::remove_dir_all(root).unwrap();
     }

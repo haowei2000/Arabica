@@ -5,7 +5,7 @@ use structure_local_core::{
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalEvent,
     LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -31,6 +31,30 @@ pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
     );
     if let Some(model) = &snapshot.llm_config.model_name {
         println!("  llm model:  {model}");
+    }
+}
+
+pub(crate) fn print_worktree_snapshot(worktree: &WorktreeSnapshot) {
+    println!("Structure local worktree");
+    println!("  available: {}", worktree.available);
+    println!(
+        "  status:    {}",
+        if worktree.clean { "clean" } else { "dirty" }
+    );
+    println!(
+        "  branch:    {}",
+        worktree.branch.as_deref().unwrap_or("unknown")
+    );
+    println!("  changes:   {}", worktree.changed_files.len());
+    if let Some(error) = &worktree.error {
+        println!("  error:     {error}");
+    }
+    if !worktree.changed_files.is_empty() {
+        println!();
+        println!("Changed files");
+        for change in &worktree.changed_files {
+            println!("  {:<3} {}", change.status, change.path);
+        }
     }
 }
 

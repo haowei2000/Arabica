@@ -436,10 +436,42 @@
 
       .run-list,
       .knowledge-list,
+      .worktree-list,
       .chat-thread,
       .event-timeline {
         display: grid;
         gap: 8px;
+      }
+
+      .worktree-status {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-strong);
+        padding: 10px 11px;
+      }
+
+      .worktree-status strong {
+        display: block;
+        font-size: 13px;
+        line-height: 19px;
+      }
+
+      .worktree-status p {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
+        overflow-wrap: anywhere;
+      }
+
+      .worktree-list button {
+        min-width: 0;
+        min-height: 34px;
+        padding: 6px 10px;
+        text-align: left;
+        font-size: 12px;
+        line-height: 18px;
       }
 
       .chat-thread {
@@ -990,6 +1022,8 @@
             <div class="panel-heading">
               <h3>Repository Tools</h3>
             </div>
+            <div id="worktree-status" class="worktree-status">Loading worktree...</div>
+            <button id="refresh-worktree" type="button">Refresh Worktree</button>
             <button id="repo-list" type="button">List Root</button>
             <form id="repo-search-form" class="knowledge-form">
               <input id="repo-search-query" type="search" placeholder="Search repository text" />
@@ -1093,6 +1127,8 @@
       const knowledgePathEl = document.querySelector("#knowledge-path");
       const addKnowledgeEl = document.querySelector("#add-knowledge");
       const knowledgeListEl = document.querySelector("#knowledge-list");
+      const worktreeStatusEl = document.querySelector("#worktree-status");
+      const refreshWorktreeEl = document.querySelector("#refresh-worktree");
       const repoListEl = document.querySelector("#repo-list");
       const repoSearchFormEl = document.querySelector("#repo-search-form");
       const repoSearchQueryEl = document.querySelector("#repo-search-query");
@@ -1123,6 +1159,7 @@
         previewRepoPath: null,
         knowledge: [],
         artifacts: [],
+        worktree: null,
         parityReport: null,
         agentMode: "code_agent",
       };
@@ -1191,6 +1228,19 @@
       async function localLlmDiagnostic() {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("local_llm_diagnostic");
+      }
+
+      async function localWorktreeSnapshot() {
+        if (!invoke) {
+          return {
+            available: false,
+            clean: true,
+            branch: null,
+            changed_files: [],
+            error: "Desktop runtime unavailable.",
+          };
+        }
+        return invoke("local_worktree_snapshot");
       }
 
       async function localChatTurns() {
@@ -1394,7 +1444,9 @@
 
       function setBusy(isBusy) {
         refreshEl.disabled = isBusy;
+        refreshWorktreeEl.disabled = isBusy;
         refreshEl.textContent = isBusy ? "Refreshing" : "Refresh";
+        refreshWorktreeEl.textContent = isBusy ? "Refreshing" : "Refresh Worktree";
       }
 
       function setAgentBusy(isBusy) {
@@ -1429,6 +1481,11 @@
       function setKnowledgeBusy(isBusy) {
         addKnowledgeEl.disabled = isBusy;
         addKnowledgeEl.textContent = isBusy ? "Adding" : "Add";
+      }
+
+      function setWorktreeBusy(isBusy) {
+        refreshWorktreeEl.disabled = isBusy;
+        refreshWorktreeEl.textContent = isBusy ? "Refreshing" : "Refresh Worktree";
       }
 
       function setRepoListBusy(isBusy) {
@@ -1579,6 +1636,22 @@ Database: ${status.runtime_db}
 LLM: ${llm.configured ? "OPENAI__ configured" : "OPENAI__ missing"}
 Sources: ${llm.api_key.source}/${llm.base_url.source}/${llm.model.source}
 Model: ${llm.model_name ?? "not set"}`;
+      }
+
+      function renderWorktreeText(worktree) {
+        if (!worktree?.available) {
+          return `Current Worktree
+Available: false
+Error: ${worktree?.error ?? "unknown"}`;
+        }
+        const changes = worktree.changed_files ?? [];
+        return `Current Worktree
+Available: true
+Status: ${worktree.clean ? "clean" : "dirty"}
+Branch: ${worktree.branch ?? "unknown"}
+Changes: ${changes.length}
+
+${changes.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No changed files."}`;
       }
 
       function renderLlmDiagnostic(diagnostic) {
@@ -2011,6 +2084,50 @@ ${payload}`;
         }
       }
 
+      function renderWorktree(worktree) {
+        state.worktree = worktree;
+        worktreeStatusEl.replaceChildren();
+
+        if (!worktree?.available) {
+          const title = document.createElement("strong");
+          title.textContent = "Worktree unavailable";
+          const detail = document.createElement("p");
+          detail.textContent = worktree?.error ?? "No git status is available for this repository.";
+          worktreeStatusEl.append(title, detail);
+          return;
+        }
+
+        const title = document.createElement("strong");
+        title.textContent = `${worktree.clean ? "Clean" : "Dirty"} on ${worktree.branch ?? "unknown branch"}`;
+        const detail = document.createElement("p");
+        detail.textContent = `${worktree.changed_files?.length ?? 0} changed files in the same snapshot passed into local agent runs.`;
+        worktreeStatusEl.append(title, detail);
+
+        if (!worktree.changed_files?.length) {
+          return;
+        }
+
+        const list = document.createElement("div");
+        list.className = "worktree-list";
+        for (const change of worktree.changed_files.slice(0, 8)) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.textContent = `${change.status} ${change.path}`;
+          item.title = `Read ${change.path}`;
+          item.addEventListener("click", async () => {
+            repoReadPathEl.value = change.path;
+            eventLogEl.textContent = `Reading changed file ${change.path}...`;
+            try {
+              renderRepoToolResult(await readRepoFile(change.path));
+            } catch (error) {
+              eventLogEl.textContent = String(error);
+            }
+          });
+          list.append(item);
+        }
+        worktreeStatusEl.append(list);
+      }
+
       async function previewKnowledge(source) {
         eventLogEl.textContent = `Loading ${source.title}...`;
         try {
@@ -2210,6 +2327,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         eventLogEl.textContent = `Desktop Agent Commands
 /status
 /llm
+/worktree
 /mode chat|code
 /workspace <id>
 /runs
@@ -2246,6 +2364,12 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           case "/llm": {
             const diagnostic = await localLlmDiagnostic();
             eventLogEl.textContent = renderLlmDiagnostic(diagnostic);
+            return true;
+          }
+          case "/worktree": {
+            const worktree = await localWorktreeSnapshot();
+            renderWorktree(worktree);
+            eventLogEl.textContent = renderWorktreeText(worktree);
             return true;
           }
           case "/mode": {
@@ -2930,13 +3054,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           }
           renderWorkspaces(workspaces);
 
-          const [snapshot, runs, turns, knowledge, artifacts, parityReport] = await Promise.all([
+          const [snapshot, runs, turns, knowledge, artifacts, parityReport, worktree] = await Promise.all([
             localSnapshot(),
             localRuns(),
             localChatTurns(),
             localKnowledge(),
             localArtifacts(),
             coreParityReport(),
+            localWorktreeSnapshot(),
           ]);
           if (!runs.some((run) => run.run_id === state.selectedRunId)) {
             state.selectedRunId = runs[0]?.run_id ?? null;
@@ -2944,6 +3069,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           renderRuns(runs);
           renderChat(turns);
           renderKnowledge(knowledge);
+          renderWorktree(worktree);
           state.artifacts = artifacts;
           state.parityReport = parityReport;
           renderSnapshot(snapshot);
@@ -3136,6 +3262,19 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           eventLogEl.textContent = String(error);
         } finally {
           setRepoListBusy(false);
+        }
+      });
+      refreshWorktreeEl.addEventListener("click", async () => {
+        setWorktreeBusy(true);
+        eventLogEl.textContent = "Refreshing worktree snapshot...";
+        try {
+          const worktree = await localWorktreeSnapshot();
+          renderWorktree(worktree);
+          eventLogEl.textContent = renderWorktreeText(worktree);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setWorktreeBusy(false);
         }
       });
       repoSearchFormEl.addEventListener("submit", async (event) => {

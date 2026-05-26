@@ -4,6 +4,7 @@ use crate::text::{
     print_local_evidence_bundle, print_run_attempt, print_run_evidence_summary, print_run_summary,
     print_run_transcript, print_runs, print_snapshot, print_surface_parity_report, print_surfaces,
     print_workspace, print_workspace_event_feed, print_workspace_replay, print_workspaces,
+    print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -37,6 +38,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Status(StatusArgs),
+    Worktree(WorktreeArgs),
     Surfaces(SurfacesArgs),
     Core(CoreArgs),
     Parity(ParityArgs),
@@ -76,6 +78,12 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct StatusArgs {
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorktreeArgs {
     #[arg(long)]
     json: bool,
 }
@@ -398,6 +406,7 @@ pub(crate) fn run() -> Result<()> {
 
     match cli.command {
         Command::Status(args) => run_status(&repo_root, args)?,
+        Command::Worktree(args) => run_worktree(&repo_root, args)?,
         Command::Surfaces(args) => run_surfaces(args)?,
         Command::Core(args) => run_core(args)?,
         Command::Parity(args) => run_parity(&repo_root, args)?,
@@ -443,6 +452,17 @@ fn run_status(repo_root: &PathBuf, args: StatusArgs) -> Result<()> {
         println!("{}", local_result(snapshot_json(&snapshot))?);
     } else {
         print_snapshot(&snapshot);
+    }
+    Ok(())
+}
+
+fn run_worktree(repo_root: &PathBuf, args: WorktreeArgs) -> Result<()> {
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let worktree = runtime.worktree_snapshot();
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&worktree)?);
+    } else {
+        print_worktree_snapshot(&worktree);
     }
     Ok(())
 }
@@ -1759,6 +1779,16 @@ mod tests {
         assert_eq!(args.run_id, "run_1");
         assert_eq!(args.instruction, vec!["write", "tests"]);
         assert_eq!(args.mode.as_deref(), Some("chat"));
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_worktree_command_accepts_json_output() {
+        let cli = Cli::try_parse_from(["structure-local", "worktree", "--json"]).unwrap();
+
+        let Command::Worktree(args) = cli.command else {
+            panic!("expected worktree command");
+        };
         assert!(args.json);
     }
 

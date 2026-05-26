@@ -100,6 +100,8 @@ impl EnvApiModelProvider {
         let response = client
             .post(endpoint)
             .bearer_auth(&self.api_key)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .json(&payload)
             .send()
             .map_err(|err| format!("local LLM API request failed: {err}"))?;
@@ -847,6 +849,10 @@ fn code_search_query(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
 
     #[test]
     fn parses_openai_tool_calls_into_local_tool_plan() {
@@ -988,5 +994,61 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(tool_names.contains(&"read_knowledge_source".to_string()));
+    }
+
+    #[test]
+    fn api_model_requests_identity_encoded_json_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (request_tx, request_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 8192];
+            let size = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..size]).to_string();
+            request_tx.send(request).unwrap();
+            let body = serde_json::json!({
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "ok"
+                        },
+                        "finish_reason": "stop"
+                    }
+                ]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let provider = EnvApiModelProvider {
+            base_url: format!("http://{address}/v1"),
+            api_key: "test-key".to_string(),
+            model: "test-model".to_string(),
+        };
+
+        let response = provider
+            .chat_completion(serde_json::json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}]
+            }))
+            .unwrap();
+        let request = request_rx.recv().unwrap().to_ascii_lowercase();
+
+        assert_eq!(
+            response["choices"][0]["message"]["content"].as_str(),
+            Some("ok")
+        );
+        assert!(request.contains("accept: application/json"));
+        assert!(request.contains("accept-encoding: identity"));
+        handle.join().unwrap();
     }
 }

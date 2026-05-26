@@ -16,7 +16,7 @@ pub use types::{
     KnowledgeSourcePreview, LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic,
     LocalToolCall, LocalToolResult, ProposalApplyResult, RunAttempt, RunEventKind,
     RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary,
+    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]

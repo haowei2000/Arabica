@@ -64,6 +64,12 @@ fn local_llm_diagnostic() -> Result<structure_local_runtime::LocalLlmDiagnostic,
 }
 
 #[tauri::command]
+fn local_worktree_snapshot() -> Result<structure_local_runtime::WorktreeSnapshot, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    Ok(runtime.worktree_snapshot())
+}
+
+#[tauri::command]
 fn core_manifest() -> Result<structure_local_core::StructureCoreManifest, String> {
     structure_core_manifest()
 }
@@ -373,6 +379,7 @@ pub fn run() {
             local_snapshot,
             local_session_status,
             local_llm_diagnostic,
+            local_worktree_snapshot,
             core_manifest,
             core_parity_report,
             local_repo_entries,
@@ -527,6 +534,7 @@ mod tests {
                 Some("code_agent".to_string()),
             )?;
             let llm_diagnostic = local_llm_diagnostic()?;
+            let worktree = local_worktree_snapshot()?;
 
             assert_eq!(workspace.workspace_id, "desktop-test");
             assert!(entries.success);
@@ -629,6 +637,7 @@ mod tests {
             assert!(!llm_diagnostic.configured);
             assert!(!llm_diagnostic.ok);
             assert!(llm_diagnostic.error.is_some());
+            assert!(!worktree.available || worktree.error.is_some() || worktree.branch.is_some());
             Ok::<(), String>(())
         })();
 
@@ -716,6 +725,17 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_surfaces_current_worktree_snapshot() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("id=\"worktree-status\""));
+        assert!(local_ui.contains("id=\"refresh-worktree\""));
+        assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
+        assert!(local_ui.contains("function renderWorktree(worktree)"));
+        assert!(local_ui.contains("case \"/worktree\":"));
+    }
+
+    #[test]
     fn desktop_app_uses_local_ui_and_runtime_entrypoints() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
@@ -736,6 +756,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_agent_run_attempt\""));
         assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
         assert!(local_ui.contains("invoke(\"local_session_status\""));
+        assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
         assert!(!local_ui.contains("fetch("));
         assert!(!local_ui.contains("localhost"));

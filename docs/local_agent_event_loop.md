@@ -67,6 +67,10 @@ and desktop app the same repository instruction semantics without each surface
 implementing its own prompt prelude.
 The same `WorkspaceContextLoaded` event also records a git worktree snapshot
 when available: branch, clean/dirty state, and bounded changed-file entries.
+That snapshot is now a first-class local surface as well: `structure worktree`
+prints the current branch and changed files, the TUI `d` key opens the same
+snapshot in the preview pane, and the desktop app exposes a Worktree panel whose
+changed-file rows can be opened and attached to the next agent prompt.
 That snapshot is passed to planning and synthesis, then promoted into run
 evidence, so local code-agent proposals can account for existing user changes
 before suggesting a patch.
