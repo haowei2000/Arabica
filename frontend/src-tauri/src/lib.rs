@@ -643,6 +643,32 @@ mod tests {
         assert!(local_ui.contains("eventLogEl.textContent = renderEvidenceText(evidence);"));
     }
 
+    #[test]
+    fn desktop_app_uses_local_ui_and_runtime_entrypoints() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let package: serde_json::Value =
+            serde_json::from_str(include_str!("../../package.json")).unwrap();
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert_eq!(config["build"]["frontendDist"], "local-ui");
+        assert!(config["build"].get("devUrl").is_none());
+        assert_eq!(
+            package["scripts"]["desktop:dev"],
+            "cargo run --manifest-path src-tauri/Cargo.toml"
+        );
+        assert_eq!(
+            package["scripts"]["desktop:build"],
+            "cargo build --release --manifest-path src-tauri/Cargo.toml"
+        );
+        assert!(local_ui.contains("invoke(\"local_agent_run_attempt\""));
+        assert!(local_ui.contains("invoke(\"local_session_status\""));
+        assert!(local_ui.contains("invoke(\"local_run_transcript\""));
+        assert!(!local_ui.contains("fetch("));
+        assert!(!local_ui.contains("localhost"));
+        assert!(!local_ui.contains("127.0.0.1"));
+    }
+
     fn restore_env(key: &str, value: Option<String>) {
         if let Some(value) = value {
             env::set_var(key, value);
