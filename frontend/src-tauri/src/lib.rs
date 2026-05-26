@@ -669,6 +669,9 @@ mod tests {
         assert!(local_ui.contains("Model usage:"));
         assert!(local_ui.contains("model_usage"));
         assert!(local_ui.contains("eventLogEl.textContent = renderEvidenceText(evidence);"));
+        assert!(local_ui.contains("function renderUsageText(evidence)"));
+        assert!(local_ui.contains("case \"/usage\":"));
+        assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));
     }
 
     #[test]

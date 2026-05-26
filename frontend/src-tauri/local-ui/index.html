@@ -2241,6 +2241,20 @@ Artifacts
 ${artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") || artifactPaths.map((path) => `- ${path}`).join("\n") || "No artifacts recorded."}`;
       }
 
+      function renderUsageText(evidence) {
+        if (!evidence) return "Model usage unavailable.";
+        const modelUsage = evidence.model_usage ?? {};
+        return `Model Usage
+Run: ${evidence.run?.run_id ?? "unknown"}
+Status: ${evidence.run?.status ?? "unknown"}
+Model requests: ${modelUsage.model_request_count ?? 0}
+Network requests: ${modelUsage.network_request_count ?? 0}
+Model responses: ${modelUsage.model_response_count ?? 0}
+Tokens: ${modelUsage.prompt_tokens ?? 0} prompt / ${modelUsage.completion_tokens ?? 0} completion / ${modelUsage.total_tokens ?? 0} total
+Response chars: ${modelUsage.response_chars ?? 0}
+Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}`;
+      }
+
       async function selectRun(run) {
         eventLogEl.textContent = "Loading transcript...";
         try {
@@ -2379,6 +2393,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /inspect [run_id]
 /events [run_id]
 /evidence [run_id]
+/usage [run_id]
 /source <absolute-path>
 /sources
 /search <query>
@@ -2513,6 +2528,16 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
             }
             const evidence = await localRunEvidence(runId);
             eventLogEl.textContent = renderEvidenceText(evidence);
+            return true;
+          }
+          case "/usage": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const evidence = await localRunEvidence(runId);
+            eventLogEl.textContent = renderUsageText(evidence);
             return true;
           }
           case "/source":

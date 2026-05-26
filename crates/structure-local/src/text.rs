@@ -336,6 +336,33 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     }
 }
 
+pub(crate) fn print_model_usage_summary(evidence: &RunEvidenceSummary) {
+    println!("Model usage");
+    println!("  run:       {}", evidence.run.run_id);
+    println!("  status:    {}", evidence.run.status);
+    println!(
+        "  requests:  {} model / {} network",
+        evidence.model_usage.model_request_count, evidence.model_usage.network_request_count
+    );
+    println!("  responses: {}", evidence.model_usage.model_response_count);
+    println!(
+        "  tokens:    {} prompt / {} completion / {} total",
+        evidence.model_usage.prompt_tokens,
+        evidence.model_usage.completion_tokens,
+        evidence.model_usage.total_tokens
+    );
+    println!("  chars:     {}", evidence.model_usage.response_chars);
+    println!(
+        "  core:      {} / schema {}",
+        if evidence.core_trace.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        },
+        evidence.core_trace.manifest_schema_version
+    );
+}
+
 pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
     println!("Run transcript");
     println!("  run:       {}", transcript.run.run_id);
