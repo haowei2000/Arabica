@@ -31,6 +31,19 @@ pub struct ModelOutput {
 pub trait LocalModelProvider {
     fn provider_id(&self) -> &'static str;
     fn plan(&self, request: &ModelRequest) -> Result<ModelPlan, String>;
+    fn plan_next(
+        &self,
+        request: &ModelRequest,
+        tool_results: &[LocalToolResult],
+    ) -> Result<ModelPlan, String> {
+        if tool_results.is_empty() {
+            return self.plan(request);
+        }
+        Ok(ModelPlan {
+            provider: self.provider_id().to_string(),
+            tool_calls: Vec::new(),
+        })
+    }
     fn synthesize(
         &self,
         request: &ModelRequest,
@@ -243,6 +256,14 @@ impl LocalModelProvider for EnvApiModelProvider {
     }
 
     fn plan(&self, request: &ModelRequest) -> Result<ModelPlan, String> {
+        self.plan_next(request, &[])
+    }
+
+    fn plan_next(
+        &self,
+        request: &ModelRequest,
+        tool_results: &[LocalToolResult],
+    ) -> Result<ModelPlan, String> {
         let response = self.chat_completion(serde_json::json!({
             "model": self.model,
             "messages": [
@@ -252,7 +273,7 @@ impl LocalModelProvider for EnvApiModelProvider {
                 },
                 {
                     "role": "user",
-                    "content": render_planning_prompt(request)
+                    "content": render_planning_prompt(request, tool_results)
                 }
             ],
             "tools": local_tool_schemas(request),
@@ -261,7 +282,7 @@ impl LocalModelProvider for EnvApiModelProvider {
             "max_tokens": 300
         }))?;
         let tool_calls = parse_api_tool_calls(&response)?;
-        if tool_calls.is_empty() {
+        if tool_calls.is_empty() && tool_results.is_empty() {
             let mut fallback = DeterministicLocalModelProvider.plan(request)?;
             fallback.provider = "local_env_api_fallback".to_string();
             return Ok(fallback);
@@ -346,7 +367,7 @@ pub fn selected_planning_provider() -> Result<Box<dyn LocalModelProvider>, Strin
     Ok(Box::new(DeterministicLocalModelProvider))
 }
 
-fn render_planning_prompt(request: &ModelRequest) -> String {
+fn render_planning_prompt(request: &ModelRequest, tool_results: &[LocalToolResult]) -> String {
     let knowledge = if request.knowledge.is_empty() {
         "No knowledge sources registered.".to_string()
     } else {
@@ -362,8 +383,17 @@ fn render_planning_prompt(request: &ModelRequest) -> String {
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let evidence = if tool_results.is_empty() {
+        "No tool results yet.".to_string()
+    } else {
+        serde_json::to_string_pretty(tool_results)
+            .unwrap_or_else(|_| "Tool results could not be rendered.".to_string())
+            .chars()
+            .take(16_000)
+            .collect::<String>()
+    };
     format!(
-        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nReturn tool calls only when inspection would improve the answer.",
+        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
         prompt = request.run.prompt,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),

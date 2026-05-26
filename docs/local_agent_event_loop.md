@@ -37,9 +37,9 @@ installations.
 The local loop is event-sourced regardless of model provider. When
 `OPENAI__API_KEY`, `OPENAI__BASE_URL`, and `OPENAI__MODEL` are configured, the
 OpenAI-compatible provider plans local tool calls through native `tool_calls`
-and later synthesizes the final answer. Without those variables, the runtime
-falls back to a deterministic planner/synthesizer for offline development and
-tests.
+and can iterate over prior tool results before the final synthesis. Without
+those variables, the runtime falls back to a deterministic planner/synthesizer
+for offline development and tests.
 
 Current event sequence:
 
@@ -53,6 +53,8 @@ ModelRequested          # tool_planning
 ModelResponded          # planned LocalToolCall list
 ToolCallRequested
 ToolCallCompleted
+ModelRequested          # optional next planning iteration with tool results
+ModelResponded          # optional additional LocalToolCall list or no-op
 ModelRequested          # response_synthesis
 ModelResponded          # final assistant response
 ArtifactWritten

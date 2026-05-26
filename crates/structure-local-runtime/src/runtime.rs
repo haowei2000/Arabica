@@ -512,62 +512,87 @@ impl LocalAgentRuntime {
             recent_turns,
             mode: mode.clone(),
         };
-        self.store.append_event(
-            &run.workspace_id,
-            Some(&run.run_id),
-            RunEventKind::ModelRequested,
-            &serde_json::json!({
-                "provider": model.provider_id(),
-                "phase": "tool_planning",
-                "network_required": model.provider_id() != "local_deterministic",
-            }),
-        )?;
-        let plan = model.plan(&model_request)?;
-        self.store.append_event(
-            &run.workspace_id,
-            Some(&run.run_id),
-            RunEventKind::AgentStepPlanned,
-            &serde_json::json!({
-                "mode": mode.as_str(),
-                "planner": "structure_local_runtime",
-                "steps": [
-                    "workspace_context_replay",
-                    "tool_planning",
-                    "local_tool_execution",
-                    "response_synthesis",
-                    "artifact_persistence"
-                ],
-                "tool_call_count": plan.tool_calls.len(),
-            }),
-        )?;
-        self.store.append_event(
-            &run.workspace_id,
-            Some(&run.run_id),
-            RunEventKind::ModelResponded,
-            &serde_json::json!({
-                "provider": plan.provider,
-                "phase": "tool_planning",
-                "tool_calls": plan.tool_calls,
-            }),
-        )?;
-
         let registry = BuiltinLocalToolRegistry::new(&self.repo_root);
         let mut tool_results = Vec::new();
-        for call in &plan.tool_calls {
+        let mut seen_tool_calls = Vec::new();
+        let mut planning_iterations = 0usize;
+        for iteration in 1..=3 {
+            planning_iterations = iteration;
             self.store.append_event(
                 &run.workspace_id,
                 Some(&run.run_id),
-                RunEventKind::ToolCallRequested,
-                call,
+                RunEventKind::ModelRequested,
+                &serde_json::json!({
+                    "provider": model.provider_id(),
+                    "phase": "tool_planning",
+                    "iteration": iteration,
+                    "prior_tool_results": tool_results.len(),
+                    "network_required": model.provider_id() != "local_deterministic",
+                }),
             )?;
-            let result = registry.execute(call);
+            let plan = model.plan_next(&model_request, &tool_results)?;
+            let new_tool_calls = plan
+                .tool_calls
+                .into_iter()
+                .filter(|call| {
+                    let fingerprint = tool_call_fingerprint(call);
+                    if seen_tool_calls.contains(&fingerprint) {
+                        return false;
+                    }
+                    seen_tool_calls.push(fingerprint);
+                    true
+                })
+                .collect::<Vec<_>>();
             self.store.append_event(
                 &run.workspace_id,
                 Some(&run.run_id),
-                RunEventKind::ToolCallCompleted,
-                &result,
+                RunEventKind::AgentStepPlanned,
+                &serde_json::json!({
+                    "mode": mode.as_str(),
+                    "planner": "structure_local_runtime",
+                    "iteration": iteration,
+                    "steps": [
+                        "workspace_context_replay",
+                        "tool_planning",
+                        "local_tool_execution",
+                        "response_synthesis",
+                        "artifact_persistence"
+                    ],
+                    "tool_call_count": new_tool_calls.len(),
+                    "total_tool_results": tool_results.len(),
+                }),
             )?;
-            tool_results.push(result);
+            self.store.append_event(
+                &run.workspace_id,
+                Some(&run.run_id),
+                RunEventKind::ModelResponded,
+                &serde_json::json!({
+                    "provider": plan.provider,
+                    "phase": "tool_planning",
+                    "iteration": iteration,
+                    "tool_calls": &new_tool_calls,
+                }),
+            )?;
+
+            if new_tool_calls.is_empty() {
+                break;
+            }
+            for call in &new_tool_calls {
+                self.store.append_event(
+                    &run.workspace_id,
+                    Some(&run.run_id),
+                    RunEventKind::ToolCallRequested,
+                    call,
+                )?;
+                let result = registry.execute(call);
+                self.store.append_event(
+                    &run.workspace_id,
+                    Some(&run.run_id),
+                    RunEventKind::ToolCallCompleted,
+                    &result,
+                )?;
+                tool_results.push(result);
+            }
         }
 
         let synthesis_model = selected_synthesis_provider()?;
@@ -579,6 +604,7 @@ impl LocalAgentRuntime {
                 "provider": synthesis_model.provider_id(),
                 "phase": "response_synthesis",
                 "tool_results": tool_results.len(),
+                "planning_iterations": planning_iterations,
                 "network_required": synthesis_model.provider_id() != "local_deterministic",
             }),
         )?;
@@ -720,6 +746,11 @@ fn read_limited_text(
 #[derive(Debug, Clone, Serialize)]
 struct KnowledgePayload {
     sources: Vec<KnowledgeSource>,
+}
+
+fn tool_call_fingerprint(call: &crate::types::LocalToolCall) -> String {
+    let input = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".to_string());
+    format!("{}:{input}", call.name)
 }
 
 fn inspected_files_from_tools(tool_results: &[LocalToolResult]) -> Vec<String> {
@@ -987,6 +1018,19 @@ mod tests {
             .events
             .iter()
             .any(|event| event.kind == "tool_call_completed"));
+        assert!(result.events.iter().any(|event| {
+            event.kind == "agent_step_planned"
+                && event
+                    .payload
+                    .get("iteration")
+                    .and_then(|value| value.as_u64())
+                    == Some(2)
+                && event
+                    .payload
+                    .get("tool_call_count")
+                    .and_then(|value| value.as_u64())
+                    == Some(0)
+        }));
         assert!(result
             .events
             .iter()
