@@ -132,6 +132,9 @@ into runtime calls:
   shared run inspection object used by both local surfaces. It combines the run
   summary, chat turn, ordered events, evidence summary, final response, and
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
+- CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
+  `/last`, `/transcript [run-id]`, and `/inspect [run-id]` make run inspection
+  part of the live agent terminal instead of a separate dashboard workflow.
 - Benchmarks: benchmark execution and report relinking are owned by dedicated
   adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
   app surfaces.

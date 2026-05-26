@@ -169,7 +169,7 @@
           "surface_id": "cli_tui",
           "status": "native",
           "entrypoint": "structure-local runs events / structure-local runs transcript / structure-local workspace events / structure-local workspace replay",
-          "evidence": "CLI emits JSON run event streams, shared run transcripts, cursor-based workspace event feeds, and workspace replay bundles for automation; local events include canonical_flow_id and primitive_id so diagnostics map back to the shared Structure core contract."
+          "evidence": "CLI emits JSON run event streams, shared run transcripts, cursor-based workspace event feeds, and workspace replay bundles for automation; interactive chat also exposes /select, /last, /transcript, and /inspect for live agent-terminal run inspection. Local events include canonical_flow_id and primitive_id so diagnostics map back to the shared Structure core contract."
         },
         {
           "surface_id": "desktop_app",

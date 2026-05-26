@@ -489,7 +489,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
     println!(
-        "  commands:  /help, /mode, /workspace, /ls, /search, /read, /source, /runs, /proposal, /apply, /quit"
+        "  commands:  /help, /mode, /workspace, /ls, /search, /read, /source, /runs, /transcript, /proposal, /apply, /quit"
     );
     println!();
 
@@ -726,6 +726,25 @@ fn handle_chat_session_command(
             print_runs(&runs);
             Ok(true)
         }
+        "/select" => {
+            let Some(run_id) = parts.next() else {
+                println!("Usage: /select <run_id>");
+                return Ok(true);
+            };
+            let run = local_result(runtime.run_by_id(run_id))?;
+            state.last_run_id = Some(run.run_id.clone());
+            print_run_summary(&run);
+            Ok(true)
+        }
+        "/last" => {
+            let Some(run_id) = state.last_run_id.as_deref() else {
+                println!("No run selected. Run a prompt or use /select <run_id>.");
+                return Ok(true);
+            };
+            let run = local_result(runtime.run_by_id(run_id))?;
+            print_run_summary(&run);
+            Ok(true)
+        }
         "/events" => {
             let run_id = parts
                 .next()
@@ -750,6 +769,20 @@ fn handle_chat_session_command(
             };
             let evidence = local_result(runtime.run_evidence_summary(&run_id))?;
             print_run_evidence_summary(&evidence);
+            Ok(true)
+        }
+        "/transcript" | "/inspect" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /transcript <run_id>.");
+                return Ok(true);
+            };
+            let transcript = local_result(runtime.run_transcript(&run_id))?;
+            state.last_run_id = Some(transcript.run.run_id.clone());
+            print_run_transcript(&transcript);
             Ok(true)
         }
         "/artifacts" => {
@@ -855,8 +888,12 @@ fn print_chat_session_help() {
     println!("  /source <path>        Register a knowledge file for this workspace");
     println!("  /sources              List workspace knowledge sources");
     println!("  /runs                 List recent runs in this workspace");
+    println!("  /select <run_id>      Select a run for follow-up inspection");
+    println!("  /last                 Show the selected or latest run summary");
     println!("  /events [run_id]      Show event stream for a run");
     println!("  /evidence [run_id]    Show run evidence summary");
+    println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
+    println!("  /inspect [run_id]     Alias for /transcript");
     println!("  /artifacts            List recent artifacts");
     println!("  /proposal [run_id]    Show the latest code-change proposal");
     println!("  /apply [id|run]       Apply a reviewed proposal; add --dry-run to preview");
