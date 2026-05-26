@@ -175,7 +175,7 @@
           "surface_id": "desktop_app",
           "status": "native",
           "entrypoint": "local_run_transcript / local_run_events / local_workspace_event_feed / local_workspace_replay",
-          "evidence": "Desktop UI can poll cursor-based workspace events manually and during local agent runs, replay the workspace stream, and inspect run transcripts locally with visible canonical flow, paper primitive labels, chat turns, evidence, and final responses. The composer also accepts slash commands for mode switching, workspace selection, run inspection, repository tools, knowledge sources, artifacts, and proposals while staying inside the local Rust runtime, and command results are appended to the chat thread as first-class local interaction turns."
+          "evidence": "Desktop UI can poll cursor-based workspace events manually and during local agent runs, replay the workspace stream, and inspect run transcripts locally with visible canonical flow, paper primitive labels, chat turns, evidence, and final responses. The composer also accepts slash commands for mode switching, workspace selection, run inspection, repository tools, knowledge sources, artifacts, proposals, and reviewed proposal application while staying inside the local Rust runtime, and command results are appended to the chat thread as first-class local interaction turns."
         },
         {
           "surface_id": "web_app",
