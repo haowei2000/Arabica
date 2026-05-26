@@ -579,9 +579,10 @@ fn print_live_workspace_events(
         local_result(runtime.workspace_event_feed(Some(workspace_id), Some(after_sequence), 50))?;
     for event in &feed.events {
         println!(
-            "  #{:<4} {:<26} {}",
+            "  #{:<4} {:<26} {:<10} {}",
             event.sequence,
             event.kind,
+            event.canonical_flow_id,
             event.run_id.as_deref().unwrap_or("workspace")
         );
     }

@@ -124,7 +124,10 @@ into runtime calls:
   workspace replay, run evidence, knowledge source metadata, and artifacts.
 - CLI event feed: `uv run structure workspace events --workspace <id> --after
   <sequence> --json` returns a cursor-based feed over the same SQLite event log
-  used by run replay.
+  used by run replay. Each local event is enriched with `canonical_flow_id` and
+  `primitive_id`, mapping the local run trajectory back to
+  `core/structure_core.json` (`goal`, `address`, `disclose`, `event`,
+  `evidence`, and `feedback`).
 - Benchmarks: benchmark execution and report relinking are owned by dedicated
   adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
   app surfaces.

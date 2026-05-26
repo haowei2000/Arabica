@@ -1,6 +1,6 @@
 use crate::types::{
-    ArtifactRecord, KnowledgeSource, LocalEvent, RunEventKind, RunStatus, RunSummary,
-    WorkspaceSummary,
+    event_taxonomy_for_kind, ArtifactRecord, KnowledgeSource, LocalEvent, RunEventKind, RunStatus,
+    RunSummary, WorkspaceSummary,
 };
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -641,12 +641,16 @@ fn artifact_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtifactRecord
 fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalEvent> {
     let payload_json: String = row.get(5)?;
     let payload = serde_json::from_str(&payload_json).unwrap_or_else(|_| serde_json::json!({}));
+    let kind: String = row.get(4)?;
+    let (canonical_flow_id, primitive_id) = event_taxonomy_for_kind(&kind);
     Ok(LocalEvent {
         sequence: row.get(0)?,
         event_id: row.get(1)?,
         run_id: row.get(2)?,
         workspace_id: row.get(3)?,
-        kind: row.get(4)?,
+        kind,
+        canonical_flow_id: canonical_flow_id.to_string(),
+        primitive_id: primitive_id.to_string(),
         payload,
         created_at_ms: row.get(6)?,
     })
@@ -703,6 +707,8 @@ mod tests {
         assert_eq!(loaded_run.run_id, run.run_id);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "prompt_received");
+        assert_eq!(events[0].canonical_flow_id, "goal");
+        assert_eq!(events[0].primitive_id, "event_audit");
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -479,11 +479,19 @@ impl LocalAgentRuntime {
         let mut knowledge_sources = Vec::new();
         let mut artifact_paths = Vec::new();
         let mut event_kinds = Vec::new();
+        let mut canonical_flow_ids = Vec::new();
+        let mut primitive_ids = Vec::new();
         let mut tool_call_count = 0;
 
         for event in &events {
             if !event_kinds.contains(&event.kind) {
                 event_kinds.push(event.kind.clone());
+            }
+            if !canonical_flow_ids.contains(&event.canonical_flow_id) {
+                canonical_flow_ids.push(event.canonical_flow_id.clone());
+            }
+            if !primitive_ids.contains(&event.primitive_id) {
+                primitive_ids.push(event.primitive_id.clone());
             }
             match event.kind.as_str() {
                 "knowledge_retrieved" => {
@@ -537,6 +545,8 @@ impl LocalAgentRuntime {
             artifact_paths,
             artifacts,
             event_kinds,
+            canonical_flow_ids,
+            primitive_ids,
             final_response_chars,
         })
     }
@@ -1338,6 +1348,12 @@ mod tests {
         assert!(evidence
             .event_kinds
             .contains(&"knowledge_retrieved".to_string()));
+        assert!(evidence
+            .canonical_flow_ids
+            .contains(&"disclose".to_string()));
+        assert!(evidence
+            .primitive_ids
+            .contains(&"multi_level_disclosure".to_string()));
 
         fs::remove_dir_all(root).unwrap();
     }

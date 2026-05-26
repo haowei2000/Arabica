@@ -1421,30 +1421,33 @@
 
       function eventDetail(event) {
         const payload = event.payload ?? {};
+        const taxonomy = `${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`;
+        const withTaxonomy = (detail) => `${taxonomy} · ${detail}`;
         switch (event.kind) {
           case "model_requested":
-            return `${payload.phase ?? "model"} / ${payload.provider ?? "unknown"} / network=${payload.network_required ?? false}`;
+            return withTaxonomy(`${payload.phase ?? "model"} / ${payload.provider ?? "unknown"} / network=${payload.network_required ?? false}`);
           case "model_responded":
-            return payload.phase === "tool_planning"
+            return withTaxonomy(payload.phase === "tool_planning"
               ? `${payload.provider ?? "model"} planned ${(payload.tool_calls ?? []).length} tool calls`
-              : `${payload.provider ?? "model"} synthesized ${payload.response_chars ?? 0} chars`;
+              : `${payload.provider ?? "model"} synthesized ${payload.response_chars ?? 0} chars`);
           case "agent_step_planned":
-            return `${payload.mode ?? "agent"} iteration ${payload.iteration ?? "?"} / ${payload.tool_call_count ?? 0} tool calls`;
+            return withTaxonomy(`${payload.mode ?? "agent"} iteration ${payload.iteration ?? "?"} / ${payload.tool_call_count ?? 0} tool calls`);
           case "tool_call_requested":
-            return `${payload.name ?? "tool"} ${JSON.stringify(payload.input ?? {})}`;
+            return withTaxonomy(`${payload.name ?? "tool"} ${JSON.stringify(payload.input ?? {})}`);
           case "tool_call_completed":
-            return `${payload.name ?? "tool"} success=${payload.success ?? false}`;
+            return withTaxonomy(`${payload.name ?? "tool"} success=${payload.success ?? false}`);
           case "knowledge_retrieved":
-            return `${(payload.sources ?? []).length} knowledge sources`;
+            return withTaxonomy(`${(payload.sources ?? []).length} knowledge sources`);
           case "artifact_written":
-            return `${payload.kind ?? "artifact"} / ${payload.path ?? ""}`;
+            return withTaxonomy(`${payload.kind ?? "artifact"} / ${payload.path ?? ""}`);
           case "code_change_proposed":
-            return `${payload.status ?? "proposed"} / applied=${payload.applied ?? false}`;
+            return withTaxonomy(`${payload.status ?? "proposed"} / applied=${payload.applied ?? false}`);
           case "run_finished":
+            return withTaxonomy(payload.status ?? payload.run?.status ?? "finished");
           case "run_failed":
-            return payload.status ?? "";
+            return withTaxonomy(payload.error ?? payload.run?.final_response ?? "failed");
           default:
-            return event.run_id ?? event.workspace_id ?? "";
+            return withTaxonomy(event.run_id ?? event.workspace_id ?? "");
         }
       }
 
@@ -1473,7 +1476,7 @@
           appendWorkspaceFeedEvents(feed.events, autoSelectLatest);
           if (!silent) {
             const events = feed.events
-              .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
+              .map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.run_id ?? "workspace"}`)
               .join("\n");
             eventLogEl.textContent = `Workspace Event Feed
 Workspace: ${feed.workspace_id}
@@ -1528,6 +1531,8 @@ ${events || "No new events."}`;
         eventLogEl.textContent = `Event
 Sequence: ${event.sequence}
 Kind: ${event.kind}
+Flow: ${event.canonical_flow_id ?? "event"}
+Primitive: ${event.primitive_id ?? "event_audit"}
 Run: ${event.run_id ?? "workspace"}
 Workspace: ${event.workspace_id}
 Created: ${formatDate(Math.floor((event.created_at_ms ?? 0) / 1000))}
@@ -1676,7 +1681,7 @@ The original file was not deleted.`;
           const eventText = events
             .map((event) => {
               const payload = JSON.stringify(event.payload);
-              return `#${event.sequence} ${event.kind}\n${payload}`;
+              return `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}\n${payload}`;
             })
             .join("\n\n");
           const evidenceText = evidence
@@ -1686,6 +1691,8 @@ Tool calls: ${evidence.tool_call_count}
 Knowledge sources: ${evidence.knowledge_sources.length}
 Artifacts: ${evidence.artifact_paths.length}
 Response chars: ${evidence.final_response_chars}
+Flows: ${evidence.canonical_flow_ids?.join(", ") || "none"}
+Primitives: ${evidence.primitive_ids?.join(", ") || "none"}
 
 Sources
 ${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources used."}
@@ -2160,7 +2167,7 @@ Mode: ${state.agentMode}
 ${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
 
 Events
-${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).join("\n")}`;
+${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
           await refresh();
           if (!result) {
             eventLogEl.textContent += "\n\nThe failed run is still recorded and visible in the event trace.";
@@ -2273,7 +2280,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind}`).joi
           const replay = await localWorkspaceReplay();
           state.workspaceEventCursor = replay.last_sequence ?? state.workspaceEventCursor;
           const events = replay.events
-            .map((event) => `#${event.sequence} ${event.kind} / ${event.run_id ?? "workspace"}`)
+            .map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.run_id ?? "workspace"}`)
             .join("\n");
           eventLogEl.textContent = `Workspace Replay
 Workspace: ${replay.workspace_id}

@@ -141,9 +141,10 @@ pub(crate) fn print_run_attempt(attempt: &RunAttempt) {
         println!("Event trace");
         for event in &attempt.events {
             println!(
-                "  #{:<4} {:<26} {}",
+                "  #{:<4} {:<26} {:<10} {}",
                 event.sequence,
                 event.kind,
+                event.canonical_flow_id,
                 event.run_id.as_deref().unwrap_or("workspace")
             );
         }
@@ -210,8 +211,8 @@ pub(crate) fn print_events(events: &[LocalEvent]) {
     println!("Run events");
     for event in events {
         println!(
-            "  #{:<4} {:<26} {}",
-            event.sequence, event.kind, event.payload
+            "  #{:<4} {:<26} {:<10} {:<22} {}",
+            event.sequence, event.kind, event.canonical_flow_id, event.primitive_id, event.payload
         );
     }
 }
@@ -250,6 +251,12 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     }
     if !evidence.event_kinds.is_empty() {
         println!("  event kinds: {}", evidence.event_kinds.join(", "));
+    }
+    if !evidence.canonical_flow_ids.is_empty() {
+        println!("  flows:       {}", evidence.canonical_flow_ids.join(", "));
+    }
+    if !evidence.primitive_ids.is_empty() {
+        println!("  primitives:  {}", evidence.primitive_ids.join(", "));
     }
 }
 
@@ -332,9 +339,10 @@ pub(crate) fn print_workspace_replay(replay: &WorkspaceReplay) {
         println!("  event stream:");
         for event in &replay.events {
             println!(
-                "    #{:<4} {:<26} {}",
+                "    #{:<4} {:<26} {:<10} {}",
                 event.sequence,
                 event.kind,
+                event.canonical_flow_id,
                 event.run_id.as_deref().unwrap_or("workspace")
             );
         }
@@ -354,9 +362,10 @@ pub(crate) fn print_workspace_event_feed(feed: &WorkspaceEventFeed) {
         println!("  event stream:");
         for event in &feed.events {
             println!(
-                "    #{:<4} {:<26} {}",
+                "    #{:<4} {:<26} {:<10} {}",
                 event.sequence,
                 event.kind,
+                event.canonical_flow_id,
                 event.run_id.as_deref().unwrap_or("workspace")
             );
         }

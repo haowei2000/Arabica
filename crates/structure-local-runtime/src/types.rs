@@ -65,6 +65,25 @@ impl RunEventKind {
     }
 }
 
+pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
+    match kind {
+        "workspace_opened" | "workspace_context_loaded" => ("address", "path_addressing"),
+        "prompt_received" | "run_created" => ("goal", "event_audit"),
+        "knowledge_retrieved" => ("disclose", "multi_level_disclosure"),
+        "artifact_written" | "code_change_proposed" | "run_finished" | "run_failed" => {
+            ("evidence", "reproducible_evidence")
+        }
+        "code_change_applied" => ("feedback", "event_audit"),
+        "chat_message_recorded"
+        | "agent_step_planned"
+        | "model_requested"
+        | "model_responded"
+        | "tool_call_requested"
+        | "tool_call_completed" => ("event", "event_audit"),
+        _ => ("event", "event_audit"),
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalAgentMode {
@@ -89,6 +108,8 @@ pub struct LocalEvent {
     pub run_id: Option<String>,
     pub workspace_id: String,
     pub kind: String,
+    pub canonical_flow_id: String,
+    pub primitive_id: String,
     pub payload: serde_json::Value,
     pub created_at_ms: i64,
 }
@@ -199,6 +220,8 @@ pub struct RunEvidenceSummary {
     pub artifact_paths: Vec<String>,
     pub artifacts: Vec<ArtifactRecord>,
     pub event_kinds: Vec<String>,
+    pub canonical_flow_ids: Vec<String>,
+    pub primitive_ids: Vec<String>,
     pub final_response_chars: usize,
 }
 
