@@ -195,13 +195,13 @@
           "surface_id": "cli_tui",
           "status": "native",
           "entrypoint": "structure-local artifacts list/show / structure-local proposals list/show/apply",
-          "evidence": "CLI lists artifact records, previews artifact files by artifact_id, and separates code-change proposals for review before explicit application; TUI proposal actions prefer the selected run's code-change proposal before falling back to the latest workspace proposal."
+          "evidence": "CLI lists artifact records, previews artifact files by artifact_id, prints dry-run proposal previews before explicit application, and separates code-change proposals for review; TUI proposal actions prefer the selected run's code-change proposal before falling back to the latest workspace proposal."
         },
         {
           "surface_id": "desktop_app",
           "status": "native",
           "entrypoint": "local_artifacts / read_local_artifact / apply_local_proposal",
-          "evidence": "Desktop UI previews local artifacts and the selected run's code-change proposal, then applies reviewed proposals through the Rust runtime."
+          "evidence": "Desktop UI previews local artifacts and the selected run's code-change proposal, shows dry-run proposal previews, then applies reviewed proposals through the Rust runtime."
         },
         {
           "surface_id": "web_app",

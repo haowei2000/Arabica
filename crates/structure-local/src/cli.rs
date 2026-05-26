@@ -17,7 +17,7 @@ use structure_local_core::{
     collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
 };
 use structure_local_runtime::{
-    LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunAttempt, RunRequest,
+    LocalAgentMode, LocalAgentRuntime, LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -839,22 +839,10 @@ fn handle_chat_session_command(
                 }
             };
             let result = local_result(runtime.apply_code_change_proposal(&artifact_id, dry_run))?;
-            println!(
-                "{} proposal {}",
-                if result.applied {
-                    "Applied"
-                } else {
-                    "Previewed"
-                },
-                result.artifact.artifact_id
+            print!(
+                "{}",
+                render_proposal_apply_result(&result, result.dry_run, run_id.as_deref())
             );
-            if let Some(run_id) = run_id {
-                println!("  run:         {run_id}");
-            }
-            println!("  target:      {}", result.target_path);
-            println!("  added lines: {}", result.added_lines);
-            println!("  bytes:       {}", result.bytes_written);
-            println!("  dry run:     {}", result.dry_run);
             Ok(true)
         }
         "/replay" => {
@@ -1289,23 +1277,10 @@ fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!(
-                    "{} code-change proposal {}",
-                    if result.applied {
-                        "Applied"
-                    } else {
-                        "Previewed"
-                    },
-                    result.artifact.artifact_id
+                print!(
+                    "{}",
+                    render_proposal_apply_result(&result, result.dry_run, None)
                 );
-                println!("  target:      {}", result.target_path);
-                println!("  added lines: {}", result.added_lines);
-                println!("  bytes:       {}", result.bytes_written);
-                println!("  dry run:     {}", result.dry_run);
-                if result.dry_run {
-                    println!();
-                    println!("{}", result.preview);
-                }
             }
         }
     }
@@ -1344,4 +1319,70 @@ fn run_evidence(repo_root: &PathBuf, command: EvidenceCommand) -> Result<()> {
 
 fn local_result<T>(result: std::result::Result<T, String>) -> Result<T> {
     result.map_err(|message| anyhow!(message))
+}
+
+fn render_proposal_apply_result(
+    result: &ProposalApplyResult,
+    include_preview: bool,
+    selected_run_id: Option<&str>,
+) -> String {
+    let mut text = String::new();
+    text.push_str(&format!(
+        "{} proposal {}\n",
+        if result.applied {
+            "Applied"
+        } else {
+            "Previewed"
+        },
+        result.artifact.artifact_id
+    ));
+    text.push_str(&format!(
+        "  run:         {}\n",
+        selected_run_id.unwrap_or(&result.artifact.run_id)
+    ));
+    text.push_str(&format!("  target:      {}\n", result.target_path));
+    text.push_str(&format!("  added lines: {}\n", result.added_lines));
+    text.push_str(&format!("  bytes:       {}\n", result.bytes_written));
+    text.push_str(&format!("  dry run:     {}\n", result.dry_run));
+    if include_preview {
+        text.push('\n');
+        text.push_str(&result.preview);
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_dry_run_apply_output_includes_review_preview() {
+        let result = ProposalApplyResult {
+            artifact: structure_local_runtime::ArtifactRecord {
+                artifact_id: "art_review".to_string(),
+                run_id: "run_review".to_string(),
+                workspace_id: "workspace".to_string(),
+                kind: "code_change_proposal".to_string(),
+                path: "artifacts/code_change_proposal.md".to_string(),
+                size_bytes: 128,
+                created_at_ms: 1,
+            },
+            target_path: "docs/local-code-agent-proposal.md".to_string(),
+            applied: false,
+            dry_run: true,
+            preview: "Patch preview\n+Evidence line".to_string(),
+            added_lines: 1,
+            bytes_written: 0,
+        };
+
+        let output = render_proposal_apply_result(&result, true, None);
+
+        assert!(output.contains("Previewed proposal art_review"));
+        assert!(output.contains("run:         run_review"));
+        assert!(output.contains("Patch preview"));
+        assert!(output.contains("+Evidence line"));
+    }
 }

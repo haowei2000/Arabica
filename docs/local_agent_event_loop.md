@@ -133,8 +133,9 @@ into runtime calls:
   summary, chat turn, ordered events, evidence summary, final response, and
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
-  `/last`, `/transcript [run-id]`, and `/inspect [run-id]` make run inspection
-  part of the live agent terminal instead of a separate dashboard workflow.
+  `/last`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, and
+  `/apply --dry-run` make run inspection and proposal review part of the live
+  agent terminal instead of a separate dashboard workflow.
 - Benchmarks: benchmark execution and report relinking are owned by dedicated
   adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
   app surfaces.
@@ -160,7 +161,8 @@ into runtime calls:
   appended to the desktop chat thread as local interaction turns while
   persisted agent runs still come from the Rust runtime event store.
   Proposal preview/apply controls prefer the selected run, matching the
-  transcript and event-trace selection model.
+  transcript and event-trace selection model; dry-run commands display the
+  reviewed preview before writing.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events, and the UI renders both workspace feed events
