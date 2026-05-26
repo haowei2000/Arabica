@@ -1079,6 +1079,11 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
         "Primitives: {}\n",
         transcript.evidence.primitive_ids.join(", ")
     ));
+    text.push_str(&format!(
+        "Core aligned: {} / schema {}\n",
+        transcript.evidence.core_trace.core_aligned,
+        transcript.evidence.core_trace.manifest_schema_version
+    ));
     text.push_str(&format!("Tools: {}\n", transcript.evidence.tool_call_count));
     text.push_str(&format!(
         "Artifacts: {}\n\n",

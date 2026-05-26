@@ -2,10 +2,10 @@ use crate::model::{selected_planning_provider, selected_synthesis_provider, Mode
 use crate::store::{new_id, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
-    ArtifactPreview, ArtifactRecord, ChatTurn, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentMode, LocalEvidenceBundle, LocalToolCall, LocalToolResult, ProposalApplyResult,
-    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, KnowledgeSource,
+    KnowledgeSourcePreview, LocalAgentMode, LocalEvidenceBundle, LocalToolCall, LocalToolResult,
+    ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
+    RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
 };
 use serde::Serialize;
 use std::env;
@@ -13,7 +13,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use structure_local_core::{
-    collect_snapshot, default_repo_root, verify_structure_core_parity_for_repo,
+    collect_snapshot, default_repo_root, structure_core_manifest,
+    verify_structure_core_parity_for_repo,
 };
 
 #[derive(Debug, Clone)]
@@ -531,6 +532,7 @@ impl LocalAgentRuntime {
             }
         }
 
+        let core_trace = build_core_execution_trace(&events)?;
         let final_response_chars = run
             .final_response
             .as_ref()
@@ -547,6 +549,7 @@ impl LocalAgentRuntime {
             event_kinds,
             canonical_flow_ids,
             primitive_ids,
+            core_trace,
             final_response_chars,
         })
     }
@@ -872,6 +875,50 @@ struct KnowledgePayload {
     sources: Vec<KnowledgeSource>,
 }
 
+fn build_core_execution_trace(
+    events: &[crate::types::LocalEvent],
+) -> Result<CoreExecutionTrace, String> {
+    let manifest = structure_core_manifest()?;
+    let manifest_flow_ids = manifest
+        .canonical_flow
+        .iter()
+        .map(|step| step.id.as_str())
+        .collect::<Vec<_>>();
+    let manifest_primitive_ids = manifest
+        .primitives
+        .iter()
+        .map(|primitive| primitive.id.as_str())
+        .collect::<Vec<_>>();
+    let mut flow_ids = Vec::new();
+    let mut primitive_ids = Vec::new();
+
+    for event in events {
+        push_unique_string(&mut flow_ids, &event.canonical_flow_id);
+        push_unique_string(&mut primitive_ids, &event.primitive_id);
+    }
+
+    let invalid_flow_ids = flow_ids
+        .iter()
+        .filter(|flow_id| !manifest_flow_ids.contains(&flow_id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let invalid_primitive_ids = primitive_ids
+        .iter()
+        .filter(|primitive_id| !manifest_primitive_ids.contains(&primitive_id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(CoreExecutionTrace {
+        manifest_schema_version: manifest.schema_version,
+        event_count: events.len(),
+        flow_ids,
+        primitive_ids,
+        core_aligned: invalid_flow_ids.is_empty() && invalid_primitive_ids.is_empty(),
+        invalid_flow_ids,
+        invalid_primitive_ids,
+    })
+}
+
 fn tool_call_fingerprint(call: &crate::types::LocalToolCall) -> String {
     let input = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".to_string());
     format!("{}:{input}", call.name)
@@ -909,6 +956,12 @@ fn inspected_files_from_tools(tool_results: &[LocalToolResult]) -> Vec<String> {
 fn push_unique_file(files: &mut Vec<String>, path: &str) {
     if !files.iter().any(|existing| existing == path) {
         files.push(path.to_string());
+    }
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
     }
 }
 
@@ -1372,6 +1425,17 @@ mod tests {
         assert!(evidence
             .primitive_ids
             .contains(&"multi_level_disclosure".to_string()));
+        assert!(evidence.core_trace.core_aligned);
+        assert_eq!(
+            evidence.core_trace.manifest_schema_version,
+            "2026.05".to_string()
+        );
+        assert!(evidence
+            .core_trace
+            .flow_ids
+            .contains(&"disclose".to_string()));
+        assert!(evidence.core_trace.invalid_flow_ids.is_empty());
+        assert!(evidence.core_trace.invalid_primitive_ids.is_empty());
         let transcript = runtime.run_transcript(&result.run.run_id).unwrap();
         assert_eq!(transcript.run.run_id, result.run.run_id);
         assert!(transcript
@@ -1384,6 +1448,7 @@ mod tests {
             .evidence
             .canonical_flow_ids
             .contains(&"disclose".to_string()));
+        assert!(transcript.evidence.core_trace.core_aligned);
 
         fs::remove_dir_all(root).unwrap();
     }

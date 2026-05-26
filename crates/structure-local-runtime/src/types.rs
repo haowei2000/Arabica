@@ -222,7 +222,19 @@ pub struct RunEvidenceSummary {
     pub event_kinds: Vec<String>,
     pub canonical_flow_ids: Vec<String>,
     pub primitive_ids: Vec<String>,
+    pub core_trace: CoreExecutionTrace,
     pub final_response_chars: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoreExecutionTrace {
+    pub manifest_schema_version: String,
+    pub event_count: usize,
+    pub flow_ids: Vec<String>,
+    pub primitive_ids: Vec<String>,
+    pub invalid_flow_ids: Vec<String>,
+    pub invalid_primitive_ids: Vec<String>,
+    pub core_aligned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

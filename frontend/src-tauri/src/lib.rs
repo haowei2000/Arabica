@@ -549,6 +549,11 @@ mod tests {
                 .evidence
                 .primitive_ids
                 .contains(&"reproducible_evidence".to_string()));
+            assert!(transcript.evidence.core_trace.core_aligned);
+            assert_eq!(
+                transcript.evidence.core_trace.manifest_schema_version,
+                "2026.05"
+            );
             assert!(transcript
                 .events
                 .iter()

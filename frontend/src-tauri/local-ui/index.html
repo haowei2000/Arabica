@@ -1828,6 +1828,7 @@ Artifacts: ${evidence.artifact_paths.length}
 Response chars: ${evidence.final_response_chars}
 Flows: ${evidence.canonical_flow_ids?.join(", ") || "none"}
 Primitives: ${evidence.primitive_ids?.join(", ") || "none"}
+Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}
 
 Sources
 ${evidence.knowledge_sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources used."}
@@ -1988,7 +1989,8 @@ Events: ${evidence.event_count}
 Tools: ${evidence.tool_call_count}
 Artifacts: ${evidence.artifact_paths.length}
 Flows: ${evidence.canonical_flow_ids.join(", ")}
-Primitives: ${evidence.primitive_ids.join(", ")}`;
+Primitives: ${evidence.primitive_ids.join(", ")}
+Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}`;
             return true;
           }
           case "/source":

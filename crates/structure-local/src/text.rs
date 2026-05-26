@@ -226,6 +226,15 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     println!("  tools:     {}", evidence.tool_call_count);
     println!("  knowledge: {}", evidence.knowledge_sources.len());
     println!("  response:  {} chars", evidence.final_response_chars);
+    println!(
+        "  core:      {} / schema {}",
+        if evidence.core_trace.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        },
+        evidence.core_trace.manifest_schema_version
+    );
     if !evidence.artifact_paths.is_empty() {
         println!("  artifacts:");
         for artifact in &evidence.artifacts {
@@ -273,6 +282,15 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
     println!(
         "  primitives: {}",
         transcript.evidence.primitive_ids.join(", ")
+    );
+    println!(
+        "  core:      {} / schema {}",
+        if transcript.evidence.core_trace.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        },
+        transcript.evidence.core_trace.manifest_schema_version
     );
     println!("  tools:     {}", transcript.evidence.tool_call_count);
     println!("  artifacts: {}", transcript.evidence.artifact_paths.len());

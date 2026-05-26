@@ -127,7 +127,10 @@ into runtime calls:
   used by run replay. Each local event is enriched with `canonical_flow_id` and
   `primitive_id`, mapping the local run trajectory back to
   `core/structure_core.json` (`goal`, `address`, `disclose`, `event`,
-  `evidence`, and `feedback`).
+  `evidence`, and `feedback`). `RunEvidenceSummary` also includes a
+  `CoreExecutionTrace` that validates those flow and primitive references
+  against the current Structure core manifest and marks the run `core_aligned`
+  only when no drift is detected.
 - CLI transcript: `uv run structure runs transcript <run-id> --json` returns the
   shared run inspection object used by both local surfaces. It combines the run
   summary, chat turn, ordered events, evidence summary, final response, and
