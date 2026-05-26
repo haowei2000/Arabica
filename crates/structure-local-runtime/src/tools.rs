@@ -15,7 +15,10 @@ pub struct BuiltinLocalToolRegistry {
 impl BuiltinLocalToolRegistry {
     pub fn new(repo_root: impl AsRef<Path>) -> Self {
         Self {
-            repo_root: repo_root.as_ref().to_path_buf(),
+            repo_root: repo_root
+                .as_ref()
+                .canonicalize()
+                .unwrap_or_else(|_| repo_root.as_ref().to_path_buf()),
         }
     }
 
@@ -32,6 +35,9 @@ impl BuiltinLocalToolRegistry {
 
         for entry in read_dir.take(max_entries) {
             let entry = entry.map_err(|err| format!("failed to inspect workspace entry: {err}"))?;
+            if is_sensitive_repo_path(&entry.path()) {
+                continue;
+            }
             let metadata = entry
                 .metadata()
                 .map_err(|err| format!("failed to inspect workspace metadata: {err}"))?;
@@ -91,6 +97,9 @@ impl BuiltinLocalToolRegistry {
             .unwrap_or(8192)
             .min(128 * 1024) as usize;
         let absolute = safe_repo_path(&self.repo_root, path)?;
+        if is_sensitive_repo_path(&absolute) {
+            return Err("refusing to read sensitive local configuration file".to_string());
+        }
         let text = fs::read_to_string(&absolute)
             .map_err(|err| format!("failed to read repo file: {err}"))?;
         let preview = text.chars().take(max_bytes).collect::<String>();
@@ -215,7 +224,11 @@ fn search_dir(
             .map_err(|err| format!("failed to inspect repo metadata: {err}"))?;
         if metadata.is_dir() {
             search_dir(repo_root, &path, query, max_matches, matches)?;
-        } else if metadata.is_file() && metadata.len() <= 1_000_000 && is_searchable_path(&path) {
+        } else if metadata.is_file()
+            && metadata.len() <= 1_000_000
+            && is_searchable_path(&path)
+            && !is_sensitive_repo_path(&path)
+        {
             search_file(repo_root, &path, query, max_matches, matches)?;
         }
     }
@@ -273,6 +286,21 @@ fn is_searchable_path(path: &Path) -> bool {
     )
 }
 
+fn is_sensitive_repo_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if matches!(name, ".env.example" | "example.env") {
+        return false;
+    }
+    name == ".env"
+        || name.starts_with(".env.")
+        || name.ends_with(".env")
+        || name.ends_with(".env.local")
+        || name.contains("secret")
+        || name.contains("credential")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,19 +309,18 @@ mod tests {
     fn builtin_registry_lists_workspace() {
         let root = unique_temp_dir("tools");
         fs::write(root.join("note.md"), "hello").unwrap();
+        fs::write(root.join(".env"), "OPENAI__API_KEY=secret").unwrap();
         let registry = BuiltinLocalToolRegistry::new(&root);
         let result = registry.execute(&LocalToolCall {
             call_id: "tool_test".to_string(),
             name: "list_workspace".to_string(),
-            input: serde_json::json!({ "max_entries": 4 }),
+            input: serde_json::json!({ "max_entries": 8 }),
         });
 
         assert!(result.success);
-        assert!(result.output["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| { entry["name"] == "note.md" }));
+        let entries = result.output["entries"].as_array().unwrap();
+        assert!(entries.iter().any(|entry| { entry["name"] == "note.md" }));
+        assert!(!entries.iter().any(|entry| { entry["name"] == ".env" }));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -302,6 +329,7 @@ mod tests {
     fn builtin_registry_searches_repo_text() {
         let root = unique_temp_dir("search");
         fs::write(root.join("runtime.rs"), "pub struct LocalAgentRuntime;\n").unwrap();
+        fs::write(root.join("secret.env"), "LocalAgentRuntime secret\n").unwrap();
         let registry = BuiltinLocalToolRegistry::new(&root);
         let result = registry.execute(&LocalToolCall {
             call_id: "tool_search".to_string(),
@@ -311,6 +339,26 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.output["match_count"], 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn builtin_registry_refuses_sensitive_repo_reads() {
+        let root = unique_temp_dir("sensitive");
+        fs::write(root.join(".env"), "OPENAI__API_KEY=secret").unwrap();
+        let registry = BuiltinLocalToolRegistry::new(&root);
+        let result = registry.execute(&LocalToolCall {
+            call_id: "tool_read".to_string(),
+            name: "read_repo_file".to_string(),
+            input: serde_json::json!({ "path": ".env" }),
+        });
+
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("refusing to read sensitive local configuration file")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

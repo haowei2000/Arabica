@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use structure_local_core::{
     collect_snapshot, default_repo_root, product_surfaces, snapshot_json, structure_core_manifest,
 };
-use structure_local_runtime::{LocalAgentMode, LocalAgentRuntime, RunRequest};
+use structure_local_runtime::{
+    BuiltinLocalToolRegistry, LocalAgentMode, LocalAgentRuntime, LocalToolCall, LocalToolRegistry,
+    RunRequest,
+};
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
 
@@ -443,7 +446,7 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
     );
     println!("  mode:      {}", session_mode_label(&state.mode));
     println!(
-        "  commands:  /help, /mode, /workspace, /source, /sources, /runs, /events, /proposal, /quit"
+        "  commands:  /help, /mode, /workspace, /ls, /search, /read, /source, /runs, /proposal, /quit"
     );
     println!();
 
@@ -544,6 +547,48 @@ fn handle_chat_session_command(
             print_knowledge_sources(&sources);
             Ok(true)
         }
+        "/ls" => {
+            let result = execute_session_tool(
+                runtime,
+                "list_workspace",
+                serde_json::json!({ "max_entries": 32 }),
+            );
+            print_tool_result(result)?;
+            Ok(true)
+        }
+        "/search" => {
+            let query = parts.collect::<Vec<_>>().join(" ");
+            if query.trim().is_empty() {
+                println!("Usage: /search <query>");
+                return Ok(true);
+            }
+            let result = execute_session_tool(
+                runtime,
+                "search_repo",
+                serde_json::json!({
+                    "query": query,
+                    "max_matches": 20,
+                }),
+            );
+            print_tool_result(result)?;
+            Ok(true)
+        }
+        "/read" | "/open" => {
+            let Some(path) = parts.next() else {
+                println!("Usage: /read <repo-relative-path>");
+                return Ok(true);
+            };
+            let result = execute_session_tool(
+                runtime,
+                "read_repo_file",
+                serde_json::json!({
+                    "path": path,
+                    "max_bytes": PREVIEW_MAX_BYTES,
+                }),
+            );
+            print_tool_result(result)?;
+            Ok(true)
+        }
         "/runs" => {
             let runs = local_result(runtime.list_runs(state.workspace_id.as_deref(), 8))?;
             print_runs(&runs);
@@ -625,6 +670,9 @@ fn print_chat_session_help() {
     println!("Structure local session commands");
     println!("  /mode chat|code       Switch between chat and code-agent mode");
     println!("  /workspace [id]       Show or open/create a workspace");
+    println!("  /ls                   List top-level workspace entries");
+    println!("  /search <query>       Search repo text through local tools");
+    println!("  /read <path>          Read a repo-relative file safely");
     println!("  /source <path>        Register a knowledge file for this workspace");
     println!("  /sources              List workspace knowledge sources");
     println!("  /runs                 List recent runs in this workspace");
@@ -634,6 +682,93 @@ fn print_chat_session_help() {
     println!("  /proposal [run_id]    Show the latest code-change proposal");
     println!("  /replay               Replay workspace event stream");
     println!("  /quit                 Exit");
+}
+
+fn execute_session_tool(
+    runtime: &LocalAgentRuntime,
+    name: &str,
+    input: serde_json::Value,
+) -> structure_local_runtime::LocalToolResult {
+    let registry = BuiltinLocalToolRegistry::new(runtime.repo_root());
+    registry.execute(&LocalToolCall {
+        call_id: format!("session_{name}"),
+        name: name.to_string(),
+        input,
+    })
+}
+
+fn print_tool_result(result: structure_local_runtime::LocalToolResult) -> Result<()> {
+    if !result.success {
+        println!(
+            "{} failed: {}",
+            result.name,
+            result.error.as_deref().unwrap_or("unknown error")
+        );
+        return Ok(());
+    }
+
+    match result.name.as_str() {
+        "search_repo" => {
+            let query = result
+                .output
+                .get("query")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let matches = result
+                .output
+                .get("matches")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            println!("Search: {query}");
+            if matches.is_empty() {
+                println!("No matches.");
+            }
+            for item in matches {
+                let path = item
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("<unknown>");
+                let line = item
+                    .get("line")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or_default();
+                let text = item
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                println!("  {path}:{line}: {text}");
+            }
+        }
+        "read_repo_file" | "read_knowledge_source" => {
+            let path = result
+                .output
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<unknown>");
+            let chars = result
+                .output
+                .get("chars_returned")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            let truncated = result
+                .output
+                .get("truncated")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let preview = result
+                .output
+                .get("preview")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            println!("{path} ({chars} chars, truncated: {truncated})");
+            println!("{preview}");
+        }
+        _ => {
+            println!("{}", serde_json::to_string_pretty(&result.output)?);
+        }
+    }
+    Ok(())
 }
 
 fn print_chat_turn(result: &structure_local_runtime::RunResult) {
