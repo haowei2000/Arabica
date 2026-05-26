@@ -842,6 +842,20 @@ fn handle_chat_session_command(
             println!("  file: {}", source.path);
             Ok(true)
         }
+        "/remember" => {
+            let memory = command_body.trim();
+            if memory.is_empty() {
+                println!("Usage: /remember <text to add to workspace knowledge>");
+                return Ok(true);
+            }
+            let source = local_result(
+                runtime.add_text_knowledge_source(state.workspace_id.clone(), memory),
+            )?;
+            println!("Remembered workspace knowledge");
+            println!("  id:   {}", source.source_id);
+            println!("  file: {}", source.path);
+            Ok(true)
+        }
         "/sources" => {
             let sources =
                 local_result(runtime.knowledge_sources(state.workspace_id.as_deref(), 8))?;
@@ -1156,6 +1170,7 @@ fn print_chat_session_help() {
     println!("  /read <path>          Read a repo-relative file safely");
     println!("  /cmd <argv...>        Run an allowlisted local check command");
     println!("  /source <path>        Register a knowledge file for this workspace");
+    println!("  /remember <text>      Persist text as local workspace knowledge");
     println!("  /sources              List workspace knowledge sources");
     println!("  /runs                 List recent runs in this workspace");
     println!("  /select <run_id>      Select a run for follow-up inspection");
@@ -1175,7 +1190,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
+    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /runs, /continue, /usage, /transcript, /proposal, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1830,6 +1845,7 @@ mod tests {
         assert!(summary.contains("/context"));
         assert!(summary.contains("/continue"));
         assert!(summary.contains("/usage"));
+        assert!(summary.contains("/remember"));
         assert!(!summary.contains("benchmark"));
     }
 

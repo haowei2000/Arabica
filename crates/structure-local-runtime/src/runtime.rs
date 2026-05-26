@@ -214,6 +214,47 @@ impl LocalAgentRuntime {
         Ok(source)
     }
 
+    pub fn add_text_knowledge_source(
+        &self,
+        workspace_id: Option<String>,
+        text: &str,
+    ) -> Result<KnowledgeSource, String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("knowledge text must not be empty".to_string());
+        }
+        if text.len() > 64_000 {
+            return Err("knowledge text must be 64000 bytes or less".to_string());
+        }
+        let workspace = self.store.ensure_workspace(workspace_id, &self.repo_root)?;
+        let knowledge_dir = self
+            .runtime_dir
+            .join("knowledge")
+            .join(safe_path_component(&workspace.workspace_id));
+        fs::create_dir_all(&knowledge_dir)
+            .map_err(|err| format!("failed to create local knowledge directory: {err}"))?;
+        let path = knowledge_dir.join(format!("memory_{}.md", new_id("note")));
+        let content = format!(
+            "# Local Agent Memory\n\nWorkspace: `{}`\n\n{}\n",
+            workspace.workspace_id, text
+        );
+        fs::write(&path, content)
+            .map_err(|err| format!("failed to write local knowledge memory: {err}"))?;
+        let source = self
+            .store
+            .add_knowledge_source(&workspace.workspace_id, &path)?;
+        self.store.append_event(
+            &workspace.workspace_id,
+            None,
+            RunEventKind::WorkspaceContextLoaded,
+            &serde_json::json!({
+                "action": "knowledge_text_remembered",
+                "source": source,
+            }),
+        )?;
+        Ok(source)
+    }
+
     pub fn knowledge_sources(
         &self,
         workspace_id: Option<&str>,
@@ -1057,6 +1098,24 @@ fn run_mode_from_events(events: &[LocalEvent]) -> Option<String> {
             .map(ToOwned::to_owned),
         _ => None,
     })
+}
+
+fn safe_path_component(value: &str) -> String {
+    let component = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if component.is_empty() {
+        "default".to_string()
+    } else {
+        component
+    }
 }
 
 fn load_openai_env_file(repo_root: &Path) -> Result<(), String> {
@@ -2217,6 +2276,42 @@ mod tests {
             .canonical_flow_ids
             .contains(&"disclose".to_string()));
         assert!(transcript.evidence.core_trace.core_aligned);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_remembers_text_as_workspace_knowledge() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("remember-text");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let source = runtime
+            .add_text_knowledge_source(
+                Some("memory".to_string()),
+                "The local agent should remember the phrase violet archive.",
+            )
+            .unwrap();
+
+        assert_eq!(source.workspace_id, "memory");
+        assert!(source.path.contains(".structure/local/knowledge/memory"));
+        assert!(source.title.starts_with("memory_note_"));
+        let preview = runtime
+            .read_knowledge_source(&source.source_id, 10_000)
+            .unwrap();
+        assert!(preview.preview.contains("violet archive"));
+        let events = runtime
+            .workspace_event_feed(Some("memory"), Some(0), 20)
+            .unwrap()
+            .events;
+        assert!(events.iter().any(|event| {
+            event.kind == "workspace_context_loaded"
+                && event.payload.get("action").and_then(|value| value.as_str())
+                    == Some("knowledge_text_remembered")
+        }));
+        let context = runtime
+            .agent_context(Some("memory"), Some(LocalAgentMode::Chat))
+            .unwrap();
+        assert_eq!(context.knowledge_sources.len(), 1);
 
         fs::remove_dir_all(root).unwrap();
     }

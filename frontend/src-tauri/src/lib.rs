@@ -301,6 +301,15 @@ fn add_local_knowledge(
 }
 
 #[tauri::command]
+fn remember_local_knowledge(
+    text: String,
+    workspace_id: Option<String>,
+) -> Result<structure_local_runtime::KnowledgeSource, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.add_text_knowledge_source(workspace_id, &text)
+}
+
+#[tauri::command]
 fn local_knowledge(
     workspace_id: Option<String>,
     limit: Option<usize>,
@@ -412,6 +421,7 @@ pub fn run() {
             local_workspace_event_feed,
             local_evidence_bundle,
             add_local_knowledge,
+            remember_local_knowledge,
             local_knowledge,
             local_knowledge_source,
             read_local_knowledge_source,
@@ -675,6 +685,7 @@ mod tests {
         assert!(local_ui.contains("function renderEvidenceText(evidence)"));
         assert!(local_ui.contains("function renderAgentContextText(context)"));
         assert!(local_ui.contains("case \"/context\":"));
+        assert!(local_ui.contains("case \"/remember\":"));
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
         assert!(local_ui.contains("Worktree Changes"));
@@ -786,6 +797,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
         assert!(local_ui.contains("invoke(\"local_session_status\""));
         assert!(local_ui.contains("invoke(\"local_agent_context\""));
+        assert!(local_ui.contains("invoke(\"remember_local_knowledge\""));
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
         assert!(!local_ui.contains("fetch("));

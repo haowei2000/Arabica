@@ -1305,6 +1305,11 @@
         return invoke("add_local_knowledge", { path, workspaceId: activeWorkspaceId() });
       }
 
+      async function rememberKnowledge(text) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("remember_local_knowledge", { text, workspaceId: activeWorkspaceId() });
+      }
+
       async function localKnowledge() {
         if (!invoke) return [];
         return invoke("local_knowledge", { workspaceId: activeWorkspaceId(), limit: 8 });
@@ -2431,6 +2436,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /evidence [run_id]
 /usage [run_id]
 /source <absolute-path>
+/remember <text>
 /sources
 /search <query>
 /read <repo-relative-path>
@@ -2591,6 +2597,19 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
             }
             const source = await addKnowledge(path);
             eventLogEl.textContent = `Knowledge Source Added
+${source.source_id}
+${source.path}`;
+            await refresh();
+            return true;
+          }
+          case "/remember": {
+            const text = parts.join(" ").trim();
+            if (!text) {
+              eventLogEl.textContent = "Usage: /remember <text>";
+              return true;
+            }
+            const source = await rememberKnowledge(text);
+            eventLogEl.textContent = `Workspace Knowledge Remembered
 ${source.source_id}
 ${source.path}`;
             await refresh();

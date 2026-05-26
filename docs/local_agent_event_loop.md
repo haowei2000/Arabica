@@ -204,6 +204,10 @@ into runtime calls:
   full transcript.
   Interactive `/apply` defaults to dry-run; writing requires an explicit
   `--yes`.
+  `/remember <text>` persists a short text note into the local workspace
+  knowledge directory and registers it as a normal `KnowledgeSource`, so later
+  runs retrieve it through the same Structure context path as file-backed
+  knowledge.
 - CLI mode selection: noninteractive `uv run structure chat` and
   `uv run structure run` accept `--mode chat|code_agent` so scripts can choose
   conversational or code-agent behavior without bypassing the same
@@ -266,6 +270,8 @@ into runtime calls:
   open in Preview, the desktop app exposes Dry Run and Apply actions directly
   on that review surface, so the user-facing app completes the inspect ->
   review -> apply loop without falling back to terminal-style service controls.
+  Desktop `/remember <text>` mirrors the CLI knowledge-memory path and stores
+  text as local workspace knowledge before refresh.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events. A `read_repo_file` preview can be attached to
