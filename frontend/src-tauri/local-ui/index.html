@@ -1639,6 +1639,33 @@ Error: ${diagnostic.error ?? "none"}`;
           inspect.type = "button";
           inspect.textContent = "Inspect";
           inspect.addEventListener("click", () => selectRun(turn));
+          const continueRun = document.createElement("button");
+          continueRun.type = "button";
+          continueRun.textContent = "Continue";
+          continueRun.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            const extraInstruction = agentPromptEl.value.trim().startsWith("/")
+              ? ""
+              : agentPromptEl.value.trim();
+            setAgentBusy(true);
+            try {
+              await performContinuationRun(turn.run_id, extraInstruction);
+              if (extraInstruction) {
+                agentPromptEl.value = "";
+              }
+            } catch (error) {
+              eventLogEl.textContent = String(error);
+              setInFlightRun(
+                extraInstruction || `Continue from ${turn.run_id}`,
+                "failed",
+                String(error),
+              );
+            } finally {
+              stopLiveEventPolling();
+              setAgentBusy(false);
+            }
+          });
           const proposal = document.createElement("button");
           proposal.type = "button";
           proposal.textContent = "Proposal";
@@ -1648,7 +1675,7 @@ Error: ${diagnostic.error ?? "none"}`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, proposal);
+          actions.append(meta, inspect, continueRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2058,6 +2085,48 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function performContinuationRun(runId, extraInstruction = "") {
+        eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
+        setInFlightRun(
+          extraInstruction || `Continue from ${runId}`,
+          "running",
+          `Continuing from ${runId} in ${state.agentMode} mode...`,
+        );
+        await primeWorkspaceEventCursor();
+        startLiveEventPolling();
+        const attempt = await continueLocalAgentAttempt(runId, extraInstruction);
+        await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
+        state.workspaceEventCursor = Math.max(
+          state.workspaceEventCursor,
+          ...attempt.events.map((runEvent) => runEvent.sequence),
+        );
+        state.selectedRunId = attempt.run.run_id;
+        renderEventTimeline(attempt.events, attempt.run.run_id, true);
+        const result = attempt.result;
+        eventLogEl.textContent = `Continuation Run: ${attempt.run.run_id}
+Continued From: ${runId}
+Workspace: ${attempt.run.workspace_id}
+Status: ${attempt.run.status}
+Mode: ${state.agentMode}
+${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
+
+Events
+${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
+        setInFlightRun(
+          extraInstruction || `Continue from ${runId}`,
+          attempt.run.status,
+          result
+            ? result.final_response.slice(0, 2400)
+            : `Continuation failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+        );
+        await refresh();
+        clearInFlightRun();
+        if (!result) {
+          eventLogEl.textContent += "\n\nThe failed continuation is still recorded and visible in the event trace.";
+        }
+        return attempt;
+      }
+
       function parseCommandLine(input) {
         const tokens = input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
         return tokens.map((token) => token.replace(/^"|"$/g, ""));
@@ -2192,43 +2261,10 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
               eventLogEl.textContent = "No run selected. Run a prompt or use /continue <run_id> [instruction].";
               return true;
             }
-            eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
-            setInFlightRun(
-              extraInstruction || `Continue from ${runId}`,
-              "running",
-              `Continuing from ${runId} in ${state.agentMode} mode...`,
-            );
-            await primeWorkspaceEventCursor();
-            startLiveEventPolling();
-            const attempt = await continueLocalAgentAttempt(runId, extraInstruction);
-            await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
-            state.workspaceEventCursor = Math.max(
-              state.workspaceEventCursor,
-              ...attempt.events.map((runEvent) => runEvent.sequence),
-            );
-            state.selectedRunId = attempt.run.run_id;
-            renderEventTimeline(attempt.events, attempt.run.run_id, true);
-            const result = attempt.result;
-            eventLogEl.textContent = `Continuation Run: ${attempt.run.run_id}
-Continued From: ${runId}
-Workspace: ${attempt.run.workspace_id}
-Status: ${attempt.run.status}
-Mode: ${state.agentMode}
-${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
-
-Events
-${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
-            setInFlightRun(
-              extraInstruction || `Continue from ${runId}`,
-              attempt.run.status,
-              result
-                ? result.final_response.slice(0, 2400)
-                : `Continuation failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
-            );
-            await refresh();
-            clearInFlightRun();
-            if (!result) {
-              eventLogEl.textContent += "\n\nThe failed continuation is still recorded and visible in the event trace.";
+            try {
+              await performContinuationRun(runId, extraInstruction);
+            } finally {
+              stopLiveEventPolling();
             }
             return true;
           }

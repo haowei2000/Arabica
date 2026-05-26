@@ -679,6 +679,8 @@ mod tests {
         assert!(local_ui.contains("case \"/continue\":"));
         assert!(local_ui.contains("case \"/resume\":"));
         assert!(local_ui.contains("continueLocalAgentAttempt"));
+        assert!(local_ui.contains("function performContinuationRun"));
+        assert!(local_ui.contains("continueRun.textContent = \"Continue\""));
     }
 
     #[test]

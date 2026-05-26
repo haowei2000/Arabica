@@ -219,8 +219,11 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/proposal actions so chat history remains a
-  navigable view over run evidence rather than a detached transcript.
+  thread exposes per-turn inspect/continue/proposal actions so chat history
+  remains a navigable view over run evidence rather than a detached transcript.
+  The per-turn Continue button uses the current composer text as an optional
+  continuation instruction, matching the slash-command path while keeping
+  normal chat interaction mouse-accessible.
   Command results are appended to the desktop chat thread as local interaction
   turns while
   persisted agent runs still come from the Rust runtime event store.
