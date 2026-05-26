@@ -150,6 +150,10 @@ into runtime calls:
   `local_workspaces` back the native workspace selector.
   `local_workspace_event_feed` powers the Poll Events action and live in-flight
   run polling from a persisted cursor.
+  The composer accepts slash commands such as `/mode`, `/workspace`, `/runs`,
+  `/transcript`, `/search`, `/read`, `/source`, `/artifacts`, and `/proposal`,
+  so desktop interaction can stay in the chat/code-agent loop instead of
+  becoming a separate operator dashboard.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events, and the UI renders both workspace feed events

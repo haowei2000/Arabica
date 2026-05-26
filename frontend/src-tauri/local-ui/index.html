@@ -1720,6 +1720,220 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
         }
       }
 
+      function parseCommandLine(input) {
+        const tokens = input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+        return tokens.map((token) => token.replace(/^"|"$/g, ""));
+      }
+
+      function commandRunId(parts) {
+        return parts[0] ?? state.selectedRunId ?? state.runs[0]?.run_id ?? null;
+      }
+
+      function renderDesktopCommandHelp() {
+        eventLogEl.textContent = `Desktop Agent Commands
+/mode chat|code
+/workspace <id>
+/runs
+/select <run_id>
+/last
+/transcript [run_id]
+/inspect [run_id]
+/events [run_id]
+/evidence [run_id]
+/source <absolute-path>
+/sources
+/search <query>
+/read <repo-relative-path>
+/cmd <allowlisted command>
+/artifacts
+/proposal [run_id]
+/replay`;
+      }
+
+      async function handleComposerCommand(input) {
+        const [command = "", ...parts] = parseCommandLine(input);
+        switch (command) {
+          case "/help":
+            renderDesktopCommandHelp();
+            return true;
+          case "/mode": {
+            const mode = parts[0];
+            if (mode === "chat") {
+              state.agentMode = "chat";
+              agentModeEl.value = "chat";
+            } else if (mode === "code" || mode === "code_agent") {
+              state.agentMode = "code_agent";
+              agentModeEl.value = "code_agent";
+            }
+            eventLogEl.textContent = `Mode: ${state.agentMode === "chat" ? "chat" : "code agent"}`;
+            if (state.snapshot) renderSnapshot(state.snapshot);
+            return true;
+          }
+          case "/workspace":
+          case "/ws": {
+            const workspaceId = parts[0];
+            if (!workspaceId) {
+              eventLogEl.textContent = `Workspace: ${activeWorkspaceId()}`;
+              return true;
+            }
+            const workspace = await createLocalWorkspace(workspaceId);
+            state.activeWorkspaceId = workspace.workspace_id;
+            state.workspaceEventCursor = 0;
+            state.workspaceFeedEvents = [];
+            eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
+            await refresh();
+            return true;
+          }
+          case "/runs": {
+            const runs = await localRuns();
+            state.runs = runs;
+            renderRuns(runs);
+            eventLogEl.textContent = `Recent Runs
+${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") || "No runs recorded."}`;
+            return true;
+          }
+          case "/select": {
+            const runId = parts[0];
+            if (!runId) {
+              eventLogEl.textContent = "Usage: /select <run_id>";
+              return true;
+            }
+            const run = await localRun(runId);
+            state.selectedRunId = run.run_id;
+            await selectRun(run);
+            return true;
+          }
+          case "/last": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const run = await localRun(runId);
+            await selectRun(run);
+            return true;
+          }
+          case "/transcript":
+          case "/inspect": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            await selectRun({ run_id: runId });
+            return true;
+          }
+          case "/events": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const events = await localRunEvents(runId);
+            renderEventTimeline(events, runId, true);
+            eventLogEl.textContent = `Events
+${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`).join("\n")}`;
+            return true;
+          }
+          case "/evidence": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const evidence = await localRunEvidence(runId);
+            eventLogEl.textContent = `Evidence
+Run: ${evidence.run.run_id}
+Status: ${evidence.run.status}
+Events: ${evidence.event_count}
+Tools: ${evidence.tool_call_count}
+Artifacts: ${evidence.artifact_paths.length}
+Flows: ${evidence.canonical_flow_ids.join(", ")}
+Primitives: ${evidence.primitive_ids.join(", ")}`;
+            return true;
+          }
+          case "/source":
+          case "/knowledge": {
+            const path = parts[0];
+            if (!path) {
+              eventLogEl.textContent = "Usage: /source <absolute-path>";
+              return true;
+            }
+            const source = await addKnowledge(path);
+            eventLogEl.textContent = `Knowledge Source Added
+${source.source_id}
+${source.path}`;
+            await refresh();
+            return true;
+          }
+          case "/sources": {
+            const sources = await localKnowledge();
+            renderKnowledge(sources);
+            eventLogEl.textContent = `Knowledge Sources
+${sources.map((source) => `${source.source_id} / ${source.title} / ${source.path}`).join("\n") || "No knowledge sources registered."}`;
+            return true;
+          }
+          case "/search": {
+            const query = parts.join(" ");
+            if (!query) {
+              eventLogEl.textContent = "Usage: /search <query>";
+              return true;
+            }
+            renderRepoToolResult(await searchRepo(query));
+            return true;
+          }
+          case "/read":
+          case "/open": {
+            const path = parts[0];
+            if (!path) {
+              eventLogEl.textContent = "Usage: /read <repo-relative-path>";
+              return true;
+            }
+            renderRepoToolResult(await readRepoFile(path));
+            return true;
+          }
+          case "/cmd": {
+            if (!parts.length) {
+              eventLogEl.textContent = "Usage: /cmd <allowlisted command>";
+              return true;
+            }
+            renderRepoToolResult(await runRepoCommand(parts));
+            return true;
+          }
+          case "/artifacts": {
+            const artifacts = await localArtifacts();
+            state.artifacts = artifacts;
+            renderReports();
+            eventLogEl.textContent = `Artifacts
+${artifacts.map((artifact) => `${artifact.artifact_id} / ${artifact.kind} / ${artifact.path}`).join("\n") || "No artifacts recorded."}`;
+            return true;
+          }
+          case "/proposal":
+          case "/diff": {
+            const runId = parts[0] ?? state.selectedRunId ?? null;
+            const proposal = await latestProposal(runId);
+            renderArtifactPreview(proposal);
+            eventLogEl.textContent = `Code Change Proposal
+Artifact: ${proposal.artifact.artifact_id}
+Run: ${proposal.artifact.run_id}
+Path: ${proposal.artifact.path}`;
+            return true;
+          }
+          case "/replay": {
+            const replay = await localWorkspaceReplay();
+            renderEventTimeline(replay.events, null, false);
+            eventLogEl.textContent = `Workspace Replay
+Workspace: ${replay.workspace_id}
+Events: ${replay.events.length}
+Last sequence: ${replay.last_sequence ?? 0}`;
+            return true;
+          }
+          default:
+            eventLogEl.textContent = `Unknown command: ${command}`;
+            return true;
+        }
+      }
+
       function renderCoreContract(manifest, parityReport = null) {
         coreVersionEl.textContent = manifest.schema_version ?? "--";
         coreContractEl.replaceChildren();
@@ -2158,6 +2372,20 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           eventLogEl.textContent = "Prompt is required.";
           return;
         }
+        if (prompt.startsWith("/")) {
+          setAgentBusy(true);
+          try {
+            const handled = await handleComposerCommand(prompt);
+            if (handled) {
+              agentPromptEl.value = "";
+            }
+          } catch (error) {
+            eventLogEl.textContent = String(error);
+          } finally {
+            setAgentBusy(false);
+          }
+          return;
+        }
         setAgentBusy(true);
         eventLogEl.textContent = `Running Structure local event loop in ${state.agentMode} mode...`;
         try {
@@ -2199,6 +2427,12 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         } finally {
           stopLiveEventPolling();
           setAgentBusy(false);
+        }
+      });
+      agentPromptEl.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.preventDefault();
+          runFormEl.requestSubmit();
         }
       });
       knowledgeFormEl.addEventListener("submit", async (event) => {
