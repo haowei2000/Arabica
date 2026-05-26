@@ -228,8 +228,10 @@ into runtime calls:
   turns while
   persisted agent runs still come from the Rust runtime event store.
   Proposal preview/apply controls prefer the selected run, matching the
-  transcript and event-trace selection model; dry-run commands display the
-  reviewed preview before writing.
+  transcript and event-trace selection model. When a code-change proposal is
+  open in Preview, the desktop app exposes Dry Run and Apply actions directly
+  on that review surface, so the user-facing app completes the inspect ->
+  review -> apply loop without falling back to terminal-style service controls.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events, and the UI renders both workspace feed events

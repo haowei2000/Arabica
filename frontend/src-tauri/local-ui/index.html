@@ -647,6 +647,34 @@
         margin-bottom: 14px;
       }
 
+      .preview-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .preview-actions[hidden] {
+        display: none;
+      }
+
+      .preview-actions button {
+        min-height: 36px;
+        padding: 0 11px;
+        font-size: 12px;
+      }
+
+      .preview-actions button[hidden] {
+        display: none;
+      }
+
+      .preview-actions button[data-primary="true"] {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #081018;
+      }
+
       .count {
         color: var(--muted);
         font-size: 13px;
@@ -1003,7 +1031,11 @@
                 <h3 id="preview-title">Preview</h3>
                 <p id="preview-meta" class="muted">No file selected</p>
               </div>
-              <button id="clear-preview" type="button" hidden>Clear</button>
+              <div id="preview-actions" class="preview-actions" hidden>
+                <button id="preview-dry-run" type="button">Dry Run</button>
+                <button id="preview-apply" type="button" data-primary="true">Apply</button>
+                <button id="clear-preview" type="button">Clear</button>
+              </div>
             </div>
             <div id="preview-empty" class="empty">No preview open.</div>
             <div id="report-summary" class="report-summary" hidden></div>
@@ -1018,6 +1050,9 @@
       const previewEl = document.querySelector("#preview");
       const previewEmptyEl = document.querySelector("#preview-empty");
       const previewMetaEl = document.querySelector("#preview-meta");
+      const previewActionsEl = document.querySelector("#preview-actions");
+      const previewDryRunEl = document.querySelector("#preview-dry-run");
+      const previewApplyEl = document.querySelector("#preview-apply");
       const reportSummaryEl = document.querySelector("#report-summary");
       const repoEl = document.querySelector("#repo");
       const coreVersionEl = document.querySelector("#core-version");
@@ -1082,6 +1117,7 @@
         chatTurns: [],
         commandMessages: [],
         inFlightRun: null,
+        previewArtifact: null,
         knowledge: [],
         artifacts: [],
         parityReport: null,
@@ -1440,6 +1476,13 @@
       function setApplyProposalBusy(isBusy) {
         applyProposalEl.disabled = isBusy;
         applyProposalEl.textContent = isBusy ? "Applying Proposal" : "Apply Proposal";
+      }
+
+      function setPreviewProposalBusy(isBusy, action = null) {
+        previewDryRunEl.disabled = isBusy;
+        previewApplyEl.disabled = isBusy;
+        previewDryRunEl.textContent = isBusy && action === "dry-run" ? "Checking" : "Dry Run";
+        previewApplyEl.textContent = isBusy && action === "apply" ? "Applying" : "Apply";
       }
 
       function setParityBusy(isBusy) {
@@ -1844,6 +1887,7 @@ ${events || "No new events."}`;
 
       function selectEvent(event) {
         state.selectedEventKey = eventKey(event);
+        state.previewArtifact = null;
         for (const item of eventTimelineEl.querySelectorAll(".event-item")) {
           item.setAttribute("aria-selected", item.dataset.eventKey === state.selectedEventKey ? "true" : "false");
         }
@@ -1854,6 +1898,9 @@ ${events || "No new events."}`;
         renderReportSummary(null);
         previewMetaEl.textContent = `${event.kind} / #${event.sequence} / ${event.run_id ?? event.workspace_id}`;
         previewEl.textContent = payload;
+        previewActionsEl.hidden = false;
+        previewDryRunEl.hidden = true;
+        previewApplyEl.hidden = true;
         eventLogEl.textContent = `Event
 Sequence: ${event.sequence}
 Kind: ${event.kind}
@@ -2583,10 +2630,14 @@ Last sequence: ${replay.last_sequence ?? 0}`;
 
       async function selectReport(artifact) {
         state.selectedPath = artifact.artifact_id;
+        state.previewArtifact = null;
         renderReports();
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
+        previewActionsEl.hidden = false;
+        previewDryRunEl.hidden = true;
+        previewApplyEl.hidden = true;
         previewMetaEl.textContent = `${artifact.kind} / ${formatBytes(artifact.size_bytes)} / ${artifact.run_id}`;
         previewEl.textContent = "Loading...";
 
@@ -2601,9 +2652,14 @@ Last sequence: ${replay.last_sequence ?? 0}`;
 
       function renderArtifactPreview(artifactPreview) {
         state.selectedPath = artifactPreview.artifact.artifact_id;
+        state.previewArtifact = artifactPreview.artifact;
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
+        previewActionsEl.hidden = false;
+        const isProposal = artifactPreview.artifact.kind === "code_change_proposal";
+        previewDryRunEl.hidden = !isProposal;
+        previewApplyEl.hidden = !isProposal;
         previewMetaEl.textContent = `${artifactPreview.artifact.kind} / ${formatBytes(artifactPreview.bytes_read)} read / ${artifactPreview.artifact.run_id}`;
         renderReportSummary(null);
         previewEl.textContent = formatPreview(
@@ -2613,12 +2669,73 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         renderReports();
       }
 
+      async function reviewPreviewProposal({ dryRun = false } = {}) {
+        const preview = state.previewArtifact?.kind === "code_change_proposal"
+          ? { artifact: state.previewArtifact }
+          : await resolveProposalPreview();
+        const artifactId = preview.artifact.artifact_id;
+        const checked = await applyProposal(artifactId, true);
+        state.selectedPath = artifactId;
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        previewActionsEl.hidden = false;
+        previewDryRunEl.hidden = false;
+        previewApplyEl.hidden = false;
+        previewMetaEl.textContent = `Proposal review / ${checked.target_path}`;
+        renderReportSummary([
+          ["Target", checked.target_path],
+          ["Added", `${checked.added_lines} lines`],
+          ["Mode", dryRun ? "dry run" : "reviewed"],
+          ["Bytes", formatBytes(checked.bytes_written)],
+        ]);
+        previewEl.textContent = checked.preview;
+        eventLogEl.textContent = `Proposal Apply Dry Run
+ID: ${checked.artifact.artifact_id}
+Run: ${checked.artifact.run_id}
+Target: ${checked.target_path}
+Added lines: ${checked.added_lines}
+Dry run: ${checked.dry_run}`;
+        if (dryRun) {
+          return checked;
+        }
+        const confirmed = window.confirm(
+          `Apply proposal to ${checked.target_path}?\n\n${checked.added_lines} proposed lines will be written after patch context is verified.`,
+        );
+        if (!confirmed) {
+          eventLogEl.textContent = `Proposal apply cancelled.
+Target: ${checked.target_path}
+Added lines: ${checked.added_lines}`;
+          return checked;
+        }
+        const result = await applyProposal(artifactId, false);
+        renderReportSummary([
+          ["Target", result.target_path],
+          ["Added", `${result.added_lines} lines`],
+          ["Mode", "applied"],
+          ["Bytes", formatBytes(result.bytes_written)],
+        ]);
+        previewMetaEl.textContent = `Proposal applied / ${result.target_path}`;
+        eventLogEl.textContent = `Proposal Applied
+ID: ${result.artifact.artifact_id}
+Run: ${result.artifact.run_id}
+Target: ${result.target_path}
+Added lines: ${result.added_lines}
+Bytes written: ${formatBytes(result.bytes_written)}`;
+        await refresh();
+        return result;
+      }
+
       function renderRepoToolResult(result) {
         renderReportSummary(null);
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
         clearPreviewEl.hidden = false;
         state.selectedPath = null;
+        state.previewArtifact = null;
+        previewActionsEl.hidden = false;
+        previewDryRunEl.hidden = true;
+        previewApplyEl.hidden = true;
         if (!result.success) {
           previewMetaEl.textContent = `${result.name} failed`;
           previewEl.textContent = result.error ?? "Tool failed.";
@@ -2686,12 +2803,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
 
       function clearPreview() {
         state.selectedPath = null;
+        state.previewArtifact = null;
         previewMetaEl.textContent = "No file selected";
         previewEl.hidden = true;
         previewEl.textContent = "";
         previewEmptyEl.hidden = false;
         renderReportSummary(null);
         clearPreviewEl.hidden = true;
+        previewActionsEl.hidden = true;
         renderReports();
       }
 
@@ -2716,6 +2835,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         previewEmptyEl.textContent = "No preview open.";
         renderReportSummary(null);
         clearPreviewEl.hidden = true;
+        previewActionsEl.hidden = true;
         renderRuns([]);
         renderChat([]);
         renderEventTimeline([]);
@@ -3124,30 +3244,30 @@ Opened in Preview${state.selectedRunId ? " for the selected run." : "."}`;
           setProposalBusy(false);
         }
       });
+      previewDryRunEl.addEventListener("click", async () => {
+        setPreviewProposalBusy(true, "dry-run");
+        try {
+          await reviewPreviewProposal({ dryRun: true });
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setPreviewProposalBusy(false);
+        }
+      });
+      previewApplyEl.addEventListener("click", async () => {
+        setPreviewProposalBusy(true, "apply");
+        try {
+          await reviewPreviewProposal({ dryRun: false });
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setPreviewProposalBusy(false);
+        }
+      });
       applyProposalEl.addEventListener("click", async () => {
         setApplyProposalBusy(true);
         try {
-          const preview = await resolveProposalPreview();
-          const artifactId = preview.artifact.artifact_id;
-          renderArtifactPreview(preview);
-          const dryRun = await applyProposal(artifactId, true);
-          const confirmed = window.confirm(
-            `Apply proposal to ${dryRun.target_path}?\n\n${dryRun.added_lines} proposed lines will be written after patch context is verified.`,
-          );
-          if (!confirmed) {
-            eventLogEl.textContent = `Proposal apply cancelled.
-Target: ${dryRun.target_path}
-Added lines: ${dryRun.added_lines}`;
-            return;
-          }
-          const result = await applyProposal(artifactId, false);
-          eventLogEl.textContent = `Proposal Applied
-ID: ${result.artifact.artifact_id}
-Run: ${result.artifact.run_id}
-Target: ${result.target_path}
-Added lines: ${result.added_lines}
-Bytes written: ${formatBytes(result.bytes_written)}`;
-          await refresh();
+          await reviewPreviewProposal({ dryRun: false });
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {
