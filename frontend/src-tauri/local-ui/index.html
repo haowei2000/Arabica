@@ -381,7 +381,8 @@
 
       .run-list,
       .knowledge-list,
-      .chat-thread {
+      .chat-thread,
+      .event-timeline {
         display: grid;
         gap: 8px;
       }
@@ -418,6 +419,50 @@
         font-size: 13px;
         line-height: 20px;
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .event-timeline {
+        max-height: 320px;
+        overflow: auto;
+        padding-right: 2px;
+      }
+
+      .event-item {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 9px 10px;
+      }
+
+      .event-seq {
+        min-width: 38px;
+        border-radius: 999px;
+        background: var(--surface-strong);
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 20px;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .event-kind {
+        display: block;
+        font-size: 12px;
+        line-height: 18px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .event-detail {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 18px;
         overflow-wrap: anywhere;
       }
 
@@ -768,6 +813,11 @@
               </div>
             </form>
             <div id="chat-thread" class="chat-thread" aria-label="Local chat thread"></div>
+            <div class="panel-heading">
+              <h3>Latest Event Trace</h3>
+              <span id="event-count" class="count">0</span>
+            </div>
+            <div id="event-timeline" class="event-timeline" aria-label="Latest local run event trace"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Latest Proposal</button>
@@ -877,6 +927,8 @@
       const agentPromptEl = document.querySelector("#agent-prompt");
       const eventLogEl = document.querySelector("#event-log");
       const chatThreadEl = document.querySelector("#chat-thread");
+      const eventTimelineEl = document.querySelector("#event-timeline");
+      const eventCountEl = document.querySelector("#event-count");
       const runListEl = document.querySelector("#run-list");
       const runCountEl = document.querySelector("#run-count");
       const knowledgeFormEl = document.querySelector("#knowledge-form");
@@ -902,6 +954,7 @@
         runs: [],
         workspaces: [],
         activeWorkspaceId: "default",
+        selectedRunId: null,
         chatTurns: [],
         knowledge: [],
         artifacts: [],
@@ -1325,6 +1378,70 @@
         chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
       }
 
+      function eventDetail(event) {
+        const payload = event.payload ?? {};
+        switch (event.kind) {
+          case "model_requested":
+            return `${payload.phase ?? "model"} / ${payload.provider ?? "unknown"} / network=${payload.network_required ?? false}`;
+          case "model_responded":
+            return payload.phase === "tool_planning"
+              ? `${payload.provider ?? "model"} planned ${(payload.tool_calls ?? []).length} tool calls`
+              : `${payload.provider ?? "model"} synthesized ${payload.response_chars ?? 0} chars`;
+          case "agent_step_planned":
+            return `${payload.mode ?? "agent"} iteration ${payload.iteration ?? "?"} / ${payload.tool_call_count ?? 0} tool calls`;
+          case "tool_call_requested":
+            return `${payload.name ?? "tool"} ${JSON.stringify(payload.input ?? {})}`;
+          case "tool_call_completed":
+            return `${payload.name ?? "tool"} success=${payload.success ?? false}`;
+          case "knowledge_retrieved":
+            return `${(payload.sources ?? []).length} knowledge sources`;
+          case "artifact_written":
+            return `${payload.kind ?? "artifact"} / ${payload.path ?? ""}`;
+          case "code_change_proposed":
+            return `${payload.status ?? "proposed"} / applied=${payload.applied ?? false}`;
+          case "run_finished":
+          case "run_failed":
+            return payload.status ?? "";
+          default:
+            return event.run_id ?? event.workspace_id ?? "";
+        }
+      }
+
+      function renderEventTimeline(events, runId = null) {
+        state.selectedRunId = runId;
+        eventTimelineEl.replaceChildren();
+        eventCountEl.textContent = events.length ? `${events.length} events` : "0";
+        if (!events.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No run events selected.";
+          eventTimelineEl.append(empty);
+          return;
+        }
+
+        for (const event of events.slice(-14)) {
+          const item = document.createElement("div");
+          item.className = "event-item";
+
+          const seq = document.createElement("span");
+          seq.className = "event-seq";
+          seq.textContent = `#${event.sequence}`;
+
+          const body = document.createElement("div");
+          const kind = document.createElement("span");
+          kind.className = "event-kind";
+          kind.textContent = event.kind.replaceAll("_", " ");
+          const detail = document.createElement("span");
+          detail.className = "event-detail";
+          detail.textContent = eventDetail(event);
+
+          body.append(kind, detail);
+          item.append(seq, body);
+          eventTimelineEl.append(item);
+        }
+        eventTimelineEl.scrollTop = eventTimelineEl.scrollHeight;
+      }
+
       function renderKnowledge(sources) {
         state.knowledge = sources;
         knowledgeListEl.replaceChildren();
@@ -1411,6 +1528,7 @@ The original file was not deleted.`;
             localRun(run.run_id),
             localRunEvents(run.run_id),
           ]);
+          renderEventTimeline(events, run.run_id);
           const evidence = await localRunEvidence(run.run_id);
           const eventText = events
             .map((event) => {
@@ -1737,6 +1855,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         clearPreviewEl.hidden = true;
         renderRuns([]);
         renderChat([]);
+        renderEventTimeline([]);
         renderWorkspaces([]);
         renderKnowledge([]);
         state.artifacts = [];
@@ -1809,6 +1928,15 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           state.artifacts = artifacts;
           state.parityReport = parityReport;
           renderSnapshot(snapshot);
+          if (runs[0]) {
+            try {
+              renderEventTimeline(await localRunEvents(runs[0].run_id), runs[0].run_id);
+            } catch {
+              renderEventTimeline([]);
+            }
+          } else {
+            renderEventTimeline([]);
+          }
           if (
             state.selectedPath &&
             !state.artifacts.some((artifact) => artifact.artifact_id === state.selectedPath)
@@ -1870,6 +1998,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         try {
           const result = await runLocalAgent(prompt);
           agentPromptEl.value = "";
+          renderEventTimeline(result.events, result.run.run_id);
           eventLogEl.textContent = `Run: ${result.run.run_id}
 Workspace: ${result.run.workspace_id}
 Status: ${result.run.status}

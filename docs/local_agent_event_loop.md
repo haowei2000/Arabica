@@ -100,6 +100,7 @@ into runtime calls:
   `local_run_events`; `create_local_workspace` and `local_workspaces` back the
   native workspace selector. Repository tool controls call safe list/search/read
   commands plus `run_local_command` for allowlisted local checks, and
+  the UI renders a latest-run event trace from `local_run_events`.
   `local_evidence_bundle` exposes the same reproducibility artifact as the
   CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
   `benchmarks/adapters/`.

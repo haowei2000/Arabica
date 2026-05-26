@@ -123,7 +123,7 @@
           "surface_id": "desktop_app",
           "status": "native",
           "entrypoint": "local_agent_run / local_chat_turns / run_local_command / apply_local_proposal",
-          "evidence": "Tauri commands invoke structure-local-runtime directly, render chat turns, replay recent workspace turns into new runs, expose an allowlisted local command panel backed by the same no-shell tool as CLI, use the same model-planned local tool loop as CLI, and expose run events/final responses plus proposed code-change artifacts and reviewed proposal application without a backend service."
+          "evidence": "Tauri commands invoke structure-local-runtime directly, render chat turns and a latest-run event trace, replay recent workspace turns into new runs, expose an allowlisted local command panel backed by the same no-shell tool as CLI, use the same model-planned local tool loop as CLI, and expose run events/final responses plus proposed code-change artifacts and reviewed proposal application without a backend service."
         },
         {
           "surface_id": "web_app",
