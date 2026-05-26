@@ -12,7 +12,7 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, KnowledgeSource, LocalAgentMode, LocalAgentRuntime, LocalEvidenceBundle,
-    RunEvidenceSummary, RunRequest, RunSummary, WorkspaceSummary,
+    ProposalApplyResult, RunEvidenceSummary, RunRequest, RunSummary, WorkspaceSummary,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -76,6 +76,7 @@ struct TuiState {
     agent_mode: LocalAgentMode,
     selected: usize,
     preview: Option<TuiPreview>,
+    pending_apply_artifact_id: Option<String>,
     input: Option<TuiInput>,
     notice: String,
 }
@@ -101,6 +102,7 @@ impl TuiState {
             agent_mode: LocalAgentMode::CodeAgent,
             selected: 0,
             preview: None,
+            pending_apply_artifact_id: None,
             input: None,
             notice: "Ready".to_string(),
         }
@@ -129,6 +131,7 @@ impl TuiState {
         self.run_evidence = collect_run_evidence(&runtime, &self.runs);
         self.knowledge_sources = local_result(runtime.knowledge_sources(Some(workspace_id), 5))?;
         self.artifacts = local_result(runtime.list_artifacts(Some(workspace_id), None, 5))?;
+        self.pending_apply_artifact_id = None;
         self.notice = "Snapshot refreshed".to_string();
         Ok(())
     }
@@ -260,6 +263,7 @@ impl TuiState {
         };
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let preview = local_result(runtime.read_knowledge_source(&source.source_id, 64_000))?;
+        self.pending_apply_artifact_id = None;
         self.preview = Some(TuiPreview {
             path: preview.source.path,
             text: format!(
@@ -280,20 +284,58 @@ impl TuiState {
             self.notice = "No artifact to preview".to_string();
             return Ok(());
         };
+        self.pending_apply_artifact_id = None;
         self.preview_artifact_record(repo_root, &artifact, "Previewing latest artifact")
     }
 
     fn preview_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
-        let Some(artifact) = self
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.kind == "code_change_proposal")
-            .cloned()
-        else {
+        let Some(artifact) = self.latest_proposal_artifact() else {
             self.notice = "No code-change proposal to preview".to_string();
             return Ok(());
         };
+        self.pending_apply_artifact_id = None;
         self.preview_artifact_record(repo_root, &artifact, "Previewing latest proposal")
+    }
+
+    fn preview_latest_proposal_apply(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(artifact) = self.latest_proposal_artifact() else {
+            self.notice = "No code-change proposal to dry-run".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let result = local_result(runtime.apply_code_change_proposal(&artifact.artifact_id, true))?;
+        self.pending_apply_artifact_id = Some(result.artifact.artifact_id.clone());
+        self.preview = Some(TuiPreview {
+            path: result.target_path.clone(),
+            text: render_proposal_apply_result(&result),
+        });
+        self.notice = "Dry-run ready; press y to apply this proposal".to_string();
+        Ok(())
+    }
+
+    fn apply_pending_proposal(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(artifact_id) = self.pending_apply_artifact_id.clone() else {
+            self.notice = "Press u to dry-run a proposal before applying".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let result = local_result(runtime.apply_code_change_proposal(&artifact_id, false))?;
+        self.preview = Some(TuiPreview {
+            path: result.target_path.clone(),
+            text: render_proposal_apply_result(&result),
+        });
+        self.pending_apply_artifact_id = None;
+        let notice = format!("Applied proposal to {}", result.target_path);
+        self.refresh(repo_root)?;
+        self.notice = notice;
+        Ok(())
+    }
+
+    fn latest_proposal_artifact(&self) -> Option<ArtifactRecord> {
+        self.artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "code_change_proposal")
+            .cloned()
     }
 
     fn preview_artifact_record(
@@ -451,6 +493,8 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
                     KeyCode::Char('g') => state.preview_latest_proposal(repo_root)?,
+                    KeyCode::Char('u') => state.preview_latest_proposal_apply(repo_root)?,
+                    KeyCode::Char('y') => state.apply_pending_proposal(repo_root)?,
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
@@ -715,7 +759,7 @@ fn draw_reports(
             out,
             x,
             artifacts_y + 1,
-            "press a for latest artifact, g for latest proposal",
+            "press a for latest artifact, g proposal, u dry-run apply, y apply",
             width,
         )?;
         write_at(out, x, artifacts_y + 2, &artifact_text, width)?;
@@ -765,7 +809,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  m mode  o workspace  c prompt  s source  x remove  n run  a artifact  g proposal  v parity  e bundle";
+    let controls = "q quit  r refresh  m mode  o workspace  c prompt  s source  n run  g proposal  u dry-run  y apply  e bundle";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -930,6 +974,26 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
             ));
         }
     }
+    text
+}
+
+fn render_proposal_apply_result(result: &ProposalApplyResult) -> String {
+    let mut text = String::new();
+    text.push_str("Proposal Apply\n");
+    text.push_str(&format!("Artifact: {}\n", result.artifact.artifact_id));
+    text.push_str(&format!("Run: {}\n", result.artifact.run_id));
+    text.push_str(&format!("Workspace: {}\n", result.artifact.workspace_id));
+    text.push_str(&format!("Target: {}\n", result.target_path));
+    text.push_str(&format!("Applied: {}\n", result.applied));
+    text.push_str(&format!("Dry run: {}\n", result.dry_run));
+    text.push_str(&format!("Added lines: {}\n", result.added_lines));
+    text.push_str(&format!("Bytes written: {}\n\n", result.bytes_written));
+    if result.dry_run {
+        text.push_str("Review this preview, then press y to apply.\n\n");
+    } else {
+        text.push_str("The apply action was recorded as code_change_applied.\n\n");
+    }
+    text.push_str(&result.preview);
     text
 }
 

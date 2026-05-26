@@ -107,7 +107,7 @@ pub fn fallback_product_surfaces() -> Vec<ProductSurface> {
             &[
                 "Codex-style chat and code-agent runs",
                 "Workspace and knowledge inspection",
-                "Proposal review from the terminal",
+                "Proposal review and application from the terminal",
             ],
             "Operator tooling only; it should stay scriptable and should not become the product UI.",
         ),
