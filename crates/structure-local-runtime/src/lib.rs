@@ -17,12 +17,13 @@ pub use types::{
     ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, EventGcPreview, EventGcSummary,
     KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
     LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
-    LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalToolCall,
-    LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
-    ProposalReview, ProposalReviewCheck, ProposalRollbackResult, RunAttempt, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
-    WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
+    LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalRunStatusEvent,
+    LocalRunStatusSnapshot, LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage,
+    ModelUsageSummary, ProposalApplyResult, ProposalReview, ProposalReviewCheck,
+    ProposalRollbackResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
+    RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceCompactRun,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageRun,
+    WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]

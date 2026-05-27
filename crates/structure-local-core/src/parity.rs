@@ -334,6 +334,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "run_continuation_from_session",
                 "run_workspace_continuation_from_session",
                 "WorkspaceCommand::Usage",
+                "RunsCommand::Status",
                 "ProposalsCommand::Apply",
                 "ProposalsCommand::Rollback",
             ],
@@ -345,6 +346,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "fn local_agent_continue_attempt",
                 "fn local_workspace_continue_attempt",
                 "fn local_workspace_usage",
+                "fn local_run_status",
                 "fn local_chat_turns",
                 "fn apply_local_proposal",
                 "fn rollback_local_proposal",
@@ -408,6 +410,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             &[
                 "RunsCommand::Events",
                 "RunsCommand::Transcript",
+                "RunsCommand::Status",
                 "WorkspaceCommand::Replay",
                 "WorkspaceCommand::Continue",
                 "WorkspaceCommand::Usage",
@@ -417,6 +420,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             "frontend/src-tauri/src/lib.rs",
             &[
                 "fn local_run_transcript",
+                "fn local_run_status",
                 "fn local_run_events",
                 "fn local_workspace_replay",
                 "fn local_workspace_continue_attempt",

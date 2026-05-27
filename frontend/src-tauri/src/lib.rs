@@ -318,6 +318,14 @@ fn local_run_review(run_id: String) -> Result<structure_local_runtime::LocalRunR
 }
 
 #[tauri::command]
+fn local_run_status(
+    run_id: String,
+) -> Result<structure_local_runtime::LocalRunStatusSnapshot, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_status_snapshot(&run_id)
+}
+
+#[tauri::command]
 fn local_run_transcript(run_id: String) -> Result<structure_local_runtime::RunTranscript, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_transcript(&run_id)
@@ -533,6 +541,7 @@ pub fn run() {
             local_run_plan,
             local_run_compact,
             local_run_review,
+            local_run_status,
             local_run_transcript,
             local_workspace_replay,
             local_workspace_compact,
@@ -667,6 +676,7 @@ mod tests {
             let tool_trace = local_run_tool_trace(run.run.run_id.clone())?;
             let transcript = local_run_transcript(run.run.run_id.clone())?;
             let review = local_run_review(run.run.run_id.clone())?;
+            let run_status = local_run_status(run.run.run_id.clone())?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
                 local_workspace_event_feed(Some(workspace.workspace_id.clone()), Some(0), Some(5))?;
@@ -802,6 +812,15 @@ mod tests {
                 .next_actions
                 .iter()
                 .any(|action| action.contains("dry-run")));
+            assert_eq!(run_status.run.run_id, run.run.run_id);
+            assert!(run_status.terminal);
+            assert!(run_status.core_aligned);
+            assert!(run_status.latest_event.is_some());
+            assert!(run_status.proposal_artifact.is_some());
+            assert!(run_status
+                .next_actions
+                .iter()
+                .any(|action| action.contains("proposal")));
             assert_eq!(
                 proposal_review.artifact.artifact_id,
                 proposal_preview.artifact.artifact_id
@@ -975,6 +994,10 @@ mod tests {
         assert!(local_ui.contains("function renderRunReviewText(review)"));
         assert!(local_ui.contains("case \"/review\":"));
         assert!(local_ui.contains("invoke(\"local_run_review\""));
+        assert!(local_ui.contains("id=\"run-status\""));
+        assert!(local_ui.contains("function renderRunStatusText(status)"));
+        assert!(local_ui.contains("case \"/run-status\":"));
+        assert!(local_ui.contains("invoke(\"local_run_status\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("id=\"show-doctor\""));

@@ -8,11 +8,12 @@ use crate::types::{
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact,
     LocalRunCoreTrace, LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview,
-    LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary,
-    ProposalApplyResult, ProposalReview, ProposalReviewCheck, ProposalRollbackResult, RunAttempt,
-    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    SourceRating, WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay,
-    WorkspaceSummary, WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
+    LocalRunStatusEvent, LocalRunStatusSnapshot, LocalToolCall, LocalToolResult,
+    LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, ProposalReview,
+    ProposalReviewCheck, ProposalRollbackResult, RunAttempt, RunEventKind, RunEvidenceSummary,
+    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceCompact,
+    WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageRun,
+    WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -873,6 +874,82 @@ impl LocalAgentRuntime {
             proposal_artifact,
             response_artifact,
             final_response_chars: evidence.final_response_chars,
+            next_actions,
+        })
+    }
+
+    pub fn run_status_snapshot(&self, run_id: &str) -> Result<LocalRunStatusSnapshot, String> {
+        let evidence = self.run_evidence_summary(run_id)?;
+        let core_trace = self.run_core_trace(run_id)?;
+        let tool_trace = self.run_tool_trace(run_id)?;
+        let latest_event =
+            self.run_events(run_id)?
+                .into_iter()
+                .last()
+                .map(|event| LocalRunStatusEvent {
+                    sequence: event.sequence,
+                    kind: event.kind.clone(),
+                    canonical_flow_id: event.canonical_flow_id.clone(),
+                    primitive_id: event.primitive_id.clone(),
+                    summary: event_payload_summary(&event),
+                    created_at_ms: event.created_at_ms,
+                });
+        let proposal_artifact = evidence
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "code_change_proposal")
+            .cloned();
+        let response_artifact = evidence
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "assistant_response")
+            .cloned()
+            .or_else(|| {
+                evidence
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.path.ends_with("/response.md"))
+                    .cloned()
+            });
+        let failed_tool_call_count = tool_trace
+            .iter()
+            .filter(|entry| entry.success == Some(false))
+            .count();
+        let pending_tool_call_count = tool_trace
+            .iter()
+            .filter(|entry| entry.success.is_none())
+            .count();
+        let latest_error = latest_run_error(&evidence.run, &tool_trace, latest_event.as_ref());
+        let terminal = matches!(
+            evidence.run.status.as_str(),
+            status if status == RunStatus::Finished.as_str() || status == RunStatus::Failed.as_str()
+        );
+        let next_actions = run_status_next_actions(
+            &evidence,
+            proposal_artifact.as_ref(),
+            response_artifact.as_ref(),
+            failed_tool_call_count,
+            pending_tool_call_count,
+            latest_error.as_deref(),
+        );
+
+        Ok(LocalRunStatusSnapshot {
+            run: evidence.run.clone(),
+            generated_at_ms: now_ms(),
+            terminal,
+            core_aligned: core_trace.core_aligned,
+            event_count: evidence.event_count,
+            latest_event,
+            model_usage: evidence.model_usage,
+            tool_call_count: evidence.tool_call_count,
+            failed_tool_call_count,
+            pending_tool_call_count,
+            artifact_count: evidence.artifacts.len(),
+            response_artifact,
+            proposal_artifact,
+            latest_error,
+            flow_path: core_trace.flow_path,
+            primitive_path: core_trace.primitive_path,
             next_actions,
         })
     }
@@ -1807,6 +1884,82 @@ fn run_review_next_actions(
     }
     if actions.is_empty() {
         actions.push("No immediate follow-up action required.".to_string());
+    }
+    actions
+}
+
+fn latest_run_error(
+    run: &RunSummary,
+    tool_trace: &[LocalToolTraceEntry],
+    latest_event: Option<&LocalRunStatusEvent>,
+) -> Option<String> {
+    if run.status == RunStatus::Failed.as_str() {
+        return run
+            .final_response
+            .as_ref()
+            .map(|error| compact_summary(error, 240));
+    }
+    if latest_event.is_some_and(|event| event.kind == RunEventKind::RunFailed.as_str()) {
+        return latest_event.map(|event| event.summary.clone());
+    }
+    tool_trace
+        .iter()
+        .rev()
+        .find_map(|entry| entry.error.as_ref())
+        .map(|error| compact_summary(error, 240))
+}
+
+fn run_status_next_actions(
+    evidence: &RunEvidenceSummary,
+    proposal_artifact: Option<&ArtifactRecord>,
+    response_artifact: Option<&ArtifactRecord>,
+    failed_tool_call_count: usize,
+    pending_tool_call_count: usize,
+    latest_error: Option<&str>,
+) -> Vec<String> {
+    let mut actions = Vec::new();
+    if !evidence.core_trace.core_aligned {
+        actions.push(
+            "Inspect the Core trace because this run drifted from the Structure manifest."
+                .to_string(),
+        );
+    }
+    if pending_tool_call_count > 0 {
+        actions.push(format!(
+            "Watch the event feed; {pending_tool_call_count} tool call(s) are still pending."
+        ));
+    }
+    if failed_tool_call_count > 0 {
+        actions.push(format!(
+            "Inspect {failed_tool_call_count} failed tool call(s), then retry or continue with extra instruction."
+        ));
+    }
+    if evidence.run.status == RunStatus::Failed.as_str() {
+        let suffix = latest_error
+            .map(|error| format!(" Latest error: {error}"))
+            .unwrap_or_default();
+        actions.push(format!(
+            "Retry or continue from this failed run after reviewing events.{suffix}"
+        ));
+    } else if evidence.run.status == RunStatus::Finished.as_str() {
+        if let Some(proposal) = proposal_artifact {
+            actions.push(format!(
+                "Review proposal {} with risk checks before dry-run or apply.",
+                proposal.artifact_id
+            ));
+        } else {
+            actions.push(
+                "Continue this run or the whole workspace session if more work is needed."
+                    .to_string(),
+            );
+        }
+    } else {
+        actions.push("Refresh status or follow the workspace event feed until the run reaches a terminal state.".to_string());
+    }
+    if response_artifact.is_some() {
+        actions.push(
+            "Open the response artifact when you need reproducible output evidence.".to_string(),
+        );
     }
     actions
 }
@@ -3861,6 +4014,48 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_builds_run_status_snapshot_from_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("run-status");
+        fs::write(root.join("status.md"), "run status context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Read @status.md and summarize the run status.".to_string(),
+                workspace_id: Some("status".to_string()),
+                mode: Some(LocalAgentMode::CodeAgent),
+            })
+            .unwrap();
+
+        let status = runtime.run_status_snapshot(&result.run.run_id).unwrap();
+
+        assert_eq!(status.run.run_id, result.run.run_id);
+        assert!(status.terminal);
+        assert!(status.core_aligned);
+        assert_eq!(status.event_count, result.events.len());
+        assert!(status.latest_event.is_some());
+        assert_eq!(
+            status
+                .latest_event
+                .as_ref()
+                .map(|event| event.kind.as_str()),
+            Some("run_finished")
+        );
+        assert!(status.model_usage.model_request_count >= 1);
+        assert!(status.tool_call_count >= 1);
+        assert_eq!(status.pending_tool_call_count, 0);
+        assert!(status.response_artifact.is_some());
+        assert!(status.artifact_count >= 1);
+        assert!(status.flow_path.contains(&"evidence".to_string()));
+        assert!(status
+            .next_actions
+            .iter()
+            .any(|action| action.contains("Continue") || action.contains("Review proposal")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_summarizes_core_trace_path_from_events() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("core-trace");
@@ -4982,7 +5177,7 @@ User-facing follow-up.\n\n\
             run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_workspace_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact WorkspaceCommand::Continue WorkspaceCommand::Usage
+            RunsCommand::Events RunsCommand::Status RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact WorkspaceCommand::Continue WorkspaceCommand::Usage
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply ProposalsCommand::Rollback
             "#,
@@ -5000,7 +5195,7 @@ User-facing follow-up.\n\n\
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
-            fn local_run_transcript() {} fn local_run_events() {} fn local_run_core_trace() {} fn local_run_review() {}
+            fn local_run_transcript() {} fn local_run_status() {} fn local_run_events() {} fn local_run_core_trace() {} fn local_run_review() {}
             fn local_workspace_event_feed() {} local_workspace_event_feed,
             fn local_workspace_replay() {} local_workspace_replay,
             fn local_workspace_compact() {} local_workspace_compact,

@@ -4,9 +4,9 @@ use crate::text::{
     print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
     print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_compact,
     print_run_core_trace, print_run_evidence_summary, print_run_plan, print_run_review,
-    print_run_summary, print_run_transcript, print_runs, print_snapshot, print_source_rating,
-    print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
-    print_workspace_compact, print_workspace_event_feed, print_workspace_replay,
+    print_run_status_snapshot, print_run_summary, print_run_transcript, print_runs, print_snapshot,
+    print_source_rating, print_surface_parity_report, print_surfaces, print_tool_trace,
+    print_workspace, print_workspace_compact, print_workspace_event_feed, print_workspace_replay,
     print_workspace_usage, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
@@ -201,6 +201,7 @@ struct RetryArgs {
 enum RunsCommand {
     List(ListRunsArgs),
     Show(ShowRunArgs),
+    Status(RunStatusArgs),
     Events(RunEventsArgs),
     Plan(RunPlanArgs),
     Trace(RunTraceArgs),
@@ -235,6 +236,13 @@ struct ListRunsArgs {
 
 #[derive(Debug, Args)]
 struct ShowRunArgs {
+    run_id: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RunStatusArgs {
     run_id: String,
     #[arg(long)]
     json: bool,
@@ -1340,6 +1348,19 @@ fn handle_chat_session_command(
             print_run_review(&review);
             Ok(true)
         }
+        "/run-status" | "/run" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /run-status <run_id>.");
+                return Ok(true);
+            };
+            let status = local_result(runtime.run_status_snapshot(&run_id))?;
+            print_run_status_snapshot(&status);
+            Ok(true)
+        }
         "/compact" => {
             let run_id = parts
                 .next()
@@ -1708,6 +1729,9 @@ fn print_chat_session_help() {
     println!("  /plan [run_id]        Show the event-derived agent plan");
     println!("  /trace [run_id]       Show Structure Core flow/primitive execution path");
     println!("  /review [run_id]      Show attempt review and next actions");
+    println!(
+        "  /run-status [run_id]  Show run state, latest event, usage, artifacts, and next actions"
+    );
     println!("  /compact [run_id]     Show compact context for continuing a run");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /usage [run_id]       Show model requests, network calls, and token usage");
@@ -1728,7 +1752,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2066,6 +2090,14 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&run)?);
             } else {
                 print_run_summary(&run);
+            }
+        }
+        RunsCommand::Status(args) => {
+            let status = local_result(runtime.run_status_snapshot(&args.run_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                print_run_status_snapshot(&status);
             }
         }
         RunsCommand::Events(args) => {
@@ -2643,6 +2675,21 @@ mod tests {
         } = cli.command
         else {
             panic!("expected runs plan command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_runs_status_command_accepts_json_output() {
+        let cli =
+            Cli::try_parse_from(["structure-local", "runs", "status", "run_1", "--json"]).unwrap();
+
+        let Command::Runs {
+            command: RunsCommand::Status(args),
+        } = cli.command
+        else {
+            panic!("expected runs status command");
         };
         assert_eq!(args.run_id, "run_1");
         assert!(args.json);

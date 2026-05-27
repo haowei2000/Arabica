@@ -1001,6 +1001,7 @@
             <button id="session-compact" type="button">Session Compact</button>
             <button id="session-continue" type="button">Session Continue</button>
             <button id="session-usage" type="button">Session Usage</button>
+            <button id="run-status" type="button">Run Status</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
             <button id="show-doctor" type="button">Doctor</button>
@@ -1122,6 +1123,7 @@
       const sessionCompactEl = document.querySelector("#session-compact");
       const sessionContinueEl = document.querySelector("#session-continue");
       const sessionUsageEl = document.querySelector("#session-usage");
+      const runStatusEl = document.querySelector("#run-status");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
       const showDoctorEl = document.querySelector("#show-doctor");
@@ -1328,6 +1330,11 @@
       async function localRunReview(runId) {
         if (!invoke) return null;
         return invoke("local_run_review", { runId });
+      }
+
+      async function localRunStatus(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_status", { runId });
       }
 
       async function localRunTranscript(runId) {
@@ -1628,6 +1635,11 @@
       function setSessionUsageBusy(isBusy) {
         sessionUsageEl.disabled = isBusy;
         sessionUsageEl.textContent = isBusy ? "Loading Usage" : "Session Usage";
+      }
+
+      function setRunStatusBusy(isBusy) {
+        runStatusEl.disabled = isBusy;
+        runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
       }
 
       function setPollEventsBusy(isBusy) {
@@ -1936,6 +1948,14 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           inspect.type = "button";
           inspect.textContent = "Inspect";
           inspect.addEventListener("click", () => selectRun(turn));
+          const status = document.createElement("button");
+          status.type = "button";
+          status.textContent = "Status";
+          status.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunStatusForRun(turn.run_id);
+          });
           const review = document.createElement("button");
           review.type = "button";
           review.textContent = "Review";
@@ -2013,7 +2033,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, plan, compact, review, continueRun, retryRun, proposal);
+          actions.append(meta, inspect, status, plan, compact, review, continueRun, retryRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2695,6 +2715,40 @@ Next Actions
 ${(review.next_actions ?? []).map((action) => `- ${action}`).join("\n") || "- No immediate follow-up action required."}`;
       }
 
+      function renderRunStatusText(status) {
+        if (!status) return "Run status unavailable.";
+        const latest = status.latest_event
+          ? `#${status.latest_event.sequence} ${status.latest_event.kind} / ${status.latest_event.canonical_flow_id} / ${status.latest_event.primitive_id}
+${status.latest_event.summary}`
+          : "none";
+        const proposal = status.proposal_artifact
+          ? `${status.proposal_artifact.artifact_id} / ${status.proposal_artifact.path}`
+          : "none";
+        const response = status.response_artifact
+          ? `${status.response_artifact.artifact_id} / ${status.response_artifact.path}`
+          : "none";
+        return `Run Status
+Run: ${status.run?.run_id ?? "unknown"}
+Workspace: ${status.run?.workspace_id ?? "unknown"}
+Status: ${status.run?.status ?? "unknown"}
+Terminal: ${status.terminal}
+Core: ${status.core_aligned ? "aligned" : "drift"}
+Events: ${status.event_count ?? 0}
+Tools: ${status.tool_call_count ?? 0} total / ${status.failed_tool_call_count ?? 0} failed / ${status.pending_tool_call_count ?? 0} pending
+Model: ${status.model_usage?.model_request_count ?? 0} requests / ${status.model_usage?.model_response_count ?? 0} responses / ${status.model_usage?.network_request_count ?? 0} network
+Tokens: ${status.model_usage?.prompt_tokens ?? 0} prompt / ${status.model_usage?.completion_tokens ?? 0} completion / ${status.model_usage?.total_tokens ?? 0} total
+Artifacts: ${status.artifact_count ?? 0}
+Latest Event: ${latest}
+Latest Error: ${status.latest_error ?? "none"}
+Flow Path: ${(status.flow_path ?? []).join(" -> ") || "none"}
+Primitive Path: ${(status.primitive_path ?? []).join(" -> ") || "none"}
+Response Artifact: ${response}
+Proposal Artifact: ${proposal}
+
+Next Actions
+${(status.next_actions ?? []).map((action) => `- ${action}`).join("\n") || "- No immediate follow-up action required."}`;
+      }
+
       function renderProposalReviewText(review) {
         if (!review) return "Proposal review unavailable.";
         return `Proposal Risk Review
@@ -2782,6 +2836,16 @@ Opened in Preview for the selected run.`;
         try {
           const review = await localRunReview(runId);
           eventLogEl.textContent = renderRunReviewText(review);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
+      async function previewRunStatusForRun(runId) {
+        eventLogEl.textContent = "Loading run status...";
+        try {
+          const status = await localRunStatus(runId);
+          eventLogEl.textContent = renderRunStatusText(status);
         } catch (error) {
           eventLogEl.textContent = String(error);
         }
@@ -2966,6 +3030,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /gc [run_id] [retain_last]
 /tools [run_id]
 /plan [run_id]
+/run-status [run_id]
 /compact [run_id]
 /session
 /workspace-compact
@@ -3185,6 +3250,16 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               return true;
             }
             await previewRunCompactForRun(runId);
+            return true;
+          }
+          case "/run-status":
+          case "/run": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            await previewRunStatusForRun(runId);
             return true;
           }
           case "/session":
@@ -4319,6 +4394,19 @@ ${events || "No events recorded."}`;
           await previewWorkspaceUsage();
         } finally {
           setSessionUsageBusy(false);
+        }
+      });
+      runStatusEl.addEventListener("click", async () => {
+        const runId = state.selectedRunId ?? state.runs[0]?.run_id;
+        if (!runId) {
+          eventLogEl.textContent = "No run selected.";
+          return;
+        }
+        setRunStatusBusy(true);
+        try {
+          await previewRunStatusForRun(runId);
+        } finally {
+          setRunStatusBusy(false);
         }
       });
       pollEventsEl.addEventListener("click", async () => {

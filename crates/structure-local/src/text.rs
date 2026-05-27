@@ -6,9 +6,9 @@ use structure_local_runtime::ProposalReview;
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace,
-    LocalRunPlan, LocalRunReview, LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult,
-    RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceEventFeed, WorkspaceReplay,
-    WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
+    LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalToolTraceEntry, RunAttempt,
+    RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating, WorkspaceCompact,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -797,6 +797,81 @@ pub(crate) fn print_run_review(review: &LocalRunReview) {
         println!();
         println!("Next actions");
         for action in &review.next_actions {
+            println!("  - {action}");
+        }
+    }
+}
+
+pub(crate) fn print_run_status_snapshot(status: &LocalRunStatusSnapshot) {
+    println!("Run status");
+    println!("  run:       {}", status.run.run_id);
+    println!("  workspace: {}", status.run.workspace_id);
+    println!("  status:    {}", status.run.status);
+    println!("  terminal:  {}", status.terminal);
+    println!(
+        "  core:      {}",
+        if status.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        }
+    );
+    println!("  events:    {}", status.event_count);
+    println!(
+        "  tools:     {} total / {} failed / {} pending",
+        status.tool_call_count, status.failed_tool_call_count, status.pending_tool_call_count
+    );
+    println!(
+        "  model:     {} req / {} resp / {} net",
+        status.model_usage.model_request_count,
+        status.model_usage.model_response_count,
+        status.model_usage.network_request_count
+    );
+    if status.model_usage.total_tokens > 0 {
+        println!(
+            "  tokens:    {} prompt / {} completion / {} total",
+            status.model_usage.prompt_tokens,
+            status.model_usage.completion_tokens,
+            status.model_usage.total_tokens
+        );
+    }
+    println!("  artifacts: {}", status.artifact_count);
+    if let Some(event) = &status.latest_event {
+        println!(
+            "  latest:    #{} {} / {} / {}",
+            event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
+        );
+        println!("             {}", event.summary);
+    }
+    if let Some(error) = &status.latest_error {
+        println!("  error:     {error}");
+    }
+    if let Some(artifact) = &status.response_artifact {
+        println!("  response:  {}", artifact.path);
+    }
+    if let Some(artifact) = &status.proposal_artifact {
+        println!("  proposal:  {}  {}", artifact.artifact_id, artifact.path);
+    }
+    println!(
+        "  flow path: {}",
+        if status.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            status.flow_path.join(" -> ")
+        }
+    );
+    println!(
+        "  primitive: {}",
+        if status.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            status.primitive_path.join(" -> ")
+        }
+    );
+    if !status.next_actions.is_empty() {
+        println!();
+        println!("Next actions");
+        for action in &status.next_actions {
             println!("  - {action}");
         }
     }

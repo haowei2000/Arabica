@@ -202,6 +202,11 @@ into runtime calls:
   Codex/OpenCode-style progress view derived from `agent_step_planned`,
   `model_requested`, and `tool_call_requested` events. The source of truth
   remains the immutable Structure event stream.
+- CLI run status: `uv run structure runs status <run-id> --json` returns a
+  single-run status snapshot with the latest event, terminal state, tool
+  failures/pending calls, model usage, artifact pointers, Core alignment, and
+  next actions. Interactive `/run-status` and TUI `i` render the same runtime
+  object.
 - CLI compact context: `uv run structure runs compact <run-id> --json` returns a
   continuation-ready summary derived from the same run transcript, evidence,
   artifacts, model usage, and Core trace. It is the local equivalent of a
@@ -357,6 +362,9 @@ into runtime calls:
   Desktop `/tools [run-id]` calls `local_run_tool_trace`, giving the app the
   same ordered tool-call explanation as the CLI without re-parsing raw events
   in JavaScript.
+  Desktop `/run-status [run-id]`, the Run Status action, and per-turn Status
+  actions call `local_run_status`, giving the app the same latest-event,
+  usage, tool, artifact, Core alignment, and next-action snapshot as CLI/TUI.
   Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
   showing progress as a derived view over immutable Structure planning/model/tool
   events rather than a desktop-only state machine.

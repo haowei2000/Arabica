@@ -431,6 +431,37 @@ pub struct LocalRunReview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunStatusSnapshot {
+    pub run: RunSummary,
+    pub generated_at_ms: i64,
+    pub terminal: bool,
+    pub core_aligned: bool,
+    pub event_count: usize,
+    pub latest_event: Option<LocalRunStatusEvent>,
+    pub model_usage: ModelUsageSummary,
+    pub tool_call_count: usize,
+    pub failed_tool_call_count: usize,
+    pub pending_tool_call_count: usize,
+    pub artifact_count: usize,
+    pub response_artifact: Option<ArtifactRecord>,
+    pub proposal_artifact: Option<ArtifactRecord>,
+    pub latest_error: Option<String>,
+    pub flow_path: Vec<String>,
+    pub primitive_path: Vec<String>,
+    pub next_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunStatusEvent {
+    pub sequence: i64,
+    pub kind: String,
+    pub canonical_flow_id: String,
+    pub primitive_id: String,
+    pub summary: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalRunCompact {
     pub run: RunSummary,
     pub status: String,
