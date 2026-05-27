@@ -2096,7 +2096,9 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
           const inspect = document.createElement("button");
           inspect.type = "button";
           inspect.textContent = "Inspect";
-          inspect.addEventListener("click", () => selectRun(turn));
+          inspect.addEventListener("click", async () => {
+            await selectRun(turn, `/inspect ${turn.run_id}`);
+          });
           const status = document.createElement("button");
           status.type = "button";
           status.textContent = "Status";
@@ -3122,7 +3124,7 @@ ${(review.checks ?? []).map((check) => `[${check.status}] ${check.id} - ${check.
         return first === last ? String(first) : `${first}..${last} (${sequences.length} events)`;
       }
 
-      async function selectRun(run) {
+      async function selectRun(run, commandInput = null) {
         eventLogEl.textContent = "Loading transcript...";
         try {
           const transcript = await localRunTranscript(run.run_id);
@@ -3150,8 +3152,12 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
             ? `Final Response\n${finalResponse}`
             : "Final Response\nNo final response recorded.";
           eventLogEl.textContent = `${evidenceText}\n\n${turn}\n\n${response}\n\nEvents\n${eventText}`;
+          if (commandInput) {
+            appendCommandMessage(commandInput, eventLogEl.textContent || "Run transcript loaded.");
+          }
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 

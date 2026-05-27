@@ -1234,7 +1234,13 @@ mod tests {
         let local_ui = include_str!("../local-ui/index.html");
 
         assert!(local_ui.contains("className = \"chat-actions\""));
-        assert!(local_ui.contains("inspect.addEventListener(\"click\", () => selectRun(turn));"));
+        assert!(local_ui.contains("await selectRun(turn, `/inspect ${turn.run_id}`);"));
+        assert!(local_ui.contains("async function selectRun(run, commandInput = null)"));
+        assert!(
+            local_ui.contains(
+                "appendCommandMessage(commandInput, eventLogEl.textContent || \"Run transcript loaded.\");"
+            )
+        );
         assert!(local_ui.contains("review.textContent = \"Review\""));
         assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));

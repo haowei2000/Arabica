@@ -497,10 +497,11 @@ into runtime calls:
   Persisted chat turns carry their originating run id and mode, and the desktop
   thread exposes per-turn inspect/plan/compact/review/continue/retry/proposal
   actions so chat history remains a navigable view over run evidence rather than
-  a detached transcript. Per-turn Status, Plan, Tools, Compact, and Review
-  actions append `/run-status <run-id>`, `/plan <run-id>`, `/tools <run-id>`,
-  `/compact <run-id>`, and `/review <run-id>` command turns while still reading
-  from the Rust local runtime. Per-turn Proposal actions append
+  a detached transcript. Per-turn Inspect, Status, Plan, Tools, Compact, and
+  Review actions append `/inspect <run-id>`, `/run-status <run-id>`,
+  `/plan <run-id>`, `/tools <run-id>`, `/compact <run-id>`, and
+  `/review <run-id>` command turns while still reading from the Rust local
+  runtime. Per-turn Proposal actions append
   `/proposal <run-id>` command turns while opening the selected run's code-change
   proposal in Preview.
   The per-turn Continue button uses the current composer text as an optional
