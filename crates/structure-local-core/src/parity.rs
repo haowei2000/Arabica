@@ -332,6 +332,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "run_chat_agent",
                 "run_continue_agent",
                 "run_continuation_from_session",
+                "run_workspace_continuation_from_session",
                 "ProposalsCommand::Apply",
             ],
         )],
@@ -340,6 +341,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
             &[
                 "fn local_agent_run",
                 "fn local_agent_continue_attempt",
+                "fn local_workspace_continue_attempt",
                 "fn local_chat_turns",
                 "fn apply_local_proposal",
                 "local_chat_turns,",
@@ -403,6 +405,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "RunsCommand::Events",
                 "RunsCommand::Transcript",
                 "WorkspaceCommand::Replay",
+                "WorkspaceCommand::Continue",
             ],
         )],
         ("event_replay", "desktop_app") => vec![marker(
@@ -411,6 +414,7 @@ fn expected_source_markers(capability_id: &str, surface_id: &str) -> Vec<SourceM
                 "fn local_run_transcript",
                 "fn local_run_events",
                 "fn local_workspace_replay",
+                "fn local_workspace_continue_attempt",
                 "local_workspace_replay,",
             ],
         )],

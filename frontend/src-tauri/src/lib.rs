@@ -2,6 +2,7 @@ use serde::Serialize;
 use structure_local_core::{collect_snapshot, default_repo_root, structure_core_manifest};
 use structure_local_runtime::{
     ContinuationRequest, LocalAgentMode, LocalAgentRuntime, LocalToolCall, RunRequest,
+    WorkspaceContinuationRequest,
 };
 
 #[derive(Debug, Serialize)]
@@ -192,6 +193,22 @@ fn local_agent_continue_attempt(
         run_id,
         extra_instruction,
         mode: Some(parse_local_agent_mode(mode)),
+    })
+}
+
+#[tauri::command]
+fn local_workspace_continue_attempt(
+    workspace_id: Option<String>,
+    extra_instruction: Option<String>,
+    mode: Option<String>,
+    limit: Option<usize>,
+) -> Result<structure_local_runtime::RunAttempt, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.workspace_continuation_attempt(WorkspaceContinuationRequest {
+        workspace_id,
+        extra_instruction,
+        mode: Some(parse_local_agent_mode(mode)),
+        limit: limit.unwrap_or(12),
     })
 }
 
@@ -484,6 +501,7 @@ pub fn run() {
             local_agent_run,
             local_agent_run_attempt,
             local_agent_continue_attempt,
+            local_workspace_continue_attempt,
             local_chat_turns,
             local_runs,
             create_local_workspace,
@@ -730,6 +748,24 @@ mod tests {
             assert!(workspace_compact
                 .continuation_context
                 .contains("Compact Structure workspace context"));
+            let workspace_continuation = local_workspace_continue_attempt(
+                Some(workspace.workspace_id.clone()),
+                Some("Continue from the desktop workspace compact.".to_string()),
+                Some("chat".to_string()),
+                Some(12),
+            )?;
+            assert_eq!(
+                workspace_continuation.run.workspace_id,
+                workspace.workspace_id
+            );
+            assert!(workspace_continuation
+                .run
+                .prompt
+                .contains("Continue Structure workspace/session"));
+            assert!(workspace_continuation
+                .run
+                .prompt
+                .contains("Compact Structure workspace context"));
             assert_eq!(review.run.run_id, run.run.run_id);
             assert!(review.core_aligned);
             assert!(review.proposal_artifact.is_some());
@@ -889,6 +925,10 @@ mod tests {
         assert!(local_ui.contains("function renderWorkspaceCompactText(compact)"));
         assert!(local_ui.contains("case \"/session\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_compact\""));
+        assert!(local_ui.contains("id=\"session-continue\""));
+        assert!(local_ui.contains("function performWorkspaceContinuationRun"));
+        assert!(local_ui.contains("case \"/session-continue\":"));
+        assert!(local_ui.contains("invoke(\"local_workspace_continue_attempt\""));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));

@@ -165,6 +165,13 @@ into runtime calls:
   derives the same compact continuation context exposed by `runs compact`,
   creates a fresh run through the shared `ContinuationRequest`, and can emit the
   same `RunAttempt` JSON envelope for automation.
+- Noninteractive workspace/session continuation:
+  `uv run structure workspace continue --workspace <id> [instruction]` is the
+  scriptable counterpart to interactive `/session-continue`, TUI `F`, and
+  desktop Session Continue. It derives compact handoff context from workspace
+  replay, recent run compacts, knowledge sources, artifacts, and Core trace
+  metadata, then creates a fresh run through the shared
+  `WorkspaceContinuationRequest`.
 - CLI parity checks: `uv run structure parity --json` reads the shared
   capability matrix, while `uv run structure parity --verify --json` verifies
   surface coverage, primitive references, entrypoints, and evidence fields.
@@ -202,6 +209,10 @@ into runtime calls:
   recent run compacts, knowledge sources, artifacts, and Core flow/primitive
   paths. Interactive `/session` renders the same object inside the local agent
   terminal.
+- CLI workspace/session continue: `uv run structure workspace continue
+  --workspace <id> --json [instruction]` turns that handoff object into a new
+  event-sourced run. This keeps long local sessions aligned with Structure Core
+  instead of passing around a desktop- or terminal-specific chat buffer.
 - CLI core trace: `uv run structure runs trace <run-id> --json` returns the
   paper-facing execution path derived from the same immutable events. It keeps
   the collapsed Structure flow path (`goal -> address -> ...`) and primitive
@@ -346,6 +357,9 @@ into runtime calls:
   Desktop `/session`, `/workspace-compact`, and the Session Compact action call
   `local_workspace_compact`, giving the desktop app the same workspace/session
   handoff object as CLI/TUI while staying inside the local Rust runtime.
+  Desktop `/session-continue`, `/workspace-continue`, and the Session Continue
+  action call `local_workspace_continue_attempt`, turning that compact handoff
+  into a fresh run with the same local event loop and Core trace semantics.
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.

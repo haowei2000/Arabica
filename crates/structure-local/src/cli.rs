@@ -23,7 +23,7 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ContinuationRequest, LocalAgentContext, LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic,
-    LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest,
+    LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest, WorkspaceContinuationRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -217,6 +217,7 @@ enum WorkspaceCommand {
     Show(ShowWorkspaceArgs),
     Replay(WorkspaceReplayArgs),
     Compact(WorkspaceCompactArgs),
+    Continue(WorkspaceContinueArgs),
     Events(WorkspaceEventsArgs),
 }
 
@@ -324,6 +325,19 @@ struct WorkspaceCompactArgs {
     workspace: Option<String>,
     #[arg(long, default_value_t = 8)]
     limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceContinueArgs {
+    instruction: Vec<String>,
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long, default_value_t = 12)]
+    limit: usize,
+    #[arg(long)]
+    mode: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -880,6 +894,41 @@ fn run_continuation_with_live_events(
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 return Err(anyhow!("local continuation worker disconnected"));
+            }
+        }
+    };
+    let _ = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
+    println!();
+    local_result(run_result)
+}
+
+fn run_workspace_continuation_with_live_events(
+    repo_root: &PathBuf,
+    workspace_id: String,
+    request: WorkspaceContinuationRequest,
+) -> Result<RunAttempt> {
+    let feed_runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let replay = local_result(feed_runtime.workspace_replay(Some(&workspace_id), 1))?;
+    let mut cursor = replay.last_sequence.unwrap_or_default();
+    let repo_root = repo_root.clone();
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = LocalAgentRuntime::open(&repo_root)
+            .and_then(|runtime| runtime.workspace_continuation_attempt(request));
+        let _ = sender.send(result);
+    });
+
+    println!("Live event feed");
+    let run_result = loop {
+        match receiver.try_recv() {
+            Ok(result) => break result,
+            Err(mpsc::TryRecvError::Empty) => {
+                cursor = print_live_workspace_events(&feed_runtime, &workspace_id, cursor)?;
+                thread::sleep(Duration::from_millis(200));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(anyhow!("local workspace continuation worker disconnected"));
             }
         }
     };
@@ -1452,6 +1501,17 @@ fn handle_chat_session_command(
             print_workspace_compact(&compact);
             Ok(true)
         }
+        "/session-continue" | "/workspace-continue" => {
+            let instruction = parts.collect::<Vec<_>>().join(" ").trim().to_string();
+            run_workspace_continuation_from_session(
+                runtime,
+                repo_root,
+                json,
+                state,
+                (!instruction.is_empty()).then_some(instruction),
+            )?;
+            Ok(true)
+        }
         other => {
             println!("Unknown command: {other}");
             println!("Use /help to list session commands.");
@@ -1493,6 +1553,38 @@ fn run_continuation_from_session(
     } else {
         run_continuation_with_live_events(repo_root, workspace_id, request)?
     };
+    state.last_run_id = Some(attempt.run.run_id.clone());
+    if json {
+        println!("{}", serde_json::to_string_pretty(&attempt)?);
+    } else {
+        print_chat_attempt(&attempt);
+    }
+    Ok(())
+}
+
+fn run_workspace_continuation_from_session(
+    runtime: &LocalAgentRuntime,
+    repo_root: &PathBuf,
+    json: bool,
+    state: &mut ChatSessionState,
+    extra_instruction: Option<String>,
+) -> Result<()> {
+    let workspace_id = state
+        .workspace_id
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    let request = WorkspaceContinuationRequest {
+        workspace_id: Some(workspace_id.clone()),
+        extra_instruction,
+        mode: Some(state.mode.clone()),
+        limit: 12,
+    };
+    let attempt = if json {
+        local_result(runtime.workspace_continuation_attempt(request))?
+    } else {
+        run_workspace_continuation_with_live_events(repo_root, workspace_id, request)?
+    };
+    state.workspace_id = Some(attempt.run.workspace_id.clone());
     state.last_run_id = Some(attempt.run.run_id.clone());
     if json {
         println!("{}", serde_json::to_string_pretty(&attempt)?);
@@ -1587,11 +1679,12 @@ fn print_chat_session_help() {
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
     println!("  /session              Show workspace/session compact context");
+    println!("  /session-continue [msg] Continue from the compact workspace/session context");
     println!("  /quit                 Exit");
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /session-continue, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2044,6 +2137,32 @@ fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
                 print_workspace_compact(&compact);
             }
         }
+        WorkspaceCommand::Continue(args) => {
+            let mode = parse_agent_mode(args.mode.as_deref(), false)?;
+            let instruction = args.instruction.join(" ").trim().to_string();
+            let workspace_id = args
+                .workspace
+                .clone()
+                .unwrap_or_else(|| "default".to_string());
+            let request = WorkspaceContinuationRequest {
+                workspace_id: Some(workspace_id.clone()),
+                extra_instruction: (!instruction.is_empty()).then_some(instruction),
+                mode: Some(mode),
+                limit: args.limit,
+            };
+            let attempt = if args.json {
+                local_result(runtime.workspace_continuation_attempt(request))?
+            } else {
+                drop(runtime);
+                run_workspace_continuation_with_live_events(repo_root, workspace_id, request)?
+            };
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&attempt)?);
+            } else {
+                print_run_attempt(&attempt);
+            }
+            attempt_error(&attempt)?;
+        }
         WorkspaceCommand::Events(args) => {
             let feed = local_result(runtime.workspace_event_feed(
                 args.workspace.as_deref(),
@@ -2474,6 +2593,38 @@ mod tests {
         };
         assert_eq!(args.workspace.as_deref(), Some("paper"));
         assert_eq!(args.limit, 4);
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_workspace_continue_command_accepts_instruction_mode_json() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "workspace",
+            "continue",
+            "--workspace",
+            "paper",
+            "--limit",
+            "6",
+            "--mode",
+            "chat",
+            "--json",
+            "continue",
+            "the",
+            "session",
+        ])
+        .unwrap();
+
+        let Command::Workspace {
+            command: WorkspaceCommand::Continue(args),
+        } = cli.command
+        else {
+            panic!("expected workspace continue command");
+        };
+        assert_eq!(args.workspace.as_deref(), Some("paper"));
+        assert_eq!(args.limit, 6);
+        assert_eq!(args.mode.as_deref(), Some("chat"));
+        assert_eq!(args.instruction, ["continue", "the", "session"]);
         assert!(args.json);
     }
 

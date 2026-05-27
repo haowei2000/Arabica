@@ -41,6 +41,14 @@ pub struct ContinuationRequest {
     pub mode: Option<LocalAgentMode>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkspaceContinuationRequest {
+    pub workspace_id: Option<String>,
+    pub extra_instruction: Option<String>,
+    pub mode: Option<LocalAgentMode>,
+    pub limit: usize,
+}
+
 pub struct LocalAgentRuntime {
     repo_root: PathBuf,
     runtime_dir: PathBuf,
@@ -938,6 +946,20 @@ impl LocalAgentRuntime {
         self.run_prompt_attempt(RunRequest {
             prompt,
             workspace_id: Some(transcript.run.workspace_id),
+            mode: request.mode,
+        })
+    }
+
+    pub fn workspace_continuation_attempt(
+        &self,
+        request: WorkspaceContinuationRequest,
+    ) -> Result<RunAttempt, String> {
+        let compact = self.workspace_compact(request.workspace_id.as_deref(), request.limit)?;
+        let prompt =
+            build_workspace_continuation_prompt(&compact, request.extra_instruction.as_deref());
+        self.run_prompt_attempt(RunRequest {
+            prompt,
+            workspace_id: Some(compact.workspace_id),
             mode: request.mode,
         })
     }
@@ -2335,6 +2357,26 @@ Produce the next assistant response now. Treat the continuation instruction as t
 Continuation instruction:\n{extra_instruction}\n",
         run_id = transcript.run.run_id,
         workspace_id = transcript.run.workspace_id,
+        compact_context = compact.continuation_context,
+    )
+}
+
+fn build_workspace_continuation_prompt(
+    compact: &WorkspaceCompact,
+    extra_instruction: Option<&str>,
+) -> String {
+    let extra_instruction = extra_instruction
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Continue this workspace session using the compact workspace context, replayed events, recent run evidence, knowledge sources, artifacts, and current repository state.");
+
+    format!(
+        "Continue Structure workspace/session `{workspace_id}` using the compacted workspace event context below.\n\n\
+This compact context is the durable session handoff boundary for the new run. It is derived from immutable Structure workspace events, recent run compacts, knowledge sources, artifacts, model usage, and Core trace metadata; do not treat it as an opaque chat buffer.\n\n\
+{compact_context}\n\n\
+Produce the next assistant response now. Treat the session continuation instruction as the active user request for this new run.\n\n\
+Session continuation instruction:\n{extra_instruction}\n",
+        workspace_id = compact.workspace_id,
         compact_context = compact.continuation_context,
     )
 }
@@ -3856,6 +3898,61 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_continues_from_workspace_compact_context() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("workspace-continuation");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        runtime
+            .add_text_knowledge_source(Some("session".to_string()), "workspace memory")
+            .unwrap();
+        let first = runtime
+            .run_prompt(RunRequest {
+                prompt: "Remember the workspace handoff phrase copper loom".to_string(),
+                workspace_id: Some("session".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let continuation = runtime
+            .workspace_continuation_attempt(WorkspaceContinuationRequest {
+                workspace_id: Some("session".to_string()),
+                extra_instruction: Some("Say the workspace handoff phrase back.".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+                limit: 12,
+            })
+            .unwrap();
+
+        assert_eq!(continuation.run.workspace_id, "session");
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Continue Structure workspace/session"));
+        assert!(continuation.run.prompt.contains(&first.run.run_id));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("workspace handoff phrase copper loom"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Compact Structure workspace context"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("durable session handoff boundary"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Say the workspace handoff phrase back."));
+        assert!(continuation
+            .events
+            .iter()
+            .any(|event| event.kind == "run_finished"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_exposes_workspace_event_feed_cursor() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("event-feed");
@@ -4631,10 +4728,10 @@ User-facing follow-up.\n\n\
             "crates/structure-local/src/cli.rs",
             r#"
             Command::Core Command::Surfaces Command::Chat Command::Run Command::Continue Command::Proposals Command::Tui
-            run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_local_agent
+            run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_workspace_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact
+            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact WorkspaceCommand::Continue
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -4645,6 +4742,7 @@ User-facing follow-up.\n\n\
             r#"
             fn local_snapshot() {} fn core_manifest() {} core_manifest,
             fn local_agent_run() {} fn local_agent_continue_attempt() {}
+            fn local_workspace_continue_attempt() {} local_workspace_continue_attempt,
             fn local_chat_turns() {} local_chat_turns,
             fn create_local_workspace() {} fn local_workspaces() {}
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}

@@ -14,7 +14,8 @@ use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
     LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
     LocalToolCall, ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest,
-    RunSummary, RunTranscript, WorkspaceCompact, WorkspaceSummary, WorktreeSnapshot,
+    RunSummary, RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary,
+    WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -39,6 +40,7 @@ struct TuiPreview {
 enum TuiInputKind {
     AgentPrompt,
     FollowUpPrompt,
+    SessionFollowUpPrompt,
     KnowledgePath,
     SourceRating,
     WorkspaceId,
@@ -50,6 +52,7 @@ impl TuiInputKind {
         match self {
             Self::AgentPrompt => "Custom agent prompt",
             Self::FollowUpPrompt => "Follow-up instruction",
+            Self::SessionFollowUpPrompt => "Session follow-up instruction",
             Self::KnowledgePath => "Knowledge file path",
             Self::SourceRating => "Source rating",
             Self::WorkspaceId => "Workspace id",
@@ -61,6 +64,7 @@ impl TuiInputKind {
         match self {
             Self::AgentPrompt => "Type a prompt and press Enter",
             Self::FollowUpPrompt => "Type a follow-up for the selected run",
+            Self::SessionFollowUpPrompt => "Type a follow-up for the whole workspace session",
             Self::KnowledgePath => "Type an absolute or repo-relative file path",
             Self::SourceRating => "Type [source_id] <1-5> [note]; source_id defaults to latest",
             Self::WorkspaceId => "Type a workspace id to create or open",
@@ -200,6 +204,9 @@ impl TuiState {
         match input.kind {
             TuiInputKind::AgentPrompt => self.run_custom_prompt(repo_root, value),
             TuiInputKind::FollowUpPrompt => self.run_follow_up_prompt(repo_root, value),
+            TuiInputKind::SessionFollowUpPrompt => {
+                self.run_session_follow_up_prompt(repo_root, value)
+            }
             TuiInputKind::KnowledgePath => self.add_knowledge_path(repo_root, value),
             TuiInputKind::SourceRating => self.rate_knowledge_source(repo_root, value),
             TuiInputKind::WorkspaceId => self.open_or_create_workspace(repo_root, value),
@@ -247,6 +254,33 @@ impl TuiState {
         self.refresh(repo_root)?;
         self.preview = Some(TuiPreview {
             path: format!("continuation / {}", attempt.run.run_id),
+            text: preview,
+        });
+        self.notice = notice;
+        Ok(())
+    }
+
+    fn run_session_follow_up_prompt(
+        &mut self,
+        repo_root: &Path,
+        instruction: String,
+    ) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let workspace_id = self.active_workspace_id.clone();
+        let attempt = local_result(runtime.workspace_continuation_attempt(
+            WorkspaceContinuationRequest {
+                workspace_id: Some(workspace_id.clone()),
+                extra_instruction: Some(instruction),
+                mode: Some(self.agent_mode.clone()),
+                limit: 12,
+            },
+        ))?;
+        self.active_workspace_id = attempt.run.workspace_id.clone();
+        let preview = render_run_attempt(&attempt);
+        let notice = format!("Continued session {workspace_id} as {}", attempt.run.run_id);
+        self.refresh(repo_root)?;
+        self.preview = Some(TuiPreview {
+            path: format!("session continuation / {}", attempt.run.run_id),
             text: preview,
         });
         self.notice = notice;
@@ -765,6 +799,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('o') => state.begin_input(TuiInputKind::WorkspaceId),
                     KeyCode::Char('c') => state.begin_input(TuiInputKind::AgentPrompt),
                     KeyCode::Char('f') => state.begin_input(TuiInputKind::FollowUpPrompt),
+                    KeyCode::Char('F') => state.begin_input(TuiInputKind::SessionFollowUpPrompt),
                     KeyCode::Char('s') => state.begin_input(TuiInputKind::KnowledgePath),
                     KeyCode::Char('R') => state.begin_input(TuiInputKind::SourceRating),
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
@@ -866,7 +901,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  d worktree  l plan  C compact  S session  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f run-follow  F session-follow  d worktree  l plan  C compact  S session  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -954,7 +989,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, l plan, C compact, S session, z trace, b review, f follow-up, n local check",
+        "press j/k to select, t transcript, l plan, C compact, S session, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1124,7 +1159,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  f follow-up  ! cmd  t transcript  l plan  C compact  S session  b review  g proposal  h risk";
+    let controls = "q quit  r refresh  c prompt  f run-follow  F session-follow  ! cmd  t transcript  l plan  C compact  S session  b review  g proposal  h risk";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -2093,6 +2128,32 @@ mod tests {
             let evidence = local_result(runtime.run_evidence_summary(&latest.run_id))?;
             assert!(evidence.event_count > 0);
             assert!(evidence.core_trace.core_aligned);
+
+            state.run_session_follow_up_prompt(
+                &root,
+                "Continue from the whole workspace compact.".to_string(),
+            )?;
+            assert!(state.notice.contains("Continued session"));
+            let session_preview = state
+                .preview
+                .as_ref()
+                .expect("session continuation preview");
+            assert!(session_preview
+                .path
+                .starts_with("session continuation / run_"));
+            assert!(session_preview.text.contains("Run Attempt"));
+            assert!(state.runs.len() >= 3);
+
+            let latest_session = state.runs.first().expect("latest session continuation run");
+            let transcript = local_result(runtime.run_transcript(&latest_session.run_id))?;
+            assert!(transcript
+                .run
+                .prompt
+                .contains("Continue Structure workspace/session"));
+            assert!(transcript
+                .run
+                .prompt
+                .contains("Compact Structure workspace context"));
             Ok(())
         })();
 

@@ -999,6 +999,7 @@
             <div id="event-timeline" class="event-timeline" aria-label="Latest local run event trace"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="session-compact" type="button">Session Compact</button>
+            <button id="session-continue" type="button">Session Continue</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
             <button id="show-doctor" type="button">Doctor</button>
@@ -1116,6 +1117,7 @@
       const agentModeButtons = Array.from(document.querySelectorAll("[data-agent-mode]"));
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const sessionCompactEl = document.querySelector("#session-compact");
+      const sessionContinueEl = document.querySelector("#session-continue");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
       const showDoctorEl = document.querySelector("#show-doctor");
@@ -1221,6 +1223,16 @@
           runId,
           extraInstruction: extraInstruction || null,
           mode: state.agentMode,
+        });
+      }
+
+      async function continueWorkspaceAttempt(extraInstruction) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("local_workspace_continue_attempt", {
+          workspaceId: activeWorkspaceId(),
+          extraInstruction: extraInstruction || null,
+          mode: state.agentMode,
+          limit: 12,
         });
       }
 
@@ -1592,6 +1604,11 @@
       function setSessionCompactBusy(isBusy) {
         sessionCompactEl.disabled = isBusy;
         sessionCompactEl.textContent = isBusy ? "Compacting Session" : "Session Compact";
+      }
+
+      function setSessionContinueBusy(isBusy) {
+        sessionContinueEl.disabled = isBusy;
+        sessionContinueEl.textContent = isBusy ? "Continuing Session" : "Session Continue";
       }
 
       function setPollEventsBusy(isBusy) {
@@ -2791,6 +2808,49 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         return attempt;
       }
 
+      async function performWorkspaceContinuationRun(extraInstruction = "") {
+        const workspaceId = activeWorkspaceId();
+        eventLogEl.textContent = `Continuing workspace session ${workspaceId} through the Structure local event loop...`;
+        setInFlightRun(
+          extraInstruction || `Continue workspace session ${workspaceId}`,
+          "running",
+          `Continuing ${workspaceId} from compact workspace context in ${state.agentMode} mode...`,
+        );
+        await primeWorkspaceEventCursor();
+        startLiveEventPolling();
+        const attempt = await continueWorkspaceAttempt(extraInstruction);
+        await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
+        state.workspaceEventCursor = Math.max(
+          state.workspaceEventCursor,
+          ...attempt.events.map((runEvent) => runEvent.sequence),
+        );
+        state.selectedRunId = attempt.run.run_id;
+        renderEventTimeline(attempt.events, attempt.run.run_id, true);
+        const result = attempt.result;
+        eventLogEl.textContent = `Session Continuation Run: ${attempt.run.run_id}
+Workspace: ${attempt.run.workspace_id}
+Status: ${attempt.run.status}
+Mode: ${state.agentMode}
+${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
+
+Events
+${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
+        setInFlightRun(
+          extraInstruction || `Continue workspace session ${workspaceId}`,
+          attempt.run.status,
+          result
+            ? result.final_response.slice(0, 2400)
+            : `Session continuation failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+          { preserveLive: true },
+        );
+        await refresh();
+        clearInFlightRun();
+        if (!result) {
+          eventLogEl.textContent += "\n\nThe failed session continuation is still recorded and visible in the event trace.";
+        }
+        return attempt;
+      }
+
       function parseCommandLine(input) {
         const tokens = input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
         return tokens.map((token) => token.replace(/^"|"$/g, ""));
@@ -2847,6 +2907,8 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /compact [run_id]
 /session
 /workspace-compact
+/session-continue [instruction]
+/workspace-continue [instruction]
 /trace [run_id]
 /review [run_id]
 /evidence [run_id]
@@ -3063,6 +3125,11 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
           case "/session":
           case "/workspace-compact": {
             await previewWorkspaceCompact();
+            return true;
+          }
+          case "/session-continue":
+          case "/workspace-continue": {
+            await performWorkspaceContinuationRun(parts.join(" ").trim());
             return true;
           }
           case "/trace":
@@ -4110,6 +4177,17 @@ ${events || "No events recorded."}`;
           await previewWorkspaceCompact();
         } finally {
           setSessionCompactBusy(false);
+        }
+      });
+      sessionContinueEl.addEventListener("click", async () => {
+        setSessionContinueBusy(true);
+        try {
+          await performWorkspaceContinuationRun(agentPromptEl.value.trim());
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          clearInFlightRun();
+        } finally {
+          setSessionContinueBusy(false);
         }
       });
       pollEventsEl.addEventListener("click", async () => {

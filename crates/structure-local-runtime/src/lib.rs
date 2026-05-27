@@ -8,7 +8,9 @@ pub use model::{
     selected_synthesis_provider, DeterministicLocalModelProvider, EnvApiModelProvider,
     LocalModelProvider, ModelOutput, ModelPlan, ModelRequest,
 };
-pub use runtime::{ContinuationRequest, LocalAgentRuntime, RunRequest};
+pub use runtime::{
+    ContinuationRequest, LocalAgentRuntime, RunRequest, WorkspaceContinuationRequest,
+};
 pub use store::SqliteLocalStore;
 pub use tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 pub use types::{
