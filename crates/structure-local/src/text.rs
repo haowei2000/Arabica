@@ -2,6 +2,7 @@ use structure_local_core::{
     CoreCapability, CorePrimitive, LocalSnapshot, ProductSurface, StructureCoreManifest,
     SurfaceParityReport,
 };
+use structure_local_runtime::ProposalReview;
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalRunPlan,
@@ -893,6 +894,30 @@ pub(crate) fn print_artifact_preview(preview: &ArtifactPreview) {
     print!("{}", preview.preview);
     if preview.truncated && !preview.preview.ends_with('\n') {
         println!();
+    }
+}
+
+pub(crate) fn print_proposal_review(review: &ProposalReview) {
+    println!("Proposal review");
+    println!("  artifact:  {}", review.artifact.artifact_id);
+    println!("  run:       {}", review.artifact.run_id);
+    println!("  target:    {}", review.target_path);
+    println!("  risk:      {}", review.risk_level);
+    println!("  can apply: {}", review.can_apply);
+    println!("  dry-run:   required");
+    println!("  new file:  {}", review.new_file);
+    println!("  exists:    {}", review.target_exists);
+    println!("  hunks:     {}", review.hunk_count);
+    println!(
+        "  lines:     {} added / {} removed",
+        review.added_lines, review.removed_lines
+    );
+    if !review.checks.is_empty() {
+        println!();
+        println!("Checks");
+        for check in &review.checks {
+            println!("  [{}] {} - {}", check.status, check.id, check.message);
+        }
     }
 }
 

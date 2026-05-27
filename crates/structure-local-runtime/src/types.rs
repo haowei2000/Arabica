@@ -253,6 +253,28 @@ pub struct ProposalApplyResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposalReview {
+    pub artifact: ArtifactRecord,
+    pub target_path: String,
+    pub target_exists: bool,
+    pub new_file: bool,
+    pub hunk_count: usize,
+    pub added_lines: usize,
+    pub removed_lines: usize,
+    pub risk_level: String,
+    pub can_apply: bool,
+    pub dry_run_required: bool,
+    pub checks: Vec<ProposalReviewCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposalReviewCheck {
+    pub id: String,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResult {
     pub run: RunSummary,
     pub events: Vec<LocalEvent>,

@@ -2,11 +2,11 @@ use crate::text::{
     print_agent_context, print_artifact_preview, print_artifacts, print_core_capabilities,
     print_core_manifest, print_event_gc_preview, print_events, print_knowledge_preview,
     print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
-    print_model_usage_summary, print_run_attempt, print_run_core_trace, print_run_evidence_summary,
-    print_run_plan, print_run_review, print_run_summary, print_run_transcript, print_runs,
-    print_snapshot, print_source_rating, print_surface_parity_report, print_surfaces,
-    print_tool_trace, print_workspace, print_workspace_event_feed, print_workspace_replay,
-    print_workspaces, print_worktree_snapshot,
+    print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_core_trace,
+    print_run_evidence_summary, print_run_plan, print_run_review, print_run_summary,
+    print_run_transcript, print_runs, print_snapshot, print_source_rating,
+    print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
+    print_workspace_event_feed, print_workspace_replay, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -374,6 +374,7 @@ enum ProposalsCommand {
     List(ListProposalsArgs),
     Latest(LatestProposalArgs),
     Show(ShowProposalArgs),
+    Review(ReviewProposalArgs),
     Apply(ApplyProposalArgs),
 }
 
@@ -432,6 +433,13 @@ struct ShowProposalArgs {
     artifact_id: String,
     #[arg(long, default_value_t = PREVIEW_MAX_BYTES)]
     max_bytes: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewProposalArgs {
+    artifact_id: String,
     #[arg(long)]
     json: bool,
 }
@@ -1308,6 +1316,35 @@ fn handle_chat_session_command(
             }
             Ok(true)
         }
+        "/proposal-review" | "/risk" => {
+            let selected = parts.next().map(str::to_string);
+            let artifact_id = if let Some(value) = selected {
+                if value.starts_with("art_") {
+                    value
+                } else {
+                    local_result(latest_proposal_preview(
+                        runtime,
+                        state.workspace_id.as_deref(),
+                        Some(&value),
+                        PREVIEW_MAX_BYTES,
+                    ))?
+                    .artifact
+                    .artifact_id
+                }
+            } else {
+                local_result(latest_proposal_preview(
+                    runtime,
+                    state.workspace_id.as_deref(),
+                    state.last_run_id.as_deref(),
+                    PREVIEW_MAX_BYTES,
+                ))?
+                .artifact
+                .artifact_id
+            };
+            let review = local_result(runtime.review_code_change_proposal(&artifact_id))?;
+            print_proposal_review(&review);
+            Ok(true)
+        }
         "/dry-run" => {
             let args = parts.collect::<Vec<_>>();
             let selected = args.first().map(|value| (*value).to_string());
@@ -1505,6 +1542,7 @@ fn print_chat_session_help() {
     println!("  /artifacts            List recent artifacts");
     println!("  /proposal [run_id]    Show the latest code-change proposal");
     println!("  /diff [run_id]        Alias for /proposal");
+    println!("  /risk [id|run]        Review proposal target, patch checks, and apply risk");
     println!("  /dry-run [id|run]     Preview proposal application without writing");
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
@@ -1512,7 +1550,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /continue, /retry, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2081,6 +2119,14 @@ fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
                 print_artifact_preview(&preview);
             }
         }
+        ProposalsCommand::Review(args) => {
+            let review = local_result(runtime.review_code_change_proposal(&args.artifact_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&review)?);
+            } else {
+                print_proposal_review(&review);
+            }
+        }
         ProposalsCommand::Apply(args) => {
             let result =
                 local_result(runtime.apply_code_change_proposal(&args.artifact_id, args.dry_run))?;
@@ -2334,6 +2380,22 @@ mod tests {
     }
 
     #[test]
+    fn cli_proposals_review_command_accepts_json_output() {
+        let cli =
+            Cli::try_parse_from(["structure-local", "proposals", "review", "art_1", "--json"])
+                .unwrap();
+
+        let Command::Proposals {
+            command: ProposalsCommand::Review(args),
+        } = cli.command
+        else {
+            panic!("expected proposals review command");
+        };
+        assert_eq!(args.artifact_id, "art_1");
+        assert!(args.json);
+    }
+
+    #[test]
     fn cli_chat_session_summary_includes_worktree_command() {
         let summary = chat_session_command_summary();
 
@@ -2355,6 +2417,7 @@ mod tests {
         assert!(summary.contains("/trace"));
         assert!(summary.contains("/review"));
         assert!(summary.contains("/diff"));
+        assert!(summary.contains("/risk"));
         assert!(summary.contains("/dry-run"));
         assert!(!summary.contains("benchmark"));
     }

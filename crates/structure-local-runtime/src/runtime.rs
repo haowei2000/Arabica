@@ -9,9 +9,9 @@ use crate::types::{
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCoreTrace,
     LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalToolCall,
     LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
-    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange,
-    WorktreeSnapshot,
+    ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult,
+    RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay,
+    WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -583,6 +583,23 @@ impl LocalAgentRuntime {
             &result,
         )?;
         Ok(result)
+    }
+
+    pub fn review_code_change_proposal(&self, artifact_id: &str) -> Result<ProposalReview, String> {
+        let artifact = self.artifact(artifact_id)?;
+        if artifact.kind != "code_change_proposal" {
+            return Err(format!(
+                "artifact {} is {}, not code_change_proposal",
+                artifact.artifact_id, artifact.kind
+            ));
+        }
+        let proposal = fs::read_to_string(&artifact.path)
+            .map_err(|err| format!("failed to read proposal artifact: {err}"))?;
+        Ok(review_code_change_proposal(
+            &self.repo_root,
+            artifact,
+            &proposal,
+        ))
     }
 
     pub fn run_by_id(&self, run_id: &str) -> Result<RunSummary, String> {
@@ -1542,7 +1559,7 @@ fn run_review_next_actions(
     }
     if let Some(proposal) = proposal_artifact {
         actions.push(format!(
-            "Review proposal {} with /proposal, then dry-run before apply.",
+            "Review proposal {} with /risk, then dry-run before apply.",
             proposal.artifact_id
         ));
     }
@@ -2144,6 +2161,14 @@ impl ParsedProposalPatch {
             .filter(|line| matches!(line, PatchLine::Add(_)))
             .count()
     }
+
+    fn removed_line_count(&self) -> usize {
+        self.hunks
+            .iter()
+            .flat_map(|hunk| &hunk.lines)
+            .filter(|line| matches!(line, PatchLine::Remove(_)))
+            .count()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2239,6 +2264,163 @@ fn parse_proposal_patch(proposal: &str) -> Result<ParsedProposalPatch, String> {
         new_file,
         hunks,
     })
+}
+
+fn review_code_change_proposal(
+    repo_root: &Path,
+    artifact: ArtifactRecord,
+    proposal: &str,
+) -> ProposalReview {
+    let mut checks = Vec::new();
+    let mut target_path = "unknown".to_string();
+    let mut target_exists = false;
+    let mut new_file = false;
+    let mut hunk_count = 0usize;
+    let mut added_lines = 0usize;
+    let mut removed_lines = 0usize;
+    let mut can_apply = true;
+
+    match parse_proposal_patch(proposal) {
+        Ok(patch) => {
+            target_path = patch.target_path.clone();
+            new_file = patch.new_file;
+            hunk_count = patch.hunks.len();
+            added_lines = patch.added_line_count();
+            removed_lines = patch.removed_line_count();
+            checks.push(proposal_check(
+                "patch_parse",
+                "ok",
+                format!(
+                    "Parsed {hunk_count} hunk(s), {added_lines} added line(s), {removed_lines} removed line(s)."
+                ),
+            ));
+
+            match safe_proposal_target_path(repo_root, &patch.target_path) {
+                Ok(target) => {
+                    target_exists = target.exists();
+                    checks.push(proposal_check(
+                        "target_safety",
+                        "ok",
+                        format!("Target stays inside workspace: {}", target.display()),
+                    ));
+                    if patch.new_file && target_exists {
+                        can_apply = false;
+                        checks.push(proposal_check(
+                            "new_file_conflict",
+                            "fail",
+                            format!(
+                                "{} already exists but the proposal creates it.",
+                                patch.target_path
+                            ),
+                        ));
+                    } else {
+                        checks.push(proposal_check(
+                            "new_file_conflict",
+                            "ok",
+                            if patch.new_file {
+                                "New target does not exist yet.".to_string()
+                            } else {
+                                "Proposal modifies an existing or context-checked target."
+                                    .to_string()
+                            },
+                        ));
+                    }
+
+                    let current_text = if target_exists {
+                        match fs::read_to_string(&target) {
+                            Ok(text) => text,
+                            Err(error) => {
+                                can_apply = false;
+                                checks.push(proposal_check(
+                                    "target_read",
+                                    "fail",
+                                    format!("Failed to read target before apply: {error}"),
+                                ));
+                                String::new()
+                            }
+                        }
+                    } else {
+                        String::new()
+                    };
+                    if can_apply {
+                        match apply_parsed_patch(&current_text, &patch) {
+                            Ok(_) => checks.push(proposal_check(
+                                "patch_context",
+                                "ok",
+                                "Patch context matched the current workspace state.",
+                            )),
+                            Err(error) => {
+                                can_apply = false;
+                                checks.push(proposal_check(
+                                    "patch_context",
+                                    "fail",
+                                    format!("Patch context check failed: {error}"),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    can_apply = false;
+                    checks.push(proposal_check("target_safety", "fail", error));
+                }
+            }
+        }
+        Err(error) => {
+            can_apply = false;
+            checks.push(proposal_check("patch_parse", "fail", error));
+        }
+    }
+
+    checks.push(proposal_check(
+        "approval",
+        "ok",
+        "Apply remains gated by an explicit dry-run/approval action.",
+    ));
+    let risk_level = proposal_risk_level(can_apply, new_file, added_lines, removed_lines);
+    ProposalReview {
+        artifact,
+        target_path,
+        target_exists,
+        new_file,
+        hunk_count,
+        added_lines,
+        removed_lines,
+        risk_level,
+        can_apply,
+        dry_run_required: true,
+        checks,
+    }
+}
+
+fn proposal_check(
+    id: impl Into<String>,
+    status: impl Into<String>,
+    message: impl Into<String>,
+) -> ProposalReviewCheck {
+    ProposalReviewCheck {
+        id: id.into(),
+        status: status.into(),
+        message: message.into(),
+    }
+}
+
+fn proposal_risk_level(
+    can_apply: bool,
+    new_file: bool,
+    added_lines: usize,
+    removed_lines: usize,
+) -> String {
+    if !can_apply {
+        return "blocked".to_string();
+    }
+    if removed_lines > 0 || added_lines + removed_lines > 200 {
+        return "medium".to_string();
+    }
+    if new_file {
+        return "low_new_file".to_string();
+    }
+    "low".to_string()
 }
 
 fn apply_parsed_patch(current_text: &str, patch: &ParsedProposalPatch) -> Result<String, String> {
@@ -3308,6 +3490,20 @@ mod tests {
             .into_iter()
             .find(|artifact| artifact.kind == "code_change_proposal")
             .expect("proposal artifact should exist");
+
+        let review = runtime
+            .review_code_change_proposal(&proposal.artifact_id)
+            .unwrap();
+        assert_eq!(review.artifact.artifact_id, proposal.artifact_id);
+        assert_eq!(review.risk_level, "low_new_file");
+        assert!(review.can_apply);
+        assert!(review.dry_run_required);
+        assert!(review.added_lines >= 1);
+        assert_eq!(review.removed_lines, 0);
+        assert!(review
+            .checks
+            .iter()
+            .any(|check| check.id == "patch_context" && check.status == "ok"));
 
         let dry_run = runtime
             .apply_code_change_proposal(&proposal.artifact_id, true)

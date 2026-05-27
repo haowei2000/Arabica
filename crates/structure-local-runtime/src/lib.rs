@@ -16,10 +16,10 @@ pub use types::{
     KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
     LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCoreTrace, LocalRunCoreTraceStep,
     LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalToolCall, LocalToolResult,
-    LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, RunAttempt,
-    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange,
-    WorktreeSnapshot,
+    LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, ProposalReview,
+    ProposalReviewCheck, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
+    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]

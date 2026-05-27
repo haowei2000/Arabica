@@ -1069,6 +1069,7 @@
               </div>
               <div id="preview-actions" class="preview-actions" hidden>
                 <button id="preview-attach" type="button">Attach</button>
+                <button id="preview-review" type="button">Risk</button>
                 <button id="preview-dry-run" type="button">Dry Run</button>
                 <button id="preview-apply" type="button" data-primary="true">Apply</button>
                 <button id="clear-preview" type="button">Clear</button>
@@ -1089,6 +1090,7 @@
       const previewMetaEl = document.querySelector("#preview-meta");
       const previewActionsEl = document.querySelector("#preview-actions");
       const previewAttachEl = document.querySelector("#preview-attach");
+      const previewReviewEl = document.querySelector("#preview-review");
       const previewDryRunEl = document.querySelector("#preview-dry-run");
       const previewApplyEl = document.querySelector("#preview-apply");
       const reportSummaryEl = document.querySelector("#report-summary");
@@ -1372,6 +1374,11 @@
         return invoke("apply_local_proposal", { artifactId, dryRun });
       }
 
+      async function reviewProposal(artifactId) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("review_local_proposal", { artifactId });
+      }
+
       async function resolveProposalPreview(selection = null) {
         if (selection?.startsWith("art_")) {
           const preview = await readArtifact(selection);
@@ -1601,8 +1608,10 @@
       }
 
       function setPreviewProposalBusy(isBusy, action = null) {
+        previewReviewEl.disabled = isBusy;
         previewDryRunEl.disabled = isBusy;
         previewApplyEl.disabled = isBusy;
+        previewReviewEl.textContent = isBusy && action === "review" ? "Reviewing" : "Risk";
         previewDryRunEl.textContent = isBusy && action === "dry-run" ? "Checking" : "Dry Run";
         previewApplyEl.textContent = isBusy && action === "apply" ? "Applying" : "Apply";
       }
@@ -2156,6 +2165,7 @@ ${events || "No new events."}`;
         previewEl.textContent = payload;
         previewActionsEl.hidden = false;
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
         eventLogEl.textContent = `Event
@@ -2515,6 +2525,25 @@ Next Actions
 ${(review.next_actions ?? []).map((action) => `- ${action}`).join("\n") || "- No immediate follow-up action required."}`;
       }
 
+      function renderProposalReviewText(review) {
+        if (!review) return "Proposal review unavailable.";
+        return `Proposal Risk Review
+Artifact: ${review.artifact?.artifact_id ?? "unknown"}
+Run: ${review.artifact?.run_id ?? "unknown"}
+Workspace: ${review.artifact?.workspace_id ?? "unknown"}
+Target: ${review.target_path ?? "unknown"}
+Risk: ${review.risk_level ?? "unknown"}
+Can apply: ${review.can_apply}
+Dry-run: ${review.dry_run_required ? "required" : "not required"}
+New file: ${review.new_file}
+Target exists: ${review.target_exists}
+Hunks: ${review.hunk_count ?? 0}
+Lines: ${review.added_lines ?? 0} added / ${review.removed_lines ?? 0} removed
+
+Checks
+${(review.checks ?? []).map((check) => `[${check.status}] ${check.id} - ${check.message}`).join("\n") || "No checks recorded."}`;
+      }
+
       function compactJson(value) {
         const raw = JSON.stringify(value ?? null);
         return raw.length > 800 ? `${raw.slice(0, 800)}...` : raw;
@@ -2710,6 +2739,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /artifacts
 /proposal [run_id]
 /diff [run_id]
+/risk [run_id|artifact_id]
 /dry-run [run_id|artifact_id]
 /apply [run_id|artifact_id] [--dry-run] [--yes]
 /replay`;
@@ -3063,6 +3093,12 @@ Run: ${proposal.artifact.run_id}
 Path: ${proposal.artifact.path}`;
             return true;
           }
+          case "/risk":
+          case "/proposal-review": {
+            const selected = parts.find((part) => !part.startsWith("--")) ?? null;
+            await reviewPreviewProposalRisk(selected);
+            return true;
+          }
           case "/dry-run": {
             const selected = parts.find((part) => !part.startsWith("--")) ?? null;
             const preview = await resolveProposalPreview(selected);
@@ -3302,6 +3338,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         clearPreviewEl.hidden = false;
         previewActionsEl.hidden = false;
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
         previewMetaEl.textContent = `${artifact.kind} / ${formatBytes(artifact.size_bytes)} / ${artifact.run_id}`;
@@ -3326,6 +3363,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         previewActionsEl.hidden = false;
         const isProposal = artifactPreview.artifact.kind === "code_change_proposal";
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = !isProposal;
         previewDryRunEl.hidden = !isProposal;
         previewApplyEl.hidden = !isProposal;
         previewMetaEl.textContent = `${artifactPreview.artifact.kind} / ${formatBytes(artifactPreview.bytes_read)} read / ${artifactPreview.artifact.run_id}`;
@@ -3349,6 +3387,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         clearPreviewEl.hidden = false;
         previewActionsEl.hidden = false;
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = false;
         previewDryRunEl.hidden = false;
         previewApplyEl.hidden = false;
         previewMetaEl.textContent = `Proposal review / ${checked.target_path}`;
@@ -3395,6 +3434,34 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
         return result;
       }
 
+      async function reviewPreviewProposalRisk(selection = null) {
+        const preview = state.previewArtifact?.kind === "code_change_proposal"
+          ? { artifact: state.previewArtifact }
+          : await resolveProposalPreview(selection);
+        const review = await reviewProposal(preview.artifact.artifact_id);
+        state.selectedPath = review.artifact.artifact_id;
+        state.previewArtifact = review.artifact;
+        state.previewRepoPath = null;
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        previewActionsEl.hidden = false;
+        previewAttachEl.hidden = true;
+        previewReviewEl.hidden = false;
+        previewDryRunEl.hidden = false;
+        previewApplyEl.hidden = false;
+        previewMetaEl.textContent = `Proposal risk / ${review.risk_level} / ${review.target_path}`;
+        renderReportSummary([
+          ["Target", review.target_path],
+          ["Risk", review.risk_level],
+          ["Can apply", String(review.can_apply)],
+          ["Lines", `${review.added_lines} added / ${review.removed_lines} removed`],
+        ]);
+        previewEl.textContent = renderProposalReviewText(review);
+        eventLogEl.textContent = renderProposalReviewText(review);
+        return review;
+      }
+
       function attachPreviewFileToPrompt() {
         if (!state.previewRepoPath) {
           eventLogEl.textContent = "No repository file preview is selected.";
@@ -3422,6 +3489,7 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
         state.previewRepoPath = null;
         previewActionsEl.hidden = false;
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
         if (!result.success) {
@@ -3503,6 +3571,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         clearPreviewEl.hidden = true;
         previewActionsEl.hidden = true;
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = true;
         renderReports();
       }
 
@@ -3529,6 +3598,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         clearPreviewEl.hidden = true;
         previewActionsEl.hidden = true;
         previewAttachEl.hidden = true;
+        previewReviewEl.hidden = true;
         renderRuns([]);
         renderChat([]);
         renderEventTimeline([]);
@@ -3983,6 +4053,16 @@ Opened in Preview${state.selectedRunId ? " for the selected run." : "."}`;
         }
       });
       previewAttachEl.addEventListener("click", attachPreviewFileToPrompt);
+      previewReviewEl.addEventListener("click", async () => {
+        setPreviewProposalBusy(true, "review");
+        try {
+          await reviewPreviewProposalRisk();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setPreviewProposalBusy(false);
+        }
+      });
       previewDryRunEl.addEventListener("click", async () => {
         setPreviewProposalBusy(true, "dry-run");
         try {

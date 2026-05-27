@@ -211,7 +211,7 @@ into runtime calls:
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`,
   `/review [run-id]`, `/plan [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
-  `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
+  `/risk`, `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
   evidence summary, preserving the event-sourced audit trail instead of editing
@@ -245,6 +245,11 @@ into runtime calls:
   `/doctor` combines the local session snapshot, the same `OPENAI__`
   diagnostic used by `/llm`, and the Structure Core parity verifier without
   starting an agent run.
+  Interactive `/risk [artifact-id|run-id]` and
+  `uv run structure proposals review <artifact-id>` parse the same reviewed
+  proposal artifact used by apply, verify target safety, new-file conflicts,
+  and patch context against the current workspace, and report whether apply can
+  proceed through the explicit approval gate.
   Interactive `/dry-run` and `/apply` without `--yes` preview proposal
   application; writing requires an explicit `/apply --yes`.
   `/remember <text>` persists a short text note into the local workspace
@@ -285,9 +290,9 @@ into runtime calls:
   `z` to inspect the same Core flow/primitive trace
   as CLI `runs trace`, `b` to inspect the same post-run review as CLI
   `runs review`, and `e` to inspect the same local evidence bundle.
-  Proposal controls `g`, `u`, and `y` prefer the selected run's code-change
+  Proposal controls `g`, `h`, `u`, and `y` prefer the selected run's code-change
   proposal before falling back to the latest workspace proposal, preserving the
-  inspect-review-apply loop around a chosen run.
+  inspect-risk-review-apply loop around a chosen run.
 - Desktop app: Tauri commands such as `local_session_status`,
   `local_agent_run_attempt`, `local_runs`,
   `local_run_transcript`, `local_run_plan`, `local_run_core_trace`, and `local_run_events`;
@@ -301,7 +306,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/trace`, `/review`, `/dry-run`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/trace`, `/review`, `/risk`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
@@ -328,6 +333,9 @@ into runtime calls:
   scheduler concept.
   Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
   compact attempt review and next-action guidance as CLI/TUI.
+  Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
+  `review_local_proposal`, giving the app the same target-safety, patch-context,
+  and explicit-approval checks as CLI before any proposal apply.
   Desktop `/doctor` and the visible Doctor action mirror CLI `/doctor`: they
   gather `local_session_status`, `local_llm_diagnostic`, and
   `core_parity_report` through Tauri commands and render the local health check
@@ -345,11 +353,12 @@ into runtime calls:
   Command results are appended to the desktop chat thread as local interaction
   turns while
   persisted agent runs still come from the Rust runtime event store.
-  Proposal preview/apply controls prefer the selected run, matching the
+  Proposal risk/preview/apply controls prefer the selected run, matching the
   transcript and event-trace selection model. When a code-change proposal is
-  open in Preview, the desktop app exposes Dry Run and Apply actions directly
-  on that review surface, so the user-facing app completes the inspect ->
-  review -> apply loop without falling back to terminal-style service controls.
+  open in Preview, the desktop app exposes Risk, Dry Run, and Apply actions
+  directly on that review surface, so the user-facing app completes the inspect
+  -> risk -> review -> apply loop without falling back to terminal-style
+  service controls.
   Desktop `/remember <text>` mirrors the CLI knowledge-memory path and stores
   text as local workspace knowledge before refresh. Desktop `/forget
   <source-id>` removes the same `KnowledgeSource` from the app chat loop.

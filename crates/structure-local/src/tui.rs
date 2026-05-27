@@ -13,8 +13,8 @@ use structure_local_core::{
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
     LocalEvidenceBundle, LocalRunCoreTrace, LocalRunPlan, LocalRunReview, LocalToolCall,
-    ProposalApplyResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
-    WorkspaceSummary, WorktreeSnapshot,
+    ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary,
+    RunTranscript, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -515,6 +515,28 @@ impl TuiState {
         Ok(())
     }
 
+    fn review_latest_proposal_risk(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(artifact) =
+            select_proposal_artifact(&self.artifacts, self.selected_run_id()).cloned()
+        else {
+            self.notice = "No code-change proposal to review".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let review = local_result(runtime.review_code_change_proposal(&artifact.artifact_id))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("proposal risk / {}", review.artifact.artifact_id),
+            text: render_proposal_review(&review),
+        });
+        self.notice = format!(
+            "{} risk: {}",
+            self.proposal_notice(&artifact, "Proposal"),
+            review.risk_level
+        );
+        Ok(())
+    }
+
     fn apply_pending_proposal(&mut self, repo_root: &Path) -> Result<()> {
         let Some(artifact_id) = self.pending_apply_artifact_id.clone() else {
             self.notice = "Press u to dry-run a proposal before applying".to_string();
@@ -726,6 +748,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
                     KeyCode::Char('g') => state.preview_latest_proposal(repo_root)?,
+                    KeyCode::Char('h') => state.review_latest_proposal_risk(repo_root)?,
                     KeyCode::Char('u') => state.preview_latest_proposal_apply(repo_root)?,
                     KeyCode::Char('y') => state.apply_pending_proposal(repo_root)?,
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
@@ -1019,7 +1042,7 @@ fn draw_reports(
             out,
             x,
             artifacts_y + 1,
-            "press a for latest artifact, g selected proposal, u dry-run, y apply",
+            "press a for latest artifact, g selected proposal, h risk, u dry-run, y apply",
             width,
         )?;
         write_at(out, x, artifacts_y + 2, &artifact_text, width)?;
@@ -1069,7 +1092,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  d worktree  c prompt  f follow-up  ! cmd  t transcript  l plan  z trace  b review  g proposal";
+    let controls = "q quit  r refresh  c prompt  f follow-up  ! cmd  t transcript  l plan  b review  g proposal  h risk";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1552,6 +1575,33 @@ fn render_proposal_apply_result(result: &ProposalApplyResult) -> String {
     text
 }
 
+fn render_proposal_review(review: &ProposalReview) -> String {
+    let mut text = String::new();
+    text.push_str("Proposal Risk Review\n");
+    text.push_str(&format!("Artifact: {}\n", review.artifact.artifact_id));
+    text.push_str(&format!("Run: {}\n", review.artifact.run_id));
+    text.push_str(&format!("Workspace: {}\n", review.artifact.workspace_id));
+    text.push_str(&format!("Target: {}\n", review.target_path));
+    text.push_str(&format!("Risk: {}\n", review.risk_level));
+    text.push_str(&format!("Can apply: {}\n", review.can_apply));
+    text.push_str("Dry-run: required\n");
+    text.push_str(&format!("New file: {}\n", review.new_file));
+    text.push_str(&format!("Target exists: {}\n", review.target_exists));
+    text.push_str(&format!("Hunks: {}\n", review.hunk_count));
+    text.push_str(&format!(
+        "Lines: {} added / {} removed\n\n",
+        review.added_lines, review.removed_lines
+    ));
+    text.push_str("Checks\n");
+    for check in &review.checks {
+        text.push_str(&format!(
+            "[{}] {} - {}\n",
+            check.status, check.id, check.message
+        ));
+    }
+    text
+}
+
 fn render_local_command_result(result: &structure_local_runtime::LocalToolResult) -> String {
     let mut text = String::new();
     text.push_str("Local Command\n");
@@ -1850,6 +1900,12 @@ mod tests {
             assert!(review_preview.path.starts_with("run review / run_"));
             assert!(review_preview.text.contains("Run Review"));
             assert!(review_preview.text.contains("Next Actions"));
+
+            state.review_latest_proposal_risk(&root)?;
+            let risk_preview = state.preview.as_ref().expect("proposal risk preview");
+            assert!(risk_preview.path.starts_with("proposal risk / art_"));
+            assert!(risk_preview.text.contains("Proposal Risk Review"));
+            assert!(risk_preview.text.contains("Dry-run: required"));
             Ok(())
         })();
 

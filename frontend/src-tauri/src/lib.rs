@@ -435,6 +435,14 @@ fn latest_local_proposal(
 }
 
 #[tauri::command]
+fn review_local_proposal(
+    artifact_id: String,
+) -> Result<structure_local_runtime::ProposalReview, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.review_code_change_proposal(&artifact_id)
+}
+
+#[tauri::command]
 fn apply_local_proposal(
     artifact_id: String,
     dry_run: Option<bool>,
@@ -488,6 +496,7 @@ pub fn run() {
             local_artifacts,
             read_local_artifact,
             latest_local_proposal,
+            review_local_proposal,
             apply_local_proposal,
         ])
         .run(tauri::generate_context!())
@@ -613,6 +622,8 @@ mod tests {
                 Some(run.run.run_id.clone()),
                 Some(64_000),
             )?;
+            let proposal_review =
+                review_local_proposal(proposal_preview.artifact.artifact_id.clone())?;
             let dry_apply =
                 apply_local_proposal(proposal_preview.artifact.artifact_id.clone(), Some(true))?;
             let chat_artifacts = local_artifacts(
@@ -695,6 +706,16 @@ mod tests {
                 .next_actions
                 .iter()
                 .any(|action| action.contains("dry-run")));
+            assert_eq!(
+                proposal_review.artifact.artifact_id,
+                proposal_preview.artifact.artifact_id
+            );
+            assert!(proposal_review.can_apply);
+            assert!(proposal_review.dry_run_required);
+            assert!(proposal_review
+                .checks
+                .iter()
+                .any(|check| check.id == "patch_context" && check.status == "ok"));
             assert_eq!(attempt.run.status, "finished");
             assert!(attempt.result.is_some());
             assert!(attempt.error.is_none());
@@ -891,6 +912,10 @@ mod tests {
 
         assert!(local_ui.contains("id=\"preview-dry-run\""));
         assert!(local_ui.contains("id=\"preview-apply\""));
+        assert!(local_ui.contains("id=\"preview-review\""));
+        assert!(local_ui.contains("function reviewPreviewProposalRisk"));
+        assert!(local_ui.contains("invoke(\"review_local_proposal\""));
+        assert!(local_ui.contains("case \"/risk\":"));
         assert!(local_ui.contains("function reviewPreviewProposal"));
         assert!(local_ui.contains("await applyProposal(artifactId, true)"));
         assert!(local_ui.contains("await applyProposal(artifactId, false)"));
