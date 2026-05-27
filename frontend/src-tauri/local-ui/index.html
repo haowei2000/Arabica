@@ -1824,6 +1824,7 @@ ${changes.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No
         if (!context) return "Agent context unavailable.";
         const instructions = context.agent_instructions ?? [];
         const sources = context.knowledge_sources ?? [];
+        const sourceRatings = context.source_ratings ?? [];
         const tasks = context.tasks ?? [];
         const turns = context.recent_turns ?? [];
         const changes = context.worktree?.changed_files ?? [];
@@ -1836,6 +1837,7 @@ Database: ${context.runtime_db}
 Worktree: ${context.worktree?.clean ? "clean" : "dirty"} / ${changes.length} changes
 Instructions: ${instructions.length}
 Knowledge sources: ${sources.length}
+Source ratings: ${sourceRatings.length}
 Tasks: ${tasks.length}
 Recent turns: ${turns.length}
 
@@ -1844,6 +1846,9 @@ ${instructions.map((item) => `- ${item.path} / ${item.size_bytes} bytes / trunca
 
 Knowledge Sources
 ${sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources registered."}
+
+Source Ratings
+${sourceRatings.map((rating) => `- ${rating.source_title}: ${rating.rating}/5${rating.note ? ` / ${rating.note}` : ""}`).join("\n") || "No source ratings recorded."}
 
 Workspace Tasks
 ${tasks.map((task) => `- ${task.task_id} [${task.status} / ${task.priority}] ${task.title}`).join("\n") || "No workspace tasks replayed."}

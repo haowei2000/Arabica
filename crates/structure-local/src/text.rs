@@ -947,6 +947,7 @@ pub(crate) fn print_agent_context(context: &LocalAgentContext) {
     );
     println!("  instr:     {}", context.agent_instructions.len());
     println!("  knowledge: {}", context.knowledge_sources.len());
+    println!("  ratings:   {}", context.source_ratings.len());
     println!("  tasks:     {}", context.tasks.len());
     println!("  turns:     {}", context.recent_turns.len());
     println!("  limit:     {}", context.context_replay_limit);
@@ -963,6 +964,15 @@ pub(crate) fn print_agent_context(context: &LocalAgentContext) {
         println!("  sources:");
         for source in &context.knowledge_sources {
             println!("    {}  {}", source.title, source.path);
+        }
+    }
+    if !context.source_ratings.is_empty() {
+        println!("  source ratings:");
+        for rating in context.source_ratings.iter().take(8) {
+            println!(
+                "    {}  {}/5  {}",
+                rating.source_title, rating.rating, rating.note
+            );
         }
     }
     if !context.tasks.is_empty() {

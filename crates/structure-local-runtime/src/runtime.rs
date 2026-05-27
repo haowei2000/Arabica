@@ -16,6 +16,7 @@ use crate::types::{
     WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -54,6 +55,12 @@ pub struct LocalAgentRuntime {
     repo_root: PathBuf,
     runtime_dir: PathBuf,
     store: SqliteLocalStore,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SourceRatingPriority {
+    rating: u8,
+    sequence: i64,
 }
 
 impl LocalAgentRuntime {
@@ -1349,6 +1356,8 @@ impl LocalAgentRuntime {
                 "agent_instructions": context.agent_instructions.clone(),
                 "worktree": context.worktree.clone(),
                 "knowledge_sources": context.knowledge_sources.len(),
+                "source_ratings": context.source_ratings.len(),
+                "knowledge_rating_policy": "latest_source_rated_priority",
                 "task_count": context.tasks.len(),
                 "active_tasks": context.tasks.iter().filter(|task| task_is_active(task)).count(),
                 "recent_turns": context.recent_turns.len(),
@@ -1628,7 +1637,13 @@ impl LocalAgentRuntime {
     ) -> Result<LocalAgentContext, String> {
         let agent_instructions = load_agent_instructions(&self.repo_root)?;
         let worktree = collect_worktree_snapshot(&self.repo_root);
-        let knowledge_sources = self.store.list_knowledge_sources(workspace_id, limit)?;
+        let source_ratings = self.workspace_source_ratings(workspace_id)?;
+        let source_rating_priorities = source_rating_priorities(&source_ratings);
+        let mut knowledge_sources = self
+            .store
+            .list_knowledge_sources(workspace_id, limit.saturating_mul(4).max(limit))?;
+        prioritize_knowledge_sources(&mut knowledge_sources, &source_rating_priorities);
+        knowledge_sources.truncate(limit);
         let tasks = self.store.list_tasks(Some(workspace_id), None, limit)?;
         let recent_turns = self
             .chat_turns(Some(workspace_id), limit)?
@@ -1645,11 +1660,85 @@ impl LocalAgentRuntime {
             agent_instructions,
             worktree,
             knowledge_sources,
+            source_ratings,
             tasks,
             recent_turns,
             context_replay_limit: limit,
         })
     }
+
+    fn workspace_source_ratings(&self, workspace_id: &str) -> Result<Vec<SourceRating>, String> {
+        let mut ratings_by_source: HashMap<String, (SourceRating, i64)> = HashMap::new();
+        for event in self.store.workspace_events(workspace_id, 512)? {
+            if event.kind != RunEventKind::SourceRated.as_str() {
+                continue;
+            }
+            let Ok(rating) = serde_json::from_value::<SourceRating>(event.payload.clone()) else {
+                continue;
+            };
+            if rating.workspace_id != workspace_id {
+                continue;
+            }
+            ratings_by_source.insert(rating.source_id.clone(), (rating, event.sequence));
+        }
+        let mut ratings = ratings_by_source
+            .into_values()
+            .collect::<Vec<(SourceRating, i64)>>();
+        ratings.sort_by(|(left, left_sequence), (right, right_sequence)| {
+            right
+                .rating
+                .cmp(&left.rating)
+                .then_with(|| right_sequence.cmp(left_sequence))
+                .then_with(|| right.created_at_ms.cmp(&left.created_at_ms))
+        });
+        Ok(ratings.into_iter().map(|(rating, _)| rating).collect())
+    }
+}
+
+fn source_rating_priorities(ratings: &[SourceRating]) -> HashMap<String, SourceRatingPriority> {
+    ratings
+        .iter()
+        .enumerate()
+        .map(|(index, rating)| {
+            (
+                rating.source_id.clone(),
+                SourceRatingPriority {
+                    rating: rating.rating,
+                    sequence: (ratings.len() - index) as i64,
+                },
+            )
+        })
+        .collect()
+}
+
+fn prioritize_knowledge_sources(
+    sources: &mut [KnowledgeSource],
+    ratings: &HashMap<String, SourceRatingPriority>,
+) {
+    sources.sort_by(|left, right| {
+        let left_rating = ratings.get(&left.source_id);
+        let right_rating = ratings.get(&right.source_id);
+        knowledge_rating_score(right_rating)
+            .cmp(&knowledge_rating_score(left_rating))
+            .then_with(|| {
+                right_rating
+                    .map(|rating| rating.sequence)
+                    .unwrap_or_default()
+                    .cmp(
+                        &left_rating
+                            .map(|rating| rating.sequence)
+                            .unwrap_or_default(),
+                    )
+            })
+            .then_with(|| right.added_at_ms.cmp(&left.added_at_ms))
+            .then_with(|| right.source_id.cmp(&left.source_id))
+    });
+}
+
+fn knowledge_rating_score(priority: Option<&SourceRatingPriority>) -> i16 {
+    priority
+        .map(|rating| i16::from(rating.rating) - 3)
+        .unwrap_or_default()
 }
 
 fn run_mode_from_events(events: &[LocalEvent]) -> Option<String> {
@@ -4055,6 +4144,67 @@ mod tests {
             .canonical_flow_ids
             .contains(&"feedback".to_string()));
         assert!(evidence.core_trace.core_aligned);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_replays_source_ratings_into_agent_context_priority() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("source-rating-priority");
+        let useful_path = root.join("useful.md");
+        let noisy_path = root.join("noisy.md");
+        fs::write(&useful_path, "trusted context").unwrap();
+        fs::write(&noisy_path, "noisy context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let useful = runtime
+            .add_knowledge_source(Some("rated".to_string()), &useful_path)
+            .unwrap();
+        let noisy = runtime
+            .add_knowledge_source(Some("rated".to_string()), &noisy_path)
+            .unwrap();
+
+        runtime
+            .rate_knowledge_source(&useful.source_id, None, 5, "prefer this source")
+            .unwrap();
+        runtime
+            .rate_knowledge_source(&noisy.source_id, None, 1, "demote this source")
+            .unwrap();
+
+        let context = runtime
+            .agent_context(Some("rated"), Some(LocalAgentMode::CodeAgent))
+            .unwrap();
+        assert_eq!(context.source_ratings.len(), 2);
+        assert_eq!(context.source_ratings[0].source_id, useful.source_id);
+        assert_eq!(context.knowledge_sources[0].source_id, useful.source_id);
+        assert_eq!(context.knowledge_sources[1].source_id, noisy.source_id);
+
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Use the preferred source first.".to_string(),
+                workspace_id: Some("rated".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let context_event = result
+            .events
+            .iter()
+            .find(|event| event.kind == "workspace_context_loaded")
+            .unwrap();
+        assert_eq!(context_event.payload["source_ratings"], 2);
+        assert_eq!(
+            context_event.payload["knowledge_rating_policy"],
+            "latest_source_rated_priority"
+        );
+        let knowledge_event = result
+            .events
+            .iter()
+            .find(|event| event.kind == "knowledge_retrieved")
+            .unwrap();
+        assert_eq!(
+            knowledge_event.payload["sources"][0]["source_id"],
+            useful.source_id
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

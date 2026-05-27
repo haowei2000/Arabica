@@ -303,9 +303,12 @@ into runtime calls:
   knowledge. `/recall <source-id>` previews the stored source, and `/forget
   <source-id>` removes a registered source and records the same workspace
   context-change event path.
-  `/rate <source-id> <1-5> [note]` records a `source_rated` event for the
-  selected run when available, mapping the local feedback loop back to the
-  `source_evaluation` primitive in the Structure Core manifest.
+  `/rate <source-id> <1-5> [note]` and `uv run structure knowledge rate
+  <source-id> <1-5>` record a `source_rated` event for the selected run when
+  available, mapping the local feedback loop back to the `source_evaluation`
+  primitive in the Structure Core manifest. Later local agent runs replay the
+  latest source ratings while assembling `LocalAgentContext`, prioritizing
+  highly rated knowledge before model planning and demoting low-rated sources.
 - CLI mode selection: noninteractive `uv run structure chat` and
   `uv run structure run` accept `--mode chat|code_agent` so scripts can choose
   conversational or code-agent behavior without bypassing the same
@@ -437,7 +440,8 @@ into runtime calls:
   Desktop `/rate <source-id> <1-5> [note]` mirrors CLI `/rate` through
   `rate_local_knowledge_source`, so source usefulness feedback remains an
   event-sourced part of the selected run evidence rather than a detached UI
-  annotation.
+  annotation, and the Agent Context view shows the replayed ratings that shape
+  subsequent knowledge ordering.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events. A `read_repo_file` preview can be attached to

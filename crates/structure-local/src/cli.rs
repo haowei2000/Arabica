@@ -436,6 +436,7 @@ enum KnowledgeCommand {
     Add(AddKnowledgeArgs),
     List(ListKnowledgeArgs),
     Show(ShowKnowledgeArgs),
+    Rate(RateKnowledgeArgs),
     Remove(RemoveKnowledgeArgs),
 }
 
@@ -463,6 +464,18 @@ struct ShowKnowledgeArgs {
     source_id: String,
     #[arg(long, default_value_t = PREVIEW_MAX_BYTES)]
     max_bytes: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RateKnowledgeArgs {
+    source_id: String,
+    rating: u8,
+    #[arg(long)]
+    run: Option<String>,
+    #[arg(long)]
+    note: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -2477,6 +2490,19 @@ fn run_knowledge(repo_root: &PathBuf, command: KnowledgeCommand) -> Result<()> {
                 print_knowledge_preview(&preview);
             }
         }
+        KnowledgeCommand::Rate(args) => {
+            let rating = local_result(runtime.rate_knowledge_source(
+                &args.source_id,
+                args.run.as_deref(),
+                args.rating,
+                args.note.as_deref().unwrap_or_default(),
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&rating)?);
+            } else {
+                print_source_rating(&rating);
+            }
+        }
         KnowledgeCommand::Remove(args) => {
             let source = local_result(runtime.remove_knowledge_source(&args.source_id))?;
             if args.json {
@@ -3045,6 +3071,35 @@ mod tests {
             panic!("expected proposals review command");
         };
         assert_eq!(args.artifact_id, "art_1");
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_knowledge_rate_command_accepts_run_note_and_json_output() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "knowledge",
+            "rate",
+            "ks_1",
+            "5",
+            "--run",
+            "run_1",
+            "--note",
+            "useful",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Knowledge {
+            command: KnowledgeCommand::Rate(args),
+        } = cli.command
+        else {
+            panic!("expected knowledge rate command");
+        };
+        assert_eq!(args.source_id, "ks_1");
+        assert_eq!(args.rating, 5);
+        assert_eq!(args.run.as_deref(), Some("run_1"));
+        assert_eq!(args.note.as_deref(), Some("useful"));
         assert!(args.json);
     }
 

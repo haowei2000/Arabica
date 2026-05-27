@@ -328,6 +328,7 @@ pub struct LocalAgentContext {
     pub agent_instructions: Vec<AgentInstruction>,
     pub worktree: WorktreeSnapshot,
     pub knowledge_sources: Vec<KnowledgeSource>,
+    pub source_ratings: Vec<SourceRating>,
     pub tasks: Vec<LocalTaskRecord>,
     pub recent_turns: Vec<ChatTurn>,
     pub context_replay_limit: usize,
