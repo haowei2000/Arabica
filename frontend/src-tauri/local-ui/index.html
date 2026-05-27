@@ -2145,6 +2145,26 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             renderRuns(state.runs);
             await previewRunCompactForRun(turn.run_id, `/compact ${turn.run_id}`);
           });
+          const rerunRun = document.createElement("button");
+          rerunRun.type = "button";
+          rerunRun.textContent = "Rerun";
+          rerunRun.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            setAgentBusy(true);
+            try {
+              await performPromptRun(turn.user_message, {
+                label: `Rerun ${turn.run_id}: ${turn.user_message}`,
+                heading: "History Rerun",
+              });
+            } catch (error) {
+              eventLogEl.textContent = String(error);
+              setInFlightRun(`Rerun ${turn.run_id}`, "failed", String(error));
+            } finally {
+              stopLiveEventPolling();
+              setAgentBusy(false);
+            }
+          });
           const continueRun = document.createElement("button");
           continueRun.type = "button";
           continueRun.textContent = "Continue";
@@ -2207,6 +2227,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             compact,
             review,
             decision,
+            rerunRun,
             continueRun,
             retryRun,
             proposal,
@@ -3585,7 +3606,7 @@ Selected run: ${state.selectedRunId ?? state.runs[0]?.run_id ?? "none"}
 Run Loop
 - prompt text -> local_agent_run_attempt -> Structure run events
 - /history -> persisted chat/code-agent turns from local run events
-- /rerun [n] -> fresh run from a persisted history prompt
+- /rerun [n] or per-turn Rerun -> fresh run from a persisted history prompt
 - /continue, /resume, /retry -> fresh runs from selected transcript/evidence
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
 

@@ -415,7 +415,9 @@ into runtime calls:
   so app navigation remains grounded in Structure Core run and workspace
   events rather than a frontend-only draft list. Desktop `/rerun [n]` uses
   those persisted `local_chat_turns` as fresh `local_agent_run_attempt` input,
-  matching CLI `/rerun` without introducing a desktop-only history model.
+  and each persisted chat/code-agent turn exposes a visible Rerun action that
+  feeds the same turn prompt back into `local_agent_run_attempt`. That matches
+  CLI `/rerun` and TUI `N` without introducing a desktop-only history model.
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`
   diagnostic, and Core parity report.

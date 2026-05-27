@@ -1235,6 +1235,9 @@ mod tests {
         assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
         assert!(local_ui.contains("tools.textContent = \"Tools\""));
+        assert!(local_ui.contains("rerunRun.textContent = \"Rerun\""));
+        assert!(local_ui.contains("await performPromptRun(turn.user_message"));
+        assert!(local_ui.contains("heading: \"History Rerun\""));
         assert!(
             local_ui.contains("previewRunStatusForRun(turn.run_id, `/run-status ${turn.run_id}`)")
         );
