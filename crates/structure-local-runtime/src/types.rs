@@ -353,6 +353,23 @@ pub struct LocalRunCoreTraceStep {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunReview {
+    pub run: RunSummary,
+    pub status: String,
+    pub core_aligned: bool,
+    pub flow_path: Vec<String>,
+    pub primitive_path: Vec<String>,
+    pub event_count: usize,
+    pub tool_call_count: usize,
+    pub failed_tool_call_count: usize,
+    pub model_usage: ModelUsageSummary,
+    pub proposal_artifact: Option<ArtifactRecord>,
+    pub response_artifact: Option<ArtifactRecord>,
+    pub final_response_chars: usize,
+    pub next_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunTranscript {
     pub run: RunSummary,
     pub chat_turn: Option<ChatTurn>,

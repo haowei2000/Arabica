@@ -12,8 +12,9 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
-    LocalEvidenceBundle, LocalRunCoreTrace, LocalToolCall, ProposalApplyResult, RunAttempt,
-    RunEvidenceSummary, RunRequest, RunSummary, RunTranscript, WorkspaceSummary, WorktreeSnapshot,
+    LocalEvidenceBundle, LocalRunCoreTrace, LocalRunReview, LocalToolCall, ProposalApplyResult,
+    RunAttempt, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript, WorkspaceSummary,
+    WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -449,6 +450,22 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_selected_run_review(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let review = local_result(runtime.run_review(&run.run_id))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("run review / {}", review.run.run_id),
+            text: render_run_review(&review),
+        });
+        self.notice = format!("Review: {}", run.run_id);
+        Ok(())
+    }
+
     fn preview_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
         let Some(artifact) =
             select_proposal_artifact(&self.artifacts, self.selected_run_id()).cloned()
@@ -688,6 +705,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('z') => state.preview_selected_run_core_trace(repo_root)?,
+                    KeyCode::Char('b') => state.preview_selected_run_review(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
                     KeyCode::Char('g') => state.preview_latest_proposal(repo_root)?,
@@ -776,7 +794,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  d worktree  z trace  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f follow-up  d worktree  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -864,7 +882,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, z trace, f follow-up, n to run a local check",
+        "press j/k to select, t transcript, z trace, b review, f follow-up, n to run a local check",
         width,
     )?;
     muted_at(
@@ -1034,7 +1052,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  d worktree  c prompt  f follow-up  ! cmd  t transcript  z trace  g proposal  u dry-run  y apply";
+    let controls = "q quit  r refresh  d worktree  c prompt  f follow-up  ! cmd  t transcript  z trace  b review  g proposal  u dry-run  y apply";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1368,6 +1386,62 @@ fn render_run_core_trace(trace: &LocalRunCoreTrace) -> String {
             step.primitive_id,
             step.payload_summary
         ));
+    }
+    text
+}
+
+fn render_run_review(review: &LocalRunReview) -> String {
+    let mut text = String::new();
+    text.push_str("Run Review\n");
+    text.push_str(&format!("Run: {}\n", review.run.run_id));
+    text.push_str(&format!("Workspace: {}\n", review.run.workspace_id));
+    text.push_str(&format!("Status: {}\n", review.status));
+    text.push_str(&format!("Core aligned: {}\n", review.core_aligned));
+    text.push_str(&format!("Events: {}\n", review.event_count));
+    text.push_str(&format!(
+        "Tools: {} total / {} failed\n",
+        review.tool_call_count, review.failed_tool_call_count
+    ));
+    text.push_str(&format!(
+        "Model: {} requests / {} responses / {} network\n",
+        review.model_usage.model_request_count,
+        review.model_usage.model_response_count,
+        review.model_usage.network_request_count
+    ));
+    text.push_str(&format!(
+        "Tokens: {} prompt / {} completion / {} total\n",
+        review.model_usage.prompt_tokens,
+        review.model_usage.completion_tokens,
+        review.model_usage.total_tokens
+    ));
+    text.push_str(&format!(
+        "Flow path: {}\n",
+        if review.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            review.flow_path.join(" -> ")
+        }
+    ));
+    text.push_str(&format!(
+        "Primitive path: {}\n",
+        if review.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            review.primitive_path.join(" -> ")
+        }
+    ));
+    if let Some(artifact) = &review.response_artifact {
+        text.push_str(&format!("Response artifact: {}\n", artifact.path));
+    }
+    if let Some(artifact) = &review.proposal_artifact {
+        text.push_str(&format!(
+            "Proposal artifact: {} / {}\n",
+            artifact.artifact_id, artifact.path
+        ));
+    }
+    text.push_str("\nNext Actions\n");
+    for action in &review.next_actions {
+        text.push_str(&format!("- {action}\n"));
     }
     text
 }
@@ -1706,6 +1780,12 @@ mod tests {
             assert!(trace_preview.text.contains("Flow path:"));
             assert!(trace_preview.text.contains("Primitive path:"));
             assert!(trace_preview.text.contains("Core aligned: true"));
+
+            state.preview_selected_run_review(&root)?;
+            let review_preview = state.preview.as_ref().expect("run review preview");
+            assert!(review_preview.path.starts_with("run review / run_"));
+            assert!(review_preview.text.contains("Run Review"));
+            assert!(review_preview.text.contains("Next Actions"));
             Ok(())
         })();
 

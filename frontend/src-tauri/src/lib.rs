@@ -283,6 +283,12 @@ fn local_run_core_trace(
 }
 
 #[tauri::command]
+fn local_run_review(run_id: String) -> Result<structure_local_runtime::LocalRunReview, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_review(&run_id)
+}
+
+#[tauri::command]
 fn local_run_transcript(run_id: String) -> Result<structure_local_runtime::RunTranscript, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_transcript(&run_id)
@@ -460,6 +466,7 @@ pub fn run() {
             local_run_event_gc,
             local_run_tool_trace,
             local_run_core_trace,
+            local_run_review,
             local_run_transcript,
             local_workspace_replay,
             local_workspace_event_feed,
@@ -589,6 +596,7 @@ mod tests {
             let event_gc = local_run_event_gc(run.run.run_id.clone(), Some(4))?;
             let tool_trace = local_run_tool_trace(run.run.run_id.clone())?;
             let transcript = local_run_transcript(run.run.run_id.clone())?;
+            let review = local_run_review(run.run.run_id.clone())?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
                 local_workspace_event_feed(Some(workspace.workspace_id.clone()), Some(0), Some(5))?;
@@ -665,6 +673,13 @@ mod tests {
                 .steps
                 .iter()
                 .any(|step| step.primitive_id == "reproducible_evidence"));
+            assert_eq!(review.run.run_id, run.run.run_id);
+            assert!(review.core_aligned);
+            assert!(review.proposal_artifact.is_some());
+            assert!(review
+                .next_actions
+                .iter()
+                .any(|action| action.contains("dry-run")));
             assert_eq!(attempt.run.status, "finished");
             assert!(attempt.result.is_some());
             assert!(attempt.error.is_none());
@@ -797,6 +812,9 @@ mod tests {
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));
+        assert!(local_ui.contains("function renderRunReviewText(review)"));
+        assert!(local_ui.contains("case \"/review\":"));
+        assert!(local_ui.contains("invoke(\"local_run_review\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("case \"/diff\":"));

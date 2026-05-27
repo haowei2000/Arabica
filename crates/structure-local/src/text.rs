@@ -4,9 +4,9 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalToolTraceEntry,
-    RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
+    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalRunReview,
+    LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript,
+    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -695,6 +695,70 @@ pub(crate) fn print_run_core_trace(trace: &LocalRunCoreTrace) {
                 step.primitive_id,
                 step.payload_summary
             );
+        }
+    }
+}
+
+pub(crate) fn print_run_review(review: &LocalRunReview) {
+    println!("Run review");
+    println!("  run:       {}", review.run.run_id);
+    println!("  workspace: {}", review.run.workspace_id);
+    println!("  status:    {}", review.status);
+    println!(
+        "  core:      {}",
+        if review.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        }
+    );
+    println!("  events:    {}", review.event_count);
+    println!(
+        "  tools:     {} total / {} failed",
+        review.tool_call_count, review.failed_tool_call_count
+    );
+    println!(
+        "  model:     {} req / {} resp / {} net",
+        review.model_usage.model_request_count,
+        review.model_usage.model_response_count,
+        review.model_usage.network_request_count
+    );
+    if review.model_usage.total_tokens > 0 {
+        println!(
+            "  tokens:    {} prompt / {} completion / {} total",
+            review.model_usage.prompt_tokens,
+            review.model_usage.completion_tokens,
+            review.model_usage.total_tokens
+        );
+    }
+    println!("  response:  {} chars", review.final_response_chars);
+    println!(
+        "  flow path: {}",
+        if review.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            review.flow_path.join(" -> ")
+        }
+    );
+    println!(
+        "  primitive path: {}",
+        if review.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            review.primitive_path.join(" -> ")
+        }
+    );
+    if let Some(artifact) = &review.response_artifact {
+        println!("  response artifact: {}", artifact.path);
+    }
+    if let Some(artifact) = &review.proposal_artifact {
+        println!("  proposal:  {}  {}", artifact.artifact_id, artifact.path);
+    }
+    if !review.next_actions.is_empty() {
+        println!();
+        println!("Next actions");
+        for action in &review.next_actions {
+            println!("  - {action}");
         }
     }
 }

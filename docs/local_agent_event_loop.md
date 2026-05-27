@@ -192,10 +192,15 @@ into runtime calls:
   the collapsed Structure flow path (`goal -> address -> ...`) and primitive
   path beside per-event payload summaries, so automation can verify the local
   loop is still using Structure Core rather than a surface-specific scheduler.
+- CLI run review: `uv run structure runs review <run-id> --json` returns the
+  shared post-run review object used by local surfaces. It combines Core
+  alignment, flow/primitive paths, model/tool counts, failed tool count,
+  response/proposal artifacts, and next actions such as dry-run/apply or
+  continue.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`,
-  `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
+  `/review [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
@@ -217,6 +222,9 @@ into runtime calls:
   `/trace [run-id]` renders the same Core flow/primitive execution path as
   `runs trace`, preserving the distinction between raw event replay and
   paper-facing conceptual trace inspection.
+  `/review [run-id]` renders the same post-run review as `runs review`, giving
+  interactive sessions a compact Codex-style summary before deciding whether
+  to inspect tools, continue, dry-run, or apply.
   `/doctor` combines the local session snapshot, the same `OPENAI__`
   diagnostic used by `/llm`, and the Structure Core parity verifier without
   starting an agent run.
@@ -252,7 +260,8 @@ into runtime calls:
   shared continuation request path, preserving the same transcript/evidence
   grounding used by CLI `/continue` and desktop Continue. Press `t` to inspect
   the selected run transcript, `z` to inspect the same Core flow/primitive trace
-  as CLI `runs trace`, and `e` to inspect the same local evidence bundle.
+  as CLI `runs trace`, `b` to inspect the same post-run review as CLI
+  `runs review`, and `e` to inspect the same local evidence bundle.
   Proposal controls `g`, `u`, and `y` prefer the selected run's code-change
   proposal before falling back to the latest workspace proposal, preserving the
   inspect-review-apply loop around a chosen run.
@@ -269,7 +278,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/trace`, `/dry-run`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/trace`, `/review`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
@@ -287,6 +296,8 @@ into runtime calls:
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.
+  Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
+  compact attempt review and next-action guidance as CLI/TUI.
   Desktop `/doctor` mirrors CLI `/doctor`: it gathers `local_session_status`,
   `local_llm_diagnostic`, and `core_parity_report` through Tauri commands and
   renders the local health check inside the chat/code-agent loop.

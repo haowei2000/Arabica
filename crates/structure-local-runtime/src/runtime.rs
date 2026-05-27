@@ -7,10 +7,10 @@ use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCoreTrace,
-    LocalRunCoreTraceStep, LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage,
-    ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary,
-    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    LocalRunCoreTraceStep, LocalRunReview, LocalToolCall, LocalToolResult, LocalToolTraceEntry,
+    ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind,
+    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -624,6 +624,55 @@ impl LocalAgentRuntime {
         let events = self.run_events(run_id)?;
         let core_trace = build_core_execution_trace(&events)?;
         Ok(core_trace_from_events(run, &events, core_trace))
+    }
+
+    pub fn run_review(&self, run_id: &str) -> Result<LocalRunReview, String> {
+        let evidence = self.run_evidence_summary(run_id)?;
+        let core_trace = self.run_core_trace(run_id)?;
+        let tool_trace = self.run_tool_trace(run_id)?;
+        let proposal_artifact = evidence
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "code_change_proposal")
+            .cloned();
+        let response_artifact = evidence
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "assistant_response")
+            .cloned()
+            .or_else(|| {
+                evidence
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.path.ends_with("/response.md"))
+                    .cloned()
+            });
+        let failed_tool_call_count = tool_trace
+            .iter()
+            .filter(|entry| entry.success == Some(false))
+            .count();
+        let next_actions = run_review_next_actions(
+            &evidence,
+            proposal_artifact.as_ref(),
+            response_artifact.as_ref(),
+            failed_tool_call_count,
+        );
+
+        Ok(LocalRunReview {
+            run: evidence.run.clone(),
+            status: evidence.run.status.clone(),
+            core_aligned: core_trace.core_aligned,
+            flow_path: core_trace.flow_path,
+            primitive_path: core_trace.primitive_path,
+            event_count: evidence.event_count,
+            tool_call_count: evidence.tool_call_count,
+            failed_tool_call_count,
+            model_usage: evidence.model_usage,
+            proposal_artifact,
+            response_artifact,
+            final_response_chars: evidence.final_response_chars,
+            next_actions,
+        })
     }
 
     pub fn run_evidence_summary(&self, run_id: &str) -> Result<RunEvidenceSummary, String> {
@@ -1467,6 +1516,41 @@ fn event_gc_summary_from_parts(
         retained_sequences: retained_events.iter().map(|event| event.sequence).collect(),
         filtered_sequences: filtered_events.iter().map(|event| event.sequence).collect(),
     }
+}
+
+fn run_review_next_actions(
+    evidence: &RunEvidenceSummary,
+    proposal_artifact: Option<&ArtifactRecord>,
+    response_artifact: Option<&ArtifactRecord>,
+    failed_tool_call_count: usize,
+) -> Vec<String> {
+    let mut actions = Vec::new();
+    if !evidence.core_trace.core_aligned {
+        actions.push("Inspect Core trace drift before trusting this run.".to_string());
+    }
+    if failed_tool_call_count > 0 {
+        actions.push(format!(
+            "Inspect {failed_tool_call_count} failed tool call(s) with /tools."
+        ));
+    }
+    if let Some(proposal) = proposal_artifact {
+        actions.push(format!(
+            "Review proposal {} with /proposal, then dry-run before apply.",
+            proposal.artifact_id
+        ));
+    }
+    if evidence.run.status == RunStatus::Failed.as_str() {
+        actions.push("Continue from this failed run after inspecting events.".to_string());
+    } else if proposal_artifact.is_none() {
+        actions.push("Continue the run if more inspection or edits are needed.".to_string());
+    }
+    if response_artifact.is_some() {
+        actions.push("Open the response artifact for reproducible evidence.".to_string());
+    }
+    if actions.is_empty() {
+        actions.push("No immediate follow-up action required.".to_string());
+    }
+    actions
 }
 
 fn core_trace_from_events(
@@ -2768,6 +2852,38 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_builds_run_review_from_shared_evidence() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("run-review");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Create a local code-agent review proposal.".to_string(),
+                workspace_id: Some("review".to_string()),
+                mode: Some(LocalAgentMode::CodeAgent),
+            })
+            .unwrap();
+
+        let review = runtime.run_review(&result.run.run_id).unwrap();
+
+        assert_eq!(review.run.run_id, result.run.run_id);
+        assert_eq!(review.status, "finished");
+        assert!(review.core_aligned);
+        assert!(review.event_count > 0);
+        assert!(review.tool_call_count > 0);
+        assert!(review.flow_path.contains(&"evidence".to_string()));
+        assert!(review.primitive_path.contains(&"event_audit".to_string()));
+        assert!(review.response_artifact.is_some());
+        assert!(review.proposal_artifact.is_some());
+        assert!(review
+            .next_actions
+            .iter()
+            .any(|action| action.contains("dry-run")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_remembers_text_as_workspace_knowledge() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("remember-text");
@@ -3634,7 +3750,7 @@ User-facing follow-up.\n\n\
             run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events RunsCommand::Trace RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
+            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -3650,7 +3766,7 @@ User-facing follow-up.\n\n\
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
-            fn local_run_transcript() {} fn local_run_events() {} fn local_run_core_trace() {}
+            fn local_run_transcript() {} fn local_run_events() {} fn local_run_core_trace() {} fn local_run_review() {}
             fn local_workspace_event_feed() {} local_workspace_event_feed,
             fn local_workspace_replay() {} local_workspace_replay,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,

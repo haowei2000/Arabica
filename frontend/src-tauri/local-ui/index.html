@@ -1291,6 +1291,11 @@
         return invoke("local_run_core_trace", { runId });
       }
 
+      async function localRunReview(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_review", { runId });
+      }
+
       async function localRunTranscript(runId) {
         if (!invoke) return null;
         return invoke("local_run_transcript", { runId });
@@ -2409,6 +2414,33 @@ ${steps.map((step) => `#${step.sequence} ${step.kind} / ${step.canonical_flow_id
   ${step.payload_summary}`).join("\n") || "No steps recorded."}`;
       }
 
+      function renderRunReviewText(review) {
+        if (!review) return "Run review unavailable.";
+        const proposal = review.proposal_artifact
+          ? `${review.proposal_artifact.artifact_id} / ${review.proposal_artifact.path}`
+          : "none";
+        const response = review.response_artifact
+          ? `${review.response_artifact.artifact_id} / ${review.response_artifact.path}`
+          : "none";
+        return `Run Review
+Run: ${review.run?.run_id ?? "unknown"}
+Workspace: ${review.run?.workspace_id ?? "unknown"}
+Status: ${review.status ?? "unknown"}
+Core: ${review.core_aligned ? "aligned" : "drift"}
+Events: ${review.event_count ?? 0}
+Tools: ${review.tool_call_count ?? 0} total / ${review.failed_tool_call_count ?? 0} failed
+Model: ${review.model_usage?.model_request_count ?? 0} requests / ${review.model_usage?.model_response_count ?? 0} responses / ${review.model_usage?.network_request_count ?? 0} network
+Tokens: ${review.model_usage?.prompt_tokens ?? 0} prompt / ${review.model_usage?.completion_tokens ?? 0} completion / ${review.model_usage?.total_tokens ?? 0} total
+Response: ${review.final_response_chars ?? 0} chars
+Flow Path: ${(review.flow_path ?? []).join(" -> ") || "none"}
+Primitive Path: ${(review.primitive_path ?? []).join(" -> ") || "none"}
+Response Artifact: ${response}
+Proposal Artifact: ${proposal}
+
+Next Actions
+${(review.next_actions ?? []).map((action) => `- ${action}`).join("\n") || "- No immediate follow-up action required."}`;
+      }
+
       function compactJson(value) {
         const raw = JSON.stringify(value ?? null);
         return raw.length > 800 ? `${raw.slice(0, 800)}...` : raw;
@@ -2563,6 +2595,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /gc [run_id] [retain_last]
 /tools [run_id]
 /trace [run_id]
+/review [run_id]
 /evidence [run_id]
 /usage [run_id]
 /source <absolute-path>
@@ -2749,6 +2782,16 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
             }
             const trace = await localRunCoreTrace(runId);
             eventLogEl.textContent = renderCoreTraceText(trace);
+            return true;
+          }
+          case "/review": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const review = await localRunReview(runId);
+            eventLogEl.textContent = renderRunReviewText(review);
             return true;
           }
           case "/evidence": {
