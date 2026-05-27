@@ -4200,7 +4200,7 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
         eventLogEl.textContent = `Attached ${reference} to the next local agent prompt.`;
       }
 
-      function renderRepoToolResult(result) {
+      function renderRepoToolResult(result, commandInput = null) {
         renderReportSummary(null);
         previewEmptyEl.hidden = true;
         previewEl.hidden = false;
@@ -4219,6 +4219,7 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
           previewEl.textContent = result.error ?? "Tool failed.";
           eventLogEl.textContent = `${result.name} failed: ${result.error ?? "unknown error"}`;
           renderReports();
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
           return;
         }
 
@@ -4279,6 +4280,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           previewEl.textContent = JSON.stringify(result.output, null, 2);
         }
         renderReports();
+        if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Repository tool completed.");
       }
 
       function clearPreview() {
@@ -4583,12 +4585,14 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         }
       });
       repoListEl.addEventListener("click", async () => {
+        const commandInput = "/ls";
         setRepoListBusy(true);
         eventLogEl.textContent = "Listing repository root...";
         try {
-          renderRepoToolResult(await listRepoEntries());
+          renderRepoToolResult(await listRepoEntries(), commandInput);
         } catch (error) {
           eventLogEl.textContent = String(error);
+          appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         } finally {
           setRepoListBusy(false);
         }
@@ -4613,12 +4617,14 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           eventLogEl.textContent = "Search query is required.";
           return;
         }
+        const commandInput = `/search ${query}`;
         setRepoSearchBusy(true);
         eventLogEl.textContent = `Searching repository for ${query}...`;
         try {
-          renderRepoToolResult(await searchRepo(query));
+          renderRepoToolResult(await searchRepo(query), commandInput);
         } catch (error) {
           eventLogEl.textContent = String(error);
+          appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         } finally {
           setRepoSearchBusy(false);
         }
@@ -4630,12 +4636,14 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           eventLogEl.textContent = "Repo-relative path is required.";
           return;
         }
+        const commandInput = `/read ${path}`;
         setRepoReadBusy(true);
         eventLogEl.textContent = `Reading ${path}...`;
         try {
-          renderRepoToolResult(await readRepoFile(path));
+          renderRepoToolResult(await readRepoFile(path), commandInput);
         } catch (error) {
           eventLogEl.textContent = String(error);
+          appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         } finally {
           setRepoReadBusy(false);
         }
@@ -4643,22 +4651,26 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
       repoCommandFormEl.addEventListener("submit", async (event) => {
         event.preventDefault();
         let argv = [];
+        const rawCommand = repoCommandArgvEl.value.trim();
         try {
-          argv = parseCommandLine(repoCommandArgvEl.value);
+          argv = parseCommandLine(rawCommand);
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (rawCommand) appendCommandMessage(`/cmd ${rawCommand}`, eventLogEl.textContent, "error");
           return;
         }
         if (argv.length === 0) {
           eventLogEl.textContent = "Command argv is required.";
           return;
         }
+        const commandInput = `/cmd ${rawCommand || argv.join(" ")}`;
         setRepoCommandBusy(true);
         eventLogEl.textContent = `Running local command: ${argv.join(" ")}`;
         try {
-          renderRepoToolResult(await runRepoCommand(argv));
+          renderRepoToolResult(await runRepoCommand(argv), commandInput);
         } catch (error) {
           eventLogEl.textContent = String(error);
+          appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         } finally {
           setRepoCommandBusy(false);
         }

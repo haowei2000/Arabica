@@ -1230,6 +1230,12 @@ mod tests {
 
         assert!(local_ui.contains("id=\"preview-attach\""));
         assert!(local_ui.contains("function attachPreviewFileToPrompt"));
+        assert!(local_ui.contains("function renderRepoToolResult(result, commandInput = null)"));
+        assert!(local_ui.contains("renderRepoToolResult(await listRepoEntries(), commandInput)"));
+        assert!(local_ui.contains("renderRepoToolResult(await searchRepo(query), commandInput)"));
+        assert!(local_ui.contains("renderRepoToolResult(await readRepoFile(path), commandInput)"));
+        assert!(local_ui.contains("renderRepoToolResult(await runRepoCommand(argv), commandInput)"));
+        assert!(local_ui.contains("appendCommandMessage(commandInput, eventLogEl.textContent"));
         assert!(local_ui.contains("state.previewRepoPath"));
         assert!(local_ui.contains("state.previewRepoPath = result.output.path ?? null"));
         assert!(local_ui.contains("const reference = `@${state.previewRepoPath}`"));
