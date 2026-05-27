@@ -352,7 +352,7 @@ into runtime calls:
   `/checkpoint` and desktop `/checkpoint`. `?` opens a command map grouped by
   run loop, workspace context, run evidence, session, and proposal actions, so
   the TUI presents a Codex/OpenCode-style agent console rather than a flat
-  dashboard. The inspect actions `?`, `A`, `H`, and `E` are also persisted through
+  dashboard. The inspect actions `?`, `A`, `H`, `E`, and `W` are also persisted through
   `LocalAgentRuntime::record_command_turn` as `command_turn_recorded` workspace
   events, so TUI navigation has the same durable command audit trail as CLI and
   desktop chat interactions. `A` previews the assembled
@@ -375,8 +375,9 @@ into runtime calls:
   `z` to inspect the same Core flow/primitive trace
   as CLI `runs trace`, `b` to inspect the same post-run review as CLI
   `runs review`, `O` to inspect the selected run's paired
-  `tool_call_requested` / `tool_call_completed` trace, and `e` to inspect the
-  same local evidence bundle.
+  `tool_call_requested` / `tool_call_completed` trace, `W` to inspect the
+  active workspace cursor event feed, and `e` to inspect the same local
+  evidence bundle.
   Proposal controls `g`, `h`, `u`, and `y` prefer the selected run's code-change
   proposal before falling back to the latest workspace proposal, preserving the
   inspect-risk-review-apply loop around a chosen run.

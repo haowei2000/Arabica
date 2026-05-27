@@ -16,8 +16,8 @@ use structure_local_runtime::{
     LocalRunCoreTrace, LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord,
     LocalToolCall, LocalToolTraceEntry, ProposalApplyResult, ProposalReview,
     ProposalRollbackResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
-    WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary,
-    WorktreeSnapshot,
+    WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceEventFeed, WorkspaceSummary,
+    WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -911,6 +911,33 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_workspace_events(&mut self, repo_root: &Path) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let feed = local_result(runtime.workspace_event_feed(
+            Some(&self.active_workspace_id),
+            Some(0),
+            80,
+        ))?;
+        let text = render_workspace_event_feed(&feed);
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("workspace events / {}", feed.workspace_id),
+            text: text.clone(),
+        });
+        self.notice = format!(
+            "Workspace events: {} after #{}",
+            feed.events.len(),
+            feed.after_sequence
+        );
+        self.record_command_turn(
+            repo_root,
+            &format!("W events {}", feed.workspace_id),
+            "ok",
+            &text,
+        )?;
+        Ok(())
+    }
+
     fn preview_workspace_tasks(&mut self, repo_root: &Path) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let tasks = local_result(runtime.list_tasks(Some(&self.active_workspace_id), None, 50))?;
@@ -1067,6 +1094,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
                     KeyCode::Char('S') => state.preview_workspace_compact(repo_root)?,
+                    KeyCode::Char('W') => state.preview_workspace_events(repo_root)?,
                     KeyCode::Char('U') => state.preview_workspace_usage(repo_root)?,
                     KeyCode::Char('T') => state.preview_workspace_tasks(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
@@ -1150,7 +1178,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "? map  m mode  o workspace  c prompt  N rerun  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "? map  m mode  o workspace  c prompt  N rerun  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  W events  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1238,7 +1266,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, E events, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, N rerun, n local check",
+        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, E events, l plan, O tools, C compact, D decision, S session, W workspace-events, U usage, T tasks, z trace, b review, f run-follow, F session-follow, N rerun, n local check",
         width,
     )?;
     muted_at(
@@ -1432,7 +1460,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "? map  q quit  r refresh  c prompt  N rerun  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  O tools";
+    let controls = "? map  q quit  r refresh  c prompt  N rerun  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  W workspace-events  l plan  O tools";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1633,6 +1661,7 @@ fn render_tui_command_map(state: &TuiState) -> String {
 
     text.push_str("Session And Proposals\n");
     text.push_str("- S session -> workspace compact handoff from replayed events\n");
+    text.push_str("- W events -> cursor-based workspace event feed from the active workspace\n");
     text.push_str("- U usage -> workspace model/tool/task/artifact/Core totals\n");
     text.push_str("- e evidence -> local evidence bundle for automation and audits\n");
     text.push_str("- a artifact -> latest artifact preview\n");
@@ -1970,6 +1999,36 @@ fn render_run_events(run: &RunSummary, events: &[LocalEvent]) -> String {
             event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
         ));
         text.push_str(&format!("{}\n\n", compact_json(&event.payload)));
+    }
+    text
+}
+
+fn render_workspace_event_feed(feed: &WorkspaceEventFeed) -> String {
+    let mut text = String::new();
+    text.push_str("Workspace Events\n");
+    text.push_str(&format!("Workspace: {}\n", feed.workspace_id));
+    text.push_str(&format!("After sequence: {}\n", feed.after_sequence));
+    text.push_str(&format!(
+        "Last sequence: {}\n",
+        feed.last_sequence
+            .map(|sequence| sequence.to_string())
+            .unwrap_or_else(|| "none".to_string())
+    ));
+    text.push_str(&format!(
+        "Next after sequence: {}\n",
+        feed.next_after_sequence
+    ));
+    text.push_str(&format!("Events: {}\n\n", feed.events.len()));
+    for event in &feed.events {
+        text.push_str(&format!(
+            "#{} {} / run={} / {} / {}\n  {}\n",
+            event.sequence,
+            event.kind,
+            event.run_id.as_deref().unwrap_or("workspace"),
+            event.canonical_flow_id,
+            event.primitive_id,
+            compact_json(&event.payload)
+        ));
     }
     text
 }
@@ -2896,6 +2955,9 @@ mod tests {
         assert!(preview
             .text
             .contains("E events -> complete immutable event stream"));
+        assert!(preview
+            .text
+            .contains("W events -> cursor-based workspace event feed"));
         assert!(preview.text.contains("Session And Proposals"));
         assert!(preview
             .text
@@ -3122,6 +3184,21 @@ mod tests {
             assert!(session_preview.text.contains("Recent Runs"));
             assert!(session_preview.text.contains("session handoff boundary"));
 
+            state.preview_workspace_events(&root)?;
+            let workspace_events_preview =
+                state.preview.as_ref().expect("workspace events preview");
+            assert!(workspace_events_preview
+                .path
+                .starts_with("workspace events / tui-preview"));
+            assert!(workspace_events_preview.text.contains("Workspace Events"));
+            assert!(workspace_events_preview
+                .text
+                .contains("workspace_context_loaded"));
+            assert!(workspace_events_preview.text.contains("run_finished"));
+            assert!(workspace_events_preview
+                .text
+                .contains("Next after sequence:"));
+
             state.preview_workspace_usage(&root)?;
             let usage_preview = state.preview.as_ref().expect("workspace usage preview");
             assert!(usage_preview
@@ -3147,6 +3224,9 @@ mod tests {
             assert!(turns
                 .iter()
                 .any(|turn| turn.input.starts_with("E events run_") && turn.surface == "tui"));
+            assert!(turns
+                .iter()
+                .any(|turn| turn.input == "W events tui-preview" && turn.surface == "tui"));
             Ok(())
         })();
 
