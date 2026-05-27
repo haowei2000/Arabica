@@ -12,8 +12,8 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
-    LocalEvidenceBundle, LocalToolCall, ProposalApplyResult, RunAttempt, RunEvidenceSummary,
-    RunRequest, RunSummary, RunTranscript, WorkspaceSummary, WorktreeSnapshot,
+    LocalEvidenceBundle, LocalRunCoreTrace, LocalToolCall, ProposalApplyResult, RunAttempt,
+    RunEvidenceSummary, RunRequest, RunSummary, RunTranscript, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -433,6 +433,22 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_selected_run_core_trace(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let trace = local_result(runtime.run_core_trace(&run.run_id))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("core trace / {}", trace.run.run_id),
+            text: render_run_core_trace(&trace),
+        });
+        self.notice = format!("Core trace: {}", run.run_id);
+        Ok(())
+    }
+
     fn preview_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
         let Some(artifact) =
             select_proposal_artifact(&self.artifacts, self.selected_run_id()).cloned()
@@ -671,6 +687,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
+                    KeyCode::Char('z') => state.preview_selected_run_core_trace(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
                     KeyCode::Char('a') => state.preview_latest_artifact(repo_root)?,
                     KeyCode::Char('g') => state.preview_latest_proposal(repo_root)?,
@@ -759,7 +776,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  d worktree  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f follow-up  d worktree  z trace  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -847,7 +864,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, f follow-up, n to run a local check",
+        "press j/k to select, t transcript, z trace, f follow-up, n to run a local check",
         width,
     )?;
     muted_at(
@@ -1017,7 +1034,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  d worktree  c prompt  f follow-up  ! cmd  t transcript  g proposal  u dry-run  y apply";
+    let controls = "q quit  r refresh  d worktree  c prompt  f follow-up  ! cmd  t transcript  z trace  g proposal  u dry-run  y apply";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1310,6 +1327,46 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
         text.push_str(&format!(
             "#{} {} / {} / {}\n",
             event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
+        ));
+    }
+    text
+}
+
+fn render_run_core_trace(trace: &LocalRunCoreTrace) -> String {
+    let mut text = String::new();
+    text.push_str("Structure Core Trace\n");
+    text.push_str(&format!("Run: {}\n", trace.run.run_id));
+    text.push_str(&format!("Workspace: {}\n", trace.run.workspace_id));
+    text.push_str(&format!("Status: {}\n", trace.run.status));
+    text.push_str(&format!("Schema: {}\n", trace.manifest_schema_version));
+    text.push_str(&format!("Core aligned: {}\n", trace.core_aligned));
+    text.push_str(&format!("Events: {}\n", trace.event_count));
+    text.push_str(&format!(
+        "Flow path: {}\n",
+        if trace.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            trace.flow_path.join(" -> ")
+        }
+    ));
+    text.push_str(&format!(
+        "Primitive path: {}\n\n",
+        if trace.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            trace.primitive_path.join(" -> ")
+        }
+    ));
+
+    text.push_str("Steps\n");
+    for step in trace.steps.iter().rev().take(24).rev() {
+        text.push_str(&format!(
+            "#{} {} / {} / {}\n  {}\n",
+            step.sequence,
+            step.kind,
+            step.canonical_flow_id,
+            step.primitive_id,
+            step.payload_summary
         ));
     }
     text
@@ -1641,6 +1698,14 @@ mod tests {
             assert!(preview.text.contains("Run Attempt"));
             assert!(preview.text.contains("Events"));
             assert!(!state.runs.is_empty());
+
+            state.preview_selected_run_core_trace(&root)?;
+            let trace_preview = state.preview.as_ref().expect("core trace preview");
+            assert!(trace_preview.path.starts_with("core trace / run_"));
+            assert!(trace_preview.text.contains("Structure Core Trace"));
+            assert!(trace_preview.text.contains("Flow path:"));
+            assert!(trace_preview.text.contains("Primitive path:"));
+            assert!(trace_preview.text.contains("Core aligned: true"));
             Ok(())
         })();
 

@@ -251,7 +251,8 @@ into runtime calls:
   the local terminal UI. Press `f` to continue the selected run through the
   shared continuation request path, preserving the same transcript/evidence
   grounding used by CLI `/continue` and desktop Continue. Press `t` to inspect
-  the selected run transcript and `e` to inspect the same local evidence bundle.
+  the selected run transcript, `z` to inspect the same Core flow/primitive trace
+  as CLI `runs trace`, and `e` to inspect the same local evidence bundle.
   Proposal controls `g`, `u`, and `y` prefer the selected run's code-change
   proposal before falling back to the latest workspace proposal, preserving the
   inspect-review-apply loop around a chosen run.
