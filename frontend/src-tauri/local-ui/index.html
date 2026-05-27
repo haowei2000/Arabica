@@ -1002,6 +1002,7 @@
             <button id="session-continue" type="button">Session Continue</button>
             <button id="session-usage" type="button">Session Usage</button>
             <button id="run-status" type="button">Run Status</button>
+            <button id="show-tasks" type="button">Tasks</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
             <button id="show-doctor" type="button">Doctor</button>
@@ -1124,6 +1125,7 @@
       const sessionContinueEl = document.querySelector("#session-continue");
       const sessionUsageEl = document.querySelector("#session-usage");
       const runStatusEl = document.querySelector("#run-status");
+      const showTasksEl = document.querySelector("#show-tasks");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
       const showDoctorEl = document.querySelector("#show-doctor");
@@ -1355,6 +1357,26 @@
       async function localWorkspaceUsage() {
         if (!invoke) return null;
         return invoke("local_workspace_usage", { workspaceId: activeWorkspaceId(), limit: 20 });
+      }
+
+      async function localTasks(status = null) {
+        if (!invoke) return [];
+        return invoke("local_tasks", { workspaceId: activeWorkspaceId(), status, limit: 50 });
+      }
+
+      async function createLocalTask(title, priority = null) {
+        if (!invoke) return null;
+        return invoke("create_local_task", {
+          workspaceId: activeWorkspaceId(),
+          runId: state.selectedRunId,
+          title,
+          priority,
+        });
+      }
+
+      async function updateLocalTaskStatus(taskId, status, note = null) {
+        if (!invoke) return null;
+        return invoke("update_local_task_status", { taskId, status, note });
       }
 
       async function localWorkspaceEventFeed(afterSequence = state.workspaceEventCursor) {
@@ -1640,6 +1662,11 @@
       function setRunStatusBusy(isBusy) {
         runStatusEl.disabled = isBusy;
         runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
+      }
+
+      function setTasksBusy(isBusy) {
+        showTasksEl.disabled = isBusy;
+        showTasksEl.textContent = isBusy ? "Loading Tasks" : "Tasks";
       }
 
       function setPollEventsBusy(isBusy) {
@@ -2688,6 +2715,24 @@ Recent Runs
 ${runs}`;
       }
 
+      function renderTasksText(tasks) {
+        const items = tasks ?? [];
+        if (!items.length) return `Workspace Tasks\nNo local tasks recorded.`;
+        const todo = items.filter((task) => task.status === "todo").length;
+        const inProgress = items.filter((task) => task.status === "in_progress").length;
+        const done = items.filter((task) => task.status === "done").length;
+        const rows = items
+          .map(
+            (task) =>
+              `- ${task.task_id} [${task.status} / ${task.priority}] ${task.title}\n  workspace=${task.workspace_id} run=${task.run_id ?? "workspace"}`,
+          )
+          .join("\n");
+        return `Workspace Tasks
+Total: ${items.length} / todo=${todo} / in_progress=${inProgress} / done=${done}
+
+${rows}`;
+      }
+
       function renderRunReviewText(review) {
         if (!review) return "Run review unavailable.";
         const proposal = review.proposal_artifact
@@ -2846,6 +2891,16 @@ Opened in Preview for the selected run.`;
         try {
           const status = await localRunStatus(runId);
           eventLogEl.textContent = renderRunStatusText(status);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
+      async function previewTasks(status = null) {
+        eventLogEl.textContent = "Loading workspace tasks...";
+        try {
+          const tasks = await localTasks(status);
+          eventLogEl.textContent = renderTasksText(tasks);
         } catch (error) {
           eventLogEl.textContent = String(error);
         }
@@ -3019,6 +3074,10 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /mode chat|code
 /workspace <id>
 /runs
+/tasks [status]
+/task <title>
+/task-status <task_id> <status> [note]
+/task-done <task_id> [note]
 /select <run_id>
 /last
 /continue [run_id] [instruction]
@@ -3182,6 +3241,47 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
             } finally {
               stopLiveEventPolling();
             }
+            return true;
+          }
+          case "/tasks": {
+            await previewTasks(parts[0] ?? null);
+            return true;
+          }
+          case "/task":
+          case "/todo": {
+            const title = parts.join(" ").trim();
+            if (!title) {
+              eventLogEl.textContent = "Usage: /task <title>";
+              return true;
+            }
+            const task = await createLocalTask(title);
+            eventLogEl.textContent = `Created Task\n${renderTasksText(task ? [task] : [])}`;
+            await pollWorkspaceEvents({ silent: true, autoSelectLatest: false });
+            return true;
+          }
+          case "/task-status":
+          case "/todo-status": {
+            const taskId = parts[0];
+            const status = parts[1];
+            if (!taskId || !status) {
+              eventLogEl.textContent = "Usage: /task-status <task_id> <todo|in_progress|done|cancelled> [note]";
+              return true;
+            }
+            const task = await updateLocalTaskStatus(taskId, status, parts.slice(2).join(" ").trim() || null);
+            eventLogEl.textContent = `Updated Task\n${renderTasksText(task ? [task] : [])}`;
+            await pollWorkspaceEvents({ silent: true, autoSelectLatest: false });
+            return true;
+          }
+          case "/task-done":
+          case "/todo-done": {
+            const taskId = parts[0];
+            if (!taskId) {
+              eventLogEl.textContent = "Usage: /task-done <task_id> [note]";
+              return true;
+            }
+            const task = await updateLocalTaskStatus(taskId, "done", parts.slice(1).join(" ").trim() || null);
+            eventLogEl.textContent = `Completed Task\n${renderTasksText(task ? [task] : [])}`;
+            await pollWorkspaceEvents({ silent: true, autoSelectLatest: false });
             return true;
           }
           case "/transcript":
@@ -4407,6 +4507,14 @@ ${events || "No events recorded."}`;
           await previewRunStatusForRun(runId);
         } finally {
           setRunStatusBusy(false);
+        }
+      });
+      showTasksEl.addEventListener("click", async () => {
+        setTasksBusy(true);
+        try {
+          await previewTasks();
+        } finally {
+          setTasksBusy(false);
         }
       });
       pollEventsEl.addEventListener("click", async () => {

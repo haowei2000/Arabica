@@ -1,6 +1,6 @@
 use crate::types::{
-    event_taxonomy_for_kind, ArtifactRecord, KnowledgeSource, LocalEvent, RunEventKind, RunStatus,
-    RunSummary, WorkspaceSummary,
+    event_taxonomy_for_kind, ArtifactRecord, KnowledgeSource, LocalEvent, LocalTaskRecord,
+    RunEventKind, RunStatus, RunSummary, WorkspaceSummary,
 };
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -273,6 +273,116 @@ impl SqliteLocalStore {
         })
     }
 
+    pub fn create_task(
+        &self,
+        workspace_id: &str,
+        run_id: Option<&str>,
+        title: &str,
+        priority: &str,
+    ) -> Result<LocalTaskRecord, String> {
+        let task_id = new_id("task");
+        let now = now_ms();
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO local_tasks
+                       (task_id, workspace_id, run_id, title, status, priority, created_at_ms, updated_at_ms)
+                     VALUES (?1, ?2, ?3, ?4, 'todo', ?5, ?6, ?6)",
+                    params![task_id, workspace_id, run_id, title, priority, now],
+                )
+                .map_err(sql_error)?;
+            self.task_by_id_with(connection, &task_id)
+        })
+    }
+
+    pub fn update_task_status(
+        &self,
+        task_id: &str,
+        status: &str,
+    ) -> Result<LocalTaskRecord, String> {
+        let now = now_ms();
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE local_tasks
+                     SET status = ?2, updated_at_ms = ?3
+                     WHERE task_id = ?1",
+                    params![task_id, status, now],
+                )
+                .map_err(sql_error)?;
+            self.task_by_id_with(connection, task_id)
+        })
+    }
+
+    pub fn list_tasks(
+        &self,
+        workspace_id: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<LocalTaskRecord>, String> {
+        self.with_connection(|connection| match (workspace_id, status) {
+            (Some(workspace_id), Some(status)) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT task_id, workspace_id, run_id, title, status, priority, created_at_ms, updated_at_ms
+                         FROM local_tasks
+                         WHERE workspace_id = ?1 AND status = ?2
+                         ORDER BY updated_at_ms DESC LIMIT ?3",
+                    )
+                    .map_err(sql_error)?;
+                let rows = statement
+                    .query_map(params![workspace_id, status, limit as i64], task_from_row)
+                    .map_err(sql_error)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+            }
+            (Some(workspace_id), None) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT task_id, workspace_id, run_id, title, status, priority, created_at_ms, updated_at_ms
+                         FROM local_tasks
+                         WHERE workspace_id = ?1
+                         ORDER BY updated_at_ms DESC LIMIT ?2",
+                    )
+                    .map_err(sql_error)?;
+                let rows = statement
+                    .query_map(params![workspace_id, limit as i64], task_from_row)
+                    .map_err(sql_error)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+            }
+            (None, Some(status)) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT task_id, workspace_id, run_id, title, status, priority, created_at_ms, updated_at_ms
+                         FROM local_tasks
+                         WHERE status = ?1
+                         ORDER BY updated_at_ms DESC LIMIT ?2",
+                    )
+                    .map_err(sql_error)?;
+                let rows = statement
+                    .query_map(params![status, limit as i64], task_from_row)
+                    .map_err(sql_error)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+            }
+            (None, None) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT task_id, workspace_id, run_id, title, status, priority, created_at_ms, updated_at_ms
+                         FROM local_tasks
+                         ORDER BY updated_at_ms DESC LIMIT ?1",
+                    )
+                    .map_err(sql_error)?;
+                let rows = statement
+                    .query_map(params![limit as i64], task_from_row)
+                    .map_err(sql_error)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+            }
+        })
+    }
+
+    pub fn task_by_id(&self, task_id: &str) -> Result<LocalTaskRecord, String> {
+        self.with_connection(|connection| self.task_by_id_with(connection, task_id))
+    }
+
     pub fn list_runs(
         &self,
         workspace_id: Option<&str>,
@@ -491,6 +601,22 @@ impl SqliteLocalStore {
             .map_err(sql_error)
     }
 
+    fn task_by_id_with(
+        &self,
+        connection: &Connection,
+        task_id: &str,
+    ) -> Result<LocalTaskRecord, String> {
+        let mut statement = connection
+            .prepare(
+                "SELECT task_id, workspace_id, run_id, title, status, priority, created_at_ms, updated_at_ms
+                 FROM local_tasks WHERE task_id = ?1",
+            )
+            .map_err(sql_error)?;
+        statement
+            .query_row(params![task_id], task_from_row)
+            .map_err(sql_error)
+    }
+
     fn event_by_sequence_with(
         &self,
         connection: &Connection,
@@ -565,6 +691,19 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
               FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
             );
 
+            CREATE TABLE IF NOT EXISTS local_tasks (
+              task_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              run_id TEXT,
+              title TEXT NOT NULL,
+              status TEXT NOT NULL,
+              priority TEXT NOT NULL,
+              created_at_ms INTEGER NOT NULL,
+              updated_at_ms INTEGER NOT NULL,
+              FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id),
+              FOREIGN KEY(run_id) REFERENCES runs(run_id)
+            );
+
             CREATE TABLE IF NOT EXISTS artifacts (
               artifact_id TEXT PRIMARY KEY,
               run_id TEXT NOT NULL,
@@ -581,6 +720,8 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_events_workspace_sequence ON events(workspace_id, sequence);
             CREATE INDEX IF NOT EXISTS idx_runs_workspace_created ON runs(workspace_id, created_at_ms);
             CREATE INDEX IF NOT EXISTS idx_knowledge_workspace_added ON knowledge_sources(workspace_id, added_at_ms);
+            CREATE INDEX IF NOT EXISTS idx_tasks_workspace_updated ON local_tasks(workspace_id, updated_at_ms);
+            CREATE INDEX IF NOT EXISTS idx_tasks_run_updated ON local_tasks(run_id, updated_at_ms);
             CREATE INDEX IF NOT EXISTS idx_artifacts_workspace_created ON artifacts(workspace_id, created_at_ms);
             CREATE INDEX IF NOT EXISTS idx_artifacts_run_created ON artifacts(run_id, created_at_ms);
             "#,
@@ -632,6 +773,19 @@ fn artifact_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtifactRecord
         path: row.get(4)?,
         size_bytes: size_bytes.max(0) as u64,
         created_at_ms: row.get(6)?,
+    })
+}
+
+fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalTaskRecord> {
+    Ok(LocalTaskRecord {
+        task_id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        run_id: row.get(2)?,
+        title: row.get(3)?,
+        status: row.get(4)?,
+        priority: row.get(5)?,
+        created_at_ms: row.get(6)?,
+        updated_at_ms: row.get(7)?,
     })
 }
 
@@ -733,10 +887,43 @@ mod tests {
     }
 
     #[test]
+    fn store_persists_local_tasks() {
+        let root = unique_temp_dir("tasks");
+        let store = SqliteLocalStore::open(&root).unwrap();
+        let workspace = store.ensure_workspace(None, &root).unwrap();
+        let run = store
+            .create_run("run_task", &workspace.workspace_id, "plan work")
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &workspace.workspace_id,
+                Some(&run.run_id),
+                "Write local task tests",
+                "high",
+            )
+            .unwrap();
+        let updated = store.update_task_status(&task.task_id, "done").unwrap();
+        let tasks = store
+            .list_tasks(Some(&workspace.workspace_id), Some("done"), 10)
+            .unwrap();
+
+        assert_eq!(task.status, "todo");
+        assert_eq!(updated.status, "done");
+        assert_eq!(updated.run_id.as_deref(), Some("run_task"));
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_id, task.task_id);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn store_event_taxonomy_matches_structure_core_manifest() {
         let kinds = [
             RunEventKind::WorkspaceOpened,
             RunEventKind::RunCreated,
+            RunEventKind::TaskCreated,
+            RunEventKind::TaskUpdated,
             RunEventKind::ChatMessageRecorded,
             RunEventKind::PromptReceived,
             RunEventKind::AgentStepPlanned,

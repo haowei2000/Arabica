@@ -26,6 +26,8 @@ impl RunStatus {
 pub enum RunEventKind {
     WorkspaceOpened,
     RunCreated,
+    TaskCreated,
+    TaskUpdated,
     ChatMessageRecorded,
     PromptReceived,
     AgentStepPlanned,
@@ -49,6 +51,8 @@ impl RunEventKind {
         match self {
             Self::WorkspaceOpened => "workspace_opened",
             Self::RunCreated => "run_created",
+            Self::TaskCreated => "task_created",
+            Self::TaskUpdated => "task_updated",
             Self::ChatMessageRecorded => "chat_message_recorded",
             Self::PromptReceived => "prompt_received",
             Self::AgentStepPlanned => "agent_step_planned",
@@ -72,13 +76,15 @@ impl RunEventKind {
 pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
     match kind {
         "workspace_opened" | "workspace_context_loaded" => ("address", "path_addressing"),
-        "prompt_received" | "run_created" => ("goal", "event_audit"),
+        "prompt_received" | "run_created" | "task_created" => ("goal", "event_audit"),
         "knowledge_retrieved" => ("disclose", "multi_level_disclosure"),
         "source_rated" => ("feedback", "source_evaluation"),
         "artifact_written" | "code_change_proposed" | "run_finished" | "run_failed" => {
             ("evidence", "reproducible_evidence")
         }
-        "code_change_applied" | "code_change_reverted" => ("feedback", "event_audit"),
+        "code_change_applied" | "code_change_reverted" | "task_updated" => {
+            ("feedback", "event_audit")
+        }
         "chat_message_recorded"
         | "agent_step_planned"
         | "model_requested"
@@ -241,6 +247,18 @@ pub struct ArtifactPreview {
     pub preview: String,
     pub bytes_read: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalTaskRecord {
+    pub task_id: String,
+    pub workspace_id: String,
+    pub run_id: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

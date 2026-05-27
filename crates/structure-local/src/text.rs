@@ -6,9 +6,10 @@ use structure_local_runtime::ProposalReview;
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace,
-    LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalToolTraceEntry, RunAttempt,
-    RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating, WorkspaceCompact,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
+    LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolTraceEntry,
+    RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating,
+    WorkspaceCompact, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageSummary,
+    WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -216,6 +217,39 @@ pub(crate) fn print_runs(runs: &[RunSummary]) {
             first_line(&run.prompt)
         );
     }
+}
+
+pub(crate) fn print_tasks(tasks: &[LocalTaskRecord]) {
+    if tasks.is_empty() {
+        println!("No local tasks found.");
+        return;
+    }
+    println!("Local tasks");
+    for task in tasks {
+        println!(
+            "  {}  {}  {}  {}  {}",
+            task.task_id,
+            task.status,
+            task.priority,
+            task.run_id.as_deref().unwrap_or("workspace"),
+            first_line(&task.title)
+        );
+    }
+}
+
+pub(crate) fn print_task(task: &LocalTaskRecord) {
+    println!("Local task");
+    println!("  task:      {}", task.task_id);
+    println!("  workspace: {}", task.workspace_id);
+    println!(
+        "  run:       {}",
+        task.run_id.as_deref().unwrap_or("workspace")
+    );
+    println!("  status:    {}", task.status);
+    println!("  priority:  {}", task.priority);
+    println!("  created:   {}", task.created_at_ms);
+    println!("  updated:   {}", task.updated_at_ms);
+    println!("  title:     {}", task.title);
 }
 
 pub(crate) fn print_run_summary(run: &RunSummary) {

@@ -5,9 +5,9 @@ use crate::text::{
     print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_compact,
     print_run_core_trace, print_run_evidence_summary, print_run_plan, print_run_review,
     print_run_status_snapshot, print_run_summary, print_run_transcript, print_runs, print_snapshot,
-    print_source_rating, print_surface_parity_report, print_surfaces, print_tool_trace,
-    print_workspace, print_workspace_compact, print_workspace_event_feed, print_workspace_replay,
-    print_workspace_usage, print_workspaces, print_worktree_snapshot,
+    print_source_rating, print_surface_parity_report, print_surfaces, print_task, print_tasks,
+    print_tool_trace, print_workspace, print_workspace_compact, print_workspace_event_feed,
+    print_workspace_replay, print_workspace_usage, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -63,6 +63,10 @@ enum Command {
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommand,
+    },
+    Tasks {
+        #[command(subcommand)]
+        command: TasksCommand,
     },
     Knowledge {
         #[command(subcommand)]
@@ -224,6 +228,14 @@ enum WorkspaceCommand {
     Events(WorkspaceEventsArgs),
 }
 
+#[derive(Debug, Subcommand)]
+enum TasksCommand {
+    List(ListTasksArgs),
+    Add(AddTaskArgs),
+    Update(UpdateTaskArgs),
+    Done(DoneTaskArgs),
+}
+
 #[derive(Debug, Args)]
 struct ListRunsArgs {
     #[arg(long)]
@@ -370,6 +382,51 @@ struct WorkspaceEventsArgs {
     after: i64,
     #[arg(long, default_value_t = 50)]
     limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ListTasksArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long)]
+    status: Option<String>,
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct AddTaskArgs {
+    title: Vec<String>,
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long)]
+    run: Option<String>,
+    #[arg(long)]
+    priority: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpdateTaskArgs {
+    task_id: String,
+    #[arg(long)]
+    status: String,
+    #[arg(long)]
+    note: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct DoneTaskArgs {
+    task_id: String,
+    #[arg(long)]
+    note: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -547,6 +604,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Retry(args) => run_retry_agent(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
         Command::Workspace { command } => run_workspace(&repo_root, command)?,
+        Command::Tasks { command } => run_tasks(&repo_root, command)?,
         Command::Knowledge { command } => run_knowledge(&repo_root, command)?,
         Command::Artifacts { command } => run_artifacts(&repo_root, command)?,
         Command::Proposals { command } => run_proposals(&repo_root, command)?,
@@ -1229,6 +1287,68 @@ fn handle_chat_session_command(
             print_runs(&runs);
             Ok(true)
         }
+        "/tasks" => {
+            let status = parts.next();
+            let tasks =
+                local_result(runtime.list_tasks(state.workspace_id.as_deref(), status, 20))?;
+            print_tasks(&tasks);
+            Ok(true)
+        }
+        "/task" | "/todo" => {
+            let title = parts.collect::<Vec<_>>().join(" ");
+            if title.trim().is_empty() {
+                println!("Usage: /task <title>");
+                return Ok(true);
+            }
+            let task = local_result(runtime.create_task(
+                state.workspace_id.clone(),
+                state.last_run_id.as_deref(),
+                &title,
+                None,
+            ))?;
+            print_task(&task);
+            Ok(true)
+        }
+        "/task-done" | "/todo-done" => {
+            let Some(task_id) = parts.next() else {
+                println!("Usage: /task-done <task_id> [note]");
+                return Ok(true);
+            };
+            let note = parts.collect::<Vec<_>>().join(" ");
+            let task = local_result(runtime.update_task_status(
+                task_id,
+                "done",
+                if note.trim().is_empty() {
+                    None
+                } else {
+                    Some(note.as_str())
+                },
+            ))?;
+            print_task(&task);
+            Ok(true)
+        }
+        "/task-status" | "/todo-status" => {
+            let Some(task_id) = parts.next() else {
+                println!("Usage: /task-status <task_id> <todo|in_progress|done|cancelled> [note]");
+                return Ok(true);
+            };
+            let Some(status) = parts.next() else {
+                println!("Usage: /task-status <task_id> <todo|in_progress|done|cancelled> [note]");
+                return Ok(true);
+            };
+            let note = parts.collect::<Vec<_>>().join(" ");
+            let task = local_result(runtime.update_task_status(
+                task_id,
+                status,
+                if note.trim().is_empty() {
+                    None
+                } else {
+                    Some(note.as_str())
+                },
+            ))?;
+            print_task(&task);
+            Ok(true)
+        }
         "/select" => {
             let Some(run_id) = parts.next() else {
                 println!("Usage: /select <run_id>");
@@ -1718,6 +1838,10 @@ fn print_chat_session_help() {
     println!("  /sources              List workspace knowledge sources");
     println!("  /rate <src> <1-5>     Rate a source for the selected run");
     println!("  /runs                 List recent runs in this workspace");
+    println!("  /tasks [status]       List workspace tasks");
+    println!("  /task <title>         Create a task linked to the selected run");
+    println!("  /task-status <id> <s> Update a task status");
+    println!("  /task-done <id>       Mark a task done");
     println!("  /select <run_id>      Select a run for follow-up inspection");
     println!("  /last                 Show the selected or latest run summary");
     println!("  /continue [run] [msg] Continue from a selected or explicit run");
@@ -1752,7 +1876,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2264,6 +2388,63 @@ fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
     Ok(())
 }
 
+fn run_tasks(repo_root: &PathBuf, command: TasksCommand) -> Result<()> {
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    match command {
+        TasksCommand::List(args) => {
+            let tasks = local_result(runtime.list_tasks(
+                args.workspace.as_deref(),
+                args.status.as_deref(),
+                args.limit,
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&tasks)?);
+            } else {
+                print_tasks(&tasks);
+            }
+        }
+        TasksCommand::Add(args) => {
+            let title = args.title.join(" ");
+            let task = local_result(runtime.create_task(
+                args.workspace,
+                args.run.as_deref(),
+                &title,
+                args.priority.as_deref(),
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&task)?);
+            } else {
+                print_task(&task);
+            }
+        }
+        TasksCommand::Update(args) => {
+            let task = local_result(runtime.update_task_status(
+                &args.task_id,
+                &args.status,
+                args.note.as_deref(),
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&task)?);
+            } else {
+                print_task(&task);
+            }
+        }
+        TasksCommand::Done(args) => {
+            let task = local_result(runtime.update_task_status(
+                &args.task_id,
+                "done",
+                args.note.as_deref(),
+            ))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&task)?);
+            } else {
+                print_task(&task);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_knowledge(repo_root: &PathBuf, command: KnowledgeCommand) -> Result<()> {
     let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
     match command {
@@ -2764,6 +2945,64 @@ mod tests {
         assert_eq!(args.limit, 6);
         assert_eq!(args.mode.as_deref(), Some("chat"));
         assert_eq!(args.instruction, ["continue", "the", "session"]);
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_tasks_add_command_accepts_workspace_run_priority_json() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "tasks",
+            "add",
+            "review",
+            "events",
+            "--workspace",
+            "paper",
+            "--run",
+            "run_1",
+            "--priority",
+            "high",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Tasks {
+            command: TasksCommand::Add(args),
+        } = cli.command
+        else {
+            panic!("expected tasks add command");
+        };
+        assert_eq!(args.title, vec!["review", "events"]);
+        assert_eq!(args.workspace.as_deref(), Some("paper"));
+        assert_eq!(args.run.as_deref(), Some("run_1"));
+        assert_eq!(args.priority.as_deref(), Some("high"));
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_tasks_update_command_accepts_status_note_json() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "tasks",
+            "update",
+            "task_1",
+            "--status",
+            "in_progress",
+            "--note",
+            "started",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Tasks {
+            command: TasksCommand::Update(args),
+        } = cli.command
+        else {
+            panic!("expected tasks update command");
+        };
+        assert_eq!(args.task_id, "task_1");
+        assert_eq!(args.status, "in_progress");
+        assert_eq!(args.note.as_deref(), Some("started"));
         assert!(args.json);
     }
 

@@ -236,6 +236,11 @@ into runtime calls:
   alignment, flow/primitive paths, model/tool counts, failed tool count,
   response/proposal artifacts, and next actions such as dry-run/apply or
   continue.
+- CLI tasks: `uv run structure tasks list/add/update/done` stores local
+  workspace tasks in the Rust runtime and records `task_created` /
+  `task_updated` events. Tasks can be linked to the selected run, so planning
+  and follow-up work stay in the same Structure event ledger as chat, tools,
+  evidence, and proposals.
 - CLI context preview: `uv run structure context --workspace <id> --mode
   code_agent --json` materializes the same assembled Rust context used before
   model planning, without starting a run.
@@ -244,7 +249,7 @@ into runtime calls:
   Core parity report, and assembled agent context as a pre-run health gate.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
-  `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`,
+  `/status`, `/llm`, `/doctor`, `/context`, `/tasks`, `/task`, `/task-status`, `/task-done`, `/usage [run-id]`,
   `/review [run-id]`, `/plan [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   `/risk`, `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
@@ -365,6 +370,10 @@ into runtime calls:
   Desktop `/run-status [run-id]`, the Run Status action, and per-turn Status
   actions call `local_run_status`, giving the app the same latest-event,
   usage, tool, artifact, Core alignment, and next-action snapshot as CLI/TUI.
+  Desktop `/tasks`, `/task`, `/task-status`, `/task-done`, and the Tasks action
+  call `local_tasks`, `create_local_task`, and `update_local_task_status`,
+  keeping agent work items as workspace/run-linked Structure events rather than
+  a desktop-only checklist.
   Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
   showing progress as a derived view over immutable Structure planning/model/tool
   events rather than a desktop-only state machine.

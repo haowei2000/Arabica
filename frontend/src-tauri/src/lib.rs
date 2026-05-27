@@ -359,6 +359,41 @@ fn local_workspace_usage(
 }
 
 #[tauri::command]
+fn local_tasks(
+    workspace_id: Option<String>,
+    status: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<structure_local_runtime::LocalTaskRecord>, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.list_tasks(
+        workspace_id.as_deref(),
+        status.as_deref(),
+        limit.unwrap_or(20),
+    )
+}
+
+#[tauri::command]
+fn create_local_task(
+    workspace_id: Option<String>,
+    run_id: Option<String>,
+    title: String,
+    priority: Option<String>,
+) -> Result<structure_local_runtime::LocalTaskRecord, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.create_task(workspace_id, run_id.as_deref(), &title, priority.as_deref())
+}
+
+#[tauri::command]
+fn update_local_task_status(
+    task_id: String,
+    status: String,
+    note: Option<String>,
+) -> Result<structure_local_runtime::LocalTaskRecord, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.update_task_status(&task_id, &status, note.as_deref())
+}
+
+#[tauri::command]
 fn local_workspace_event_feed(
     workspace_id: Option<String>,
     after_sequence: Option<i64>,
@@ -546,6 +581,9 @@ pub fn run() {
             local_workspace_replay,
             local_workspace_compact,
             local_workspace_usage,
+            local_tasks,
+            create_local_task,
+            update_local_task_status,
             local_workspace_event_feed,
             local_evidence_bundle,
             add_local_knowledge,
@@ -677,6 +715,22 @@ mod tests {
             let transcript = local_run_transcript(run.run.run_id.clone())?;
             let review = local_run_review(run.run.run_id.clone())?;
             let run_status = local_run_status(run.run.run_id.clone())?;
+            let task = create_local_task(
+                Some(workspace.workspace_id.clone()),
+                Some(run.run.run_id.clone()),
+                "Review desktop local task evidence".to_string(),
+                Some("high".to_string()),
+            )?;
+            let updated_task = update_local_task_status(
+                task.task_id.clone(),
+                "done".to_string(),
+                Some("desktop verified".to_string()),
+            )?;
+            let tasks = local_tasks(
+                Some(workspace.workspace_id.clone()),
+                Some("done".to_string()),
+                Some(20),
+            )?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
                 local_workspace_event_feed(Some(workspace.workspace_id.clone()), Some(0), Some(5))?;
@@ -821,6 +875,11 @@ mod tests {
                 .next_actions
                 .iter()
                 .any(|action| action.contains("proposal")));
+            assert_eq!(task.status, "todo");
+            assert_eq!(task.priority, "high");
+            assert_eq!(task.run_id.as_deref(), Some(run.run.run_id.as_str()));
+            assert_eq!(updated_task.status, "done");
+            assert!(tasks.iter().any(|item| item.task_id == task.task_id));
             assert_eq!(
                 proposal_review.artifact.artifact_id,
                 proposal_preview.artifact.artifact_id
@@ -998,6 +1057,12 @@ mod tests {
         assert!(local_ui.contains("function renderRunStatusText(status)"));
         assert!(local_ui.contains("case \"/run-status\":"));
         assert!(local_ui.contains("invoke(\"local_run_status\""));
+        assert!(local_ui.contains("id=\"show-tasks\""));
+        assert!(local_ui.contains("function renderTasksText(tasks)"));
+        assert!(local_ui.contains("case \"/tasks\":"));
+        assert!(local_ui.contains("invoke(\"local_tasks\""));
+        assert!(local_ui.contains("invoke(\"create_local_task\""));
+        assert!(local_ui.contains("invoke(\"update_local_task_status\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("id=\"show-doctor\""));

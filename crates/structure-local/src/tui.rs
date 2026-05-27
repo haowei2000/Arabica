@@ -13,7 +13,7 @@ use structure_local_core::{
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
     LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
-    LocalRunStatusSnapshot, LocalToolCall, ProposalApplyResult, ProposalReview,
+    LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, ProposalApplyResult, ProposalReview,
     ProposalRollbackResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
     WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary,
     WorktreeSnapshot,
@@ -88,6 +88,7 @@ struct TuiState {
     workspaces: Vec<WorkspaceSummary>,
     active_workspace_id: String,
     knowledge_sources: Vec<KnowledgeSource>,
+    tasks: Vec<LocalTaskRecord>,
     artifacts: Vec<ArtifactRecord>,
     worktree: WorktreeSnapshot,
     agent_mode: LocalAgentMode,
@@ -98,24 +99,29 @@ struct TuiState {
     notice: String,
 }
 
+#[derive(Debug)]
+struct TuiStateInit {
+    snapshot: LocalSnapshot,
+    runs: Vec<RunSummary>,
+    run_evidence: Vec<RunEvidenceSummary>,
+    workspaces: Vec<WorkspaceSummary>,
+    active_workspace_id: String,
+    knowledge_sources: Vec<KnowledgeSource>,
+    tasks: Vec<LocalTaskRecord>,
+    artifacts: Vec<ArtifactRecord>,
+}
+
 impl TuiState {
-    fn new(
-        snapshot: LocalSnapshot,
-        runs: Vec<RunSummary>,
-        run_evidence: Vec<RunEvidenceSummary>,
-        workspaces: Vec<WorkspaceSummary>,
-        active_workspace_id: String,
-        knowledge_sources: Vec<KnowledgeSource>,
-        artifacts: Vec<ArtifactRecord>,
-    ) -> Self {
+    fn new(init: TuiStateInit) -> Self {
         Self {
-            snapshot,
-            runs,
-            run_evidence,
-            workspaces,
-            active_workspace_id,
-            knowledge_sources,
-            artifacts,
+            snapshot: init.snapshot,
+            runs: init.runs,
+            run_evidence: init.run_evidence,
+            workspaces: init.workspaces,
+            active_workspace_id: init.active_workspace_id,
+            knowledge_sources: init.knowledge_sources,
+            tasks: init.tasks,
+            artifacts: init.artifacts,
             worktree: unavailable_worktree_snapshot(),
             agent_mode: LocalAgentMode::CodeAgent,
             selected: 0,
@@ -148,6 +154,7 @@ impl TuiState {
         self.runs = local_result(runtime.list_runs(Some(workspace_id), 5))?;
         self.run_evidence = collect_run_evidence(&runtime, &self.runs);
         self.knowledge_sources = local_result(runtime.knowledge_sources(Some(workspace_id), 5))?;
+        self.tasks = local_result(runtime.list_tasks(Some(workspace_id), None, 8))?;
         self.artifacts = local_result(runtime.list_artifacts(Some(workspace_id), None, 5))?;
         self.worktree = runtime.worktree_snapshot();
         self.pending_apply_artifact_id = None;
@@ -737,6 +744,17 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_workspace_tasks(&mut self, repo_root: &Path) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let tasks = local_result(runtime.list_tasks(Some(&self.active_workspace_id), None, 50))?;
+        self.preview = Some(TuiPreview {
+            path: format!("workspace tasks / {}", self.active_workspace_id),
+            text: render_tasks(&tasks),
+        });
+        self.notice = format!("Workspace tasks: {}", tasks.len());
+        Ok(())
+    }
+
     fn preview_worktree_snapshot(&mut self, repo_root: &Path) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let worktree = runtime.worktree_snapshot();
@@ -825,17 +843,19 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
     let runs = local_result(runtime.list_runs(Some(&active_workspace_id), 5))?;
     let run_evidence = collect_run_evidence(&runtime, &runs);
     let knowledge_sources = local_result(runtime.knowledge_sources(Some(&active_workspace_id), 5))?;
+    let tasks = local_result(runtime.list_tasks(Some(&active_workspace_id), None, 8))?;
     let artifacts = local_result(runtime.list_artifacts(Some(&active_workspace_id), None, 5))?;
     let worktree = runtime.worktree_snapshot();
-    let mut state = TuiState::new(
+    let mut state = TuiState::new(TuiStateInit {
         snapshot,
         runs,
         run_evidence,
         workspaces,
         active_workspace_id,
         knowledge_sources,
+        tasks,
         artifacts,
-    );
+    });
     state.worktree = worktree;
     loop {
         draw_tui(out, &state)?;
@@ -874,6 +894,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
                     KeyCode::Char('S') => state.preview_workspace_compact(repo_root)?,
                     KeyCode::Char('U') => state.preview_workspace_usage(repo_root)?,
+                    KeyCode::Char('T') => state.preview_workspace_tasks(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
                     KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
                     KeyCode::PageUp => state.move_selection(-5),
@@ -955,7 +976,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f run-follow  F session-follow  i status  l plan  C compact  S session  U usage  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f run-follow  F session-follow  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1043,7 +1064,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, i status, t transcript, l plan, C compact, S session, U usage, z trace, b review, f run-follow, F session-follow, n local check",
+        "press j/k to select, i status, t transcript, l plan, C compact, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1135,7 +1156,30 @@ fn draw_reports(
         )?;
         write_at(out, x, reports_y + 2, &knowledge_text, width)?;
     }
-    let artifacts_y = reports_y + 4;
+    let tasks_y = reports_y + 4;
+    if tasks_y + 3 < y + height {
+        styled_at(out, x, tasks_y, "Tasks", width, Some(Attribute::Bold), None)?;
+        let task_text = if state.tasks.is_empty() {
+            "No local tasks".to_string()
+        } else {
+            state
+                .tasks
+                .iter()
+                .take(2)
+                .map(|task| format!("{} [{}]", task.title, task.status))
+                .collect::<Vec<_>>()
+                .join("  |  ")
+        };
+        muted_at(
+            out,
+            x,
+            tasks_y + 1,
+            "press T to inspect workspace tasks",
+            width,
+        )?;
+        write_at(out, x, tasks_y + 2, &task_text, width)?;
+    }
+    let artifacts_y = tasks_y + 4;
     if artifacts_y + 3 < y + height {
         styled_at(
             out,
@@ -1860,6 +1904,40 @@ fn render_workspace_usage(usage: &WorkspaceUsageSummary) -> String {
     text
 }
 
+fn render_tasks(tasks: &[LocalTaskRecord]) -> String {
+    let mut text = String::new();
+    text.push_str("Workspace Tasks\n");
+    if tasks.is_empty() {
+        text.push_str("No local tasks recorded.\n");
+        return text;
+    }
+    let todo = tasks.iter().filter(|task| task.status == "todo").count();
+    let in_progress = tasks
+        .iter()
+        .filter(|task| task.status == "in_progress")
+        .count();
+    let done = tasks.iter().filter(|task| task.status == "done").count();
+    text.push_str(&format!(
+        "Total: {} / todo={} / in_progress={} / done={}\n\n",
+        tasks.len(),
+        todo,
+        in_progress,
+        done
+    ));
+    for task in tasks {
+        text.push_str(&format!(
+            "- {} [{} / {}] {}\n",
+            task.task_id, task.status, task.priority, task.title
+        ));
+        text.push_str(&format!(
+            "  workspace={} run={}\n",
+            task.workspace_id,
+            task.run_id.as_deref().unwrap_or("workspace")
+        ));
+    }
+    text
+}
+
 fn render_run_attempt(attempt: &RunAttempt) -> String {
     let mut text = String::new();
     text.push_str("Run Attempt\n");
@@ -2124,15 +2202,16 @@ mod tests {
     fn tui_local_command_records_workspace_tool_events() {
         let root = unique_repo("tui-local-command-events");
         let snapshot = local_result(collect_snapshot(&root)).unwrap();
-        let mut state = TuiState::new(
+        let mut state = TuiState::new(TuiStateInit {
             snapshot,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            "tui-events".to_string(),
-            Vec::new(),
-            Vec::new(),
-        );
+            runs: Vec::new(),
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-events".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
 
         state.run_local_command(&root, "pwd".to_string()).unwrap();
 
@@ -2213,15 +2292,16 @@ mod tests {
 
         let root = unique_repo("tui-attempt-preview");
         let snapshot = local_result(collect_snapshot(&root)).unwrap();
-        let mut state = TuiState::new(
+        let mut state = TuiState::new(TuiStateInit {
             snapshot,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            "tui-preview".to_string(),
-            Vec::new(),
-            Vec::new(),
-        );
+            runs: Vec::new(),
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-preview".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
 
         let result = (|| -> Result<()> {
             state.run_custom_prompt(&root, "Summarize this workspace.".to_string())?;
@@ -2307,15 +2387,16 @@ mod tests {
 
         let root = unique_repo("tui-follow-up");
         let snapshot = local_result(collect_snapshot(&root)).unwrap();
-        let mut state = TuiState::new(
+        let mut state = TuiState::new(TuiStateInit {
             snapshot,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            "tui-follow-up".to_string(),
-            Vec::new(),
-            Vec::new(),
-        );
+            runs: Vec::new(),
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-follow-up".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
 
         let result = (|| -> Result<()> {
             state.run_custom_prompt(&root, "Summarize this workspace.".to_string())?;

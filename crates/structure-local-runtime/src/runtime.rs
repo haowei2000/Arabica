@@ -8,7 +8,7 @@ use crate::types::{
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact,
     LocalRunCoreTrace, LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview,
-    LocalRunStatusEvent, LocalRunStatusSnapshot, LocalToolCall, LocalToolResult,
+    LocalRunStatusEvent, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, LocalToolResult,
     LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, ProposalReview,
     ProposalReviewCheck, ProposalRollbackResult, RunAttempt, RunEventKind, RunEvidenceSummary,
     RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceCompact,
@@ -352,6 +352,79 @@ impl LocalAgentRuntime {
             &rating,
         )?;
         Ok(rating)
+    }
+
+    pub fn create_task(
+        &self,
+        workspace_id: Option<String>,
+        run_id: Option<&str>,
+        title: &str,
+        priority: Option<&str>,
+    ) -> Result<LocalTaskRecord, String> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err("task title must not be empty".to_string());
+        }
+        if title.chars().count() > 2_000 {
+            return Err("task title must be 2000 characters or fewer".to_string());
+        }
+        let priority = normalize_task_priority(priority.unwrap_or("normal"))?;
+        let workspace = if let Some(run_id) = run_id {
+            let run = self.run_by_id(run_id)?;
+            if let Some(workspace_id) = workspace_id.as_deref() {
+                if workspace_id != run.workspace_id {
+                    return Err("task run must belong to the selected workspace".to_string());
+                }
+            }
+            self.store.workspace_by_id(&run.workspace_id)?
+        } else {
+            self.store.ensure_workspace(workspace_id, &self.repo_root)?
+        };
+        let task = self
+            .store
+            .create_task(&workspace.workspace_id, run_id, title, priority)?;
+        self.store.append_event(
+            &task.workspace_id,
+            task.run_id.as_deref(),
+            RunEventKind::TaskCreated,
+            &task,
+        )?;
+        Ok(task)
+    }
+
+    pub fn update_task_status(
+        &self,
+        task_id: &str,
+        status: &str,
+        note: Option<&str>,
+    ) -> Result<LocalTaskRecord, String> {
+        let status = normalize_task_status(status)?;
+        let task = self.store.update_task_status(task_id, status)?;
+        self.store.append_event(
+            &task.workspace_id,
+            task.run_id.as_deref(),
+            RunEventKind::TaskUpdated,
+            &serde_json::json!({
+                "task": task,
+                "note": note.unwrap_or("").trim(),
+            }),
+        )?;
+        Ok(task)
+    }
+
+    pub fn list_tasks(
+        &self,
+        workspace_id: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<LocalTaskRecord>, String> {
+        let status = status.map(normalize_task_status).transpose()?;
+        self.store
+            .list_tasks(workspace_id, status, limit.clamp(1, 500))
+    }
+
+    pub fn task(&self, task_id: &str) -> Result<LocalTaskRecord, String> {
+        self.store.task_by_id(task_id)
     }
 
     pub fn list_runs(
@@ -1780,6 +1853,30 @@ fn looks_like_repo_path_reference(reference: &str) -> bool {
         && (reference.contains('/') || reference.contains('.'))
 }
 
+fn normalize_task_priority(priority: &str) -> Result<&'static str, String> {
+    match priority.trim().to_ascii_lowercase().as_str() {
+        "" | "normal" | "medium" => Ok("normal"),
+        "low" => Ok("low"),
+        "high" => Ok("high"),
+        "urgent" => Ok("urgent"),
+        other => Err(format!(
+            "unknown task priority {other}; expected low, normal, high, or urgent"
+        )),
+    }
+}
+
+fn normalize_task_status(status: &str) -> Result<&'static str, String> {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "todo" | "open" | "pending" => Ok("todo"),
+        "doing" | "in_progress" | "running" => Ok("in_progress"),
+        "done" | "complete" | "completed" => Ok("done"),
+        "cancelled" | "canceled" | "cancel" => Ok("cancelled"),
+        other => Err(format!(
+            "unknown task status {other}; expected todo, in_progress, done, or cancelled"
+        )),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct KnowledgePayload {
     sources: Vec<KnowledgeSource>,
@@ -2503,6 +2600,19 @@ fn humanize_plan_step(step: &str) -> String {
 fn event_payload_summary(event: &crate::types::LocalEvent) -> String {
     match event.kind.as_str() {
         "workspace_opened" => format!("workspace {}", event.workspace_id),
+        "task_created" => format!(
+            "task {} {}",
+            json_str(&event.payload, "task_id", "task"),
+            json_str(&event.payload, "title", "created")
+        ),
+        "task_updated" => {
+            let task = event.payload.get("task").unwrap_or(&event.payload);
+            format!(
+                "task {} {}",
+                json_str(task, "task_id", "task"),
+                json_str(task, "status", "updated")
+            )
+        }
         "run_created" | "prompt_received" => event
             .payload
             .get("prompt")
@@ -3866,6 +3976,51 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_records_workspace_tasks_as_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("local-tasks");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Create evidence for a task-linked run.".to_string(),
+                workspace_id: Some("tasks".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let task = runtime
+            .create_task(
+                Some("tasks".to_string()),
+                Some(&result.run.run_id),
+                "Review local task event evidence",
+                Some("high"),
+            )
+            .unwrap();
+        let updated = runtime
+            .update_task_status(&task.task_id, "done", Some("verified"))
+            .unwrap();
+        let tasks = runtime.list_tasks(Some("tasks"), Some("done"), 20).unwrap();
+        let events = runtime.run_events(&result.run.run_id).unwrap();
+
+        assert_eq!(task.status, "todo");
+        assert_eq!(task.priority, "high");
+        assert_eq!(updated.status, "done");
+        assert!(tasks.iter().any(|item| item.task_id == task.task_id));
+        assert!(events.iter().any(|event| {
+            event.kind == "task_created"
+                && event.canonical_flow_id == "goal"
+                && event.primitive_id == "event_audit"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == "task_updated"
+                && event.canonical_flow_id == "feedback"
+                && event.primitive_id == "event_audit"
+        }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_builds_plan_from_agent_step_events() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("run-plan");
@@ -5173,7 +5328,7 @@ User-facing follow-up.\n\n\
             root,
             "crates/structure-local/src/cli.rs",
             r#"
-            Command::Core Command::Surfaces Command::Chat Command::Run Command::Continue Command::Proposals Command::Tui
+            Command::Core Command::Surfaces Command::Chat Command::Run Command::Continue Command::Tasks Command::Proposals Command::Tui
             run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_workspace_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
@@ -5190,6 +5345,7 @@ User-facing follow-up.\n\n\
             fn local_agent_run() {} fn local_agent_continue_attempt() {}
             fn local_workspace_continue_attempt() {} local_workspace_continue_attempt,
             fn local_workspace_usage() {} local_workspace_usage,
+            fn local_tasks() {} fn create_local_task() {} fn update_local_task_status() {}
             fn local_chat_turns() {} local_chat_turns,
             fn create_local_workspace() {} fn local_workspaces() {}
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
