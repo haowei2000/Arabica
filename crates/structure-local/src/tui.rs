@@ -448,6 +448,16 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_command_map(&mut self) {
+        let text = render_tui_command_map(self);
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("tui command map / {}", self.active_workspace_id),
+            text,
+        });
+        self.notice = "Command map: Structure runtime actions grouped by agent loop".to_string();
+    }
+
     fn run_local_command(&mut self, repo_root: &Path, command: String) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let argv = command
@@ -961,6 +971,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
+                    KeyCode::Char('?') => state.preview_command_map(),
                     KeyCode::Char('A') => state.preview_agent_context(repo_root)?,
                     KeyCode::Char('H') => state.preview_local_doctor(repo_root)?,
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
@@ -1064,7 +1075,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "? map  m mode  o workspace  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1152,7 +1163,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, A context, H doctor, i status, t transcript, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
+        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1346,7 +1357,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  O tools";
+    let controls = "? map  q quit  r refresh  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  O tools";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1473,6 +1484,87 @@ fn render_parity_report(report: &SurfaceParityReport) -> String {
             text.push_str(&format!("  - {detail}\n"));
         }
     }
+    text
+}
+
+fn render_tui_command_map(state: &TuiState) -> String {
+    let selected_run = state
+        .runs
+        .get(state.selected)
+        .map(|run| {
+            format!(
+                "{} / {} / {}",
+                run.run_id,
+                run.status,
+                truncate(&run.prompt, 96)
+            )
+        })
+        .unwrap_or_else(|| "none".to_string());
+    let llm = if state.snapshot.llm_config.configured {
+        format!(
+            "OPENAI__ configured ({})",
+            state
+                .snapshot
+                .llm_config
+                .model_name
+                .as_deref()
+                .unwrap_or("model configured")
+        )
+    } else {
+        "OPENAI__ missing".to_string()
+    };
+    let mut text = String::new();
+    text.push_str("Structure TUI Command Map\n");
+    text.push_str(&format!("Workspace: {}\n", state.active_workspace_id));
+    text.push_str(&format!("Mode: {}\n", agent_mode_label(&state.agent_mode)));
+    text.push_str(&format!("Selected run: {selected_run}\n"));
+    text.push_str(&format!("LLM: {llm}\n"));
+    text.push_str(&format!(
+        "Core: {} surfaces / {} primitives / {} capabilities\n\n",
+        state.snapshot.product_surfaces.len(),
+        state.snapshot.core_manifest.primitives.len(),
+        state.snapshot.core_manifest.capabilities.len()
+    ));
+
+    text.push_str("Run Loop\n");
+    text.push_str("- c prompt -> LocalAgentRuntime::run_prompt_attempt -> Structure run events\n");
+    text.push_str("- n local check -> same run loop with a workspace-inspection prompt\n");
+    text.push_str("- f run-follow -> run_continuation_attempt from selected transcript/evidence\n");
+    text.push_str("- F session-follow -> workspace_continuation_attempt from workspace compact\n");
+    text.push_str("- m mode -> switch chat/code_agent without changing the runtime contract\n\n");
+
+    text.push_str("Workspace Context\n");
+    text.push_str("- o/w workspace -> create/open or cycle local workspace metadata\n");
+    text.push_str("- A context -> LocalAgentContext before model planning\n");
+    text.push_str("- H doctor -> OPENAI__ diagnostic + Core parity + Agent Context\n");
+    text.push_str("- s/p/x knowledge -> register, preview, or remove path-addressed knowledge\n");
+    text.push_str("- R rate -> source_rated feedback replayed into future context\n");
+    text.push_str("- T tasks -> workspace/run-linked task events\n");
+    text.push_str("- ! command -> allowlisted local tool recorded as workspace events\n\n");
+
+    text.push_str("Run Evidence\n");
+    text.push_str(
+        "- i status -> latest event, model usage, tool counts, artifacts, next actions\n",
+    );
+    text.push_str("- t transcript -> shared run transcript and checkpoint notes\n");
+    text.push_str("- l plan -> event-derived agent progress view\n");
+    text.push_str("- O tools -> paired tool_call_requested/tool_call_completed trace\n");
+    text.push_str("- C compact -> continuation boundary for the selected run\n");
+    text.push_str("- z trace -> Structure Core flow/primitive path\n");
+    text.push_str("- b review -> post-run attempt review and next actions\n");
+    text.push_str("- D decision -> run_checkpoint_recorded feedback event\n\n");
+
+    text.push_str("Session And Proposals\n");
+    text.push_str("- S session -> workspace compact handoff from replayed events\n");
+    text.push_str("- U usage -> workspace model/tool/task/artifact/Core totals\n");
+    text.push_str("- e evidence -> local evidence bundle for automation and audits\n");
+    text.push_str("- a artifact -> latest artifact preview\n");
+    text.push_str("- g/h/u/y/Y proposal -> preview, risk-review, dry-run, apply, rollback\n\n");
+
+    text.push_str("Invariant\n");
+    text.push_str(
+        "Every agent action above calls structure-local-runtime and writes or reads Structure Core-aligned events. Benchmark adapters stay outside this TUI surface.\n",
+    );
     text
 }
 
@@ -2660,6 +2752,56 @@ mod tests {
             parse_source_rating_input("src_other 3 partial", Some(&source)).unwrap(),
             ("src_other".to_string(), 3, "partial".to_string())
         );
+    }
+
+    #[test]
+    fn tui_command_map_groups_agent_actions_by_core_loop() {
+        let root = unique_repo("tui-command-map");
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(TuiStateInit {
+            snapshot,
+            runs: vec![RunSummary {
+                run_id: "run_selected".to_string(),
+                workspace_id: "tui-map".to_string(),
+                prompt: "Inspect Structure Core event loop affordances".to_string(),
+                status: "finished".to_string(),
+                final_response: Some("done".to_string()),
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            }],
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-map".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
+
+        state.preview_command_map();
+
+        assert!(state.notice.contains("Command map"));
+        let preview = state.preview.as_ref().expect("command map preview");
+        assert_eq!(preview.path, "tui command map / tui-map");
+        assert!(preview.text.contains("Structure TUI Command Map"));
+        assert!(preview
+            .text
+            .contains("Selected run: run_selected / finished"));
+        assert!(preview.text.contains("Run Loop"));
+        assert!(preview
+            .text
+            .contains("c prompt -> LocalAgentRuntime::run_prompt_attempt"));
+        assert!(preview.text.contains("Workspace Context"));
+        assert!(preview.text.contains("H doctor -> OPENAI__ diagnostic"));
+        assert!(preview.text.contains("Run Evidence"));
+        assert!(preview
+            .text
+            .contains("O tools -> paired tool_call_requested/tool_call_completed"));
+        assert!(preview.text.contains("Session And Proposals"));
+        assert!(preview
+            .text
+            .contains("Benchmark adapters stay outside this TUI surface"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

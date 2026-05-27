@@ -337,7 +337,10 @@ into runtime calls:
   bound to `n`; `!` commands are persisted as workspace tool events. `R` records
   a source rating for the selected run or workspace, and `D` records a selected
   run human decision as the same `run_checkpoint_recorded` event used by CLI
-  `/checkpoint` and desktop `/checkpoint`. `A` previews the assembled
+  `/checkpoint` and desktop `/checkpoint`. `?` opens a command map grouped by
+  run loop, workspace context, run evidence, session, and proposal actions, so
+  the TUI presents a Codex/OpenCode-style agent console rather than a flat
+  dashboard. `A` previews the assembled
   `LocalAgentContext` without starting a run, showing the same AGENTS.md,
   worktree, knowledge, source-rating, task, and recent-turn context that CLI
   `/context` and desktop Agent Context materialize before planning. `H` opens a
