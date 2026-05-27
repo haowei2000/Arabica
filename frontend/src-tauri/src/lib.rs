@@ -1208,6 +1208,13 @@ mod tests {
         assert!(local_ui.contains("`/proposal ${state.selectedRunId}`"));
         assert!(local_ui.contains("case \"/risk\":"));
         assert!(local_ui.contains("function reviewPreviewProposal"));
+        assert!(local_ui.contains("commandInput: \"/dry-run\""));
+        assert!(local_ui.contains("commandInput: \"/apply\""));
+        assert!(local_ui.contains("reviewPreviewProposalRisk(null, \"/risk\")"));
+        assert!(local_ui.contains("rollbackPreviewProposal(null, \"/rollback\")"));
+        assert!(
+            local_ui.contains("appendCommandMessage(input, eventLogEl.textContent, \"cancelled\")")
+        );
         assert!(local_ui.contains("await applyProposal(artifactId, true)"));
         assert!(local_ui.contains("await applyProposal(artifactId, false)"));
         assert!(local_ui.contains("case \"/dry-run\":"));

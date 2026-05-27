@@ -449,7 +449,11 @@ into runtime calls:
   Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
   `review_local_proposal`, giving the app the same target-safety, patch-context,
   and explicit-approval checks as CLI before any proposal apply while recording
-  the same `code_change_reviewed` event in the local Structure stream.
+  the same `code_change_reviewed` event in the local Structure stream. Preview
+  Risk, Dry Run, Apply, and Rollback actions append `/risk <artifact-id>`,
+  `/dry-run <artifact-id>`, `/apply <artifact-id>`, and
+  `/rollback <artifact-id>` command turns; cancelled apply confirmations are
+  recorded as cancelled command turns.
   Desktop `/rollback [artifact-id]` and the preview Rollback action call
   `rollback_local_proposal`, restoring the backup artifact recorded before
   apply and keeping rollback evidence in the local Structure event stream.
