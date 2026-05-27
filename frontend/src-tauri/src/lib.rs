@@ -1222,6 +1222,10 @@ mod tests {
         assert!(local_ui.contains("function performContinuationRun"));
         assert!(local_ui.contains("continueRun.textContent = \"Continue\""));
         assert!(local_ui.contains("retryRun.textContent = \"Retry\""));
+        assert!(local_ui.contains("`/continue ${turn.run_id} ${extraInstruction}`"));
+        assert!(local_ui.contains("const commandInput = `/retry ${turn.run_id}`"));
+        assert!(local_ui.contains("eventLogEl.textContent || `Continued ${turn.run_id}.`"));
+        assert!(local_ui.contains("eventLogEl.textContent || `Retried ${turn.run_id}.`"));
         assert!(local_ui.contains("function retryInstruction()"));
     }
 

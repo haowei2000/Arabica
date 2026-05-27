@@ -399,10 +399,14 @@ into runtime calls:
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
-  run's transcript and evidence.
+  run's transcript and evidence. The per-turn Continue action records the same
+  `/continue <run-id> ...` command turn after the fresh continuation attempt,
+  so visible desktop continuation remains replayable as Structure workspace
+  history.
   Desktop `/retry` and the per-turn Retry action use that same continuation
   path with a retry instruction, keeping retry semantics explicit without
-  mutating the previous run.
+  mutating the previous run; the visible Retry action records `/retry <run-id>`
+  as a command turn after the fresh retry attempt.
   Desktop `/context` and the visible Agent Context action call the shared
   `local_agent_context` Tauri command so the app shows the same assembled
   context the CLI sees before a run starts; the visible action is also appended
@@ -501,7 +505,9 @@ into runtime calls:
   proposal in Preview.
   The per-turn Continue button uses the current composer text as an optional
   continuation instruction, matching the slash-command path while keeping
-  normal chat interaction mouse-accessible.
+  normal chat interaction mouse-accessible. Per-turn Continue and Retry append
+  `/continue <run-id> ...` and `/retry <run-id>` command turns after their fresh
+  Structure continuation attempts.
   Command results are appended to the desktop chat thread as local interaction
   turns while
   persisted agent runs still come from the Rust runtime event store.

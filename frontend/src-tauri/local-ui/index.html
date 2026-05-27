@@ -2181,14 +2181,23 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             const extraInstruction = agentPromptEl.value.trim().startsWith("/")
               ? ""
               : agentPromptEl.value.trim();
+            const commandInput = extraInstruction
+              ? `/continue ${turn.run_id} ${extraInstruction}`
+              : `/continue ${turn.run_id}`;
             setAgentBusy(true);
             try {
-              await performContinuationRun(turn.run_id, extraInstruction);
+              const attempt = await performContinuationRun(turn.run_id, extraInstruction);
+              appendCommandMessage(
+                commandInput,
+                eventLogEl.textContent || `Continued ${turn.run_id}.`,
+                attempt.result ? "ok" : "error",
+              );
               if (extraInstruction) {
                 agentPromptEl.value = "";
               }
             } catch (error) {
               eventLogEl.textContent = String(error);
+              appendCommandMessage(commandInput, eventLogEl.textContent, "error");
               setInFlightRun(
                 extraInstruction || `Continue from ${turn.run_id}`,
                 "failed",
@@ -2205,11 +2214,18 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
           retryRun.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
+            const commandInput = `/retry ${turn.run_id}`;
             setAgentBusy(true);
             try {
-              await performContinuationRun(turn.run_id, retryInstruction());
+              const attempt = await performContinuationRun(turn.run_id, retryInstruction());
+              appendCommandMessage(
+                commandInput,
+                eventLogEl.textContent || `Retried ${turn.run_id}.`,
+                attempt.result ? "ok" : "error",
+              );
             } catch (error) {
               eventLogEl.textContent = String(error);
+              appendCommandMessage(commandInput, eventLogEl.textContent, "error");
               setInFlightRun(`Retry ${turn.run_id}`, "failed", String(error));
             } finally {
               stopLiveEventPolling();
