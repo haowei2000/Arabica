@@ -11,12 +11,12 @@ use structure_local_core::{
     collect_snapshot, verify_structure_core_parity_for_repo, LocalSnapshot, SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
-    LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
-    LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, ProposalApplyResult, ProposalReview,
-    ProposalRollbackResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
-    WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary,
-    WorktreeSnapshot,
+    ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentContext, LocalAgentMode,
+    LocalAgentRuntime, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan,
+    LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, ProposalApplyResult,
+    ProposalReview, ProposalRollbackResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary,
+    RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary,
+    WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -399,6 +399,27 @@ impl TuiState {
             text: preview,
         });
         self.notice = notice;
+        Ok(())
+    }
+
+    fn preview_agent_context(&mut self, repo_root: &Path) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let context = local_result(runtime.agent_context(
+            Some(&self.active_workspace_id),
+            Some(self.agent_mode.clone()),
+        ))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("agent context / {}", context.workspace_id),
+            text: render_agent_context(&context),
+        });
+        self.notice = format!(
+            "Agent context: {} instructions, {} sources, {} tasks, {} turns",
+            context.agent_instructions.len(),
+            context.knowledge_sources.len(),
+            context.tasks.len(),
+            context.recent_turns.len()
+        );
         Ok(())
     }
 
@@ -899,6 +920,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
+                    KeyCode::Char('A') => state.preview_agent_context(repo_root)?,
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('l') => state.preview_selected_run_plan(repo_root)?,
@@ -999,7 +1021,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f run-follow  F session-follow  D decision  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  A context  f run-follow  F session-follow  D decision  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1087,7 +1109,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, i status, t transcript, l plan, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
+        "press j/k to select, A context, i status, t transcript, l plan, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1281,7 +1303,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  C compact  S session  b review";
+    let controls = "q quit  r refresh  c prompt  A context  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  C compact  b review";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1479,6 +1501,114 @@ fn render_worktree_snapshot(worktree: &WorktreeSnapshot) -> String {
         text.push_str("\nChanged Files\n");
         for change in worktree.changed_files.iter().take(64) {
             text.push_str(&format!("- {} {}\n", change.status, change.path));
+        }
+    }
+    text
+}
+
+fn render_agent_context(context: &LocalAgentContext) -> String {
+    let mut text = String::new();
+    text.push_str("Agent Context\n");
+    text.push_str(&format!("Workspace: {}\n", context.workspace_id));
+    text.push_str(&format!("Mode: {}\n", context.mode));
+    text.push_str(&format!("Repository: {}\n", context.repo_root));
+    text.push_str(&format!("Database: {}\n", context.runtime_db));
+    text.push_str(&format!("Replay limit: {}\n", context.context_replay_limit));
+    text.push_str(&format!(
+        "Worktree: {} / {} changes\n",
+        if context.worktree.clean {
+            "clean"
+        } else {
+            "dirty"
+        },
+        context.worktree.changed_files.len()
+    ));
+    text.push_str(&format!(
+        "Instructions: {}\n",
+        context.agent_instructions.len()
+    ));
+    text.push_str(&format!(
+        "Knowledge sources: {}\n",
+        context.knowledge_sources.len()
+    ));
+    text.push_str(&format!(
+        "Source ratings: {}\n",
+        context.source_ratings.len()
+    ));
+    text.push_str(&format!("Tasks: {}\n", context.tasks.len()));
+    text.push_str(&format!("Recent turns: {}\n", context.recent_turns.len()));
+    if let Some(error) = &context.worktree.error {
+        text.push_str(&format!("Worktree error: {error}\n"));
+    }
+
+    if !context.agent_instructions.is_empty() {
+        text.push_str("\nAgent Instructions\n");
+        for instruction in &context.agent_instructions {
+            text.push_str(&format!(
+                "- {} ({})\n",
+                instruction.path,
+                format_bytes(instruction.size_bytes)
+            ));
+            if !instruction.content_preview.is_empty() {
+                text.push_str(&format!("  {}\n", clean_line(&instruction.content_preview)));
+            }
+        }
+    }
+
+    if !context.worktree.changed_files.is_empty() {
+        text.push_str("\nWorktree Changes\n");
+        for change in context.worktree.changed_files.iter().take(24) {
+            text.push_str(&format!("- {} {}\n", change.status, change.path));
+        }
+    }
+
+    if !context.knowledge_sources.is_empty() {
+        text.push_str("\nKnowledge Sources\n");
+        for source in &context.knowledge_sources {
+            text.push_str(&format!(
+                "- {} ({})\n  {}\n",
+                source.title,
+                format_bytes(source.size_bytes),
+                source.path
+            ));
+        }
+    }
+
+    if !context.source_ratings.is_empty() {
+        text.push_str("\nSource Ratings\n");
+        for rating in context.source_ratings.iter().take(12) {
+            let note = if rating.note.is_empty() {
+                "no note".to_string()
+            } else {
+                rating.note.clone()
+            };
+            text.push_str(&format!(
+                "- {}: {}/5 for {} ({})\n",
+                rating.source_title,
+                rating.rating,
+                rating.run_id.as_deref().unwrap_or("workspace"),
+                note
+            ));
+        }
+    }
+
+    if !context.tasks.is_empty() {
+        text.push_str("\nWorkspace Tasks\n");
+        for task in context.tasks.iter().take(12) {
+            text.push_str(&format!(
+                "- {} [{} / {}] {}\n",
+                task.task_id, task.status, task.priority, task.title
+            ));
+        }
+    }
+
+    if !context.recent_turns.is_empty() {
+        text.push_str("\nRecent Turns\n");
+        for turn in context.recent_turns.iter().take(8) {
+            text.push_str(&format!(
+                "- {} [{} / {} events] {}\n",
+                turn.run_id, turn.status, turn.event_count, turn.user_message
+            ));
         }
     }
     text
@@ -2327,6 +2457,60 @@ mod tests {
             parse_source_rating_input("src_other 3 partial", Some(&source)).unwrap(),
             ("src_other".to_string(), 3, "partial".to_string())
         );
+    }
+
+    #[test]
+    fn tui_previews_agent_context_without_starting_run() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_openai = openai_env_keys()
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in openai_env_keys() {
+            std::env::remove_var(key);
+        }
+
+        let root = unique_repo("tui-agent-context");
+        fs::write(root.join("AGENTS.md"), "Use Structure Core from TUI.").unwrap();
+        let source_path = root.join("context-note.md");
+        fs::write(&source_path, "TUI context preview source.").unwrap();
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(TuiStateInit {
+            snapshot,
+            runs: Vec::new(),
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-context".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
+
+        let result = (|| -> Result<()> {
+            state.add_knowledge_path(&root, source_path.to_string_lossy().to_string())?;
+            state.preview_agent_context(&root)?;
+
+            assert!(state.notice.contains("Agent context:"));
+            let preview = state.preview.as_ref().expect("agent context preview");
+            assert_eq!(preview.path, "agent context / tui-context");
+            assert!(preview.text.contains("Agent Context"));
+            assert!(preview.text.contains("Workspace: tui-context"));
+            assert!(preview.text.contains("Mode: code_agent"));
+            assert!(preview.text.contains("Agent Instructions"));
+            assert!(preview.text.contains("AGENTS.md"));
+            assert!(preview.text.contains("Knowledge Sources"));
+            assert!(preview.text.contains("context-note.md"));
+
+            let runtime = local_result(LocalAgentRuntime::open(&root))?;
+            assert!(local_result(runtime.list_runs(Some("tui-context"), 1))?.is_empty());
+            Ok(())
+        })();
+
+        fs::remove_dir_all(root).ok();
+        for (key, value) in previous_openai {
+            restore_env(key, value);
+        }
+        result.unwrap();
     }
 
     #[test]

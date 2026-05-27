@@ -337,8 +337,11 @@ into runtime calls:
   bound to `n`; `!` commands are persisted as workspace tool events. `R` records
   a source rating for the selected run or workspace, and `D` records a selected
   run human decision as the same `run_checkpoint_recorded` event used by CLI
-  `/checkpoint` and desktop `/checkpoint`. It also surfaces knowledge and
-  artifact previews through the same runtime. Custom
+  `/checkpoint` and desktop `/checkpoint`. `A` previews the assembled
+  `LocalAgentContext` without starting a run, showing the same AGENTS.md,
+  worktree, knowledge, source-rating, task, and recent-turn context that CLI
+  `/context` and desktop Agent Context materialize before planning. It also
+  surfaces knowledge and artifact previews through the same runtime. Custom
   prompt and workspace-check runs open a `RunAttempt` preview immediately, so
   successful and failed TUI runs both expose their event trace without leaving
   the local terminal UI. Press `f` to continue the selected run through the
