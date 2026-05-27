@@ -12,11 +12,11 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentContext, LocalAgentMode,
-    LocalAgentRuntime, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan,
-    LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, ProposalApplyResult,
-    ProposalReview, ProposalRollbackResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary,
-    RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary,
-    WorkspaceUsageSummary, WorktreeSnapshot,
+    LocalAgentRuntime, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
+    LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall,
+    ProposalApplyResult, ProposalReview, ProposalRollbackResult, RunAttempt, RunEvidenceSummary,
+    RunRequest, RunSummary, RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest,
+    WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -419,6 +419,31 @@ impl TuiState {
             context.knowledge_sources.len(),
             context.tasks.len(),
             context.recent_turns.len()
+        );
+        Ok(())
+    }
+
+    fn preview_local_doctor(&mut self, repo_root: &Path) -> Result<()> {
+        let snapshot = local_result(collect_snapshot(repo_root))?;
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let diagnostic = runtime.llm_diagnostic();
+        let parity = local_result(verify_structure_core_parity_for_repo(repo_root))?;
+        let context = local_result(runtime.agent_context(
+            Some(&self.active_workspace_id),
+            Some(self.agent_mode.clone()),
+        ))?;
+        self.snapshot = snapshot.clone();
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("local doctor / {}", context.workspace_id),
+            text: render_local_doctor(&snapshot, &diagnostic, &parity, &context),
+        });
+        self.notice = format!(
+            "Doctor: llm={} parity={} context={} sources/{} tasks",
+            if diagnostic.ok { "ok" } else { "check" },
+            if parity.passed { "ok" } else { "drift" },
+            context.knowledge_sources.len(),
+            context.tasks.len()
         );
         Ok(())
     }
@@ -921,6 +946,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
                     KeyCode::Char('A') => state.preview_agent_context(repo_root)?,
+                    KeyCode::Char('H') => state.preview_local_doctor(repo_root)?,
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('l') => state.preview_selected_run_plan(repo_root)?,
@@ -1021,7 +1047,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  A context  f run-follow  F session-follow  D decision  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1109,7 +1135,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, A context, i status, t transcript, l plan, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
+        "press j/k to select, A context, H doctor, i status, t transcript, l plan, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1303,7 +1329,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  A context  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  C compact  b review";
+    let controls = "q quit  r refresh  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  C compact";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1423,6 +1449,119 @@ fn render_parity_report(report: &SurfaceParityReport) -> String {
         ));
         for detail in &check.details {
             text.push_str(&format!("  - {detail}\n"));
+        }
+    }
+    text
+}
+
+fn render_local_doctor(
+    snapshot: &LocalSnapshot,
+    diagnostic: &LocalLlmDiagnostic,
+    parity: &SurfaceParityReport,
+    context: &LocalAgentContext,
+) -> String {
+    let llm_state = if diagnostic.ok {
+        "ok"
+    } else if diagnostic.configured {
+        "failed"
+    } else {
+        "missing"
+    };
+    let mut text = String::new();
+    text.push_str("Structure Local Doctor\n");
+    text.push_str(&format!("Workspace: {}\n", context.workspace_id));
+    text.push_str(&format!("Mode: {}\n", context.mode));
+    text.push_str(&format!("Repository: {}\n", snapshot.repo_root));
+    text.push_str(&format!("Runtime: {}\n", snapshot.runtime_dir));
+    text.push_str(&format!("Database: {}\n", context.runtime_db));
+    text.push_str(&format!(
+        "Core: {} surfaces / {} primitives / {} capabilities\n",
+        snapshot.product_surfaces.len(),
+        snapshot.core_manifest.primitives.len(),
+        snapshot.core_manifest.capabilities.len()
+    ));
+    text.push_str(&format!(
+        "Parity: {} / {} checks\n",
+        if parity.passed { "passed" } else { "failed" },
+        parity.checks.len()
+    ));
+    text.push_str(&format!(
+        "LLM: {} / provider={} / configured={}\n",
+        llm_state, diagnostic.provider, diagnostic.configured
+    ));
+    text.push_str(&format!(
+        "Model: {}\n",
+        diagnostic.model.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!(
+        "Endpoint: {}\n",
+        diagnostic.endpoint.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!("Elapsed: {} ms\n", diagnostic.elapsed_ms));
+    if let Some(response) = &diagnostic.response_preview {
+        if !response.is_empty() {
+            text.push_str(&format!("Response: {}\n", clean_line(response)));
+        }
+    }
+    if let Some(error) = &diagnostic.error {
+        text.push_str(&format!("Error: {error}\n"));
+    }
+    text.push_str(&format!(
+        "Context: {} instructions / {} sources / {} ratings / {} tasks / {} turns\n",
+        context.agent_instructions.len(),
+        context.knowledge_sources.len(),
+        context.source_ratings.len(),
+        context.tasks.len(),
+        context.recent_turns.len()
+    ));
+    text.push_str(&format!(
+        "Worktree: {} / {} changes\n",
+        if context.worktree.clean {
+            "clean"
+        } else {
+            "dirty"
+        },
+        context.worktree.changed_files.len()
+    ));
+
+    text.push_str("\nChecks\n");
+    text.push_str(&format!(
+        "- OPENAI__: {}\n",
+        if diagnostic.ok {
+            "chat-completions request succeeded"
+        } else if diagnostic.configured {
+            "configured but diagnostic failed"
+        } else {
+            "OPENAI__API_KEY, OPENAI__BASE_URL, or OPENAI__MODEL missing"
+        }
+    ));
+    text.push_str(&format!(
+        "- Structure Core parity: {}\n",
+        if parity.passed {
+            "surface contract aligned"
+        } else {
+            "surface contract drift detected"
+        }
+    ));
+    text.push_str(&format!(
+        "- Agent context: {} knowledge source(s), {} active task(s), {} replayed turn(s)\n",
+        context.knowledge_sources.len(),
+        context
+            .tasks
+            .iter()
+            .filter(|task| task.status != "done")
+            .count(),
+        context.recent_turns.len()
+    ));
+
+    if !parity.checks.is_empty() {
+        text.push_str("\nParity Details\n");
+        for check in &parity.checks {
+            text.push_str(&format!(
+                "- {}: {}\n",
+                check.id,
+                if check.passed { "ok" } else { "fail" }
+            ));
         }
     }
     text
@@ -2503,6 +2642,61 @@ mod tests {
 
             let runtime = local_result(LocalAgentRuntime::open(&root))?;
             assert!(local_result(runtime.list_runs(Some("tui-context"), 1))?.is_empty());
+            Ok(())
+        })();
+
+        fs::remove_dir_all(root).ok();
+        for (key, value) in previous_openai {
+            restore_env(key, value);
+        }
+        result.unwrap();
+    }
+
+    #[test]
+    fn tui_previews_local_doctor_without_starting_run() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_openai = openai_env_keys()
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in openai_env_keys() {
+            std::env::remove_var(key);
+        }
+
+        let root = unique_repo("tui-doctor");
+        fs::write(
+            root.join("AGENTS.md"),
+            "Doctor must preserve Structure Core.",
+        )
+        .unwrap();
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(TuiStateInit {
+            snapshot,
+            runs: Vec::new(),
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-doctor".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
+
+        let result = (|| -> Result<()> {
+            state.preview_local_doctor(&root)?;
+
+            assert!(state.notice.contains("Doctor:"));
+            let preview = state.preview.as_ref().expect("doctor preview");
+            assert_eq!(preview.path, "local doctor / tui-doctor");
+            assert!(preview.text.contains("Structure Local Doctor"));
+            assert!(preview.text.contains("Workspace: tui-doctor"));
+            assert!(preview.text.contains("LLM: missing"));
+            assert!(preview.text.contains("OPENAI__API_KEY"));
+            assert!(preview.text.contains("Structure Core parity:"));
+            assert!(preview.text.contains("Parity Details"));
+            assert!(preview.text.contains("Context: 1 instructions"));
+
+            let runtime = local_result(LocalAgentRuntime::open(&root))?;
+            assert!(local_result(runtime.list_runs(Some("tui-doctor"), 1))?.is_empty());
             Ok(())
         })();
 
