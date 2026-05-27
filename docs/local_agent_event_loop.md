@@ -405,7 +405,10 @@ into runtime calls:
   written through `record_local_command_turn` as `command_turn_recorded`
   workspace events and restored through `local_command_turns`, so command
   output survives refresh/reopen as Structure event history rather than a
-  browser-only buffer.
+  browser-only buffer. The desktop composer also rebuilds its prompt/command
+  recall history from persisted `local_chat_turns` and `local_command_turns`,
+  so app navigation remains grounded in Structure Core run and workspace
+  events rather than a frontend-only draft list.
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`
   diagnostic, and Core parity report.

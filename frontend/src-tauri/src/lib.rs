@@ -1251,6 +1251,22 @@ mod tests {
     }
 
     #[test]
+    fn desktop_local_ui_recalls_composer_history_from_persisted_turns() {
+        let local_ui = include_str!("../local-ui/index.html");
+
+        assert!(local_ui.contains("composerHistory: []"));
+        assert!(local_ui.contains("function syncComposerHistory()"));
+        assert!(local_ui.contains("...state.chatTurns.map((turn) => ({"));
+        assert!(local_ui.contains("...state.commandMessages.map((message) => ({"));
+        assert!(local_ui.contains("function recallComposerHistory(direction)"));
+        assert!(local_ui.contains("function resetComposerHistoryNavigation()"));
+        assert!(local_ui.contains("canRecallComposerHistory(event)"));
+        assert!(local_ui.contains("event.key === \"ArrowUp\" || event.key === \"ArrowDown\""));
+        assert!(local_ui.contains("syncComposerHistory();"));
+        assert!(local_ui.contains("resetComposerHistoryNavigation();"));
+    }
+
+    #[test]
     fn desktop_local_ui_reviews_proposals_from_preview_surface() {
         let local_ui = include_str!("../local-ui/index.html");
 

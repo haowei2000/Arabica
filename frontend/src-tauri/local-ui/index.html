@@ -1178,6 +1178,9 @@
         workspaceFeedEvents: [],
         chatTurns: [],
         commandMessages: [],
+        composerHistory: [],
+        composerHistoryIndex: null,
+        composerDraft: "",
         inFlightRun: null,
         previewArtifact: null,
         previewRepoPath: null,
@@ -2253,6 +2256,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
 
       function renderChat(turns) {
         state.chatTurns = turns;
+        syncComposerHistory();
         renderChatThread();
       }
 
@@ -2263,7 +2267,80 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
           status: message.status,
           created_at_ms: message.created_at_ms,
         }));
+        syncComposerHistory();
         renderChatThread();
+      }
+
+      function syncComposerHistory() {
+        const entries = [
+          ...state.chatTurns.map((turn) => ({
+            input: turn.user_message,
+            created_at_ms: turn.created_at_ms,
+          })),
+          ...state.commandMessages.map((message) => ({
+            input: message.input,
+            created_at_ms: message.created_at_ms,
+          })),
+        ]
+          .filter((entry) => entry.input?.trim())
+          .sort((left, right) => (left.created_at_ms ?? 0) - (right.created_at_ms ?? 0));
+
+        const seen = new Set();
+        state.composerHistory = entries
+          .map((entry) => entry.input.trim())
+          .filter((input) => {
+            const key = input.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .slice(-80);
+        state.composerHistoryIndex = null;
+        state.composerDraft = "";
+      }
+
+      function canRecallComposerHistory(event) {
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+        if (event.key === "ArrowUp") {
+          return agentPromptEl.selectionStart === 0 && agentPromptEl.selectionEnd === 0;
+        }
+        if (event.key === "ArrowDown") {
+          return (
+            agentPromptEl.selectionStart === agentPromptEl.value.length &&
+            agentPromptEl.selectionEnd === agentPromptEl.value.length
+          );
+        }
+        return false;
+      }
+
+      function recallComposerHistory(direction) {
+        if (!state.composerHistory.length) return false;
+        if (state.composerHistoryIndex === null) {
+          state.composerDraft = agentPromptEl.value;
+          state.composerHistoryIndex =
+            direction < 0 ? state.composerHistory.length - 1 : 0;
+        } else {
+          state.composerHistoryIndex += direction;
+        }
+
+        if (state.composerHistoryIndex < 0) {
+          state.composerHistoryIndex = 0;
+        }
+        if (state.composerHistoryIndex >= state.composerHistory.length) {
+          agentPromptEl.value = state.composerDraft;
+          state.composerHistoryIndex = null;
+          state.composerDraft = "";
+          return true;
+        }
+
+        agentPromptEl.value = state.composerHistory[state.composerHistoryIndex];
+        agentPromptEl.setSelectionRange(agentPromptEl.value.length, agentPromptEl.value.length);
+        return true;
+      }
+
+      function resetComposerHistoryNavigation() {
+        state.composerHistoryIndex = null;
+        state.composerDraft = "";
       }
 
       function setInFlightRun(prompt, status, message, options = {}) {
@@ -2314,6 +2391,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             created_at_ms: Date.now(),
           },
         ].slice(-20);
+        syncComposerHistory();
         renderChatThread();
         if (persist) {
           recordLocalCommandTurn(input, output, status).catch(() => {});
@@ -3569,6 +3647,7 @@ Detailed Slash Commands
             state.workspaceEventCursor = 0;
             state.workspaceFeedEvents = [];
             state.commandMessages = [];
+            syncComposerHistory();
             eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
             await refresh();
             return true;
@@ -4677,6 +4756,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
         state.workspaceEventCursor = 0;
         state.workspaceFeedEvents = [];
         state.commandMessages = [];
+        syncComposerHistory();
         eventLogEl.textContent = `Workspace selected: ${activeWorkspaceId()}`;
         await refresh();
       });
@@ -4694,6 +4774,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           state.workspaceEventCursor = 0;
           state.workspaceFeedEvents = [];
           state.commandMessages = [];
+          syncComposerHistory();
           workspaceIdEl.value = "";
           eventLogEl.textContent = `Workspace ready: ${workspace.workspace_id}`;
           await refresh();
@@ -4717,6 +4798,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
             if (handled) {
               appendCommandMessage(prompt, eventLogEl.textContent || "Command completed.");
               agentPromptEl.value = "";
+              resetComposerHistoryNavigation();
             }
           } catch (error) {
             eventLogEl.textContent = String(error);
@@ -4767,6 +4849,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
             return;
           }
           agentPromptEl.value = "";
+          resetComposerHistoryNavigation();
           if (state.agentMode === "code_agent") {
             try {
               const proposal = await latestProposal(result.run.run_id);
@@ -4785,6 +4868,14 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         }
       });
       agentPromptEl.addEventListener("keydown", (event) => {
+        if (
+          (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+          canRecallComposerHistory(event)
+        ) {
+          event.preventDefault();
+          recallComposerHistory(event.key === "ArrowUp" ? -1 : 1);
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();
           runFormEl.requestSubmit();
