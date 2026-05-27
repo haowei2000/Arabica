@@ -1066,6 +1066,16 @@ mod tests {
         assert!(local_ui.contains("Model usage:"));
         assert!(local_ui.contains("model_usage"));
         assert!(local_ui.contains("eventLogEl.textContent = renderEvidenceText(evidence);"));
+        assert!(local_ui.contains("id=\"command-map\""));
+        assert!(local_ui.contains("Desktop Agent Command Map"));
+        assert!(local_ui.contains("Run Loop"));
+        assert!(local_ui.contains("Workspace Context"));
+        assert!(local_ui.contains("Run Evidence"));
+        assert!(local_ui.contains("Session And Proposals"));
+        assert!(local_ui.contains("Evaluation adapters stay outside this desktop surface"));
+        assert!(local_ui.contains("commandMapEl.addEventListener(\"click\""));
+        assert!(local_ui.contains("case \"/map\":"));
+        assert!(local_ui.contains("case \"/commands\":"));
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));

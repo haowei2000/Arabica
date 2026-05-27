@@ -1003,6 +1003,7 @@
             <button id="session-usage" type="button">Session Usage</button>
             <button id="run-status" type="button">Run Status</button>
             <button id="run-tools" type="button">Tool Trace</button>
+            <button id="command-map" type="button">Command Map</button>
             <button id="record-checkpoint" type="button">Record Decision</button>
             <button id="show-tasks" type="button">Tasks</button>
             <button id="poll-events" type="button">Poll Events</button>
@@ -1128,6 +1129,7 @@
       const sessionUsageEl = document.querySelector("#session-usage");
       const runStatusEl = document.querySelector("#run-status");
       const runToolsEl = document.querySelector("#run-tools");
+      const commandMapEl = document.querySelector("#command-map");
       const recordCheckpointEl = document.querySelector("#record-checkpoint");
       const showTasksEl = document.querySelector("#show-tasks");
       const pollEventsEl = document.querySelector("#poll-events");
@@ -3178,7 +3180,38 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
       }
 
       function renderDesktopCommandHelp() {
-        eventLogEl.textContent = `Desktop Agent Commands
+        eventLogEl.textContent = `Desktop Agent Command Map
+Workspace: ${activeWorkspaceId()}
+Mode: ${state.agentMode}
+Selected run: ${state.selectedRunId ?? state.runs[0]?.run_id ?? "none"}
+
+Run Loop
+- prompt text -> local_agent_run_attempt -> Structure run events
+- /continue, /resume, /retry -> fresh runs from selected transcript/evidence
+- /mode chat|code -> switch chat/code_agent on the same runtime contract
+
+Workspace Context
+- /workspace, /context, /doctor, /llm, /worktree -> pre-run health and context
+- /source, /remember, /recall, /forget, /sources -> path-addressed knowledge
+- /rate -> source_rated feedback replayed into future context
+- /tasks, /task, /task-status, /task-done -> workspace/run-linked task events
+- /search, /read, /cmd -> allowlisted local tools recorded as events
+
+Run Evidence
+- /run-status, /events, /transcript, /inspect -> selected run inspection
+- /plan, /tools, /trace, /review -> event-derived agent reasoning views
+- /compact, /evidence, /usage, /gc -> continuation and audit boundaries
+- /checkpoint, /decision -> human feedback replayed into continuation context
+
+Session And Proposals
+- /session, /session-continue, /session-usage -> workspace session handoff
+- /artifacts, /proposal, /diff -> local artifact and proposal disclosure
+- /risk, /dry-run, /apply, /rollback -> review-gated code proposal loop
+
+Invariant
+Every action above stays inside structure-local-runtime and reads or writes Structure Core-aligned events. Evaluation adapters stay outside this desktop surface.
+
+Detailed Slash Commands
 /status
 /llm
 /doctor
@@ -3238,6 +3271,8 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         const [command = "", ...parts] = parseCommandLine(input);
         switch (command) {
           case "/help":
+          case "/map":
+          case "/commands":
             renderDesktopCommandHelp();
             return true;
           case "/status": {
@@ -4647,6 +4682,9 @@ ${events || "No events recorded."}`;
         } finally {
           setRunToolsBusy(false);
         }
+      });
+      commandMapEl.addEventListener("click", () => {
+        renderDesktopCommandHelp();
       });
       recordCheckpointEl.addEventListener("click", async () => {
         setCheckpointBusy(true);

@@ -365,7 +365,9 @@ into runtime calls:
   Proposal controls `g`, `h`, `u`, and `y` prefer the selected run's code-change
   proposal before falling back to the latest workspace proposal, preserving the
   inspect-risk-review-apply loop around a chosen run.
-- Desktop app: Tauri commands such as `local_session_status`,
+- Desktop app: a visible Command Map action plus `/help`, `/map`, and
+  `/commands` render the same grouped agent-loop mental model as CLI/TUI while
+  keeping benchmark execution outside the local app surface. Tauri commands such as `local_session_status`,
   `local_agent_run_attempt`, `local_runs`,
   `local_run_transcript`, `local_run_plan`, `local_run_core_trace`, and `local_run_events`;
   `create_local_workspace` and `local_workspaces` back the native workspace selector.
