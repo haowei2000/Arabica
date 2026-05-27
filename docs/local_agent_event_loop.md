@@ -352,7 +352,7 @@ into runtime calls:
   `/checkpoint` and desktop `/checkpoint`. `?` opens a command map grouped by
   run loop, workspace context, run evidence, session, and proposal actions, so
   the TUI presents a Codex/OpenCode-style agent console rather than a flat
-  dashboard. The inspect actions `?`, `A`, and `H` are also persisted through
+  dashboard. The inspect actions `?`, `A`, `H`, and `E` are also persisted through
   `LocalAgentRuntime::record_command_turn` as `command_turn_recorded` workspace
   events, so TUI navigation has the same durable command audit trail as CLI and
   desktop chat interactions. `A` previews the assembled
@@ -370,7 +370,8 @@ into runtime calls:
   selected TUI row as the history source. Press `f` to continue the selected run through the
   shared continuation request path, preserving the same transcript/evidence
   grounding used by CLI `/continue` and desktop Continue. Press `t` to inspect
-  the selected run transcript, `l` to inspect the event-derived agent plan,
+  the selected run transcript, `E` to inspect the complete immutable run event
+  stream, `l` to inspect the event-derived agent plan,
   `z` to inspect the same Core flow/primitive trace
   as CLI `runs trace`, `b` to inspect the same post-run review as CLI
   `runs review`, `O` to inspect the selected run's paired

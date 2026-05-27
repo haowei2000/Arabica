@@ -12,11 +12,12 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentContext, LocalAgentMode,
-    LocalAgentRuntime, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
-    LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall,
-    LocalToolTraceEntry, ProposalApplyResult, ProposalReview, ProposalRollbackResult, RunAttempt,
-    RunEvidenceSummary, RunRequest, RunSummary, RunTranscript, WorkspaceCompact,
-    WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
+    LocalAgentRuntime, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact,
+    LocalRunCoreTrace, LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord,
+    LocalToolCall, LocalToolTraceEntry, ProposalApplyResult, ProposalReview,
+    ProposalRollbackResult, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary, RunTranscript,
+    WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary,
+    WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -608,6 +609,24 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_selected_run_events(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let events = local_result(runtime.run_events(&run.run_id))?;
+        let text = render_run_events(&run, &events);
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("run events / {}", run.run_id),
+            text: text.clone(),
+        });
+        self.notice = format!("Events: {} for {}", events.len(), run.run_id);
+        self.record_command_turn(repo_root, &format!("E events {}", run.run_id), "ok", &text)?;
+        Ok(())
+    }
+
     fn preview_selected_run_core_trace(&mut self, repo_root: &Path) -> Result<()> {
         let Some(run) = self.runs.get(self.selected).cloned() else {
             self.notice = "No run selected".to_string();
@@ -1031,6 +1050,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('H') => state.preview_local_doctor(repo_root)?,
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
+                    KeyCode::Char('E') => state.preview_selected_run_events(repo_root)?,
                     KeyCode::Char('l') => state.preview_selected_run_plan(repo_root)?,
                     KeyCode::Char('O') => state.preview_selected_run_tool_trace(repo_root)?,
                     KeyCode::Char('C') => state.preview_selected_run_compact(repo_root)?,
@@ -1218,7 +1238,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, N rerun, n local check",
+        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, E events, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, N rerun, n local check",
         width,
     )?;
     muted_at(
@@ -1603,6 +1623,7 @@ fn render_tui_command_map(state: &TuiState) -> String {
         "- i status -> latest event, model usage, tool counts, artifacts, next actions\n",
     );
     text.push_str("- t transcript -> shared run transcript and checkpoint notes\n");
+    text.push_str("- E events -> complete immutable event stream for the selected run\n");
     text.push_str("- l plan -> event-derived agent progress view\n");
     text.push_str("- O tools -> paired tool_call_requested/tool_call_completed trace\n");
     text.push_str("- C compact -> continuation boundary for the selected run\n");
@@ -1933,6 +1954,23 @@ fn render_run_checkpoint(checkpoint: &structure_local_runtime::RunCheckpoint) ->
     text.push_str("Human Decision\n");
     text.push_str(&checkpoint.note);
     text.push('\n');
+    text
+}
+
+fn render_run_events(run: &RunSummary, events: &[LocalEvent]) -> String {
+    let mut text = String::new();
+    text.push_str("Run Events\n");
+    text.push_str(&format!("Run: {}\n", run.run_id));
+    text.push_str(&format!("Workspace: {}\n", run.workspace_id));
+    text.push_str(&format!("Status: {}\n", run.status));
+    text.push_str(&format!("Events: {}\n\n", events.len()));
+    for event in events {
+        text.push_str(&format!(
+            "#{} {} / {} / {}\n",
+            event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
+        ));
+        text.push_str(&format!("{}\n\n", compact_json(&event.payload)));
+    }
     text
 }
 
@@ -2855,6 +2893,9 @@ mod tests {
         assert!(preview
             .text
             .contains("O tools -> paired tool_call_requested/tool_call_completed"));
+        assert!(preview
+            .text
+            .contains("E events -> complete immutable event stream"));
         assert!(preview.text.contains("Session And Proposals"));
         assert!(preview
             .text
@@ -3058,6 +3099,13 @@ mod tests {
             assert!(tool_preview.text.contains("Tool calls:"));
             assert!(tool_preview.text.contains("list_workspace"));
 
+            state.preview_selected_run_events(&root)?;
+            let events_preview = state.preview.as_ref().expect("run events preview");
+            assert!(events_preview.path.starts_with("run events / run_"));
+            assert!(events_preview.text.contains("Run Events"));
+            assert!(events_preview.text.contains("workspace_context_loaded"));
+            assert!(events_preview.text.contains("run_finished"));
+
             state.preview_selected_run_compact(&root)?;
             let compact_preview = state.preview.as_ref().expect("run compact preview");
             assert!(compact_preview.path.starts_with("run compact / run_"));
@@ -3094,6 +3142,11 @@ mod tests {
             assert!(risk_preview.path.starts_with("proposal risk / art_"));
             assert!(risk_preview.text.contains("Proposal Risk Review"));
             assert!(risk_preview.text.contains("Dry-run: required"));
+            let runtime = local_result(LocalAgentRuntime::open(&root))?;
+            let turns = local_result(runtime.command_turns(Some("tui-preview"), 20))?;
+            assert!(turns
+                .iter()
+                .any(|turn| turn.input.starts_with("E events run_") && turn.surface == "tui"));
             Ok(())
         })();
 
