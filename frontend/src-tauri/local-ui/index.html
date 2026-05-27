@@ -2013,7 +2013,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           status.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await previewRunStatusForRun(turn.run_id);
+            await previewRunStatusForRun(turn.run_id, `/run-status ${turn.run_id}`);
           });
           const review = document.createElement("button");
           review.type = "button";
@@ -2021,7 +2021,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           review.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await previewRunReviewForRun(turn.run_id);
+            await previewRunReviewForRun(turn.run_id, `/review ${turn.run_id}`);
           });
           const decision = document.createElement("button");
           decision.type = "button";
@@ -2037,7 +2037,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           plan.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await previewRunPlanForRun(turn.run_id);
+            await previewRunPlanForRun(turn.run_id, `/plan ${turn.run_id}`);
           });
           const tools = document.createElement("button");
           tools.type = "button";
@@ -2045,7 +2045,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           tools.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await previewRunToolTraceForRun(turn.run_id);
+            await previewRunToolTraceForRun(turn.run_id, `/tools ${turn.run_id}`);
           });
           const compact = document.createElement("button");
           compact.type = "button";
@@ -2053,7 +2053,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           compact.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await previewRunCompactForRun(turn.run_id);
+            await previewRunCompactForRun(turn.run_id, `/compact ${turn.run_id}`);
           });
           const continueRun = document.createElement("button");
           continueRun.type = "button";
@@ -2949,13 +2949,15 @@ Opened in Preview for the selected run.`;
         }
       }
 
-      async function previewRunReviewForRun(runId) {
+      async function previewRunReviewForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading run review...";
         try {
           const review = await localRunReview(runId);
           eventLogEl.textContent = renderRunReviewText(review);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Run review loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
@@ -2995,23 +2997,27 @@ Opened in Preview for the selected run.`;
         }
       }
 
-      async function previewRunPlanForRun(runId) {
+      async function previewRunPlanForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading run plan...";
         try {
           const plan = await localRunPlan(runId);
           eventLogEl.textContent = renderRunPlanText(plan);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Run plan loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
-      async function previewRunCompactForRun(runId) {
+      async function previewRunCompactForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Compacting run context...";
         try {
           const compact = await localRunCompact(runId);
           eventLogEl.textContent = renderRunCompactText(compact);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Run compact loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 

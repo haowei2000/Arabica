@@ -1176,9 +1176,17 @@ mod tests {
         assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
         assert!(local_ui.contains("tools.textContent = \"Tools\""));
-        assert!(local_ui.contains("await previewRunPlanForRun(turn.run_id);"));
-        assert!(local_ui.contains("await previewRunToolTraceForRun(turn.run_id);"));
-        assert!(local_ui.contains("await previewRunReviewForRun(turn.run_id);"));
+        assert!(
+            local_ui.contains("previewRunStatusForRun(turn.run_id, `/run-status ${turn.run_id}`)")
+        );
+        assert!(local_ui.contains("previewRunPlanForRun(turn.run_id, `/plan ${turn.run_id}`)"));
+        assert!(
+            local_ui.contains("previewRunToolTraceForRun(turn.run_id, `/tools ${turn.run_id}`)")
+        );
+        assert!(
+            local_ui.contains("previewRunCompactForRun(turn.run_id, `/compact ${turn.run_id}`)")
+        );
+        assert!(local_ui.contains("previewRunReviewForRun(turn.run_id, `/review ${turn.run_id}`)"));
         assert!(local_ui.contains("await recordDecisionForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
     }
