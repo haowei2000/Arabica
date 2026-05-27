@@ -267,6 +267,14 @@ fn local_run_event_gc(
 }
 
 #[tauri::command]
+fn local_run_tool_trace(
+    run_id: String,
+) -> Result<Vec<structure_local_runtime::LocalToolTraceEntry>, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_tool_trace(&run_id)
+}
+
+#[tauri::command]
 fn local_run_transcript(run_id: String) -> Result<structure_local_runtime::RunTranscript, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_transcript(&run_id)
@@ -442,6 +450,7 @@ pub fn run() {
             local_run_events,
             local_run_evidence,
             local_run_event_gc,
+            local_run_tool_trace,
             local_run_transcript,
             local_workspace_replay,
             local_workspace_event_feed,
@@ -569,6 +578,7 @@ mod tests {
                 Some("desktop grounding".to_string()),
             )?;
             let event_gc = local_run_event_gc(run.run.run_id.clone(), Some(4))?;
+            let tool_trace = local_run_tool_trace(run.run.run_id.clone())?;
             let transcript = local_run_transcript(run.run.run_id.clone())?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
@@ -633,6 +643,10 @@ mod tests {
                 event_gc.summary.retained_event_count + event_gc.summary.filtered_event_count,
                 event_gc.retained_events.len() + event_gc.filtered_events.len()
             );
+            assert!(!tool_trace.is_empty());
+            assert!(tool_trace
+                .iter()
+                .any(|entry| entry.completed_sequence.is_some()));
             assert_eq!(attempt.run.status, "finished");
             assert!(attempt.result.is_some());
             assert!(attempt.error.is_none());
@@ -760,6 +774,8 @@ mod tests {
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));
         assert!(local_ui.contains("function renderEventGcText(preview)"));
         assert!(local_ui.contains("case \"/gc\":"));
+        assert!(local_ui.contains("function renderToolTraceText(trace)"));
+        assert!(local_ui.contains("case \"/tools\":"));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("case \"/diff\":"));
@@ -877,6 +893,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
         assert!(local_ui.contains("invoke(\"local_run_event_gc\""));
+        assert!(local_ui.contains("invoke(\"local_run_tool_trace\""));
         assert!(!local_ui.contains("fetch("));
         assert!(!local_ui.contains("localhost"));
         assert!(!local_ui.contains("127.0.0.1"));

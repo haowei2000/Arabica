@@ -4,8 +4,8 @@ use crate::text::{
     print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
     print_model_usage_summary, print_run_attempt, print_run_evidence_summary, print_run_summary,
     print_run_transcript, print_runs, print_snapshot, print_source_rating,
-    print_surface_parity_report, print_surfaces, print_workspace, print_workspace_event_feed,
-    print_workspace_replay, print_workspaces, print_worktree_snapshot,
+    print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
+    print_workspace_event_feed, print_workspace_replay, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -1046,6 +1046,19 @@ fn handle_chat_session_command(
             print_event_gc_preview(&preview);
             Ok(true)
         }
+        "/tools" | "/tool-trace" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /tools <run_id>.");
+                return Ok(true);
+            };
+            let trace = local_result(runtime.run_tool_trace(&run_id))?;
+            print_tool_trace(&trace);
+            Ok(true)
+        }
         "/evidence" => {
             let run_id = parts
                 .next()
@@ -1292,6 +1305,7 @@ fn print_chat_session_help() {
     println!("  /resume [run] [msg]   Alias for /continue");
     println!("  /events [run_id]      Show event stream for a run");
     println!("  /gc [run_id] [n]      Preview non-destructive event retention");
+    println!("  /tools [run_id]       Show paired local tool calls and results");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /usage [run_id]       Show model requests, network calls, and token usage");
     println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
@@ -1306,7 +1320,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2024,6 +2038,7 @@ mod tests {
         assert!(summary.contains("/rate"));
         assert!(summary.contains("/events"));
         assert!(summary.contains("/gc"));
+        assert!(summary.contains("/tools"));
         assert!(summary.contains("/diff"));
         assert!(summary.contains("/dry-run"));
         assert!(!summary.contains("benchmark"));

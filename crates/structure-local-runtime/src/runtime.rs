@@ -7,8 +7,8 @@ use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall,
-    LocalToolResult, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, RunAttempt,
-    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
+    LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
+    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
     SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange,
     WorktreeSnapshot,
 };
@@ -612,6 +612,11 @@ impl LocalAgentRuntime {
             retained_events,
             filtered_events,
         })
+    }
+
+    pub fn run_tool_trace(&self, run_id: &str) -> Result<Vec<LocalToolTraceEntry>, String> {
+        let events = self.run_events(run_id)?;
+        Ok(tool_trace_from_events(&events))
     }
 
     pub fn run_evidence_summary(&self, run_id: &str) -> Result<RunEvidenceSummary, String> {
@@ -1455,6 +1460,56 @@ fn event_gc_summary_from_parts(
         retained_sequences: retained_events.iter().map(|event| event.sequence).collect(),
         filtered_sequences: filtered_events.iter().map(|event| event.sequence).collect(),
     }
+}
+
+fn tool_trace_from_events(events: &[crate::types::LocalEvent]) -> Vec<LocalToolTraceEntry> {
+    let mut trace = Vec::<LocalToolTraceEntry>::new();
+    for event in events {
+        match event.kind.as_str() {
+            "tool_call_requested" => {
+                if let Ok(call) = serde_json::from_value::<LocalToolCall>(event.payload.clone()) {
+                    trace.push(LocalToolTraceEntry {
+                        call_id: call.call_id,
+                        name: call.name,
+                        requested_sequence: Some(event.sequence),
+                        completed_sequence: None,
+                        input: call.input,
+                        success: None,
+                        output: None,
+                        error: None,
+                    });
+                }
+            }
+            "tool_call_completed" => {
+                if let Ok(result) = serde_json::from_value::<LocalToolResult>(event.payload.clone())
+                {
+                    if let Some(entry) = trace
+                        .iter_mut()
+                        .rev()
+                        .find(|entry| entry.call_id == result.call_id)
+                    {
+                        entry.completed_sequence = Some(event.sequence);
+                        entry.success = Some(result.success);
+                        entry.output = Some(result.output);
+                        entry.error = result.error;
+                    } else {
+                        trace.push(LocalToolTraceEntry {
+                            call_id: result.call_id,
+                            name: result.name,
+                            requested_sequence: None,
+                            completed_sequence: Some(event.sequence),
+                            input: serde_json::Value::Null,
+                            success: Some(result.success),
+                            output: Some(result.output),
+                            error: result.error,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    trace
 }
 
 const CONTINUATION_SNIPPET_MAX_CHARS: usize = 1_200;
@@ -2466,6 +2521,35 @@ mod tests {
             evidence.event_gc.retained_event_count + evidence.event_gc.filtered_event_count,
             evidence.event_count
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_summarizes_tool_trace_from_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("tool-trace");
+        fs::write(root.join("trace.md"), "tool trace context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Read @trace.md and summarize the trace.".to_string(),
+                workspace_id: Some("tools".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let trace = runtime.run_tool_trace(&result.run.run_id).unwrap();
+
+        assert!(!trace.is_empty());
+        assert!(trace.iter().any(|entry| entry.name == "read_repo_file"));
+        assert!(trace
+            .iter()
+            .all(|entry| entry.requested_sequence.is_some() || entry.completed_sequence.is_some()));
+        assert!(trace.iter().any(|entry| entry.success == Some(true)));
+        assert!(trace
+            .iter()
+            .any(|entry| entry.input["path"].as_str() == Some("trace.md")));
 
         fs::remove_dir_all(root).unwrap();
     }

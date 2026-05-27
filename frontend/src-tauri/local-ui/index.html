@@ -1281,6 +1281,11 @@
         return invoke("local_run_event_gc", { runId, retainLast });
       }
 
+      async function localRunToolTrace(runId) {
+        if (!invoke) return [];
+        return invoke("local_run_tool_trace", { runId });
+      }
+
       async function localRunTranscript(runId) {
         if (!invoke) return null;
         return invoke("local_run_transcript", { runId });
@@ -2363,6 +2368,29 @@ Retained Events
 ${retained.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`).join("\n") || "No retained events."}`;
       }
 
+      function renderToolTraceText(trace) {
+        if (!trace?.length) return "No tool calls recorded.";
+        return `Tool Trace
+${trace.map((entry) => {
+          const status = entry.success === true ? "ok" : entry.success === false ? "failed" : "pending";
+          const requested = entry.requested_sequence ?? "none";
+          const completed = entry.completed_sequence ?? "none";
+          const input = compactJson(entry.input);
+          const output = entry.output == null ? "none" : compactJson(entry.output);
+          const error = entry.error ? `\n  error: ${entry.error}` : "";
+          return `- ${entry.call_id} / ${entry.name} / ${status}
+  requested: ${requested}
+  completed: ${completed}
+  input: ${input}
+  output: ${output}${error}`;
+        }).join("\n\n")}`;
+      }
+
+      function compactJson(value) {
+        const raw = JSON.stringify(value ?? null);
+        return raw.length > 800 ? `${raw.slice(0, 800)}...` : raw;
+      }
+
       function summarizeSequences(sequences) {
         if (!sequences.length) return "none";
         const first = sequences[0];
@@ -2510,6 +2538,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /inspect [run_id]
 /events [run_id]
 /gc [run_id] [retain_last]
+/tools [run_id]
 /evidence [run_id]
 /usage [run_id]
 /source <absolute-path>
@@ -2674,6 +2703,17 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               retainLast ? Number.parseInt(retainLast, 10) : null,
             );
             eventLogEl.textContent = renderEventGcText(preview);
+            return true;
+          }
+          case "/tools":
+          case "/tool-trace": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const trace = await localRunToolTrace(runId);
+            eventLogEl.textContent = renderToolTraceText(trace);
             return true;
           }
           case "/evidence": {

@@ -398,3 +398,15 @@ pub struct LocalToolResult {
     pub output: serde_json::Value,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalToolTraceEntry {
+    pub call_id: String,
+    pub name: String,
+    pub requested_sequence: Option<i64>,
+    pub completed_sequence: Option<i64>,
+    pub input: serde_json::Value,
+    pub success: Option<bool>,
+    pub output: Option<serde_json::Value>,
+    pub error: Option<String>,
+}

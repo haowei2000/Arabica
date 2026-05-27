@@ -4,9 +4,9 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentContext, LocalEvent, LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult,
-    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorktreeSnapshot,
+    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalToolTraceEntry, RunAttempt,
+    RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
+    WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -614,6 +614,50 @@ pub(crate) fn print_event_gc_preview(preview: &EventGcPreview) {
                 event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
             );
         }
+    }
+}
+
+pub(crate) fn print_tool_trace(trace: &[LocalToolTraceEntry]) {
+    if trace.is_empty() {
+        println!("No tool calls recorded.");
+        return;
+    }
+    println!("Tool trace");
+    for entry in trace {
+        println!(
+            "  {}  {}  req={}  done={}  {}",
+            entry.call_id,
+            entry.name,
+            entry
+                .requested_sequence
+                .map(|sequence| sequence.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            entry
+                .completed_sequence
+                .map(|sequence| sequence.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            match entry.success {
+                Some(true) => "ok",
+                Some(false) => "failed",
+                None => "pending",
+            }
+        );
+        println!("    input:  {}", compact_json(&entry.input));
+        if let Some(output) = &entry.output {
+            println!("    output: {}", compact_json(output));
+        }
+        if let Some(error) = &entry.error {
+            println!("    error:  {error}");
+        }
+    }
+}
+
+fn compact_json(value: &serde_json::Value) -> String {
+    let raw = serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
+    if raw.chars().count() > 600 {
+        format!("{}...", raw.chars().take(600).collect::<String>())
+    } else {
+        raw
     }
 }
 
