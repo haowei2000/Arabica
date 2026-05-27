@@ -1074,6 +1074,7 @@ mod tests {
         assert!(local_ui.contains("Session And Proposals"));
         assert!(local_ui.contains("Evaluation adapters stay outside this desktop surface"));
         assert!(local_ui.contains("commandMapEl.addEventListener(\"click\""));
+        assert!(local_ui.contains("appendCommandMessage(\"/map\""));
         assert!(local_ui.contains("case \"/map\":"));
         assert!(local_ui.contains("case \"/commands\":"));
         assert!(local_ui.contains("function renderUsageText(evidence)"));

@@ -4685,6 +4685,7 @@ ${events || "No events recorded."}`;
       });
       commandMapEl.addEventListener("click", () => {
         renderDesktopCommandHelp();
+        appendCommandMessage("/map", eventLogEl.textContent || "Command map opened.");
       });
       recordCheckpointEl.addEventListener("click", async () => {
         setCheckpointBusy(true);
