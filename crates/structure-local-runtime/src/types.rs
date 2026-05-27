@@ -483,6 +483,35 @@ pub struct WorkspaceCompactRun {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceUsageSummary {
+    pub workspace_id: String,
+    pub generated_at_ms: i64,
+    pub run_count: usize,
+    pub event_count: usize,
+    pub tool_call_count: usize,
+    pub artifact_count: usize,
+    pub knowledge_source_count: usize,
+    pub model_usage: ModelUsageSummary,
+    pub core_aligned: bool,
+    pub flow_path: Vec<String>,
+    pub primitive_path: Vec<String>,
+    pub runs: Vec<WorkspaceUsageRun>,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceUsageRun {
+    pub run_id: String,
+    pub status: String,
+    pub event_count: usize,
+    pub tool_call_count: usize,
+    pub artifact_count: usize,
+    pub model_usage: ModelUsageSummary,
+    pub core_aligned: bool,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceEventFeed {
     pub workspace_id: String,
     pub after_sequence: i64,

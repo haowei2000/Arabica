@@ -1000,6 +1000,7 @@
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="session-compact" type="button">Session Compact</button>
             <button id="session-continue" type="button">Session Continue</button>
+            <button id="session-usage" type="button">Session Usage</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
             <button id="show-doctor" type="button">Doctor</button>
@@ -1118,6 +1119,7 @@
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const sessionCompactEl = document.querySelector("#session-compact");
       const sessionContinueEl = document.querySelector("#session-continue");
+      const sessionUsageEl = document.querySelector("#session-usage");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
       const showDoctorEl = document.querySelector("#show-doctor");
@@ -1339,6 +1341,11 @@
       async function localWorkspaceCompact() {
         if (!invoke) return null;
         return invoke("local_workspace_compact", { workspaceId: activeWorkspaceId(), limit: 12 });
+      }
+
+      async function localWorkspaceUsage() {
+        if (!invoke) return null;
+        return invoke("local_workspace_usage", { workspaceId: activeWorkspaceId(), limit: 20 });
       }
 
       async function localWorkspaceEventFeed(afterSequence = state.workspaceEventCursor) {
@@ -1609,6 +1616,11 @@
       function setSessionContinueBusy(isBusy) {
         sessionContinueEl.disabled = isBusy;
         sessionContinueEl.textContent = isBusy ? "Continuing Session" : "Session Continue";
+      }
+
+      function setSessionUsageBusy(isBusy) {
+        sessionUsageEl.disabled = isBusy;
+        sessionUsageEl.textContent = isBusy ? "Loading Usage" : "Session Usage";
       }
 
       function setPollEventsBusy(isBusy) {
@@ -2616,6 +2628,36 @@ Continuation Context
 ${compact.continuation_context ?? ""}`;
       }
 
+      function renderWorkspaceUsageText(usage) {
+        if (!usage) return "Workspace usage unavailable.";
+        const model = usage.model_usage ?? {};
+        const runs = (usage.runs ?? [])
+          .map(
+            (run) =>
+              `- ${run.run_id} / ${run.status} / events=${run.event_count} / tools=${run.tool_call_count} / tokens=${run.model_usage?.total_tokens ?? 0} / artifacts=${run.artifact_count} / core=${run.core_aligned ? "aligned" : "drift"}`,
+          )
+          .join("\n") || "- none";
+        return `Workspace Usage
+Workspace: ${usage.workspace_id ?? activeWorkspaceId()}
+Runs: ${usage.run_count ?? 0}
+Events: ${usage.event_count ?? 0}
+Tools: ${usage.tool_call_count ?? 0}
+Artifacts: ${usage.artifact_count ?? 0}
+Knowledge sources: ${usage.knowledge_source_count ?? 0}
+Core: ${usage.core_aligned ? "aligned" : "drift"}
+Model: ${model.model_request_count ?? 0} requests / ${model.model_response_count ?? 0} responses / ${model.network_request_count ?? 0} network
+Tokens: ${model.prompt_tokens ?? 0} prompt / ${model.completion_tokens ?? 0} completion / ${model.total_tokens ?? 0} total
+Response chars: ${model.response_chars ?? 0}
+Flow Path: ${(usage.flow_path ?? []).join(" -> ") || "none"}
+Primitive Path: ${(usage.primitive_path ?? []).join(" -> ") || "none"}
+
+Summary
+${usage.summary ?? "No usage summary derived."}
+
+Recent Runs
+${runs}`;
+      }
+
       function renderRunReviewText(review) {
         if (!review) return "Run review unavailable.";
         const proposal = review.proposal_artifact
@@ -2765,6 +2807,16 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function previewWorkspaceUsage() {
+        eventLogEl.textContent = "Loading workspace session usage...";
+        try {
+          const usage = await localWorkspaceUsage();
+          eventLogEl.textContent = renderWorkspaceUsageText(usage);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
       async function performContinuationRun(runId, extraInstruction = "") {
         eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
         setInFlightRun(
@@ -2909,6 +2961,8 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /workspace-compact
 /session-continue [instruction]
 /workspace-continue [instruction]
+/session-usage
+/workspace-usage
 /trace [run_id]
 /review [run_id]
 /evidence [run_id]
@@ -3130,6 +3184,11 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
           case "/session-continue":
           case "/workspace-continue": {
             await performWorkspaceContinuationRun(parts.join(" ").trim());
+            return true;
+          }
+          case "/session-usage":
+          case "/workspace-usage": {
+            await previewWorkspaceUsage();
             return true;
           }
           case "/trace":
@@ -4188,6 +4247,14 @@ ${events || "No events recorded."}`;
           clearInFlightRun();
         } finally {
           setSessionContinueBusy(false);
+        }
+      });
+      sessionUsageEl.addEventListener("click", async () => {
+        setSessionUsageBusy(true);
+        try {
+          await previewWorkspaceUsage();
+        } finally {
+          setSessionUsageBusy(false);
         }
       });
       pollEventsEl.addEventListener("click", async () => {

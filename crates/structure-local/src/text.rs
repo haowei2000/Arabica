@@ -8,7 +8,7 @@ use structure_local_runtime::{
     LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace,
     LocalRunPlan, LocalRunReview, LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult,
     RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceEventFeed, WorkspaceReplay,
-    WorkspaceSummary, WorktreeSnapshot,
+    WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -1052,6 +1052,71 @@ pub(crate) fn print_workspace_compact(compact: &WorkspaceCompact) {
     println!();
     println!("Continuation Context");
     println!("{}", compact.continuation_context);
+}
+
+pub(crate) fn print_workspace_usage(usage: &WorkspaceUsageSummary) {
+    println!("Workspace usage");
+    println!("  workspace: {}", usage.workspace_id);
+    println!("  runs:      {}", usage.run_count);
+    println!("  events:    {}", usage.event_count);
+    println!("  tools:     {}", usage.tool_call_count);
+    println!("  artifacts: {}", usage.artifact_count);
+    println!("  knowledge: {}", usage.knowledge_source_count);
+    println!(
+        "  core:      {}",
+        if usage.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        }
+    );
+    println!(
+        "  model:     {} requests / {} responses / {} network",
+        usage.model_usage.model_request_count,
+        usage.model_usage.model_response_count,
+        usage.model_usage.network_request_count
+    );
+    println!(
+        "  tokens:    prompt={} completion={} total={}",
+        usage.model_usage.prompt_tokens,
+        usage.model_usage.completion_tokens,
+        usage.model_usage.total_tokens
+    );
+    println!("  chars:     {}", usage.model_usage.response_chars);
+    println!(
+        "  flow path: {}",
+        if usage.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            usage.flow_path.join(" -> ")
+        }
+    );
+    println!(
+        "  primitive: {}",
+        if usage.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            usage.primitive_path.join(" -> ")
+        }
+    );
+    println!();
+    println!("{}", usage.summary);
+    if !usage.runs.is_empty() {
+        println!();
+        println!("Recent Runs");
+        for run in &usage.runs {
+            println!(
+                "  {}  {}  events={} tools={} tokens={} artifacts={} core={}",
+                run.run_id,
+                run.status,
+                run.event_count,
+                run.tool_call_count,
+                run.model_usage.total_tokens,
+                run.artifact_count,
+                if run.core_aligned { "aligned" } else { "drift" }
+            );
+        }
+    }
 }
 
 pub(crate) fn print_workspace_event_feed(feed: &WorkspaceEventFeed) {

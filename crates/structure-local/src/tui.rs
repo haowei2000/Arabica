@@ -15,7 +15,7 @@ use structure_local_runtime::{
     LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
     LocalToolCall, ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest,
     RunSummary, RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary,
-    WorktreeSnapshot,
+    WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -686,6 +686,20 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_workspace_usage(&mut self, repo_root: &Path) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let usage = local_result(runtime.workspace_usage(Some(&self.active_workspace_id), 20))?;
+        self.preview = Some(TuiPreview {
+            path: format!("workspace usage / {}", usage.workspace_id),
+            text: render_workspace_usage(&usage),
+        });
+        self.notice = format!(
+            "Workspace usage: {} runs, {} tokens",
+            usage.run_count, usage.model_usage.total_tokens
+        );
+        Ok(())
+    }
+
     fn preview_worktree_snapshot(&mut self, repo_root: &Path) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let worktree = runtime.worktree_snapshot();
@@ -820,6 +834,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
                     KeyCode::Char('S') => state.preview_workspace_compact(repo_root)?,
+                    KeyCode::Char('U') => state.preview_workspace_usage(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
                     KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
                     KeyCode::PageUp => state.move_selection(-5),
@@ -901,7 +916,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f run-follow  F session-follow  d worktree  l plan  C compact  S session  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f run-follow  F session-follow  d worktree  l plan  C compact  S session  U usage  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -989,7 +1004,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, l plan, C compact, S session, z trace, b review, f run-follow, F session-follow, n local check",
+        "press j/k to select, t transcript, l plan, C compact, S session, U usage, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1159,7 +1174,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  f run-follow  F session-follow  ! cmd  t transcript  l plan  C compact  S session  b review  g proposal  h risk";
+    let controls = "q quit  r refresh  c prompt  f run-follow  F session-follow  ! cmd  t transcript  l plan  C compact  S session  U usage  b review  g proposal  h risk";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1678,6 +1693,65 @@ fn render_workspace_compact(compact: &WorkspaceCompact) -> String {
     text
 }
 
+fn render_workspace_usage(usage: &WorkspaceUsageSummary) -> String {
+    let mut text = String::new();
+    text.push_str("Workspace Usage\n");
+    text.push_str(&format!("Workspace: {}\n", usage.workspace_id));
+    text.push_str(&format!("Runs: {}\n", usage.run_count));
+    text.push_str(&format!("Events: {}\n", usage.event_count));
+    text.push_str(&format!("Tools: {}\n", usage.tool_call_count));
+    text.push_str(&format!("Artifacts: {}\n", usage.artifact_count));
+    text.push_str(&format!("Knowledge: {}\n", usage.knowledge_source_count));
+    text.push_str(&format!("Core aligned: {}\n", usage.core_aligned));
+    text.push_str(&format!(
+        "Model: {} requests / {} responses / {} network\n",
+        usage.model_usage.model_request_count,
+        usage.model_usage.model_response_count,
+        usage.model_usage.network_request_count
+    ));
+    text.push_str(&format!(
+        "Tokens: prompt={} completion={} total={}\n",
+        usage.model_usage.prompt_tokens,
+        usage.model_usage.completion_tokens,
+        usage.model_usage.total_tokens
+    ));
+    text.push_str(&format!(
+        "Response chars: {}\n",
+        usage.model_usage.response_chars
+    ));
+    text.push_str(&format!(
+        "Flow path: {}\n",
+        if usage.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            usage.flow_path.join(" -> ")
+        }
+    ));
+    text.push_str(&format!(
+        "Primitive path: {}\n\n",
+        if usage.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            usage.primitive_path.join(" -> ")
+        }
+    ));
+    text.push_str(&usage.summary);
+    text.push_str("\n\nRecent Runs\n");
+    for run in usage.runs.iter().take(20) {
+        text.push_str(&format!(
+            "- {} / {} / events={} / tools={} / tokens={} / artifacts={} / core={}\n",
+            run.run_id,
+            run.status,
+            run.event_count,
+            run.tool_call_count,
+            run.model_usage.total_tokens,
+            run.artifact_count,
+            run.core_aligned
+        ));
+    }
+    text
+}
+
 fn render_run_attempt(attempt: &RunAttempt) -> String {
     let mut text = String::new();
     text.push_str("Run Attempt\n");
@@ -2062,6 +2136,15 @@ mod tests {
             assert!(session_preview.text.contains("Workspace Compact"));
             assert!(session_preview.text.contains("Recent Runs"));
             assert!(session_preview.text.contains("session handoff boundary"));
+
+            state.preview_workspace_usage(&root)?;
+            let usage_preview = state.preview.as_ref().expect("workspace usage preview");
+            assert!(usage_preview
+                .path
+                .starts_with("workspace usage / tui-preview"));
+            assert!(usage_preview.text.contains("Workspace Usage"));
+            assert!(usage_preview.text.contains("Tokens:"));
+            assert!(usage_preview.text.contains("Recent Runs"));
 
             state.preview_selected_run_review(&root)?;
             let review_preview = state.preview.as_ref().expect("run review preview");

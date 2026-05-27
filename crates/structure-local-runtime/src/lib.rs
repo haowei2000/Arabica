@@ -21,7 +21,8 @@ pub use types::{
     LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
     ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult,
     RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceCompactRun,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageRun,
+    WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]

@@ -342,6 +342,15 @@ fn local_workspace_compact(
 }
 
 #[tauri::command]
+fn local_workspace_usage(
+    workspace_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<structure_local_runtime::WorkspaceUsageSummary, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.workspace_usage(workspace_id.as_deref(), limit.unwrap_or(20))
+}
+
+#[tauri::command]
 fn local_workspace_event_feed(
     workspace_id: Option<String>,
     after_sequence: Option<i64>,
@@ -519,6 +528,7 @@ pub fn run() {
             local_run_transcript,
             local_workspace_replay,
             local_workspace_compact,
+            local_workspace_usage,
             local_workspace_event_feed,
             local_evidence_bundle,
             add_local_knowledge,
@@ -748,6 +758,13 @@ mod tests {
             assert!(workspace_compact
                 .continuation_context
                 .contains("Compact Structure workspace context"));
+            let workspace_usage =
+                local_workspace_usage(Some(workspace.workspace_id.clone()), Some(20))?;
+            assert_eq!(workspace_usage.workspace_id, workspace.workspace_id);
+            assert!(workspace_usage.core_aligned);
+            assert!(workspace_usage.run_count >= 1);
+            assert!(workspace_usage.event_count >= run.events.len());
+            assert!(workspace_usage.summary.contains("total tokens"));
             let workspace_continuation = local_workspace_continue_attempt(
                 Some(workspace.workspace_id.clone()),
                 Some("Continue from the desktop workspace compact.".to_string()),
@@ -929,6 +946,10 @@ mod tests {
         assert!(local_ui.contains("function performWorkspaceContinuationRun"));
         assert!(local_ui.contains("case \"/session-continue\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_continue_attempt\""));
+        assert!(local_ui.contains("id=\"session-usage\""));
+        assert!(local_ui.contains("function renderWorkspaceUsageText(usage)"));
+        assert!(local_ui.contains("case \"/session-usage\":"));
+        assert!(local_ui.contains("invoke(\"local_workspace_usage\""));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));

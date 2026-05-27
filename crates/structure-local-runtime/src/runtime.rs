@@ -12,7 +12,7 @@ use crate::types::{
     ProposalApplyResult, ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind,
     RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
     WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorktreeChange, WorktreeSnapshot,
+    WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -439,6 +439,75 @@ impl LocalAgentRuntime {
             });
         }
         Ok(workspace_compact_from_replay(replay, recent_runs))
+    }
+
+    pub fn workspace_usage(
+        &self,
+        workspace_id: Option<&str>,
+        limit: usize,
+    ) -> Result<WorkspaceUsageSummary, String> {
+        let workspace_id = workspace_id.unwrap_or("default");
+        let runs = self.store.list_runs(Some(workspace_id), limit)?;
+        let knowledge_source_count = self
+            .store
+            .list_knowledge_sources(workspace_id, limit)?
+            .len();
+        let artifact_count = self
+            .store
+            .list_artifacts(Some(workspace_id), None, limit)?
+            .len();
+        let mut model_usage = ModelUsageSummary::default();
+        let mut event_count = 0;
+        let mut tool_call_count = 0;
+        let mut core_aligned = true;
+        let mut flow_path = Vec::new();
+        let mut primitive_path = Vec::new();
+        let mut usage_runs = Vec::new();
+
+        for run in runs {
+            let evidence = self.run_evidence_summary(&run.run_id)?;
+            event_count += evidence.event_count;
+            tool_call_count += evidence.tool_call_count;
+            add_model_usage(&mut model_usage, &evidence.model_usage);
+            core_aligned &= evidence.core_trace.core_aligned;
+            extend_unique(&mut flow_path, &evidence.core_trace.flow_ids);
+            extend_unique(&mut primitive_path, &evidence.core_trace.primitive_ids);
+            usage_runs.push(WorkspaceUsageRun {
+                run_id: evidence.run.run_id,
+                status: evidence.run.status,
+                event_count: evidence.event_count,
+                tool_call_count: evidence.tool_call_count,
+                artifact_count: evidence.artifacts.len(),
+                model_usage: evidence.model_usage,
+                core_aligned: evidence.core_trace.core_aligned,
+                updated_at_ms: evidence.run.updated_at_ms,
+            });
+        }
+
+        let summary = format!(
+            "Workspace {workspace_id} has {run_count} recent runs, {event_count} run events, {tool_call_count} completed tool calls, {model_responses} model responses, {network_requests} network requests, and {total_tokens} total tokens. Core alignment is {alignment}.",
+            run_count = usage_runs.len(),
+            model_responses = model_usage.model_response_count,
+            network_requests = model_usage.network_request_count,
+            total_tokens = model_usage.total_tokens,
+            alignment = if core_aligned { "aligned" } else { "drifted" },
+        );
+
+        Ok(WorkspaceUsageSummary {
+            workspace_id: workspace_id.to_string(),
+            generated_at_ms: now_ms(),
+            run_count: usage_runs.len(),
+            event_count,
+            tool_call_count,
+            artifact_count,
+            knowledge_source_count,
+            model_usage,
+            core_aligned,
+            flow_path,
+            primitive_path,
+            runs: usage_runs,
+            summary,
+        })
     }
 
     pub fn workspace_event_feed(
@@ -1872,6 +1941,24 @@ Use this compact as a session handoff boundary for local chat/code-agent work. P
             core_trace.primitive_ids.join(" -> ")
         },
     )
+}
+
+fn add_model_usage(total: &mut ModelUsageSummary, usage: &ModelUsageSummary) {
+    total.model_request_count += usage.model_request_count;
+    total.model_response_count += usage.model_response_count;
+    total.network_request_count += usage.network_request_count;
+    total.prompt_tokens += usage.prompt_tokens;
+    total.completion_tokens += usage.completion_tokens;
+    total.total_tokens += usage.total_tokens;
+    total.response_chars += usage.response_chars;
+}
+
+fn extend_unique(target: &mut Vec<String>, values: &[String]) {
+    for value in values {
+        if !target.contains(value) {
+            target.push(value.clone());
+        }
+    }
 }
 
 fn run_compact_from_transcript(transcript: &RunTranscript) -> LocalRunCompact {
@@ -3953,6 +4040,47 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_summarizes_workspace_usage_across_recent_runs() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("workspace-usage");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        runtime
+            .add_text_knowledge_source(Some("usage".to_string()), "usage knowledge")
+            .unwrap();
+        let first = runtime
+            .run_prompt(RunRequest {
+                prompt: "Summarize workspace usage once.".to_string(),
+                workspace_id: Some("usage".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let _second = runtime
+            .run_continuation_attempt(ContinuationRequest {
+                run_id: first.run.run_id,
+                extra_instruction: Some("Summarize workspace usage twice.".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let usage = runtime.workspace_usage(Some("usage"), 10).unwrap();
+
+        assert_eq!(usage.workspace_id, "usage");
+        assert!(usage.core_aligned);
+        assert_eq!(usage.run_count, 2);
+        assert!(usage.event_count > 0);
+        assert!(usage.tool_call_count > 0);
+        assert_eq!(usage.knowledge_source_count, 1);
+        assert!(usage.model_usage.model_request_count >= usage.run_count);
+        assert!(usage.model_usage.model_response_count >= usage.run_count);
+        assert!(usage.flow_path.contains(&"goal".to_string()));
+        assert!(usage.primitive_path.contains(&"event_audit".to_string()));
+        assert!(usage.summary.contains("total tokens"));
+        assert_eq!(usage.runs.len(), 2);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_exposes_workspace_event_feed_cursor() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("event-feed");
@@ -4731,7 +4859,7 @@ User-facing follow-up.\n\n\
             run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_workspace_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact WorkspaceCommand::Continue
+            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact WorkspaceCommand::Continue WorkspaceCommand::Usage
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -4743,6 +4871,7 @@ User-facing follow-up.\n\n\
             fn local_snapshot() {} fn core_manifest() {} core_manifest,
             fn local_agent_run() {} fn local_agent_continue_attempt() {}
             fn local_workspace_continue_attempt() {} local_workspace_continue_attempt,
+            fn local_workspace_usage() {} local_workspace_usage,
             fn local_chat_turns() {} local_chat_turns,
             fn create_local_workspace() {} fn local_workspaces() {}
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}

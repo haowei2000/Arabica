@@ -6,8 +6,8 @@ use crate::text::{
     print_run_core_trace, print_run_evidence_summary, print_run_plan, print_run_review,
     print_run_summary, print_run_transcript, print_runs, print_snapshot, print_source_rating,
     print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
-    print_workspace_compact, print_workspace_event_feed, print_workspace_replay, print_workspaces,
-    print_worktree_snapshot,
+    print_workspace_compact, print_workspace_event_feed, print_workspace_replay,
+    print_workspace_usage, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -218,6 +218,7 @@ enum WorkspaceCommand {
     Replay(WorkspaceReplayArgs),
     Compact(WorkspaceCompactArgs),
     Continue(WorkspaceContinueArgs),
+    Usage(WorkspaceUsageArgs),
     Events(WorkspaceEventsArgs),
 }
 
@@ -338,6 +339,16 @@ struct WorkspaceContinueArgs {
     limit: usize,
     #[arg(long)]
     mode: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceUsageArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
     #[arg(long)]
     json: bool,
 }
@@ -1359,6 +1370,11 @@ fn handle_chat_session_command(
             print_model_usage_summary(&evidence);
             Ok(true)
         }
+        "/session-usage" | "/workspace-usage" => {
+            let usage = local_result(runtime.workspace_usage(state.workspace_id.as_deref(), 20))?;
+            print_workspace_usage(&usage);
+            Ok(true)
+        }
         "/transcript" | "/inspect" => {
             let run_id = parts
                 .next()
@@ -1669,6 +1685,7 @@ fn print_chat_session_help() {
     println!("  /compact [run_id]     Show compact context for continuing a run");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /usage [run_id]       Show model requests, network calls, and token usage");
+    println!("  /session-usage        Show workspace/session model, tool, and event totals");
     println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
     println!("  /inspect [run_id]     Alias for /transcript");
     println!("  /artifacts            List recent artifacts");
@@ -1684,7 +1701,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /session-continue, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2163,6 +2180,15 @@ fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
             }
             attempt_error(&attempt)?;
         }
+        WorkspaceCommand::Usage(args) => {
+            let usage =
+                local_result(runtime.workspace_usage(args.workspace.as_deref(), args.limit))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&usage)?);
+            } else {
+                print_workspace_usage(&usage);
+            }
+        }
         WorkspaceCommand::Events(args) => {
             let feed = local_result(runtime.workspace_event_feed(
                 args.workspace.as_deref(),
@@ -2625,6 +2651,31 @@ mod tests {
         assert_eq!(args.limit, 6);
         assert_eq!(args.mode.as_deref(), Some("chat"));
         assert_eq!(args.instruction, ["continue", "the", "session"]);
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_workspace_usage_command_accepts_json_output() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "workspace",
+            "usage",
+            "--workspace",
+            "paper",
+            "--limit",
+            "5",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Workspace {
+            command: WorkspaceCommand::Usage(args),
+        } = cli.command
+        else {
+            panic!("expected workspace usage command");
+        };
+        assert_eq!(args.workspace.as_deref(), Some("paper"));
+        assert_eq!(args.limit, 5);
         assert!(args.json);
     }
 

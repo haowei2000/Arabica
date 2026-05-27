@@ -213,6 +213,11 @@ into runtime calls:
   --workspace <id> --json [instruction]` turns that handoff object into a new
   event-sourced run. This keeps long local sessions aligned with Structure Core
   instead of passing around a desktop- or terminal-specific chat buffer.
+- CLI workspace/session usage: `uv run structure workspace usage --workspace
+  <id> --json` aggregates recent run evidence into session-level totals for
+  immutable events, local tools, artifacts, knowledge, Core alignment, model
+  network requests, and tokens. Interactive `/session-usage` renders the same
+  object in the local agent terminal.
 - CLI core trace: `uv run structure runs trace <run-id> --json` returns the
   paper-facing execution path derived from the same immutable events. It keeps
   the collapsed Structure flow path (`goal -> address -> ...`) and primitive
@@ -360,6 +365,9 @@ into runtime calls:
   Desktop `/session-continue`, `/workspace-continue`, and the Session Continue
   action call `local_workspace_continue_attempt`, turning that compact handoff
   into a fresh run with the same local event loop and Core trace semantics.
+  Desktop `/session-usage`, `/workspace-usage`, and the Session Usage action
+  call `local_workspace_usage`, showing the same session-level model, token,
+  tool, artifact, and Core totals as CLI/TUI.
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.
