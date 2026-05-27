@@ -23,9 +23,9 @@ use structure_local_core::{
     LocalSnapshot,
 };
 use structure_local_runtime::{
-    ContinuationRequest, LocalAgentContext, LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic,
-    LocalToolCall, ProposalApplyResult, ProposalRollbackResult, RunAttempt, RunRequest,
-    WorkspaceContinuationRequest,
+    ChatTurn, ContinuationRequest, LocalAgentContext, LocalAgentMode, LocalAgentRuntime,
+    LocalLlmDiagnostic, LocalToolCall, ProposalApplyResult, ProposalRollbackResult, RunAttempt,
+    RunRequest, WorkspaceContinuationRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -1310,6 +1310,11 @@ fn handle_chat_session_command(
             print_runs(&runs);
             Ok(true)
         }
+        "/history" | "/chat-history" => {
+            let turns = local_result(runtime.chat_turns(state.workspace_id.as_deref(), 12))?;
+            print!("{}", render_chat_history(&turns));
+            Ok(true)
+        }
         "/tasks" => {
             let status = parts.next();
             let tasks =
@@ -1901,6 +1906,7 @@ fn print_chat_session_help(state: &ChatSessionState) {
     println!("  /sources              List workspace knowledge sources");
     println!("  /rate <src> <1-5>     Rate a source for the selected run");
     println!("  /runs                 List recent runs in this workspace");
+    println!("  /history              Show recent persisted chat/code-agent turns");
     println!("  /tasks [status]       List workspace tasks");
     println!("  /task <title>         Create a task linked to the selected run");
     println!("  /task-status <id> <s> Update a task status");
@@ -1940,7 +1946,7 @@ fn print_chat_session_help(state: &ChatSessionState) {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /map, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+    "/help, /map, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /history, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
 }
 
 fn render_chat_session_command_map(state: &ChatSessionState) -> String {
@@ -1958,6 +1964,7 @@ fn render_chat_session_command_map(state: &ChatSessionState) -> String {
 
     text.push_str("Run Loop\n");
     text.push_str("- prompt text -> run_prompt_attempt -> Structure run events\n");
+    text.push_str("- /history -> persisted chat/code-agent turns from local run events\n");
     text.push_str("- /continue, /resume -> fresh run from selected transcript/evidence\n");
     text.push_str("- /retry -> fresh retry run with explicit retry instruction\n");
     text.push_str("- /mode chat|code -> switch chat/code_agent on the same runtime contract\n\n");
@@ -2144,6 +2151,44 @@ fn render_local_doctor_report(
         text.push_str(&format!("  error:        {}\n", error));
     }
     text
+}
+
+fn render_chat_history(turns: &[ChatTurn]) -> String {
+    let mut text = String::new();
+    text.push_str("Chat History\n");
+    if turns.is_empty() {
+        text.push_str("No persisted chat turns for this workspace.\n");
+        return text;
+    }
+    for turn in turns {
+        text.push_str(&format!(
+            "- {} / {} / {} / {} event(s)\n",
+            turn.run_id, turn.status, turn.mode, turn.event_count
+        ));
+        text.push_str(&format!(
+            "  You: {}\n",
+            truncate_history_line(&turn.user_message, 180)
+        ));
+        text.push_str(&format!(
+            "  Structure: {}\n",
+            turn.assistant_message
+                .as_deref()
+                .map(|message| truncate_history_line(message, 220))
+                .unwrap_or_else(|| "No assistant response recorded.".to_string())
+        ));
+    }
+    text
+}
+
+fn truncate_history_line(value: &str, limit: usize) -> String {
+    let flattened = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = flattened.chars();
+    let truncated = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn execute_session_tool(
@@ -3277,6 +3322,7 @@ mod tests {
         assert!(summary.contains("/forget"));
         assert!(summary.contains("/rate"));
         assert!(summary.contains("/events"));
+        assert!(summary.contains("/history"));
         assert!(summary.contains("/gc"));
         assert!(summary.contains("/tools"));
         assert!(summary.contains("/plan"));
@@ -3306,6 +3352,7 @@ mod tests {
         assert!(map.contains("Selected run: run_selected"));
         assert!(map.contains("Run Loop"));
         assert!(map.contains("prompt text -> run_prompt_attempt -> Structure run events"));
+        assert!(map.contains("/history -> persisted chat/code-agent turns"));
         assert!(map.contains("Workspace Context"));
         assert!(map.contains("/context, /doctor, /llm"));
         assert!(map.contains("Run Evidence"));
@@ -3313,6 +3360,28 @@ mod tests {
         assert!(map.contains("Session And Proposals"));
         assert!(map.contains("/risk, /dry-run, /apply, /rollback"));
         assert!(map.contains("Benchmark adapters stay outside this CLI surface"));
+    }
+
+    #[test]
+    fn cli_chat_history_renders_persisted_turns() {
+        let turns = vec![ChatTurn {
+            run_id: "run_history".to_string(),
+            workspace_id: "hist".to_string(),
+            mode: "code_agent".to_string(),
+            user_message: "inspect @core/structure_core.json".to_string(),
+            assistant_message: Some("Core-aligned response".to_string()),
+            status: "finished".to_string(),
+            event_count: 7,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }];
+
+        let history = render_chat_history(&turns);
+
+        assert!(history.contains("Chat History"));
+        assert!(history.contains("run_history / finished / code_agent / 7 event(s)"));
+        assert!(history.contains("You: inspect @core/structure_core.json"));
+        assert!(history.contains("Structure: Core-aligned response"));
     }
 
     #[test]

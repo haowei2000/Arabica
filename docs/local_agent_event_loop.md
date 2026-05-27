@@ -258,7 +258,7 @@ into runtime calls:
   render a grouped agent command map for run loop, workspace context, run
   evidence, session, and proposal actions while keeping benchmark work outside
   the local agent surface. `/select <run-id>`,
-  `/last`, `/continue [run-id] [instruction]`, `/resume`,
+  `/last`, `/history`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/tasks`, `/task`, `/task-status`, `/task-done`, `/usage [run-id]`,
   `/review [run-id]`, `/plan [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   `/risk`, `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
@@ -273,6 +273,9 @@ into runtime calls:
   `/context` renders the same Rust-built context snapshot used before model
   planning: workspace id, mode, AGENTS instructions, git worktree, knowledge
   sources, and replayed assistant turns.
+  `/history` renders persisted chat/code-agent turns from
+  `LocalAgentRuntime::chat_turns`, so session recall is grounded in stored
+  Structure runs rather than a separate terminal buffer.
   `/usage` is the lightweight model-call view over the same
   `RunEvidenceSummary`, so terminal sessions can inspect request counts,
   network-backed calls, token usage, and core alignment without opening the
@@ -380,7 +383,7 @@ into runtime calls:
   In-flight chat bubbles consume that same feed to show the current live event
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
-  `/runs`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
+  `/runs`, `/history`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
   `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/compact`, `/session`, `/trace`, `/review`, `/risk`, `/dry-run`, `/apply --dry-run`, and `/rollback`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust

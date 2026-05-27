@@ -1078,6 +1078,12 @@ mod tests {
         assert!(local_ui.contains("appendCommandMessage(\"/map\""));
         assert!(local_ui.contains("case \"/map\":"));
         assert!(local_ui.contains("case \"/commands\":"));
+        assert!(local_ui.contains("case \"/history\":"));
+        assert!(local_ui.contains("case \"/chat-history\":"));
+        assert!(local_ui.contains("function renderChatHistoryText(turns)"));
+        assert!(local_ui.contains("function previewChatHistory(commandInput = null)"));
+        assert!(local_ui.contains("renderChat(turns);"));
+        assert!(local_ui.contains("/history -> persisted chat/code-agent turns"));
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));

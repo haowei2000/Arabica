@@ -1895,6 +1895,23 @@ Recent Turns
 ${turns.map((turn) => `- ${turn.run_id} / ${turn.status} / ${turn.event_count} events`).join("\n") || "No prior assistant turns replayed."}`;
       }
 
+      function renderChatHistoryText(turns) {
+        if (!turns?.length) return "Chat History\nNo persisted chat turns for this workspace.";
+        return `Chat History
+Workspace: ${activeWorkspaceId()}
+Turns: ${turns.length}
+
+${turns.map((turn) => {
+          const user = (turn.user_message ?? "").replace(/\s+/g, " ").slice(0, 180);
+          const assistant = (turn.assistant_message ?? "No assistant response recorded.")
+            .replace(/\s+/g, " ")
+            .slice(0, 220);
+          return `- ${turn.run_id} / ${turn.status} / ${turn.mode} / ${turn.event_count} events
+  You: ${user}
+  Structure: ${assistant}`;
+        }).join("\n\n")}`;
+      }
+
       function renderLlmDiagnostic(diagnostic) {
         return `Structure Local LLM Diagnostic
 Provider: ${diagnostic.provider}
@@ -3145,6 +3162,19 @@ Note: ${checkpoint.note}`;
         }
       }
 
+      async function previewChatHistory(commandInput = null) {
+        eventLogEl.textContent = "Loading persisted chat history...";
+        try {
+          const turns = await localChatTurns();
+          renderChat(turns);
+          eventLogEl.textContent = renderChatHistoryText(turns);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Chat history loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewWorktree(commandInput = null) {
         eventLogEl.textContent = "Refreshing worktree snapshot...";
         try {
@@ -3360,6 +3390,7 @@ Selected run: ${state.selectedRunId ?? state.runs[0]?.run_id ?? "none"}
 
 Run Loop
 - prompt text -> local_agent_run_attempt -> Structure run events
+- /history -> persisted chat/code-agent turns from local run events
 - /continue, /resume, /retry -> fresh runs from selected transcript/evidence
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
 
@@ -3394,6 +3425,7 @@ Detailed Slash Commands
 /mode chat|code
 /workspace <id>
 /runs
+/history
 /tasks [status]
 /task <title>
 /task-status <task_id> <status> [note]
@@ -3517,6 +3549,11 @@ Detailed Slash Commands
             renderRuns(runs);
             eventLogEl.textContent = `Recent Runs
 ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") || "No runs recorded."}`;
+            return true;
+          }
+          case "/history":
+          case "/chat-history": {
+            await previewChatHistory();
             return true;
           }
           case "/select": {
