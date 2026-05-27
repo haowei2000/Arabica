@@ -2191,6 +2191,10 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             return withTaxonomy(`${payload.kind ?? "artifact"} / ${payload.path ?? ""}`);
           case "code_change_proposed":
             return withTaxonomy(`${payload.status ?? "proposed"} / source=${payload.proposal_source ?? "unknown"} / applied=${payload.applied ?? false}`);
+          case "code_change_reviewed": {
+            const review = payload.review ?? {};
+            return withTaxonomy(`${review.target_path ?? "proposal"} / risk=${review.risk_level ?? "unknown"} / can_apply=${review.can_apply ?? false}`);
+          }
           case "run_finished":
             return withTaxonomy(payload.status ?? payload.run?.status ?? "finished");
           case "run_failed":

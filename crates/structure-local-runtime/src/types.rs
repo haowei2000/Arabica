@@ -39,6 +39,7 @@ pub enum RunEventKind {
     ToolCallRequested,
     ToolCallCompleted,
     CodeChangeProposed,
+    CodeChangeReviewed,
     CodeChangeApplied,
     CodeChangeReverted,
     ArtifactWritten,
@@ -64,6 +65,7 @@ impl RunEventKind {
             Self::ToolCallRequested => "tool_call_requested",
             Self::ToolCallCompleted => "tool_call_completed",
             Self::CodeChangeProposed => "code_change_proposed",
+            Self::CodeChangeReviewed => "code_change_reviewed",
             Self::CodeChangeApplied => "code_change_applied",
             Self::CodeChangeReverted => "code_change_reverted",
             Self::ArtifactWritten => "artifact_written",
@@ -82,9 +84,10 @@ pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
         "artifact_written" | "code_change_proposed" | "run_finished" | "run_failed" => {
             ("evidence", "reproducible_evidence")
         }
-        "code_change_applied" | "code_change_reverted" | "task_updated" => {
-            ("feedback", "event_audit")
-        }
+        "code_change_reviewed"
+        | "code_change_applied"
+        | "code_change_reverted"
+        | "task_updated" => ("feedback", "event_audit"),
         "chat_message_recorded"
         | "agent_step_planned"
         | "model_requested"

@@ -854,11 +854,17 @@ impl LocalAgentRuntime {
         }
         let proposal = fs::read_to_string(&artifact.path)
             .map_err(|err| format!("failed to read proposal artifact: {err}"))?;
-        Ok(review_code_change_proposal(
-            &self.repo_root,
-            artifact,
-            &proposal,
-        ))
+        let review = review_code_change_proposal(&self.repo_root, artifact, &proposal);
+        self.store.append_event(
+            &review.artifact.workspace_id,
+            Some(&review.artifact.run_id),
+            RunEventKind::CodeChangeReviewed,
+            &serde_json::json!({
+                "review": review.clone(),
+                "approval_gate": "explicit_dry_run_or_apply_required",
+            }),
+        )?;
+        Ok(review)
     }
 
     pub fn run_by_id(&self, run_id: &str) -> Result<RunSummary, String> {
@@ -2755,6 +2761,18 @@ fn event_payload_summary(event: &crate::types::LocalEvent) -> String {
         .to_string(),
         "artifact_written" | "code_change_proposed" => {
             json_str(&event.payload, "path", "artifact").to_string()
+        }
+        "code_change_reviewed" => {
+            let review = event.payload.get("review").unwrap_or(&event.payload);
+            format!(
+                "{} risk={} can_apply={}",
+                json_str(review, "target_path", "proposal"),
+                json_str(review, "risk_level", "unknown"),
+                review
+                    .get("can_apply")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            )
         }
         "code_change_applied" => format!(
             "{} {}",
@@ -4835,6 +4853,12 @@ mod tests {
         assert!(!Path::new(&rollback.target_path).exists());
 
         let events = runtime.run_events(&result.run.run_id).unwrap();
+        assert!(events.iter().any(|event| {
+            event.kind == "code_change_reviewed"
+                && event.canonical_flow_id == "feedback"
+                && event.primitive_id == "event_audit"
+                && event.payload["review"]["artifact"]["artifact_id"] == proposal.artifact_id
+        }));
         assert!(events
             .iter()
             .any(|event| event.kind == "code_change_applied"));

@@ -290,8 +290,9 @@ into runtime calls:
   Interactive `/risk [artifact-id|run-id]` and
   `uv run structure proposals review <artifact-id>` parse the same reviewed
   proposal artifact used by apply, verify target safety, new-file conflicts,
-  and patch context against the current workspace, and report whether apply can
-  proceed through the explicit approval gate.
+  and patch context against the current workspace, persist the review as a
+  `code_change_reviewed` Structure event, and report whether apply can proceed
+  through the explicit approval gate.
   Interactive `/dry-run` and `/apply` without `--yes` preview proposal
   application; writing requires an explicit `/apply --yes`. Interactive
   `/rollback` and `uv run structure proposals rollback <artifact-id>` restore
@@ -400,7 +401,8 @@ into runtime calls:
   compact attempt review and next-action guidance as CLI/TUI.
   Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
   `review_local_proposal`, giving the app the same target-safety, patch-context,
-  and explicit-approval checks as CLI before any proposal apply.
+  and explicit-approval checks as CLI before any proposal apply while recording
+  the same `code_change_reviewed` event in the local Structure stream.
   Desktop `/rollback [artifact-id]` and the preview Rollback action call
   `rollback_local_proposal`, restoring the backup artifact recorded before
   apply and keeping rollback evidence in the local Structure event stream.
