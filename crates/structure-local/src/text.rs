@@ -4,9 +4,10 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalRunReview,
-    LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript,
-    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
+    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalRunPlan,
+    LocalRunReview, LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult, RunSummary,
+    RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -695,6 +696,43 @@ pub(crate) fn print_run_core_trace(trace: &LocalRunCoreTrace) {
                 step.primitive_id,
                 step.payload_summary
             );
+        }
+    }
+}
+
+pub(crate) fn print_run_plan(plan: &LocalRunPlan) {
+    println!("Run plan");
+    println!("  run:       {}", plan.run.run_id);
+    println!("  workspace: {}", plan.run.workspace_id);
+    println!("  status:    {}", plan.status);
+    println!(
+        "  steps:     {} total / {} completed",
+        plan.step_count, plan.completed_step_count
+    );
+    println!("  model:     {} requests", plan.model_request_count);
+    println!("  tools:     {} requested", plan.tool_call_count);
+    if !plan.steps.is_empty() {
+        println!();
+        println!("Steps");
+        for step in &plan.steps {
+            let iteration = step
+                .iteration
+                .map(|value| format!(" iter {value}"))
+                .unwrap_or_default();
+            println!(
+                "  #{:<4} [{}]{} {}",
+                step.sequence, step.status, iteration, step.title
+            );
+            println!(
+                "        flow={} primitive={} tools={} total_results={}",
+                step.canonical_flow_id,
+                step.primitive_id,
+                step.tool_call_count,
+                step.total_tool_results
+            );
+            if !step.prompt_references.is_empty() {
+                println!("        refs: @{}", step.prompt_references.join(", @"));
+            }
         }
     }
 }

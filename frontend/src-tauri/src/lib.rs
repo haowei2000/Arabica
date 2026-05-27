@@ -283,6 +283,12 @@ fn local_run_core_trace(
 }
 
 #[tauri::command]
+fn local_run_plan(run_id: String) -> Result<structure_local_runtime::LocalRunPlan, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_plan(&run_id)
+}
+
+#[tauri::command]
 fn local_run_review(run_id: String) -> Result<structure_local_runtime::LocalRunReview, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_review(&run_id)
@@ -466,6 +472,7 @@ pub fn run() {
             local_run_event_gc,
             local_run_tool_trace,
             local_run_core_trace,
+            local_run_plan,
             local_run_review,
             local_run_transcript,
             local_workspace_replay,
@@ -673,6 +680,14 @@ mod tests {
                 .steps
                 .iter()
                 .any(|step| step.primitive_id == "reproducible_evidence"));
+            let plan = local_run_plan(run.run.run_id.clone())?;
+            assert_eq!(plan.run.run_id, run.run.run_id);
+            assert!(plan.step_count >= 1);
+            assert_eq!(plan.completed_step_count, plan.step_count);
+            assert!(plan
+                .steps
+                .iter()
+                .any(|step| step.title.contains("Workspace Context Replay")));
             assert_eq!(review.run.run_id, run.run.run_id);
             assert!(review.core_aligned);
             assert!(review.proposal_artifact.is_some());
@@ -812,6 +827,9 @@ mod tests {
         assert!(local_ui.contains("case \"/gc\":"));
         assert!(local_ui.contains("function renderToolTraceText(trace)"));
         assert!(local_ui.contains("case \"/tools\":"));
+        assert!(local_ui.contains("function renderRunPlanText(plan)"));
+        assert!(local_ui.contains("case \"/plan\":"));
+        assert!(local_ui.contains("invoke(\"local_run_plan\""));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));
@@ -861,6 +879,8 @@ mod tests {
         assert!(local_ui.contains("className = \"chat-actions\""));
         assert!(local_ui.contains("inspect.addEventListener(\"click\", () => selectRun(turn));"));
         assert!(local_ui.contains("review.textContent = \"Review\""));
+        assert!(local_ui.contains("plan.textContent = \"Plan\""));
+        assert!(local_ui.contains("await previewRunPlanForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewRunReviewForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
     }

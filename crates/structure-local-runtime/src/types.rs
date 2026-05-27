@@ -353,6 +353,30 @@ pub struct LocalRunCoreTraceStep {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunPlan {
+    pub run: RunSummary,
+    pub status: String,
+    pub step_count: usize,
+    pub completed_step_count: usize,
+    pub model_request_count: usize,
+    pub tool_call_count: usize,
+    pub steps: Vec<LocalRunPlanStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunPlanStep {
+    pub sequence: i64,
+    pub title: String,
+    pub status: String,
+    pub canonical_flow_id: String,
+    pub primitive_id: String,
+    pub iteration: Option<u64>,
+    pub tool_call_count: usize,
+    pub total_tool_results: usize,
+    pub prompt_references: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalRunReview {
     pub run: RunSummary,
     pub status: String,

@@ -1295,6 +1295,11 @@
         return invoke("local_run_core_trace", { runId });
       }
 
+      async function localRunPlan(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_plan", { runId });
+      }
+
       async function localRunReview(runId) {
         if (!invoke) return null;
         return invoke("local_run_review", { runId });
@@ -1875,6 +1880,14 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewRunReviewForRun(turn.run_id);
           });
+          const plan = document.createElement("button");
+          plan.type = "button";
+          plan.textContent = "Plan";
+          plan.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunPlanForRun(turn.run_id);
+          });
           const continueRun = document.createElement("button");
           continueRun.type = "button";
           continueRun.textContent = "Continue";
@@ -1928,7 +1941,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, review, continueRun, retryRun, proposal);
+          actions.append(meta, inspect, plan, review, continueRun, retryRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2453,6 +2466,28 @@ ${steps.map((step) => `#${step.sequence} ${step.kind} / ${step.canonical_flow_id
   ${step.payload_summary}`).join("\n") || "No steps recorded."}`;
       }
 
+      function renderRunPlanText(plan) {
+        if (!plan) return "Run plan unavailable.";
+        const steps = plan.steps ?? [];
+        return `Run Plan
+Run: ${plan.run?.run_id ?? "unknown"}
+Workspace: ${plan.run?.workspace_id ?? "unknown"}
+Status: ${plan.status ?? "unknown"}
+Steps: ${plan.step_count ?? steps.length} total / ${plan.completed_step_count ?? 0} completed
+Model: ${plan.model_request_count ?? 0} requests
+Tools: ${plan.tool_call_count ?? 0} requested
+
+Steps
+${steps.map((step) => {
+          const iteration = step.iteration == null ? "" : ` iter ${step.iteration}`;
+          const refs = (step.prompt_references ?? []).length
+            ? `\n  refs: @${step.prompt_references.join(", @")}`
+            : "";
+          return `#${step.sequence} [${step.status}]${iteration} ${step.title}
+  flow=${step.canonical_flow_id} primitive=${step.primitive_id} tools=${step.tool_call_count} total_results=${step.total_tool_results}${refs}`;
+        }).join("\n") || "No plan steps recorded."}`;
+      }
+
       function renderRunReviewText(review) {
         if (!review) return "Run review unavailable.";
         const proposal = review.proposal_artifact
@@ -2553,6 +2588,16 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function previewRunPlanForRun(runId) {
+        eventLogEl.textContent = "Loading run plan...";
+        try {
+          const plan = await localRunPlan(runId);
+          eventLogEl.textContent = renderRunPlanText(plan);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
       async function performContinuationRun(runId, extraInstruction = "") {
         eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
         setInFlightRun(
@@ -2648,6 +2693,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /events [run_id]
 /gc [run_id] [retain_last]
 /tools [run_id]
+/plan [run_id]
 /trace [run_id]
 /review [run_id]
 /evidence [run_id]
@@ -2840,6 +2886,15 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
             }
             const trace = await localRunToolTrace(runId);
             eventLogEl.textContent = renderToolTraceText(trace);
+            return true;
+          }
+          case "/plan": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            await previewRunPlanForRun(runId);
             return true;
           }
           case "/trace":

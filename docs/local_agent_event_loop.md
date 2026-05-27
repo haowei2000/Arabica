@@ -187,6 +187,10 @@ into runtime calls:
   shared run inspection object used by both local surfaces. It combines the run
   summary, chat turn, ordered events, evidence summary, final response, and
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
+- CLI run plan: `uv run structure runs plan <run-id> --json` returns a compact
+  Codex/OpenCode-style progress view derived from `agent_step_planned`,
+  `model_requested`, and `tool_call_requested` events. The source of truth
+  remains the immutable Structure event stream.
 - CLI core trace: `uv run structure runs trace <run-id> --json` returns the
   paper-facing execution path derived from the same immutable events. It keeps
   the collapsed Structure flow path (`goal -> address -> ...`) and primitive
@@ -206,7 +210,7 @@ into runtime calls:
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`,
-  `/review [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
+  `/review [run-id]`, `/plan [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
@@ -229,6 +233,9 @@ into runtime calls:
   `/tools [run-id]` renders the paired local tool trace from
   `tool_call_requested` and `tool_call_completed` events, including tool input,
   result status, compact output, and error text.
+  `/plan [run-id]` renders the event-derived agent plan from
+  `agent_step_planned` events, so terminal users can inspect progress without
+  a separate planner state.
   `/trace [run-id]` renders the same Core flow/primitive execution path as
   `runs trace`, preserving the distinction between raw event replay and
   paper-facing conceptual trace inspection.
@@ -274,7 +281,8 @@ into runtime calls:
   the local terminal UI. Press `f` to continue the selected run through the
   shared continuation request path, preserving the same transcript/evidence
   grounding used by CLI `/continue` and desktop Continue. Press `t` to inspect
-  the selected run transcript, `z` to inspect the same Core flow/primitive trace
+  the selected run transcript, `l` to inspect the event-derived agent plan,
+  `z` to inspect the same Core flow/primitive trace
   as CLI `runs trace`, `b` to inspect the same post-run review as CLI
   `runs review`, and `e` to inspect the same local evidence bundle.
   Proposal controls `g`, `u`, and `y` prefer the selected run's code-change
@@ -282,7 +290,7 @@ into runtime calls:
   inspect-review-apply loop around a chosen run.
 - Desktop app: Tauri commands such as `local_session_status`,
   `local_agent_run_attempt`, `local_runs`,
-  `local_run_transcript`, `local_run_core_trace`, and `local_run_events`;
+  `local_run_transcript`, `local_run_plan`, `local_run_core_trace`, and `local_run_events`;
   `create_local_workspace` and `local_workspaces` back the native workspace selector.
   A segmented `Chat` / `Code Agent` mode control drives the same `mode` field
   passed to the Rust runtime as `/mode`, keeping visible desktop interaction and
@@ -293,7 +301,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/trace`, `/review`, `/dry-run`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/trace`, `/review`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
@@ -312,6 +320,9 @@ into runtime calls:
   Desktop `/tools [run-id]` calls `local_run_tool_trace`, giving the app the
   same ordered tool-call explanation as the CLI without re-parsing raw events
   in JavaScript.
+  Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
+  showing progress as a derived view over immutable Structure planning/model/tool
+  events rather than a desktop-only state machine.
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.
@@ -325,7 +336,7 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/review/continue/retry/proposal actions so chat
+  thread exposes per-turn inspect/plan/review/continue/retry/proposal actions so chat
   history remains a navigable view over run evidence rather than a detached
   transcript.
   The per-turn Continue button uses the current composer text as an optional

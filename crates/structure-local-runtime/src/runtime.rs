@@ -7,10 +7,11 @@ use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCoreTrace,
-    LocalRunCoreTraceStep, LocalRunReview, LocalToolCall, LocalToolResult, LocalToolTraceEntry,
-    ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalToolCall,
+    LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
+    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
+    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange,
+    WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -624,6 +625,12 @@ impl LocalAgentRuntime {
         let events = self.run_events(run_id)?;
         let core_trace = build_core_execution_trace(&events)?;
         Ok(core_trace_from_events(run, &events, core_trace))
+    }
+
+    pub fn run_plan(&self, run_id: &str) -> Result<LocalRunPlan, String> {
+        let run = self.run_by_id(run_id)?;
+        let events = self.run_events(run_id)?;
+        Ok(run_plan_from_events(run, &events))
     }
 
     pub fn run_review(&self, run_id: &str) -> Result<LocalRunReview, String> {
@@ -1590,6 +1597,120 @@ fn push_changed_string(values: &mut Vec<String>, value: &str) {
     if values.last().is_none_or(|existing| existing != value) {
         values.push(value.to_string());
     }
+}
+
+fn run_plan_from_events(run: RunSummary, events: &[crate::types::LocalEvent]) -> LocalRunPlan {
+    let mut model_request_count = 0usize;
+    let mut tool_call_count = 0usize;
+    let mut steps = Vec::new();
+
+    for event in events {
+        match event.kind.as_str() {
+            "model_requested" => model_request_count += 1,
+            "tool_call_requested" => tool_call_count += 1,
+            "agent_step_planned" => {
+                let planned_steps = event
+                    .payload
+                    .get("steps")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(humanize_plan_step)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let title = if planned_steps.is_empty() {
+                    "Agent step planned".to_string()
+                } else {
+                    planned_steps.join(" -> ")
+                };
+                steps.push(LocalRunPlanStep {
+                    sequence: event.sequence,
+                    title,
+                    status: "completed".to_string(),
+                    canonical_flow_id: event.canonical_flow_id.clone(),
+                    primitive_id: event.primitive_id.clone(),
+                    iteration: event
+                        .payload
+                        .get("iteration")
+                        .and_then(serde_json::Value::as_u64),
+                    tool_call_count: event
+                        .payload
+                        .get("tool_call_count")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or_default() as usize,
+                    total_tool_results: event
+                        .payload
+                        .get("total_tool_results")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or_default() as usize,
+                    prompt_references: event
+                        .payload
+                        .get("prompt_references")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|values| {
+                            values
+                                .iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if steps.is_empty() {
+        steps.push(LocalRunPlanStep {
+            sequence: events
+                .first()
+                .map(|event| event.sequence)
+                .unwrap_or_default(),
+            title: "Open workspace -> record prompt -> synthesize response".to_string(),
+            status: if run.status == RunStatus::Failed.as_str() {
+                "failed".to_string()
+            } else {
+                "completed".to_string()
+            },
+            canonical_flow_id: "event".to_string(),
+            primitive_id: "event_audit".to_string(),
+            iteration: None,
+            tool_call_count,
+            total_tool_results: tool_call_count,
+            prompt_references: Vec::new(),
+        });
+    }
+
+    LocalRunPlan {
+        status: run.status.clone(),
+        step_count: steps.len(),
+        completed_step_count: steps
+            .iter()
+            .filter(|step| step.status == "completed")
+            .count(),
+        model_request_count,
+        tool_call_count,
+        run,
+        steps,
+    }
+}
+
+fn humanize_plan_step(step: &str) -> String {
+    step.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn event_payload_summary(event: &crate::types::LocalEvent) -> String {
@@ -2739,6 +2860,41 @@ mod tests {
             .canonical_flow_ids
             .contains(&"feedback".to_string()));
         assert!(evidence.core_trace.core_aligned);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_builds_plan_from_agent_step_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("run-plan");
+        let note = root.join("plan_note.md");
+        fs::write(&note, "plan-visible context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Inspect @plan_note.md and summarize the agent plan.".to_string(),
+                workspace_id: Some("plan".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let plan = runtime.run_plan(&result.run.run_id).unwrap();
+
+        assert_eq!(plan.run.run_id, result.run.run_id);
+        assert_eq!(plan.status, "finished");
+        assert!(plan.step_count >= 1);
+        assert_eq!(plan.completed_step_count, plan.step_count);
+        assert!(plan.model_request_count >= 1);
+        assert!(plan.tool_call_count >= 1);
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.title.contains("Prompt Reference Resolution")));
+        assert!(plan
+            .steps
+            .iter()
+            .any(|step| step.prompt_references.contains(&"plan_note.md".to_string())));
 
         fs::remove_dir_all(root).unwrap();
     }
