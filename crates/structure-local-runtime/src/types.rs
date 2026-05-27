@@ -325,6 +325,7 @@ pub struct LocalAgentContext {
     pub agent_instructions: Vec<AgentInstruction>,
     pub worktree: WorktreeSnapshot,
     pub knowledge_sources: Vec<KnowledgeSource>,
+    pub tasks: Vec<LocalTaskRecord>,
     pub recent_turns: Vec<ChatTurn>,
     pub context_replay_limit: usize,
 }
@@ -509,6 +510,7 @@ pub struct WorkspaceReplay {
     pub events: Vec<LocalEvent>,
     pub runs: Vec<RunSummary>,
     pub knowledge_sources: Vec<KnowledgeSource>,
+    pub tasks: Vec<LocalTaskRecord>,
     pub artifacts: Vec<ArtifactRecord>,
     pub last_sequence: Option<i64>,
 }
@@ -520,6 +522,8 @@ pub struct WorkspaceCompact {
     pub event_count: usize,
     pub run_count: usize,
     pub knowledge_source_count: usize,
+    pub task_count: usize,
+    pub active_task_count: usize,
     pub artifact_count: usize,
     pub last_sequence: Option<i64>,
     pub core_aligned: bool,
@@ -555,6 +559,8 @@ pub struct WorkspaceUsageSummary {
     pub tool_call_count: usize,
     pub artifact_count: usize,
     pub knowledge_source_count: usize,
+    pub task_count: usize,
+    pub active_task_count: usize,
     pub model_usage: ModelUsageSummary,
     pub core_aligned: bool,
     pub flow_path: Vec<String>,

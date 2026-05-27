@@ -1398,6 +1398,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
         "Knowledge sources: {}\n",
         bundle.workspace_replay.knowledge_sources.len()
     ));
+    text.push_str(&format!("Tasks: {}\n", bundle.workspace_replay.tasks.len()));
     text.push_str(&format!(
         "Artifacts: {}\n",
         bundle.workspace_replay.artifacts.len()

@@ -2011,9 +2011,10 @@ fn render_local_doctor_report(
         passed_checks, failed_checks
     ));
     text.push_str(&format!(
-        "  context:      {} instruction(s), {} knowledge source(s), {} recent turn(s)\n",
+        "  context:      {} instruction(s), {} knowledge source(s), {} task(s), {} recent turn(s)\n",
         context.agent_instructions.len(),
         context.knowledge_sources.len(),
+        context.tasks.len(),
         context.recent_turns.len()
     ));
     text.push_str(&format!(

@@ -470,6 +470,7 @@ impl LocalAgentRuntime {
         let events = self.store.workspace_events(workspace_id, limit)?;
         let runs = self.store.list_runs(Some(workspace_id), limit)?;
         let knowledge_sources = self.store.list_knowledge_sources(workspace_id, limit)?;
+        let tasks = self.store.list_tasks(Some(workspace_id), None, limit)?;
         let artifacts = self.store.list_artifacts(Some(workspace_id), None, limit)?;
         let last_sequence = events.last().map(|event| event.sequence);
 
@@ -478,6 +479,7 @@ impl LocalAgentRuntime {
             events,
             runs,
             knowledge_sources,
+            tasks,
             artifacts,
             last_sequence,
         })
@@ -530,6 +532,9 @@ impl LocalAgentRuntime {
             .store
             .list_artifacts(Some(workspace_id), None, limit)?
             .len();
+        let tasks = self.store.list_tasks(Some(workspace_id), None, limit)?;
+        let task_count = tasks.len();
+        let active_task_count = tasks.iter().filter(|task| task_is_active(task)).count();
         let mut model_usage = ModelUsageSummary::default();
         let mut event_count = 0;
         let mut tool_call_count = 0;
@@ -559,7 +564,7 @@ impl LocalAgentRuntime {
         }
 
         let summary = format!(
-            "Workspace {workspace_id} has {run_count} recent runs, {event_count} run events, {tool_call_count} completed tool calls, {model_responses} model responses, {network_requests} network requests, and {total_tokens} total tokens. Core alignment is {alignment}.",
+            "Workspace {workspace_id} has {run_count} recent runs, {event_count} run events, {tool_call_count} completed tool calls, {task_count} tasks ({active_task_count} active), {model_responses} model responses, {network_requests} network requests, and {total_tokens} total tokens. Core alignment is {alignment}.",
             run_count = usage_runs.len(),
             model_responses = model_usage.model_response_count,
             network_requests = model_usage.network_request_count,
@@ -575,6 +580,8 @@ impl LocalAgentRuntime {
             tool_call_count,
             artifact_count,
             knowledge_source_count,
+            task_count,
+            active_task_count,
             model_usage,
             core_aligned,
             flow_path,
@@ -1336,6 +1343,8 @@ impl LocalAgentRuntime {
                 "agent_instructions": context.agent_instructions.clone(),
                 "worktree": context.worktree.clone(),
                 "knowledge_sources": context.knowledge_sources.len(),
+                "task_count": context.tasks.len(),
+                "active_tasks": context.tasks.iter().filter(|task| task_is_active(task)).count(),
                 "recent_turns": context.recent_turns.len(),
                 "context_replay_limit": context.context_replay_limit,
             }),
@@ -1356,6 +1365,7 @@ impl LocalAgentRuntime {
             agent_instructions: context.agent_instructions,
             worktree: context.worktree,
             knowledge: context.knowledge_sources,
+            tasks: context.tasks,
             recent_turns: context.recent_turns,
             mode: mode.clone(),
         };
@@ -1613,6 +1623,7 @@ impl LocalAgentRuntime {
         let agent_instructions = load_agent_instructions(&self.repo_root)?;
         let worktree = collect_worktree_snapshot(&self.repo_root);
         let knowledge_sources = self.store.list_knowledge_sources(workspace_id, limit)?;
+        let tasks = self.store.list_tasks(Some(workspace_id), None, limit)?;
         let recent_turns = self
             .chat_turns(Some(workspace_id), limit)?
             .into_iter()
@@ -1628,6 +1639,7 @@ impl LocalAgentRuntime {
             agent_instructions,
             worktree,
             knowledge_sources,
+            tasks,
             recent_turns,
             context_replay_limit: limit,
         })
@@ -1877,6 +1889,10 @@ fn normalize_task_status(status: &str) -> Result<&'static str, String> {
     }
 }
 
+fn task_is_active(task: &LocalTaskRecord) -> bool {
+    matches!(task.status.as_str(), "todo" | "in_progress")
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct KnowledgePayload {
     sources: Vec<KnowledgeSource>,
@@ -2085,6 +2101,11 @@ fn workspace_compact_from_replay(
         .iter()
         .filter(|artifact| artifact.kind == "code_change_proposal")
         .count();
+    let active_tasks = replay
+        .tasks
+        .iter()
+        .filter(|task| task_is_active(task))
+        .collect::<Vec<_>>();
 
     let mut carry_forward_items = Vec::new();
     if let Some(run) = latest_run {
@@ -2113,6 +2134,16 @@ fn workspace_compact_from_replay(
                 .knowledge_sources
                 .iter()
                 .map(|source| source.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !active_tasks.is_empty() {
+        carry_forward_items.push(format!(
+            "Active tasks: {}",
+            active_tasks
+                .iter()
+                .map(|task| format!("{}({}/{})", task.title, task.status, task.priority))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -2168,6 +2199,12 @@ fn workspace_compact_from_replay(
             "Review {proposal_artifacts} code-change proposal artifact(s) with risk checks before apply."
         ));
     }
+    if !active_tasks.is_empty() {
+        next_actions.push(format!(
+            "Resolve or continue {} active workspace task(s) before closing this session.",
+            active_tasks.len()
+        ));
+    }
     if replay.knowledge_sources.is_empty() {
         next_actions.push(
             "Add workspace knowledge if future turns need persistent local context.".to_string(),
@@ -2179,11 +2216,13 @@ fn workspace_compact_from_replay(
     }
 
     let summary = format!(
-        "Workspace {} has {} events, {} recent runs, {} knowledge sources, and {} artifacts. Core alignment is {}.",
+        "Workspace {} has {} events, {} recent runs, {} knowledge sources, {} tasks ({} active), and {} artifacts. Core alignment is {}.",
         replay.workspace_id,
         replay.events.len(),
         recent_runs.len(),
         replay.knowledge_sources.len(),
+        replay.tasks.len(),
+        active_tasks.len(),
         replay.artifacts.len(),
         if core_trace.core_aligned { "aligned" } else { "drifted" },
     );
@@ -2202,6 +2241,8 @@ fn workspace_compact_from_replay(
         event_count: replay.events.len(),
         run_count: recent_runs.len(),
         knowledge_source_count: replay.knowledge_sources.len(),
+        task_count: replay.tasks.len(),
+        active_task_count: active_tasks.len(),
         artifact_count: replay.artifacts.len(),
         last_sequence: replay.last_sequence,
         core_aligned: core_trace.core_aligned,
@@ -2259,6 +2300,22 @@ fn workspace_continuation_context(
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let active_tasks = replay
+        .tasks
+        .iter()
+        .filter(|task| task_is_active(task))
+        .map(|task| {
+            format!(
+                "- {} [{} / {}] {} (run={})",
+                task.task_id,
+                task.status,
+                task.priority,
+                task.title,
+                task.run_id.as_deref().unwrap_or("workspace")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     format!(
         "Compact Structure workspace context for `{workspace_id}`.\n\n\
@@ -2266,12 +2323,14 @@ Summary: {summary}\n\
 Events: {events}\n\
 Runs: {runs_count}\n\
 Knowledge sources: {knowledge_count}\n\
+Tasks: {task_count} ({active_task_count} active)\n\
 Artifacts: {artifact_count}\n\
 Last event sequence: {last_sequence}\n\
 Core aligned: {core_aligned}\n\
 Flow path: {flow_path}\n\
 Primitive path: {primitive_path}\n\n\
 Recent runs:\n{runs}\n\n\
+Active tasks:\n{tasks}\n\n\
 Carry forward:\n{carry}\n\n\
 Next actions:\n{actions}\n\n\
 Use this compact as a session handoff boundary for local chat/code-agent work. Preserve Structure Core event, path, disclosure, source-evaluation, GC, and evidence concepts when continuing.",
@@ -2279,6 +2338,8 @@ Use this compact as a session handoff boundary for local chat/code-agent work. P
         events = replay.events.len(),
         runs_count = recent_runs.len(),
         knowledge_count = replay.knowledge_sources.len(),
+        task_count = replay.tasks.len(),
+        active_task_count = replay.tasks.iter().filter(|task| task_is_active(task)).count(),
         artifact_count = replay.artifacts.len(),
         last_sequence = replay
             .last_sequence
@@ -2294,6 +2355,11 @@ Use this compact as a session handoff boundary for local chat/code-agent work. P
             "none".to_string()
         } else {
             core_trace.primitive_ids.join(" -> ")
+        },
+        tasks = if active_tasks.is_empty() {
+            "- none".to_string()
+        } else {
+            active_tasks
         },
     )
 }
@@ -3999,13 +4065,41 @@ mod tests {
         let updated = runtime
             .update_task_status(&task.task_id, "done", Some("verified"))
             .unwrap();
+        let active_task = runtime
+            .create_task(
+                Some("tasks".to_string()),
+                None,
+                "Carry active workspace task into context",
+                Some("normal"),
+            )
+            .unwrap();
         let tasks = runtime.list_tasks(Some("tasks"), Some("done"), 20).unwrap();
+        let context = runtime
+            .agent_context(Some("tasks"), Some(LocalAgentMode::CodeAgent))
+            .unwrap();
+        let replay = runtime.workspace_replay(Some("tasks"), 50).unwrap();
+        let compact = runtime.workspace_compact(Some("tasks"), 50).unwrap();
+        let usage = runtime.workspace_usage(Some("tasks"), 50).unwrap();
         let events = runtime.run_events(&result.run.run_id).unwrap();
 
         assert_eq!(task.status, "todo");
         assert_eq!(task.priority, "high");
         assert_eq!(updated.status, "done");
+        assert_eq!(active_task.status, "todo");
         assert!(tasks.iter().any(|item| item.task_id == task.task_id));
+        assert!(context
+            .tasks
+            .iter()
+            .any(|item| item.task_id == active_task.task_id));
+        assert!(replay.tasks.iter().any(|item| item.task_id == task.task_id));
+        assert_eq!(compact.task_count, 2);
+        assert_eq!(compact.active_task_count, 1);
+        assert!(compact
+            .continuation_context
+            .contains("Carry active workspace task into context"));
+        assert_eq!(usage.task_count, 2);
+        assert_eq!(usage.active_task_count, 1);
+        assert!(usage.summary.contains("2 tasks (1 active)"));
         assert!(events.iter().any(|event| {
             event.kind == "task_created"
                 && event.canonical_flow_id == "goal"

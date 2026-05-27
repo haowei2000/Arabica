@@ -15,6 +15,7 @@ pub struct ModelRequest {
     pub agent_instructions: Vec<AgentInstruction>,
     pub worktree: WorktreeSnapshot,
     pub knowledge: Vec<KnowledgeSource>,
+    pub tasks: Vec<crate::types::LocalTaskRecord>,
     pub recent_turns: Vec<ChatTurn>,
     pub mode: LocalAgentMode,
 }
@@ -289,6 +290,7 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
             "- Knowledge sources: `{}`\n",
             request.knowledge.len()
         ));
+        response.push_str(&format!("- Workspace tasks: `{}`\n", request.tasks.len()));
         response.push_str(&format!(
             "- Replayed chat turns: `{}`\n",
             request.recent_turns.len()
@@ -330,6 +332,22 @@ impl LocalModelProvider for DeterministicLocalModelProvider {
                 response.push_str(&format!(
                     "- {} ({} bytes): `{}`\n",
                     source.title, source.size_bytes, source.path
+                ));
+            }
+        }
+
+        response.push_str("\n## Workspace Tasks\n\n");
+        if request.tasks.is_empty() {
+            response.push_str("No workspace tasks were replayed.\n");
+        } else {
+            for task in &request.tasks {
+                response.push_str(&format!(
+                    "- {} [{} / {}] {} (run={})\n",
+                    task.task_id,
+                    task.status,
+                    task.priority,
+                    task.title,
+                    task.run_id.as_deref().unwrap_or("workspace")
                 ));
             }
         }
@@ -477,6 +495,7 @@ impl LocalModelProvider for EnvApiModelProvider {
             "- Replayed chat turns: `{}`\n",
             request.recent_turns.len()
         ));
+        final_response.push_str(&format!("- Workspace tasks: `{}`\n", request.tasks.len()));
         final_response.push_str(&format!("- Mode: `{}`\n\n", request.mode.as_str()));
         final_response.push_str(&strip_runtime_response_envelope(content));
         final_response.push_str("\n\n## Tool Evidence Summary\n\n");
@@ -537,13 +556,14 @@ fn render_planning_prompt(request: &ModelRequest, tool_results: &[LocalToolResul
             .collect::<String>()
     };
     format!(
-        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nWorktree snapshot:\n{worktree}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
+        "Prompt:\n{prompt}\n\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nWorktree snapshot:\n{worktree}\n\nRecent workspace conversation:\n{recent_turns}\n\nKnowledge sources:\n{knowledge}\n\nWorkspace tasks:\n{tasks}\n\nTool results so far:\n{evidence}\n\nReturn additional tool calls only if more local inspection is needed. If the current evidence is enough, return no tool calls.",
         prompt = request.run.prompt,
         mode = request.mode.as_str(),
         repo = request.repo_root.display(),
         instructions = render_agent_instructions_for_api(&request.agent_instructions),
         worktree = render_worktree_for_api(&request.worktree),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
+        tasks = render_tasks_for_api(&request.tasks),
     )
 }
 
@@ -779,7 +799,7 @@ fn render_api_prompt(
     let evidence = serde_json::to_string_pretty(tool_results)
         .map_err(|err| format!("failed to render tool evidence: {err}"))?;
     Ok(format!(
-        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nWorktree snapshot:\n{worktree}\n\nRecent workspace conversation:\n{recent_turns}\n\nTool evidence JSON:\n{evidence}",
+        "Prompt:\n{prompt}\n\nRun: {run_id}\nWorkspace: {workspace_id}\nMode: {mode}\nRepo: {repo}\n\nAgent instructions:\n{instructions}\n\nWorktree snapshot:\n{worktree}\n\nRecent workspace conversation:\n{recent_turns}\n\nWorkspace tasks:\n{tasks}\n\nTool evidence JSON:\n{evidence}",
         prompt = request.run.prompt,
         run_id = request.run.run_id,
         workspace_id = request.run.workspace_id,
@@ -788,6 +808,7 @@ fn render_api_prompt(
         instructions = render_agent_instructions_for_api(&request.agent_instructions),
         worktree = render_worktree_for_api(&request.worktree),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
+        tasks = render_tasks_for_api(&request.tasks),
         evidence = evidence.chars().take(20_000).collect::<String>()
     ))
 }
@@ -863,6 +884,26 @@ fn render_recent_turns_for_api(turns: &[ChatTurn]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn render_tasks_for_api(tasks: &[crate::types::LocalTaskRecord]) -> String {
+    if tasks.is_empty() {
+        return "No workspace tasks replayed.".to_string();
+    }
+    tasks
+        .iter()
+        .map(|task| {
+            format!(
+                "- {} [{} / {}] {} (run={})",
+                task.task_id,
+                task.status,
+                task.priority,
+                summarize_line(&task.title, 300),
+                task.run_id.as_deref().unwrap_or("workspace")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn summarize_line(value: &str, max_chars: usize) -> String {
@@ -1042,6 +1083,7 @@ The actual assistant answer.\n\n\
                 error: None,
             },
             knowledge: Vec::new(),
+            tasks: Vec::new(),
             recent_turns: Vec::new(),
             mode: LocalAgentMode::CodeAgent,
         };

@@ -1791,6 +1791,7 @@ Selected run: ${selectedRun}
 Runs: ${status.run_count}
 Artifacts: ${status.artifact_count}
 Knowledge sources: ${status.knowledge_source_count}
+Tasks: ${status.task_count} (${status.active_task_count} active)
 Recent workspace events: ${status.recent_event_count}
 Last event sequence: ${status.last_event_sequence ?? "none"}
 
@@ -1823,6 +1824,7 @@ ${changes.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No
         if (!context) return "Agent context unavailable.";
         const instructions = context.agent_instructions ?? [];
         const sources = context.knowledge_sources ?? [];
+        const tasks = context.tasks ?? [];
         const turns = context.recent_turns ?? [];
         const changes = context.worktree?.changed_files ?? [];
         return `Agent Context
@@ -1834,6 +1836,7 @@ Database: ${context.runtime_db}
 Worktree: ${context.worktree?.clean ? "clean" : "dirty"} / ${changes.length} changes
 Instructions: ${instructions.length}
 Knowledge sources: ${sources.length}
+Tasks: ${tasks.length}
 Recent turns: ${turns.length}
 
 Agent Instructions
@@ -1841,6 +1844,9 @@ ${instructions.map((item) => `- ${item.path} / ${item.size_bytes} bytes / trunca
 
 Knowledge Sources
 ${sources.map((source) => `- ${source.title}: ${source.path}`).join("\n") || "No knowledge sources registered."}
+
+Workspace Tasks
+${tasks.map((task) => `- ${task.task_id} [${task.status} / ${task.priority}] ${task.title}`).join("\n") || "No workspace tasks replayed."}
 
 Recent Turns
 ${turns.map((turn) => `- ${turn.run_id} / ${turn.status} / ${turn.event_count} events`).join("\n") || "No prior assistant turns replayed."}`;
@@ -2174,7 +2180,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           case "agent_step_planned":
             return withTaxonomy(`${payload.mode ?? "agent"} iteration ${payload.iteration ?? "?"} / ${payload.tool_call_count ?? 0} tool calls`);
           case "workspace_context_loaded":
-            return withTaxonomy(`${payload.agent_instruction_count ?? 0} instructions / ${(payload.worktree?.changed_files ?? []).length} worktree / ${payload.knowledge_sources ?? 0} knowledge / ${payload.recent_turns ?? 0} turns`);
+            return withTaxonomy(`${payload.agent_instruction_count ?? 0} instructions / ${(payload.worktree?.changed_files ?? []).length} worktree / ${payload.knowledge_sources ?? 0} knowledge / ${payload.task_count ?? 0} tasks / ${payload.recent_turns ?? 0} turns`);
           case "tool_call_requested":
             return withTaxonomy(`${payload.name ?? "tool"} ${JSON.stringify(payload.input ?? {})}`);
           case "tool_call_completed":
@@ -2663,6 +2669,7 @@ Workspace: ${compact.workspace_id ?? activeWorkspaceId()}
 Events: ${compact.event_count ?? 0}
 Runs: ${compact.run_count ?? 0}
 Knowledge sources: ${compact.knowledge_source_count ?? 0}
+Tasks: ${compact.task_count ?? 0} (${compact.active_task_count ?? 0} active)
 Artifacts: ${compact.artifact_count ?? 0}
 Last event sequence: ${compact.last_sequence ?? "none"}
 Core: ${compact.core_aligned ? "aligned" : "drift"}
@@ -2701,6 +2708,7 @@ Events: ${usage.event_count ?? 0}
 Tools: ${usage.tool_call_count ?? 0}
 Artifacts: ${usage.artifact_count ?? 0}
 Knowledge sources: ${usage.knowledge_source_count ?? 0}
+Tasks: ${usage.task_count ?? 0} (${usage.active_task_count ?? 0} active)
 Core: ${usage.core_aligned ? "aligned" : "drift"}
 Model: ${model.model_request_count ?? 0} requests / ${model.model_response_count ?? 0} responses / ${model.network_request_count ?? 0} network
 Tokens: ${model.prompt_tokens ?? 0} prompt / ${model.completion_tokens ?? 0} completion / ${model.total_tokens ?? 0} total
@@ -4458,6 +4466,7 @@ Workspace: ${replay.workspace_id}
 Events: ${replay.events.length}
 Runs: ${replay.runs.length}
 Knowledge sources: ${replay.knowledge_sources.length}
+Tasks: ${(replay.tasks ?? []).length}
 Artifacts: ${replay.artifacts.length}
 Last sequence: ${replay.last_sequence ?? "none"}
 
@@ -4702,6 +4711,7 @@ Parity passed: ${bundle.parity_report.passed}
 Events: ${bundle.workspace_replay.events.length}
 Runs: ${bundle.workspace_replay.runs.length}
 Knowledge sources: ${bundle.workspace_replay.knowledge_sources.length}
+Tasks: ${(bundle.workspace_replay.tasks ?? []).length}
 Artifacts: ${bundle.workspace_replay.artifacts.length}
 Run evidence records: ${bundle.run_evidence.length}
 

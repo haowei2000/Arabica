@@ -16,8 +16,8 @@ crates/structure-local-runtime
 
 The local runtime uses a hybrid storage model:
 
-- SQLite is canonical for events, runs, workspace metadata, and knowledge
-  source indexes.
+- SQLite is canonical for events, runs, workspace metadata, local tasks, and
+  knowledge source indexes.
 - The filesystem is canonical for original files and generated artifacts.
 - Indexes are derived and can be rebuilt from files plus SQLite metadata.
 
@@ -240,7 +240,9 @@ into runtime calls:
   workspace tasks in the Rust runtime and records `task_created` /
   `task_updated` events. Tasks can be linked to the selected run, so planning
   and follow-up work stay in the same Structure event ledger as chat, tools,
-  evidence, and proposals.
+  evidence, and proposals. The runtime also replays these tasks into
+  `local_agent_context`, workspace replay, workspace compact handoff, workspace
+  usage, and the OpenAI-compatible model prompt.
 - CLI context preview: `uv run structure context --workspace <id> --mode
   code_agent --json` materializes the same assembled Rust context used before
   model planning, without starting a run.
@@ -373,7 +375,8 @@ into runtime calls:
   Desktop `/tasks`, `/task`, `/task-status`, `/task-done`, and the Tasks action
   call `local_tasks`, `create_local_task`, and `update_local_task_status`,
   keeping agent work items as workspace/run-linked Structure events rather than
-  a desktop-only checklist.
+  a desktop-only checklist. Those same task records are rendered in Agent
+  Context, Session Compact, Session Usage, replay, and evidence-bundle views.
   Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
   showing progress as a derived view over immutable Structure planning/model/tool
   events rather than a desktop-only state machine.

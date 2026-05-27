@@ -17,6 +17,8 @@ struct DesktopSessionStatus {
     run_count: usize,
     artifact_count: usize,
     knowledge_source_count: usize,
+    task_count: usize,
+    active_task_count: usize,
     recent_event_count: usize,
     last_event_sequence: Option<i64>,
 }
@@ -40,6 +42,7 @@ fn local_session_status(
     let runs = runtime.list_runs(Some(&workspace_id), 1_000)?;
     let artifacts = runtime.list_artifacts(Some(&workspace_id), None, 1_000)?;
     let knowledge_sources = runtime.knowledge_sources(Some(&workspace_id), 1_000)?;
+    let tasks = runtime.list_tasks(Some(&workspace_id), None, 1_000)?;
     let replay = runtime.workspace_replay(Some(&workspace_id), 500)?;
 
     Ok(DesktopSessionStatus {
@@ -53,6 +56,11 @@ fn local_session_status(
         run_count: runs.len(),
         artifact_count: artifacts.len(),
         knowledge_source_count: knowledge_sources.len(),
+        task_count: tasks.len(),
+        active_task_count: tasks
+            .iter()
+            .filter(|task| matches!(task.status.as_str(), "todo" | "in_progress"))
+            .count(),
         recent_event_count: replay.events.len(),
         last_event_sequence: replay.last_sequence,
     })
@@ -880,6 +888,12 @@ mod tests {
             assert_eq!(task.run_id.as_deref(), Some(run.run.run_id.as_str()));
             assert_eq!(updated_task.status, "done");
             assert!(tasks.iter().any(|item| item.task_id == task.task_id));
+            assert!(replay.tasks.iter().any(|item| item.task_id == task.task_id));
+            assert!(workspace_compact.task_count >= 1);
+            assert!(workspace_compact.continuation_context.contains("Tasks:"));
+            assert!(workspace_usage.task_count >= 1);
+            assert_eq!(workspace_usage.active_task_count, 0);
+            assert!(workspace_usage.summary.contains("tasks"));
             assert_eq!(
                 proposal_review.artifact.artifact_id,
                 proposal_preview.artifact.artifact_id
@@ -973,6 +987,8 @@ mod tests {
             assert!(session_status.runtime_db.ends_with("structure.db"));
             assert!(session_status.run_count >= 3);
             assert!(session_status.artifact_count >= 3);
+            assert!(session_status.task_count >= 1);
+            assert_eq!(session_status.active_task_count, 0);
             assert!(session_status.recent_event_count > 0);
             assert!(session_status.last_event_sequence.is_some());
             assert!(!session_status.llm_config.configured);
@@ -1006,6 +1022,8 @@ mod tests {
 
         assert!(local_ui.contains("function renderEvidenceText(evidence)"));
         assert!(local_ui.contains("function renderAgentContextText(context)"));
+        assert!(local_ui.contains("Workspace Tasks"));
+        assert!(local_ui.contains("Tasks: ${tasks.length}"));
         assert!(local_ui.contains("id=\"show-context\""));
         assert!(local_ui.contains("setContextBusy(true)"));
         assert!(local_ui.contains("eventLogEl.textContent = renderAgentContextText(context);"));
@@ -1045,6 +1063,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_workspace_continue_attempt\""));
         assert!(local_ui.contains("id=\"session-usage\""));
         assert!(local_ui.contains("function renderWorkspaceUsageText(usage)"));
+        assert!(local_ui.contains("active_task_count"));
         assert!(local_ui.contains("case \"/session-usage\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_usage\""));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));

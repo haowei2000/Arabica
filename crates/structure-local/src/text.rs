@@ -947,6 +947,7 @@ pub(crate) fn print_agent_context(context: &LocalAgentContext) {
     );
     println!("  instr:     {}", context.agent_instructions.len());
     println!("  knowledge: {}", context.knowledge_sources.len());
+    println!("  tasks:     {}", context.tasks.len());
     println!("  turns:     {}", context.recent_turns.len());
     println!("  limit:     {}", context.context_replay_limit);
     if !context.agent_instructions.is_empty() {
@@ -962,6 +963,15 @@ pub(crate) fn print_agent_context(context: &LocalAgentContext) {
         println!("  sources:");
         for source in &context.knowledge_sources {
             println!("    {}  {}", source.title, source.path);
+        }
+    }
+    if !context.tasks.is_empty() {
+        println!("  tasks:");
+        for task in context.tasks.iter().take(8) {
+            println!(
+                "    {}  {}  {}  {}",
+                task.task_id, task.status, task.priority, task.title
+            );
         }
     }
     if !context.recent_turns.is_empty() {
@@ -1094,6 +1104,7 @@ pub(crate) fn print_workspace_replay(replay: &WorkspaceReplay) {
     println!("  events:    {}", replay.events.len());
     println!("  runs:      {}", replay.runs.len());
     println!("  knowledge: {}", replay.knowledge_sources.len());
+    println!("  tasks:     {}", replay.tasks.len());
     println!("  artifacts: {}", replay.artifacts.len());
     if let Some(sequence) = replay.last_sequence {
         println!("  last seq:  {sequence}");
@@ -1118,6 +1129,10 @@ pub(crate) fn print_workspace_compact(compact: &WorkspaceCompact) {
     println!("  events:    {}", compact.event_count);
     println!("  runs:      {}", compact.run_count);
     println!("  knowledge: {}", compact.knowledge_source_count);
+    println!(
+        "  tasks:     {} ({} active)",
+        compact.task_count, compact.active_task_count
+    );
     println!("  artifacts: {}", compact.artifact_count);
     println!(
         "  core:      {}",
@@ -1171,6 +1186,10 @@ pub(crate) fn print_workspace_usage(usage: &WorkspaceUsageSummary) {
     println!("  tools:     {}", usage.tool_call_count);
     println!("  artifacts: {}", usage.artifact_count);
     println!("  knowledge: {}", usage.knowledge_source_count);
+    println!(
+        "  tasks:     {} ({} active)",
+        usage.task_count, usage.active_task_count
+    );
     println!(
         "  core:      {}",
         if usage.core_aligned {
@@ -1267,6 +1286,7 @@ pub(crate) fn print_local_evidence_bundle(bundle: &LocalEvidenceBundle) {
         "  artifacts:    {}",
         bundle.workspace_replay.artifacts.len()
     );
+    println!("  tasks:        {}", bundle.workspace_replay.tasks.len());
     println!("  run evidence: {}", bundle.run_evidence.len());
 }
 
