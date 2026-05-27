@@ -1286,6 +1286,11 @@
         return invoke("local_run_tool_trace", { runId });
       }
 
+      async function localRunCoreTrace(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_core_trace", { runId });
+      }
+
       async function localRunTranscript(runId) {
         if (!invoke) return null;
         return invoke("local_run_transcript", { runId });
@@ -2386,6 +2391,24 @@ ${trace.map((entry) => {
         }).join("\n\n")}`;
       }
 
+      function renderCoreTraceText(trace) {
+        if (!trace) return "Structure Core trace unavailable.";
+        const steps = trace.steps ?? [];
+        return `Structure Core Trace
+Run: ${trace.run?.run_id ?? "unknown"}
+Workspace: ${trace.run?.workspace_id ?? "unknown"}
+Status: ${trace.run?.status ?? "unknown"}
+Schema: ${trace.manifest_schema_version ?? "unknown"}
+Core: ${trace.core_aligned ? "aligned" : "drift"}
+Events: ${trace.event_count ?? steps.length}
+Flow Path: ${(trace.flow_path ?? []).join(" -> ") || "none"}
+Primitive Path: ${(trace.primitive_path ?? []).join(" -> ") || "none"}
+
+Steps
+${steps.map((step) => `#${step.sequence} ${step.kind} / ${step.canonical_flow_id} / ${step.primitive_id}
+  ${step.payload_summary}`).join("\n") || "No steps recorded."}`;
+      }
+
       function compactJson(value) {
         const raw = JSON.stringify(value ?? null);
         return raw.length > 800 ? `${raw.slice(0, 800)}...` : raw;
@@ -2539,6 +2562,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /events [run_id]
 /gc [run_id] [retain_last]
 /tools [run_id]
+/trace [run_id]
 /evidence [run_id]
 /usage [run_id]
 /source <absolute-path>
@@ -2714,6 +2738,17 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
             }
             const trace = await localRunToolTrace(runId);
             eventLogEl.textContent = renderToolTraceText(trace);
+            return true;
+          }
+          case "/trace":
+          case "/core-trace": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const trace = await localRunCoreTrace(runId);
+            eventLogEl.textContent = renderCoreTraceText(trace);
             return true;
           }
           case "/evidence": {

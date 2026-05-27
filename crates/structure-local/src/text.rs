@@ -4,9 +4,9 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalToolTraceEntry, RunAttempt,
-    RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
+    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalToolTraceEntry,
+    RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -648,6 +648,53 @@ pub(crate) fn print_tool_trace(trace: &[LocalToolTraceEntry]) {
         }
         if let Some(error) = &entry.error {
             println!("    error:  {error}");
+        }
+    }
+}
+
+pub(crate) fn print_run_core_trace(trace: &LocalRunCoreTrace) {
+    println!("Structure core trace");
+    println!("  run:       {}", trace.run.run_id);
+    println!("  workspace: {}", trace.run.workspace_id);
+    println!("  status:    {}", trace.run.status);
+    println!("  schema:    {}", trace.manifest_schema_version);
+    println!(
+        "  core:      {}",
+        if trace.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        }
+    );
+    println!("  events:    {}", trace.event_count);
+    println!(
+        "  flow path: {}",
+        if trace.flow_path.is_empty() {
+            "none".to_string()
+        } else {
+            trace.flow_path.join(" -> ")
+        }
+    );
+    println!(
+        "  primitive path: {}",
+        if trace.primitive_path.is_empty() {
+            "none".to_string()
+        } else {
+            trace.primitive_path.join(" -> ")
+        }
+    );
+    if !trace.steps.is_empty() {
+        println!();
+        println!("Steps");
+        for step in &trace.steps {
+            println!(
+                "  #{:<4} {:<26} {:<10} {:<22} {}",
+                step.sequence,
+                step.kind,
+                step.canonical_flow_id,
+                step.primitive_id,
+                step.payload_summary
+            );
         }
     }
 }

@@ -333,6 +333,26 @@ pub struct CoreExecutionTrace {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunCoreTrace {
+    pub run: RunSummary,
+    pub manifest_schema_version: String,
+    pub core_aligned: bool,
+    pub event_count: usize,
+    pub flow_path: Vec<String>,
+    pub primitive_path: Vec<String>,
+    pub steps: Vec<LocalRunCoreTraceStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunCoreTraceStep {
+    pub sequence: i64,
+    pub kind: String,
+    pub canonical_flow_id: String,
+    pub primitive_id: String,
+    pub payload_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunTranscript {
     pub run: RunSummary,
     pub chat_turn: Option<ChatTurn>,

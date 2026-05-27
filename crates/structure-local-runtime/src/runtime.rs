@@ -6,11 +6,11 @@ use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
-    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall,
-    LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
-    RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
-    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange,
-    WorktreeSnapshot,
+    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCoreTrace,
+    LocalRunCoreTraceStep, LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage,
+    ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary,
+    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
+    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -617,6 +617,13 @@ impl LocalAgentRuntime {
     pub fn run_tool_trace(&self, run_id: &str) -> Result<Vec<LocalToolTraceEntry>, String> {
         let events = self.run_events(run_id)?;
         Ok(tool_trace_from_events(&events))
+    }
+
+    pub fn run_core_trace(&self, run_id: &str) -> Result<LocalRunCoreTrace, String> {
+        let run = self.run_by_id(run_id)?;
+        let events = self.run_events(run_id)?;
+        let core_trace = build_core_execution_trace(&events)?;
+        Ok(core_trace_from_events(run, &events, core_trace))
     }
 
     pub fn run_evidence_summary(&self, run_id: &str) -> Result<RunEvidenceSummary, String> {
@@ -1459,6 +1466,177 @@ fn event_gc_summary_from_parts(
         filtered_event_count: filtered_events.len(),
         retained_sequences: retained_events.iter().map(|event| event.sequence).collect(),
         filtered_sequences: filtered_events.iter().map(|event| event.sequence).collect(),
+    }
+}
+
+fn core_trace_from_events(
+    run: RunSummary,
+    events: &[crate::types::LocalEvent],
+    core_trace: CoreExecutionTrace,
+) -> LocalRunCoreTrace {
+    let mut flow_path = Vec::new();
+    let mut primitive_path = Vec::new();
+    let steps = events
+        .iter()
+        .map(|event| {
+            push_changed_string(&mut flow_path, &event.canonical_flow_id);
+            push_changed_string(&mut primitive_path, &event.primitive_id);
+            LocalRunCoreTraceStep {
+                sequence: event.sequence,
+                kind: event.kind.clone(),
+                canonical_flow_id: event.canonical_flow_id.clone(),
+                primitive_id: event.primitive_id.clone(),
+                payload_summary: event_payload_summary(event),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    LocalRunCoreTrace {
+        run,
+        manifest_schema_version: core_trace.manifest_schema_version,
+        core_aligned: core_trace.core_aligned,
+        event_count: events.len(),
+        flow_path,
+        primitive_path,
+        steps,
+    }
+}
+
+fn push_changed_string(values: &mut Vec<String>, value: &str) {
+    if values.last().is_none_or(|existing| existing != value) {
+        values.push(value.to_string());
+    }
+}
+
+fn event_payload_summary(event: &crate::types::LocalEvent) -> String {
+    match event.kind.as_str() {
+        "workspace_opened" => format!("workspace {}", event.workspace_id),
+        "run_created" | "prompt_received" => event
+            .payload
+            .get("prompt")
+            .and_then(|value| value.as_str())
+            .map(|prompt| compact_summary(prompt, 96))
+            .unwrap_or_else(|| "prompt recorded".to_string()),
+        "chat_message_recorded" => event
+            .payload
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or("chat")
+            .to_string(),
+        "workspace_context_loaded" => format!(
+            "mode={} instructions={} knowledge={} turns={}",
+            json_str(&event.payload, "mode", "unknown"),
+            json_u64(&event.payload, "agent_instruction_count"),
+            json_u64(&event.payload, "knowledge_sources"),
+            json_u64(&event.payload, "recent_turns")
+        ),
+        "knowledge_retrieved" => format!(
+            "{} knowledge source(s)",
+            event
+                .payload
+                .get("sources")
+                .and_then(|value| value.as_array())
+                .map(|sources| sources.len())
+                .unwrap_or_default()
+        ),
+        "agent_step_planned" => format!(
+            "phase={} tool_calls={} refs={}",
+            json_str(&event.payload, "phase", "planning"),
+            json_u64(&event.payload, "tool_call_count"),
+            event
+                .payload
+                .get("prompt_references")
+                .and_then(|value| value.as_array())
+                .map(|refs| refs.len())
+                .unwrap_or_default()
+        ),
+        "model_requested" => format!(
+            "phase={} provider={} model={}",
+            json_str(&event.payload, "phase", "unknown"),
+            json_str(&event.payload, "provider", "unknown"),
+            json_str(&event.payload, "model", "unknown")
+        ),
+        "model_responded" => format!(
+            "phase={} chars={}",
+            json_str(&event.payload, "phase", "unknown"),
+            json_u64(&event.payload, "response_chars")
+        ),
+        "tool_call_requested" => format!(
+            "{} {}",
+            json_str(&event.payload, "name", "tool"),
+            json_str(&event.payload, "call_id", "")
+        )
+        .trim()
+        .to_string(),
+        "tool_call_completed" => format!(
+            "{} {} {}",
+            json_str(&event.payload, "name", "tool"),
+            json_str(&event.payload, "call_id", ""),
+            if event
+                .payload
+                .get("success")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                "ok"
+            } else {
+                "failed"
+            }
+        )
+        .trim()
+        .to_string(),
+        "artifact_written" | "code_change_proposed" => {
+            json_str(&event.payload, "path", "artifact").to_string()
+        }
+        "code_change_applied" => format!(
+            "{} {}",
+            json_str(&event.payload, "target_path", "proposal"),
+            if event
+                .payload
+                .get("dry_run")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                "dry-run"
+            } else {
+                "applied"
+            }
+        ),
+        "source_rated" => format!(
+            "{} {}/5",
+            json_str(&event.payload, "source_title", "source"),
+            json_u64(&event.payload, "rating")
+        ),
+        "run_finished" => "terminal finished".to_string(),
+        "run_failed" => event
+            .payload
+            .get("error")
+            .and_then(|value| value.as_str())
+            .map(|error| compact_summary(error, 120))
+            .unwrap_or_else(|| "terminal failed".to_string()),
+        _ => compact_summary(&event.payload.to_string(), 120),
+    }
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, key: &str, fallback: &'a str) -> &'a str {
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .unwrap_or(fallback)
+}
+
+fn json_u64(value: &serde_json::Value, key: &str) -> u64 {
+    value
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default()
+}
+
+fn compact_summary(value: &str, max_chars: usize) -> String {
+    if value.chars().count() > max_chars {
+        format!("{}...", value.chars().take(max_chars).collect::<String>())
+    } else {
+        value.to_string()
     }
 }
 
@@ -2555,6 +2733,41 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_summarizes_core_trace_path_from_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("core-trace");
+        fs::write(root.join("trace.md"), "core trace context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Read @trace.md and summarize the Structure Core trace.".to_string(),
+                workspace_id: Some("trace".to_string()),
+                mode: Some(LocalAgentMode::CodeAgent),
+            })
+            .unwrap();
+
+        let trace = runtime.run_core_trace(&result.run.run_id).unwrap();
+
+        assert_eq!(trace.run.run_id, result.run.run_id);
+        assert_eq!(trace.manifest_schema_version, "2026.05");
+        assert!(trace.core_aligned);
+        assert_eq!(trace.event_count, trace.steps.len());
+        assert!(trace.flow_path.contains(&"goal".to_string()));
+        assert!(trace.flow_path.contains(&"event".to_string()));
+        assert!(trace.flow_path.contains(&"evidence".to_string()));
+        assert!(trace.primitive_path.contains(&"event_audit".to_string()));
+        assert!(trace
+            .steps
+            .iter()
+            .any(|step| step.kind == "workspace_context_loaded"
+                && step.payload_summary.contains("instructions=")));
+        assert!(trace.steps.iter().any(|step| step.kind == "run_finished"
+            && step.payload_summary.contains("terminal finished")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_remembers_text_as_workspace_knowledge() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("remember-text");
@@ -3421,7 +3634,7 @@ User-facing follow-up.\n\n\
             run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
+            RunsCommand::Events RunsCommand::Trace RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -3437,7 +3650,7 @@ User-facing follow-up.\n\n\
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}
             fn remove_local_knowledge() {} remove_local_knowledge,
-            fn local_run_transcript() {} fn local_run_events() {}
+            fn local_run_transcript() {} fn local_run_events() {} fn local_run_core_trace() {}
             fn local_workspace_event_feed() {} local_workspace_event_feed,
             fn local_workspace_replay() {} local_workspace_replay,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,

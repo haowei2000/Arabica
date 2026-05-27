@@ -275,6 +275,14 @@ fn local_run_tool_trace(
 }
 
 #[tauri::command]
+fn local_run_core_trace(
+    run_id: String,
+) -> Result<structure_local_runtime::LocalRunCoreTrace, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_core_trace(&run_id)
+}
+
+#[tauri::command]
 fn local_run_transcript(run_id: String) -> Result<structure_local_runtime::RunTranscript, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_transcript(&run_id)
@@ -451,6 +459,7 @@ pub fn run() {
             local_run_evidence,
             local_run_event_gc,
             local_run_tool_trace,
+            local_run_core_trace,
             local_run_transcript,
             local_workspace_replay,
             local_workspace_event_feed,
@@ -647,6 +656,15 @@ mod tests {
             assert!(tool_trace
                 .iter()
                 .any(|entry| entry.completed_sequence.is_some()));
+            let core_trace = local_run_core_trace(run.run.run_id.clone())?;
+            assert_eq!(core_trace.run.run_id, run.run.run_id);
+            assert!(core_trace.core_aligned);
+            assert_eq!(core_trace.manifest_schema_version, "2026.05");
+            assert!(core_trace.flow_path.contains(&"goal".to_string()));
+            assert!(core_trace
+                .steps
+                .iter()
+                .any(|step| step.primitive_id == "reproducible_evidence"));
             assert_eq!(attempt.run.status, "finished");
             assert!(attempt.result.is_some());
             assert!(attempt.error.is_none());
@@ -776,6 +794,9 @@ mod tests {
         assert!(local_ui.contains("case \"/gc\":"));
         assert!(local_ui.contains("function renderToolTraceText(trace)"));
         assert!(local_ui.contains("case \"/tools\":"));
+        assert!(local_ui.contains("function renderCoreTraceText(trace)"));
+        assert!(local_ui.contains("case \"/trace\":"));
+        assert!(local_ui.contains("invoke(\"local_run_core_trace\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("case \"/diff\":"));

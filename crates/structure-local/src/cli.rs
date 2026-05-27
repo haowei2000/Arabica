@@ -2,8 +2,8 @@ use crate::text::{
     print_agent_context, print_artifact_preview, print_artifacts, print_core_capabilities,
     print_core_manifest, print_event_gc_preview, print_events, print_knowledge_preview,
     print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
-    print_model_usage_summary, print_run_attempt, print_run_evidence_summary, print_run_summary,
-    print_run_transcript, print_runs, print_snapshot, print_source_rating,
+    print_model_usage_summary, print_run_attempt, print_run_core_trace, print_run_evidence_summary,
+    print_run_summary, print_run_transcript, print_runs, print_snapshot, print_source_rating,
     print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
     print_workspace_event_feed, print_workspace_replay, print_workspaces, print_worktree_snapshot,
 };
@@ -167,6 +167,7 @@ enum RunsCommand {
     List(ListRunsArgs),
     Show(ShowRunArgs),
     Events(RunEventsArgs),
+    Trace(RunTraceArgs),
     Evidence(RunEvidenceArgs),
     Transcript(RunTranscriptArgs),
     Inspect(RunTranscriptArgs),
@@ -200,6 +201,13 @@ struct ShowRunArgs {
 
 #[derive(Debug, Args)]
 struct RunEventsArgs {
+    run_id: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RunTraceArgs {
     run_id: String,
     #[arg(long)]
     json: bool,
@@ -1059,6 +1067,19 @@ fn handle_chat_session_command(
             print_tool_trace(&trace);
             Ok(true)
         }
+        "/trace" | "/core-trace" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /trace <run_id>.");
+                return Ok(true);
+            };
+            let trace = local_result(runtime.run_core_trace(&run_id))?;
+            print_run_core_trace(&trace);
+            Ok(true)
+        }
         "/evidence" => {
             let run_id = parts
                 .next()
@@ -1306,6 +1327,7 @@ fn print_chat_session_help() {
     println!("  /events [run_id]      Show event stream for a run");
     println!("  /gc [run_id] [n]      Preview non-destructive event retention");
     println!("  /tools [run_id]       Show paired local tool calls and results");
+    println!("  /trace [run_id]       Show Structure Core flow/primitive execution path");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /usage [run_id]       Show model requests, network calls, and token usage");
     println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
@@ -1320,7 +1342,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /trace, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1606,6 +1628,14 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&events)?);
             } else {
                 print_events(&events);
+            }
+        }
+        RunsCommand::Trace(args) => {
+            let trace = local_result(runtime.run_core_trace(&args.run_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&trace)?);
+            } else {
+                print_run_core_trace(&trace);
             }
         }
         RunsCommand::Evidence(args) => {
@@ -2039,6 +2069,7 @@ mod tests {
         assert!(summary.contains("/events"));
         assert!(summary.contains("/gc"));
         assert!(summary.contains("/tools"));
+        assert!(summary.contains("/trace"));
         assert!(summary.contains("/diff"));
         assert!(summary.contains("/dry-run"));
         assert!(!summary.contains("benchmark"));
