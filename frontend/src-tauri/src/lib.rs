@@ -1236,8 +1236,11 @@ mod tests {
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
         assert!(local_ui.contains("tools.textContent = \"Tools\""));
         assert!(local_ui.contains("rerunRun.textContent = \"Rerun\""));
+        assert!(local_ui.contains("const commandInput = `Rerun ${turn.run_id}`"));
         assert!(local_ui.contains("await performPromptRun(turn.user_message"));
         assert!(local_ui.contains("heading: \"History Rerun\""));
+        assert!(local_ui.contains("appendCommandMessage("));
+        assert!(local_ui.contains("attempt.result ? \"ok\" : \"error\""));
         assert!(
             local_ui.contains("previewRunStatusForRun(turn.run_id, `/run-status ${turn.run_id}`)")
         );

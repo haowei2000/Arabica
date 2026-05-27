@@ -416,7 +416,8 @@ into runtime calls:
   events rather than a frontend-only draft list. Desktop `/rerun [n]` uses
   those persisted `local_chat_turns` as fresh `local_agent_run_attempt` input,
   and each persisted chat/code-agent turn exposes a visible Rerun action that
-  feeds the same turn prompt back into `local_agent_run_attempt`. That matches
+  feeds the same turn prompt back into `local_agent_run_attempt` and records
+  the visible action as a `command_turn_recorded` workspace event. That matches
   CLI `/rerun` and TUI `N` without introducing a desktop-only history model.
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`

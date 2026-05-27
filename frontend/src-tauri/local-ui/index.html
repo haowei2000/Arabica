@@ -2151,14 +2151,21 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
           rerunRun.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
+            const commandInput = `Rerun ${turn.run_id}`;
             setAgentBusy(true);
             try {
-              await performPromptRun(turn.user_message, {
+              const attempt = await performPromptRun(turn.user_message, {
                 label: `Rerun ${turn.run_id}: ${turn.user_message}`,
                 heading: "History Rerun",
               });
+              appendCommandMessage(
+                commandInput,
+                eventLogEl.textContent || `Reran ${turn.run_id}.`,
+                attempt.result ? "ok" : "error",
+              );
             } catch (error) {
               eventLogEl.textContent = String(error);
+              appendCommandMessage(commandInput, eventLogEl.textContent, "error");
               setInFlightRun(`Rerun ${turn.run_id}`, "failed", String(error));
             } finally {
               stopLiveEventPolling();
