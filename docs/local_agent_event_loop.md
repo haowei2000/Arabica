@@ -349,7 +349,10 @@ into runtime calls:
   `/checkpoint` and desktop `/checkpoint`. `?` opens a command map grouped by
   run loop, workspace context, run evidence, session, and proposal actions, so
   the TUI presents a Codex/OpenCode-style agent console rather than a flat
-  dashboard. `A` previews the assembled
+  dashboard. The inspect actions `?`, `A`, and `H` are also persisted through
+  `LocalAgentRuntime::record_command_turn` as `command_turn_recorded` workspace
+  events, so TUI navigation has the same durable command audit trail as CLI and
+  desktop chat interactions. `A` previews the assembled
   `LocalAgentContext` without starting a run, showing the same AGENTS.md,
   worktree, knowledge, source-rating, task, and recent-turn context that CLI
   `/context` and desktop Agent Context materialize before planning. `H` opens a

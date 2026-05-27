@@ -165,6 +165,24 @@ impl TuiState {
         Ok(())
     }
 
+    fn record_command_turn(
+        &self,
+        repo_root: &Path,
+        input: &str,
+        status: &str,
+        output: &str,
+    ) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        local_result(runtime.record_command_turn(
+            Some(&self.active_workspace_id),
+            input,
+            output,
+            status,
+            "tui",
+        ))?;
+        Ok(())
+    }
+
     fn begin_input(&mut self, kind: TuiInputKind) {
         self.input = Some(TuiInput {
             kind,
@@ -408,10 +426,11 @@ impl TuiState {
             Some(&self.active_workspace_id),
             Some(self.agent_mode.clone()),
         ))?;
+        let text = render_agent_context(&context);
         self.pending_apply_artifact_id = None;
         self.preview = Some(TuiPreview {
             path: format!("agent context / {}", context.workspace_id),
-            text: render_agent_context(&context),
+            text: text.clone(),
         });
         self.notice = format!(
             "Agent context: {} instructions, {} sources, {} tasks, {} turns",
@@ -420,6 +439,7 @@ impl TuiState {
             context.tasks.len(),
             context.recent_turns.len()
         );
+        self.record_command_turn(repo_root, "A context", "ok", &text)?;
         Ok(())
     }
 
@@ -433,10 +453,11 @@ impl TuiState {
             Some(self.agent_mode.clone()),
         ))?;
         self.snapshot = snapshot.clone();
+        let text = render_local_doctor(&snapshot, &diagnostic, &parity, &context);
         self.pending_apply_artifact_id = None;
         self.preview = Some(TuiPreview {
             path: format!("local doctor / {}", context.workspace_id),
-            text: render_local_doctor(&snapshot, &diagnostic, &parity, &context),
+            text: text.clone(),
         });
         self.notice = format!(
             "Doctor: llm={} parity={} context={} sources/{} tasks",
@@ -445,17 +466,20 @@ impl TuiState {
             context.knowledge_sources.len(),
             context.tasks.len()
         );
+        self.record_command_turn(repo_root, "H doctor", "ok", &text)?;
         Ok(())
     }
 
-    fn preview_command_map(&mut self) {
+    fn preview_command_map(&mut self, repo_root: &Path) -> Result<()> {
         let text = render_tui_command_map(self);
         self.pending_apply_artifact_id = None;
         self.preview = Some(TuiPreview {
             path: format!("tui command map / {}", self.active_workspace_id),
-            text,
+            text: text.clone(),
         });
         self.notice = "Command map: Structure runtime actions grouped by agent loop".to_string();
+        self.record_command_turn(repo_root, "? map", "ok", &text)?;
+        Ok(())
     }
 
     fn run_local_command(&mut self, repo_root: &Path, command: String) -> Result<()> {
@@ -971,7 +995,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
-                    KeyCode::Char('?') => state.preview_command_map(),
+                    KeyCode::Char('?') => state.preview_command_map(repo_root)?,
                     KeyCode::Char('A') => state.preview_agent_context(repo_root)?,
                     KeyCode::Char('H') => state.preview_local_doctor(repo_root)?,
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
@@ -1563,7 +1587,7 @@ fn render_tui_command_map(state: &TuiState) -> String {
 
     text.push_str("Invariant\n");
     text.push_str(
-        "Every agent action above calls structure-local-runtime and writes or reads Structure Core-aligned events. Benchmark adapters stay outside this TUI surface.\n",
+        "Every agent action above calls structure-local-runtime and writes or reads Structure Core-aligned events; inspect actions record command_turn_recorded workspace events. Benchmark adapters stay outside this TUI surface.\n",
     );
     text
 }
@@ -2777,7 +2801,7 @@ mod tests {
             artifacts: Vec::new(),
         });
 
-        state.preview_command_map();
+        state.preview_command_map(&root).unwrap();
 
         assert!(state.notice.contains("Command map"));
         let preview = state.preview.as_ref().expect("command map preview");
@@ -2799,7 +2823,15 @@ mod tests {
         assert!(preview.text.contains("Session And Proposals"));
         assert!(preview
             .text
+            .contains("command_turn_recorded workspace events"));
+        assert!(preview
+            .text
             .contains("Benchmark adapters stay outside this TUI surface"));
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let turns = runtime.command_turns(Some("tui-map"), 10).unwrap();
+        assert!(turns
+            .iter()
+            .any(|turn| turn.input == "? map" && turn.surface == "tui"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2848,6 +2880,10 @@ mod tests {
 
             let runtime = local_result(LocalAgentRuntime::open(&root))?;
             assert!(local_result(runtime.list_runs(Some("tui-context"), 1))?.is_empty());
+            let turns = local_result(runtime.command_turns(Some("tui-context"), 10))?;
+            assert!(turns
+                .iter()
+                .any(|turn| turn.input == "A context" && turn.surface == "tui"));
             Ok(())
         })();
 
@@ -2903,6 +2939,10 @@ mod tests {
 
             let runtime = local_result(LocalAgentRuntime::open(&root))?;
             assert!(local_result(runtime.list_runs(Some("tui-doctor"), 1))?.is_empty());
+            let turns = local_result(runtime.command_turns(Some("tui-doctor"), 10))?;
+            assert!(turns
+                .iter()
+                .any(|turn| turn.input == "H doctor" && turn.surface == "tui"));
             Ok(())
         })();
 
