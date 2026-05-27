@@ -53,6 +53,7 @@ enum Command {
     Chat(ChatArgs),
     Run(RunArgs),
     Continue(ContinueArgs),
+    Retry(RetryArgs),
     Runs {
         #[command(subcommand)]
         command: RunsCommand,
@@ -179,6 +180,15 @@ struct ContinueArgs {
     run_id: String,
     #[arg(value_name = "instruction")]
     instruction: Vec<String>,
+    #[arg(long, value_name = "chat|code_agent")]
+    mode: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RetryArgs {
+    run_id: String,
     #[arg(long, value_name = "chat|code_agent")]
     mode: Option<String>,
     #[arg(long)]
@@ -456,6 +466,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Chat(args) => run_chat_agent(&repo_root, args)?,
         Command::Run(args) => run_local_agent(&repo_root, args)?,
         Command::Continue(args) => run_continue_agent(&repo_root, args)?,
+        Command::Retry(args) => run_retry_agent(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
         Command::Workspace { command } => run_workspace(&repo_root, command)?,
         Command::Knowledge { command } => run_knowledge(&repo_root, command)?,
@@ -652,6 +663,29 @@ fn run_continue_agent(repo_root: &PathBuf, args: ContinueArgs) -> Result<()> {
     let request = ContinuationRequest {
         run_id: transcript.run.run_id.clone(),
         extra_instruction: (!instruction.is_empty()).then_some(instruction),
+        mode: Some(mode),
+    };
+    let workspace_id = transcript.run.workspace_id;
+    let attempt = if args.json {
+        local_result(runtime.run_continuation_attempt(request))?
+    } else {
+        run_continuation_with_live_events(repo_root, workspace_id, request)?
+    };
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&attempt)?);
+    } else {
+        print_run_attempt(&attempt);
+    }
+    attempt_error(&attempt)
+}
+
+fn run_retry_agent(repo_root: &PathBuf, args: RetryArgs) -> Result<()> {
+    let mode = parse_agent_mode(args.mode.as_deref(), false)?;
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let transcript = local_result(runtime.run_transcript(&args.run_id))?;
+    let request = ContinuationRequest {
+        run_id: transcript.run.run_id.clone(),
+        extra_instruction: Some(retry_instruction().to_string()),
         mode: Some(mode),
     };
     let workspace_id = transcript.run.workspace_id;
@@ -1105,6 +1139,19 @@ fn handle_chat_session_command(
             run_continuation_from_session(runtime, repo_root, json, state, command_body)?;
             Ok(true)
         }
+        "/retry" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /retry <run_id>.");
+                return Ok(true);
+            };
+            let body = format!("{run_id} {}", retry_instruction());
+            run_continuation_from_session(runtime, repo_root, json, state, &body)?;
+            Ok(true)
+        }
         "/events" => {
             let run_id = parts
                 .next()
@@ -1358,6 +1405,10 @@ fn run_continuation_from_session(
     Ok(())
 }
 
+fn retry_instruction() -> &'static str {
+    "Retry the previous request as a fresh Structure local run. Use the persisted transcript, events, evidence, workspace context, and current repository state; do not mutate the old run."
+}
+
 fn parse_continuation_args(
     selected_run_id: Option<String>,
     command_body: &str,
@@ -1419,6 +1470,7 @@ fn print_chat_session_help() {
     println!("  /last                 Show the selected or latest run summary");
     println!("  /continue [run] [msg] Continue from a selected or explicit run");
     println!("  /resume [run] [msg]   Alias for /continue");
+    println!("  /retry [run_id]       Retry a selected or explicit run as a fresh run");
     println!("  /events [run_id]      Show event stream for a run");
     println!("  /gc [run_id] [n]      Preview non-destructive event retention");
     println!("  /tools [run_id]       Show paired local tool calls and results");
@@ -1438,7 +1490,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /trace, /review, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /trace, /review, /continue, /retry, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2217,6 +2269,26 @@ mod tests {
     }
 
     #[test]
+    fn cli_retry_command_accepts_run_mode_and_json() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "retry",
+            "run_1",
+            "--mode",
+            "code-agent",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Retry(args) = cli.command else {
+            panic!("expected retry command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert_eq!(args.mode.as_deref(), Some("code-agent"));
+        assert!(args.json);
+    }
+
+    #[test]
     fn cli_chat_session_summary_includes_worktree_command() {
         let summary = chat_session_command_summary();
 
@@ -2225,6 +2297,7 @@ mod tests {
         assert!(summary.contains("/doctor"));
         assert!(summary.contains("/context"));
         assert!(summary.contains("/continue"));
+        assert!(summary.contains("/retry"));
         assert!(summary.contains("/usage"));
         assert!(summary.contains("/remember"));
         assert!(summary.contains("/recall"));

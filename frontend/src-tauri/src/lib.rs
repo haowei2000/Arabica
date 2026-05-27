@@ -846,9 +846,12 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
         assert!(local_ui.contains("case \"/continue\":"));
         assert!(local_ui.contains("case \"/resume\":"));
+        assert!(local_ui.contains("case \"/retry\":"));
         assert!(local_ui.contains("continueLocalAgentAttempt"));
         assert!(local_ui.contains("function performContinuationRun"));
         assert!(local_ui.contains("continueRun.textContent = \"Continue\""));
+        assert!(local_ui.contains("retryRun.textContent = \"Retry\""));
+        assert!(local_ui.contains("function retryInstruction()"));
     }
 
     #[test]

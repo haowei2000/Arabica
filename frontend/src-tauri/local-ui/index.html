@@ -1902,6 +1902,23 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
               setAgentBusy(false);
             }
           });
+          const retryRun = document.createElement("button");
+          retryRun.type = "button";
+          retryRun.textContent = "Retry";
+          retryRun.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            setAgentBusy(true);
+            try {
+              await performContinuationRun(turn.run_id, retryInstruction());
+            } catch (error) {
+              eventLogEl.textContent = String(error);
+              setInFlightRun(`Retry ${turn.run_id}`, "failed", String(error));
+            } finally {
+              stopLiveEventPolling();
+              setAgentBusy(false);
+            }
+          });
           const proposal = document.createElement("button");
           proposal.type = "button";
           proposal.textContent = "Proposal";
@@ -1911,7 +1928,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, review, continueRun, proposal);
+          actions.append(meta, inspect, review, continueRun, retryRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2607,6 +2624,10 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         };
       }
 
+      function retryInstruction() {
+        return "Retry the previous request as a fresh Structure local run. Use the persisted transcript, events, evidence, workspace context, and current repository state; do not mutate the old run.";
+      }
+
       function renderDesktopCommandHelp() {
         eventLogEl.textContent = `Desktop Agent Commands
 /status
@@ -2621,6 +2642,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /last
 /continue [run_id] [instruction]
 /resume [run_id] [instruction]
+/retry [run_id]
 /transcript [run_id]
 /inspect [run_id]
 /events [run_id]
@@ -2750,6 +2772,21 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
             }
             try {
               await performContinuationRun(runId, extraInstruction);
+            } finally {
+              stopLiveEventPolling();
+            }
+            return true;
+          }
+          case "/retry": {
+            const runId = parts[0]?.startsWith("run_")
+              ? parts[0]
+              : state.selectedRunId ?? state.runs[0]?.run_id ?? null;
+            if (!runId) {
+              eventLogEl.textContent = "No run selected. Run a prompt or use /retry <run_id>.";
+              return true;
+            }
+            try {
+              await performContinuationRun(runId, retryInstruction());
             } finally {
               stopLiveEventPolling();
             }

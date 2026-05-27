@@ -212,6 +212,10 @@ into runtime calls:
   starts a new Structure local run from the selected run's transcript and
   evidence summary, preserving the event-sourced audit trail instead of editing
   an old run in place.
+  `uv run structure retry <run-id>` and interactive `/retry [run-id]` use the
+  same continuation request path with an explicit retry instruction, so a failed
+  or unsatisfactory run can be tried again as a new audited run while preserving
+  the old transcript and events.
   `/context` renders the same Rust-built context snapshot used before model
   planning: workspace id, mode, AGENTS instructions, git worktree, knowledge
   sources, and replayed assistant turns.
@@ -288,12 +292,15 @@ into runtime calls:
   In-flight chat bubbles consume that same feed to show the current live event
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
-  `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
+  `/runs`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
   `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/trace`, `/review`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
   run's transcript and evidence.
+  Desktop `/retry` and the per-turn Retry action use that same continuation
+  path with a retry instruction, keeping retry semantics explicit without
+  mutating the previous run.
   Desktop `/context` and the visible Agent Context action call the shared
   `local_agent_context` Tauri command so the app shows the same assembled
   context the CLI sees before a run starts.
@@ -318,7 +325,7 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/review/continue/proposal actions so chat
+  thread exposes per-turn inspect/review/continue/retry/proposal actions so chat
   history remains a navigable view over run evidence rather than a detached
   transcript.
   The per-turn Continue button uses the current composer text as an optional
