@@ -1276,6 +1276,11 @@
         return invoke("local_run_evidence", { runId });
       }
 
+      async function localRunEventGc(runId, retainLast = null) {
+        if (!invoke) return null;
+        return invoke("local_run_event_gc", { runId, retainLast });
+      }
+
       async function localRunTranscript(runId) {
         if (!invoke) return null;
         return invoke("local_run_transcript", { runId });
@@ -2281,6 +2286,7 @@ The original file was not deleted.`;
         const artifacts = evidence.artifacts ?? [];
         const artifactPaths = evidence.artifact_paths ?? [];
         const modelUsage = evidence.model_usage ?? {};
+        const eventGc = evidence.event_gc ?? {};
         const tokenLine = modelUsage.total_tokens > 0
           ? `Model tokens: ${modelUsage.prompt_tokens ?? 0} prompt / ${modelUsage.completion_tokens ?? 0} completion / ${modelUsage.total_tokens ?? 0} total\n`
           : "";
@@ -2296,6 +2302,7 @@ Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} 
 Prompt refs: ${promptReferences.length}
 Knowledge sources: ${knowledgeSources.length}
 Source ratings: ${sourceRatings.length}
+Event GC: ${eventGc.retained_event_count ?? 0} retained / ${eventGc.filtered_event_count ?? 0} filtered / ${eventGc.policy_id ?? "unknown"}
 Artifacts: ${artifactPaths.length}
 Response chars: ${evidence.final_response_chars}
 Flows: ${evidence.canonical_flow_ids?.join(", ") || "none"}
@@ -2333,6 +2340,34 @@ Model responses: ${modelUsage.model_response_count ?? 0}
 Tokens: ${modelUsage.prompt_tokens ?? 0} prompt / ${modelUsage.completion_tokens ?? 0} completion / ${modelUsage.total_tokens ?? 0} total
 Response chars: ${modelUsage.response_chars ?? 0}
 Core aligned: ${evidence.core_trace?.core_aligned ?? false} / ${evidence.core_trace?.manifest_schema_version ?? "unknown"}`;
+      }
+
+      function renderEventGcText(preview) {
+        if (!preview) return "Event GC preview unavailable.";
+        const summary = preview.summary ?? {};
+        const retained = preview.retained_events ?? [];
+        const filtered = preview.filtered_events ?? [];
+        const retainedRange = summarizeSequences(summary.retained_sequences ?? []);
+        const filteredRange = summarizeSequences(summary.filtered_sequences ?? []);
+        return `Event GC Preview
+Run: ${preview.run?.run_id ?? "unknown"}
+Workspace: ${preview.run?.workspace_id ?? "unknown"}
+Policy: ${summary.policy_id ?? "retain_last_n_events"}
+Retain last: ${summary.retain_last ?? 0}
+Retained: ${summary.retained_event_count ?? retained.length}
+Filtered: ${summary.filtered_event_count ?? filtered.length}
+Retained sequences: ${retainedRange}
+Filtered sequences: ${filteredRange}
+
+Retained Events
+${retained.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`).join("\n") || "No retained events."}`;
+      }
+
+      function summarizeSequences(sequences) {
+        if (!sequences.length) return "none";
+        const first = sequences[0];
+        const last = sequences[sequences.length - 1];
+        return first === last ? String(first) : `${first}..${last} (${sequences.length} events)`;
       }
 
       async function selectRun(run) {
@@ -2474,6 +2509,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /transcript [run_id]
 /inspect [run_id]
 /events [run_id]
+/gc [run_id] [retain_last]
 /evidence [run_id]
 /usage [run_id]
 /source <absolute-path>
@@ -2621,6 +2657,23 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
             renderEventTimeline(events, runId, true);
             eventLogEl.textContent = `Events
 ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`).join("\n")}`;
+            return true;
+          }
+          case "/gc": {
+            const first = parts[0];
+            const runId = first?.startsWith("run_")
+              ? first
+              : state.selectedRunId ?? state.runs[0]?.run_id ?? null;
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            const retainLast = parts.find((part) => /^\d+$/.test(part));
+            const preview = await localRunEventGc(
+              runId,
+              retainLast ? Number.parseInt(retainLast, 10) : null,
+            );
+            eventLogEl.textContent = renderEventGcText(preview);
             return true;
           }
           case "/evidence": {

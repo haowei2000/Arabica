@@ -3,9 +3,9 @@ use structure_local_core::{
     SurfaceParityReport,
 };
 use structure_local_runtime::{
-    ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
-    LocalEvent, LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary,
-    RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
+    LocalAgentContext, LocalEvent, LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult,
+    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
     WorktreeSnapshot,
 };
 
@@ -274,6 +274,12 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     println!("  refs:      {}", evidence.prompt_references.len());
     println!("  knowledge: {}", evidence.knowledge_sources.len());
     println!("  ratings:   {}", evidence.source_ratings.len());
+    println!(
+        "  event gc:  {} retained / {} filtered ({})",
+        evidence.event_gc.retained_event_count,
+        evidence.event_gc.filtered_event_count,
+        evidence.event_gc.policy_id
+    );
     println!("  response:  {} chars", evidence.final_response_chars);
     println!(
         "  core:      {} / schema {}",
@@ -438,6 +444,12 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
         transcript.evidence.knowledge_sources.len()
     );
     println!("  ratings:   {}", transcript.evidence.source_ratings.len());
+    println!(
+        "  event gc:  {} retained / {} filtered ({})",
+        transcript.evidence.event_gc.retained_event_count,
+        transcript.evidence.event_gc.filtered_event_count,
+        transcript.evidence.event_gc.policy_id
+    );
     println!("  artifacts: {}", transcript.evidence.artifact_paths.len());
     if !transcript.evidence.prompt_references.is_empty() {
         println!("  prompt refs:");
@@ -571,6 +583,47 @@ pub(crate) fn print_source_rating(rating: &SourceRating) {
     println!("  path:      {}", rating.source_path);
     if !rating.note.is_empty() {
         println!("  note:      {}", rating.note);
+    }
+}
+
+pub(crate) fn print_event_gc_preview(preview: &EventGcPreview) {
+    println!("Event GC preview");
+    println!("  run:       {}", preview.run.run_id);
+    println!("  workspace: {}", preview.run.workspace_id);
+    println!("  policy:    {}", preview.summary.policy_id);
+    println!("  retain:    last {} events", preview.summary.retain_last);
+    println!("  retained:  {}", preview.summary.retained_event_count);
+    println!("  filtered:  {}", preview.summary.filtered_event_count);
+    if !preview.summary.retained_sequences.is_empty() {
+        println!(
+            "  retained sequences: {}",
+            sequence_summary(&preview.summary.retained_sequences)
+        );
+    }
+    if !preview.summary.filtered_sequences.is_empty() {
+        println!(
+            "  filtered sequences: {}",
+            sequence_summary(&preview.summary.filtered_sequences)
+        );
+    }
+    if !preview.retained_events.is_empty() {
+        println!("  retained events:");
+        for event in &preview.retained_events {
+            println!(
+                "    #{:<4} {:<26} {:<10} {}",
+                event.sequence, event.kind, event.canonical_flow_id, event.primitive_id
+            );
+        }
+    }
+}
+
+fn sequence_summary(sequences: &[i64]) -> String {
+    match (sequences.first(), sequences.last()) {
+        (Some(first), Some(last)) if first != last => {
+            format!("{first}..{last} ({} events)", sequences.len())
+        }
+        (Some(only), _) => only.to_string(),
+        _ => "none".to_string(),
     }
 }
 

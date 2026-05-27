@@ -5,11 +5,12 @@ use crate::store::{new_id, now_ms, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
-    KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
-    LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage,
-    ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary,
-    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
-    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
+    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall,
+    LocalToolResult, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, RunAttempt,
+    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
+    SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange,
+    WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -21,6 +22,8 @@ use structure_local_core::{
     collect_snapshot, default_repo_root, structure_core_manifest,
     verify_structure_core_parity_for_repo,
 };
+
+pub const DEFAULT_EVENT_GC_RETAIN_LAST: usize = 24;
 
 #[derive(Debug, Clone)]
 pub struct RunRequest {
@@ -589,6 +592,28 @@ impl LocalAgentRuntime {
         self.store.run_events(run_id)
     }
 
+    pub fn run_event_gc_preview(
+        &self,
+        run_id: &str,
+        retain_last: Option<usize>,
+    ) -> Result<EventGcPreview, String> {
+        let run = self.run_by_id(run_id)?;
+        let events = self.run_events(run_id)?;
+        let retain_last = retain_last
+            .unwrap_or(DEFAULT_EVENT_GC_RETAIN_LAST)
+            .clamp(1, 1_000);
+        let split_at = events.len().saturating_sub(retain_last);
+        let filtered_events = events[..split_at].to_vec();
+        let retained_events = events[split_at..].to_vec();
+        let summary = event_gc_summary_from_parts(retain_last, &retained_events, &filtered_events);
+        Ok(EventGcPreview {
+            run,
+            summary,
+            retained_events,
+            filtered_events,
+        })
+    }
+
     pub fn run_evidence_summary(&self, run_id: &str) -> Result<RunEvidenceSummary, String> {
         let run = self.run_by_id(run_id)?;
         let events = self.run_events(run_id)?;
@@ -735,6 +760,7 @@ impl LocalAgentRuntime {
         }
 
         let core_trace = build_core_execution_trace(&events)?;
+        let event_gc = event_gc_summary_for_events(&events, DEFAULT_EVENT_GC_RETAIN_LAST);
         let final_response_chars = run
             .final_response
             .as_ref()
@@ -751,6 +777,7 @@ impl LocalAgentRuntime {
             prompt_references,
             knowledge_sources,
             source_ratings,
+            event_gc,
             artifact_paths,
             artifacts,
             event_kinds,
@@ -1404,6 +1431,30 @@ fn build_core_execution_trace(
         invalid_flow_ids,
         invalid_primitive_ids,
     })
+}
+
+fn event_gc_summary_for_events(
+    events: &[crate::types::LocalEvent],
+    retain_last: usize,
+) -> EventGcSummary {
+    let retain_last = retain_last.max(1);
+    let split_at = events.len().saturating_sub(retain_last);
+    event_gc_summary_from_parts(retain_last, &events[split_at..], &events[..split_at])
+}
+
+fn event_gc_summary_from_parts(
+    retain_last: usize,
+    retained_events: &[crate::types::LocalEvent],
+    filtered_events: &[crate::types::LocalEvent],
+) -> EventGcSummary {
+    EventGcSummary {
+        policy_id: "retain_last_n_events".to_string(),
+        retain_last,
+        retained_event_count: retained_events.len(),
+        filtered_event_count: filtered_events.len(),
+        retained_sequences: retained_events.iter().map(|event| event.sequence).collect(),
+        filtered_sequences: filtered_events.iter().map(|event| event.sequence).collect(),
+    }
 }
 
 const CONTINUATION_SNIPPET_MAX_CHARS: usize = 1_200;
@@ -2371,6 +2422,50 @@ mod tests {
             .canonical_flow_ids
             .contains(&"feedback".to_string()));
         assert!(evidence.core_trace.core_aligned);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_previews_event_gc_without_deleting_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("event-gc");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Inspect enough context to produce events.".to_string(),
+                workspace_id: Some("gc".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let before = runtime.run_events(&result.run.run_id).unwrap();
+        let preview = runtime
+            .run_event_gc_preview(&result.run.run_id, Some(4))
+            .unwrap();
+        let after = runtime.run_events(&result.run.run_id).unwrap();
+
+        assert_eq!(before.len(), after.len());
+        assert_eq!(preview.summary.policy_id, "retain_last_n_events");
+        assert_eq!(preview.summary.retain_last, 4);
+        assert_eq!(preview.summary.retained_event_count, 4);
+        assert_eq!(
+            preview.summary.filtered_event_count,
+            before.len().saturating_sub(4)
+        );
+        assert_eq!(preview.retained_events.len(), 4);
+        assert!(preview
+            .summary
+            .retained_sequences
+            .iter()
+            .all(|sequence| !preview.summary.filtered_sequences.contains(sequence)));
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        assert_eq!(evidence.event_gc.policy_id, "retain_last_n_events");
+        assert_eq!(evidence.event_gc.retain_last, DEFAULT_EVENT_GC_RETAIN_LAST);
+        assert_eq!(
+            evidence.event_gc.retained_event_count + evidence.event_gc.filtered_event_count,
+            evidence.event_count
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

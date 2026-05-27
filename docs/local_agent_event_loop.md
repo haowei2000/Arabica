@@ -202,6 +202,9 @@ into runtime calls:
   `RunEvidenceSummary`, so terminal sessions can inspect request counts,
   network-backed calls, token usage, and core alignment without opening the
   full transcript.
+  `/gc [run-id] [retain-last]` previews the event-level garbage-collection
+  visibility filter for a run. It reports retained and filtered event sequence
+  ranges without deleting or rewriting the underlying event store.
   `/doctor` combines the local session snapshot, the same `OPENAI__`
   diagnostic used by `/llm`, and the Structure Core parity verifier without
   starting an agent run.
@@ -253,7 +256,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/dry-run`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
@@ -262,6 +265,9 @@ into runtime calls:
   the app shows the same assembled context the CLI sees before a run starts.
   Desktop `/usage [run-id]` mirrors the CLI model-call shortcut and renders the
   same `model_usage` evidence summary from Rust.
+  Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
+  `local_run_event_gc` preview as the CLI, keeping event visibility policy
+  inspectable inside the app chat loop.
   Desktop `/doctor` mirrors CLI `/doctor`: it gathers `local_session_status`,
   `local_llm_diagnostic`, and `core_parity_report` through Tauri commands and
   renders the local health check inside the chat/code-agent loop.

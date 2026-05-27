@@ -1,11 +1,11 @@
 use crate::text::{
     print_agent_context, print_artifact_preview, print_artifacts, print_core_capabilities,
-    print_core_manifest, print_events, print_knowledge_preview, print_knowledge_source,
-    print_knowledge_sources, print_local_evidence_bundle, print_model_usage_summary,
-    print_run_attempt, print_run_evidence_summary, print_run_summary, print_run_transcript,
-    print_runs, print_snapshot, print_source_rating, print_surface_parity_report, print_surfaces,
-    print_workspace, print_workspace_event_feed, print_workspace_replay, print_workspaces,
-    print_worktree_snapshot,
+    print_core_manifest, print_event_gc_preview, print_events, print_knowledge_preview,
+    print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
+    print_model_usage_summary, print_run_attempt, print_run_evidence_summary, print_run_summary,
+    print_run_transcript, print_runs, print_snapshot, print_source_rating,
+    print_surface_parity_report, print_surfaces, print_workspace, print_workspace_event_feed,
+    print_workspace_replay, print_workspaces, print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -1028,6 +1028,24 @@ fn handle_chat_session_command(
             print_events(&events);
             Ok(true)
         }
+        "/gc" => {
+            let args = parts.collect::<Vec<_>>();
+            let (run_id, retain_last) = match args.as_slice() {
+                [first, rest @ ..] if first.starts_with("run_") => (
+                    Some((*first).to_string()),
+                    rest.first().and_then(|value| value.parse::<usize>().ok()),
+                ),
+                [first, ..] => (state.last_run_id.clone(), first.parse::<usize>().ok()),
+                [] => (state.last_run_id.clone(), None),
+            };
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /gc <run_id> [retain_last].");
+                return Ok(true);
+            };
+            let preview = local_result(runtime.run_event_gc_preview(&run_id, retain_last))?;
+            print_event_gc_preview(&preview);
+            Ok(true)
+        }
         "/evidence" => {
             let run_id = parts
                 .next()
@@ -1273,6 +1291,7 @@ fn print_chat_session_help() {
     println!("  /continue [run] [msg] Continue from a selected or explicit run");
     println!("  /resume [run] [msg]   Alias for /continue");
     println!("  /events [run_id]      Show event stream for a run");
+    println!("  /gc [run_id] [n]      Preview non-destructive event retention");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /usage [run_id]       Show model requests, network calls, and token usage");
     println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
@@ -1287,7 +1306,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2004,6 +2023,7 @@ mod tests {
         assert!(summary.contains("/forget"));
         assert!(summary.contains("/rate"));
         assert!(summary.contains("/events"));
+        assert!(summary.contains("/gc"));
         assert!(summary.contains("/diff"));
         assert!(summary.contains("/dry-run"));
         assert!(!summary.contains("benchmark"));

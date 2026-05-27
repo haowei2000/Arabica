@@ -12,12 +12,12 @@ pub use runtime::{ContinuationRequest, LocalAgentRuntime, RunRequest};
 pub use store::SqliteLocalStore;
 pub use tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 pub use types::{
-    ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, KnowledgeSource,
-    KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent, LocalEvidenceBundle,
-    LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage, ModelUsageSummary,
-    ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
-    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorktreeChange, WorktreeSnapshot,
+    ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, EventGcPreview, EventGcSummary,
+    KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
+    LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage,
+    ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary,
+    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
+    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]

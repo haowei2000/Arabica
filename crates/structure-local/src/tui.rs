@@ -877,7 +877,7 @@ fn draw_reports(
             .find(|evidence| evidence.run.run_id == run.run_id)
             .map(|evidence| {
                 format!(
-                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} artifacts]",
+                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} gc, {} artifacts]",
                     evidence.event_count,
                     evidence.tool_call_count,
                     evidence.agent_instruction_paths.len(),
@@ -888,6 +888,7 @@ fn draw_reports(
                         .unwrap_or_default(),
                     evidence.knowledge_sources.len(),
                     evidence.source_ratings.len(),
+                    evidence.event_gc.filtered_event_count,
                     evidence.artifacts.len()
                 )
             })
@@ -1172,7 +1173,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
     } else {
         for evidence in &bundle.run_evidence {
             text.push_str(&format!(
-                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} artifacts\n",
+                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} gc-filtered, {} artifacts\n",
                 evidence.run.run_id,
                 evidence.event_count,
                 evidence.tool_call_count,
@@ -1184,6 +1185,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
                     .unwrap_or_default(),
                 evidence.knowledge_sources.len(),
                 evidence.source_ratings.len(),
+                evidence.event_gc.filtered_event_count,
                 evidence.artifacts.len()
             ));
         }

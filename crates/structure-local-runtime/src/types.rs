@@ -157,6 +157,24 @@ pub struct SourceRating {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventGcSummary {
+    pub policy_id: String,
+    pub retain_last: usize,
+    pub retained_event_count: usize,
+    pub filtered_event_count: usize,
+    pub retained_sequences: Vec<i64>,
+    pub filtered_sequences: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventGcPreview {
+    pub run: RunSummary,
+    pub summary: EventGcSummary,
+    pub retained_events: Vec<LocalEvent>,
+    pub filtered_events: Vec<LocalEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInstruction {
     pub path: String,
     pub title: String,
@@ -293,6 +311,7 @@ pub struct RunEvidenceSummary {
     pub prompt_references: Vec<String>,
     pub knowledge_sources: Vec<KnowledgeSource>,
     pub source_ratings: Vec<SourceRating>,
+    pub event_gc: EventGcSummary,
     pub artifact_paths: Vec<String>,
     pub artifacts: Vec<ArtifactRecord>,
     pub event_kinds: Vec<String>,

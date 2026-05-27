@@ -258,6 +258,15 @@ fn local_run_evidence(
 }
 
 #[tauri::command]
+fn local_run_event_gc(
+    run_id: String,
+    retain_last: Option<usize>,
+) -> Result<structure_local_runtime::EventGcPreview, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_event_gc_preview(&run_id, retain_last)
+}
+
+#[tauri::command]
 fn local_run_transcript(run_id: String) -> Result<structure_local_runtime::RunTranscript, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_transcript(&run_id)
@@ -432,6 +441,7 @@ pub fn run() {
             local_run,
             local_run_events,
             local_run_evidence,
+            local_run_event_gc,
             local_run_transcript,
             local_workspace_replay,
             local_workspace_event_feed,
@@ -558,6 +568,7 @@ mod tests {
                 4,
                 Some("desktop grounding".to_string()),
             )?;
+            let event_gc = local_run_event_gc(run.run.run_id.clone(), Some(4))?;
             let transcript = local_run_transcript(run.run.run_id.clone())?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
@@ -616,6 +627,12 @@ mod tests {
                 source_rating.run_id.as_deref(),
                 Some(run.run.run_id.as_str())
             );
+            assert_eq!(event_gc.summary.policy_id, "retain_last_n_events");
+            assert_eq!(event_gc.summary.retained_event_count, 4);
+            assert_eq!(
+                event_gc.summary.retained_event_count + event_gc.summary.filtered_event_count,
+                event_gc.retained_events.len() + event_gc.filtered_events.len()
+            );
             assert_eq!(attempt.run.status, "finished");
             assert!(attempt.result.is_some());
             assert!(attempt.error.is_none());
@@ -635,6 +652,10 @@ mod tests {
                 .primitive_ids
                 .contains(&"reproducible_evidence".to_string()));
             assert_eq!(transcript.evidence.source_ratings.len(), 1);
+            assert_eq!(
+                transcript.evidence.event_gc.policy_id,
+                "retain_last_n_events"
+            );
             assert!(transcript
                 .evidence
                 .primitive_ids
@@ -737,6 +758,8 @@ mod tests {
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));
+        assert!(local_ui.contains("function renderEventGcText(preview)"));
+        assert!(local_ui.contains("case \"/gc\":"));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("case \"/diff\":"));
@@ -853,6 +876,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"rate_local_knowledge_source\""));
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
+        assert!(local_ui.contains("invoke(\"local_run_event_gc\""));
         assert!(!local_ui.contains("fetch("));
         assert!(!local_ui.contains("localhost"));
         assert!(!local_ui.contains("127.0.0.1"));
