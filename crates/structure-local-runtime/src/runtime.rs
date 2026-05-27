@@ -6,12 +6,12 @@ use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
-    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCoreTrace,
-    LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalToolCall,
-    LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
-    ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult,
-    RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay,
-    WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact,
+    LocalRunCoreTrace, LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview,
+    LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary,
+    ProposalApplyResult, ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind,
+    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
+    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -697,6 +697,11 @@ impl LocalAgentRuntime {
             final_response_chars: evidence.final_response_chars,
             next_actions,
         })
+    }
+
+    pub fn run_compact(&self, run_id: &str) -> Result<LocalRunCompact, String> {
+        let transcript = self.run_transcript(run_id)?;
+        Ok(run_compact_from_transcript(&transcript))
     }
 
     pub fn run_evidence_summary(&self, run_id: &str) -> Result<RunEvidenceSummary, String> {
@@ -1577,6 +1582,134 @@ fn run_review_next_actions(
     actions
 }
 
+fn run_compact_from_transcript(transcript: &RunTranscript) -> LocalRunCompact {
+    let evidence = &transcript.evidence;
+    let proposal_artifact = evidence
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == "code_change_proposal");
+    let response_artifact = evidence
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == "assistant_response")
+        .or_else(|| {
+            evidence
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.path.ends_with("/response.md"))
+        });
+    let failed_tool_call_count = transcript
+        .events
+        .iter()
+        .filter(|event| {
+            event.kind == "tool_call_completed"
+                && event
+                    .payload
+                    .get("success")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(false)
+        })
+        .count();
+    let assistant_message = transcript
+        .chat_turn
+        .as_ref()
+        .and_then(|turn| turn.assistant_message.as_deref())
+        .or(transcript.final_response.as_deref())
+        .unwrap_or("No assistant response was recorded.");
+    let assistant_excerpt = continuation_response_excerpt(assistant_message);
+    let mut carry_forward_items = Vec::new();
+    carry_forward_items.push(format!(
+        "Previous prompt: {}",
+        one_line_compact(&transcript.run.prompt, 320)
+    ));
+    carry_forward_items.push(format!(
+        "Previous assistant outcome: {}",
+        one_line_compact(&assistant_excerpt, 520)
+    ));
+    carry_forward_items.push(format!(
+        "Core path: {}",
+        if evidence.core_trace.flow_ids.is_empty() {
+            "none".to_string()
+        } else {
+            evidence.core_trace.flow_ids.join(" -> ")
+        }
+    ));
+    carry_forward_items.push(format!(
+        "Primitive path: {}",
+        if evidence.core_trace.primitive_ids.is_empty() {
+            "none".to_string()
+        } else {
+            evidence.core_trace.primitive_ids.join(" -> ")
+        }
+    ));
+    if !evidence.prompt_references.is_empty() {
+        carry_forward_items.push(format!(
+            "Prompt references: @{}",
+            evidence.prompt_references.join(", @")
+        ));
+    }
+    if !evidence.knowledge_sources.is_empty() {
+        carry_forward_items.push(format!(
+            "Knowledge sources: {}",
+            evidence
+                .knowledge_sources
+                .iter()
+                .map(|source| source.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(worktree) = &evidence.worktree {
+        carry_forward_items.push(format!(
+            "Worktree: {} on {} with {} changed file(s)",
+            if worktree.clean { "clean" } else { "dirty" },
+            worktree.branch.as_deref().unwrap_or("unknown branch"),
+            worktree.changed_files.len()
+        ));
+    }
+    if !evidence.artifact_paths.is_empty() {
+        carry_forward_items.push(format!("Artifacts: {}", evidence.artifact_paths.join(", ")));
+    }
+
+    let summary = format!(
+        "Run {run_id} in workspace {workspace_id} is {status}. It recorded {events} events, {tools} completed tool calls, {models} model responses, and {tokens} total tokens. Core alignment is {core}.",
+        run_id = transcript.run.run_id,
+        workspace_id = transcript.run.workspace_id,
+        status = transcript.run.status,
+        events = evidence.event_count,
+        tools = evidence.tool_call_count,
+        models = evidence.model_usage.model_response_count,
+        tokens = evidence.model_usage.total_tokens,
+        core = if evidence.core_trace.core_aligned {
+            "aligned"
+        } else {
+            "drifted"
+        },
+    );
+    let next_actions = run_review_next_actions(
+        evidence,
+        proposal_artifact,
+        response_artifact,
+        failed_tool_call_count,
+    );
+    let continuation_context =
+        build_compact_continuation_context(transcript, &assistant_excerpt, &carry_forward_items);
+
+    LocalRunCompact {
+        run: transcript.run.clone(),
+        status: transcript.run.status.clone(),
+        core_aligned: evidence.core_trace.core_aligned,
+        event_count: evidence.event_count,
+        tool_call_count: evidence.tool_call_count,
+        model_usage: evidence.model_usage.clone(),
+        artifact_paths: evidence.artifact_paths.clone(),
+        summary,
+        carry_forward_items,
+        next_actions,
+        continuation_context,
+    }
+}
+
 fn core_trace_from_events(
     run: RunSummary,
     events: &[crate::types::LocalEvent],
@@ -1957,6 +2090,51 @@ Continuation instruction:\n{extra_instruction}\n",
     )
 }
 
+fn build_compact_continuation_context(
+    transcript: &RunTranscript,
+    assistant_excerpt: &str,
+    carry_forward_items: &[String],
+) -> String {
+    let items = if carry_forward_items.is_empty() {
+        "- No carry-forward items were derived.".to_string()
+    } else {
+        carry_forward_items
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let artifacts = if transcript.evidence.artifact_paths.is_empty() {
+        "none".to_string()
+    } else {
+        transcript.evidence.artifact_paths.join("\n")
+    };
+
+    format!(
+        "Compact Structure context for continuing run `{run_id}`.\n\n\
+Workspace: {workspace_id}\n\
+Status: {status}\n\
+Core aligned: {core_aligned}\n\
+Events: {events}\n\
+Tool calls: {tool_calls}\n\
+Model requests: {model_requests}\n\
+Total tokens: {tokens}\n\n\
+Carry forward:\n{items}\n\n\
+Previous assistant outcome:\n{assistant}\n\n\
+Artifact evidence:\n{artifacts}\n\n\
+Use this compact as the durable context boundary for the next local chat or code-agent step. Preserve Structure Core event, path, disclosure, and evidence concepts when continuing.",
+        run_id = transcript.run.run_id,
+        workspace_id = transcript.run.workspace_id,
+        status = transcript.run.status,
+        core_aligned = transcript.evidence.core_trace.core_aligned,
+        events = transcript.evidence.event_count,
+        tool_calls = transcript.evidence.tool_call_count,
+        model_requests = transcript.evidence.model_usage.model_request_count,
+        tokens = transcript.evidence.model_usage.total_tokens,
+        assistant = truncate_for_prompt(assistant_excerpt, CONTINUATION_SNIPPET_MAX_CHARS),
+    )
+}
+
 fn continuation_response_excerpt(response: &str) -> String {
     let mut body = Vec::new();
     let mut after_runtime_header = false;
@@ -1989,6 +2167,11 @@ fn truncate_for_prompt(value: &str, max_chars: usize) -> String {
         output.push_str("\n...[truncated]");
     }
     output
+}
+
+fn one_line_compact(value: &str, max_chars: usize) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    compact_summary(&normalized, max_chars)
 }
 
 fn tool_call_fingerprint(call: &crate::types::LocalToolCall) -> String {
@@ -3077,6 +3260,46 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.prompt_references.contains(&"plan_note.md".to_string())));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_compacts_run_context_from_events_and_evidence() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("run-compact");
+        let note = root.join("compact_note.md");
+        fs::write(&note, "compact-visible context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Inspect @compact_note.md and produce a compactable answer.".to_string(),
+                workspace_id: Some("compact".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let compact = runtime.run_compact(&result.run.run_id).unwrap();
+
+        assert_eq!(compact.run.run_id, result.run.run_id);
+        assert_eq!(compact.status, "finished");
+        assert!(compact.core_aligned);
+        assert!(compact.event_count >= compact.tool_call_count);
+        assert!(compact.summary.contains(&result.run.run_id));
+        assert!(compact
+            .carry_forward_items
+            .iter()
+            .any(|item| item.contains("Previous prompt")));
+        assert!(compact
+            .carry_forward_items
+            .iter()
+            .any(|item| item.contains("Prompt references")));
+        assert!(compact
+            .continuation_context
+            .contains("Compact Structure context"));
+        assert!(compact
+            .continuation_context
+            .contains("Structure Core event, path, disclosure, and evidence"));
 
         fs::remove_dir_all(root).unwrap();
     }

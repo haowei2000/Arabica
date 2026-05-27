@@ -2,9 +2,9 @@ use crate::text::{
     print_agent_context, print_artifact_preview, print_artifacts, print_core_capabilities,
     print_core_manifest, print_event_gc_preview, print_events, print_knowledge_preview,
     print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
-    print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_core_trace,
-    print_run_evidence_summary, print_run_plan, print_run_review, print_run_summary,
-    print_run_transcript, print_runs, print_snapshot, print_source_rating,
+    print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_compact,
+    print_run_core_trace, print_run_evidence_summary, print_run_plan, print_run_review,
+    print_run_summary, print_run_transcript, print_runs, print_snapshot, print_source_rating,
     print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
     print_workspace_event_feed, print_workspace_replay, print_workspaces, print_worktree_snapshot,
 };
@@ -203,6 +203,7 @@ enum RunsCommand {
     Plan(RunPlanArgs),
     Trace(RunTraceArgs),
     Review(RunReviewArgs),
+    Compact(RunCompactArgs),
     Evidence(RunEvidenceArgs),
     Transcript(RunTranscriptArgs),
     Inspect(RunTranscriptArgs),
@@ -257,6 +258,13 @@ struct RunTraceArgs {
 
 #[derive(Debug, Args)]
 struct RunReviewArgs {
+    run_id: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RunCompactArgs {
     run_id: String,
     #[arg(long)]
     json: bool,
@@ -1251,6 +1259,19 @@ fn handle_chat_session_command(
             print_run_review(&review);
             Ok(true)
         }
+        "/compact" => {
+            let run_id = parts
+                .next()
+                .map(str::to_string)
+                .or_else(|| state.last_run_id.clone());
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /compact <run_id>.");
+                return Ok(true);
+            };
+            let compact = local_result(runtime.run_compact(&run_id))?;
+            print_run_compact(&compact);
+            Ok(true)
+        }
         "/evidence" => {
             let run_id = parts
                 .next()
@@ -1535,6 +1556,7 @@ fn print_chat_session_help() {
     println!("  /plan [run_id]        Show the event-derived agent plan");
     println!("  /trace [run_id]       Show Structure Core flow/primitive execution path");
     println!("  /review [run_id]      Show attempt review and next actions");
+    println!("  /compact [run_id]     Show compact context for continuing a run");
     println!("  /evidence [run_id]    Show run evidence summary");
     println!("  /usage [run_id]       Show model requests, network calls, and token usage");
     println!("  /transcript [run_id]  Show run, chat turn, events, evidence, and response");
@@ -1550,7 +1572,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1920,6 +1942,14 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&review)?);
             } else {
                 print_run_review(&review);
+            }
+        }
+        RunsCommand::Compact(args) => {
+            let compact = local_result(runtime.run_compact(&args.run_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&compact)?);
+            } else {
+                print_run_compact(&compact);
             }
         }
         RunsCommand::Evidence(args) => {
@@ -2380,6 +2410,21 @@ mod tests {
     }
 
     #[test]
+    fn cli_runs_compact_command_accepts_json_output() {
+        let cli =
+            Cli::try_parse_from(["structure-local", "runs", "compact", "run_1", "--json"]).unwrap();
+
+        let Command::Runs {
+            command: RunsCommand::Compact(args),
+        } = cli.command
+        else {
+            panic!("expected runs compact command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert!(args.json);
+    }
+
+    #[test]
     fn cli_proposals_review_command_accepts_json_output() {
         let cli =
             Cli::try_parse_from(["structure-local", "proposals", "review", "art_1", "--json"])
@@ -2416,6 +2461,7 @@ mod tests {
         assert!(summary.contains("/plan"));
         assert!(summary.contains("/trace"));
         assert!(summary.contains("/review"));
+        assert!(summary.contains("/compact"));
         assert!(summary.contains("/diff"));
         assert!(summary.contains("/risk"));
         assert!(summary.contains("/dry-run"));

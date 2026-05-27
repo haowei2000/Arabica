@@ -191,6 +191,11 @@ into runtime calls:
   Codex/OpenCode-style progress view derived from `agent_step_planned`,
   `model_requested`, and `tool_call_requested` events. The source of truth
   remains the immutable Structure event stream.
+- CLI compact context: `uv run structure runs compact <run-id> --json` returns a
+  continuation-ready summary derived from the same run transcript, evidence,
+  artifacts, model usage, and Core trace. It is the local equivalent of a
+  Codex-style context compaction boundary, but the boundary is computed from
+  Structure events rather than a detached chat buffer.
 - CLI core trace: `uv run structure runs trace <run-id> --json` returns the
   paper-facing execution path derived from the same immutable events. It keeps
   the collapsed Structure flow path (`goal -> address -> ...`) and primitive
@@ -328,6 +333,10 @@ into runtime calls:
   Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
   showing progress as a derived view over immutable Structure planning/model/tool
   events rather than a desktop-only state machine.
+  Desktop `/compact [run-id]` and per-turn Compact actions call
+  `local_run_compact`, showing the same continuation-ready context boundary as
+  CLI/TUI. The app can therefore support long local chat/code-agent sessions
+  without inventing a desktop-only memory model.
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.
@@ -344,9 +353,9 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/plan/review/continue/retry/proposal actions so chat
-  history remains a navigable view over run evidence rather than a detached
-  transcript.
+  thread exposes per-turn inspect/plan/compact/review/continue/retry/proposal
+  actions so chat history remains a navigable view over run evidence rather than
+  a detached transcript.
   The per-turn Continue button uses the current composer text as an optional
   continuation instruction, matching the slash-command path while keeping
   normal chat interaction mouse-accessible.

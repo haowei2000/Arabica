@@ -12,9 +12,9 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
-    LocalEvidenceBundle, LocalRunCoreTrace, LocalRunPlan, LocalRunReview, LocalToolCall,
-    ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest, RunSummary,
-    RunTranscript, WorkspaceSummary, WorktreeSnapshot,
+    LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
+    LocalToolCall, ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest,
+    RunSummary, RunTranscript, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -466,6 +466,22 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_selected_run_compact(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let compact = local_result(runtime.run_compact(&run.run_id))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("run compact / {}", compact.run.run_id),
+            text: render_run_compact(&compact),
+        });
+        self.notice = format!("Compact: {}", run.run_id);
+        Ok(())
+    }
+
     fn preview_selected_run_review(&mut self, repo_root: &Path) -> Result<()> {
         let Some(run) = self.runs.get(self.selected).cloned() else {
             self.notice = "No run selected".to_string();
@@ -743,6 +759,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('l') => state.preview_selected_run_plan(repo_root)?,
+                    KeyCode::Char('C') => state.preview_selected_run_compact(repo_root)?,
                     KeyCode::Char('z') => state.preview_selected_run_core_trace(repo_root)?,
                     KeyCode::Char('b') => state.preview_selected_run_review(repo_root)?,
                     KeyCode::Char('p') => state.preview_latest_knowledge(repo_root)?,
@@ -834,7 +851,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  d worktree  l plan  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f follow-up  d worktree  l plan  C compact  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -922,7 +939,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, l plan, z trace, b review, f follow-up, n local check",
+        "press j/k to select, t transcript, l plan, C compact, z trace, b review, f follow-up, n local check",
         width,
     )?;
     muted_at(
@@ -1092,7 +1109,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  f follow-up  ! cmd  t transcript  l plan  b review  g proposal  h risk";
+    let controls = "q quit  r refresh  c prompt  f follow-up  ! cmd  t transcript  l plan  C compact  b review  g proposal  h risk";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1467,6 +1484,49 @@ fn render_run_plan(plan: &LocalRunPlan) -> String {
             ));
         }
     }
+    text
+}
+
+fn render_run_compact(compact: &LocalRunCompact) -> String {
+    let mut text = String::new();
+    text.push_str("Run Compact\n");
+    text.push_str(&format!("Run: {}\n", compact.run.run_id));
+    text.push_str(&format!("Workspace: {}\n", compact.run.workspace_id));
+    text.push_str(&format!("Status: {}\n", compact.status));
+    text.push_str(&format!("Core aligned: {}\n", compact.core_aligned));
+    text.push_str(&format!("Events: {}\n", compact.event_count));
+    text.push_str(&format!("Tools: {}\n", compact.tool_call_count));
+    text.push_str(&format!(
+        "Model: {} req / {} resp / {} net\n",
+        compact.model_usage.model_request_count,
+        compact.model_usage.model_response_count,
+        compact.model_usage.network_request_count
+    ));
+    if compact.model_usage.total_tokens > 0 {
+        text.push_str(&format!(
+            "Tokens: {} prompt / {} completion / {} total\n",
+            compact.model_usage.prompt_tokens,
+            compact.model_usage.completion_tokens,
+            compact.model_usage.total_tokens
+        ));
+    }
+    text.push_str("\nSummary\n");
+    text.push_str(&compact.summary);
+    text.push('\n');
+    if !compact.carry_forward_items.is_empty() {
+        text.push_str("\nCarry Forward\n");
+        for item in &compact.carry_forward_items {
+            text.push_str(&format!("- {item}\n"));
+        }
+    }
+    if !compact.next_actions.is_empty() {
+        text.push_str("\nNext Actions\n");
+        for action in &compact.next_actions {
+            text.push_str(&format!("- {action}\n"));
+        }
+    }
+    text.push_str("\nContinuation Context\n");
+    text.push_str(&compact.continuation_context);
     text
 }
 
@@ -1894,6 +1954,13 @@ mod tests {
             assert!(plan_preview.text.contains("Run Plan"));
             assert!(plan_preview.text.contains("Steps:"));
             assert!(plan_preview.text.contains("Model:"));
+
+            state.preview_selected_run_compact(&root)?;
+            let compact_preview = state.preview.as_ref().expect("run compact preview");
+            assert!(compact_preview.path.starts_with("run compact / run_"));
+            assert!(compact_preview.text.contains("Run Compact"));
+            assert!(compact_preview.text.contains("Carry Forward"));
+            assert!(compact_preview.text.contains("Continuation Context"));
 
             state.preview_selected_run_review(&root)?;
             let review_preview = state.preview.as_ref().expect("run review preview");

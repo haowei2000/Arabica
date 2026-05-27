@@ -289,6 +289,12 @@ fn local_run_plan(run_id: String) -> Result<structure_local_runtime::LocalRunPla
 }
 
 #[tauri::command]
+fn local_run_compact(run_id: String) -> Result<structure_local_runtime::LocalRunCompact, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.run_compact(&run_id)
+}
+
+#[tauri::command]
 fn local_run_review(run_id: String) -> Result<structure_local_runtime::LocalRunReview, String> {
     let runtime = LocalAgentRuntime::open_default()?;
     runtime.run_review(&run_id)
@@ -481,6 +487,7 @@ pub fn run() {
             local_run_tool_trace,
             local_run_core_trace,
             local_run_plan,
+            local_run_compact,
             local_run_review,
             local_run_transcript,
             local_workspace_replay,
@@ -699,6 +706,13 @@ mod tests {
                 .steps
                 .iter()
                 .any(|step| step.title.contains("Workspace Context Replay")));
+            let compact = local_run_compact(run.run.run_id.clone())?;
+            assert_eq!(compact.run.run_id, run.run.run_id);
+            assert!(compact.core_aligned);
+            assert!(compact.summary.contains(&run.run.run_id));
+            assert!(compact
+                .continuation_context
+                .contains("Compact Structure context"));
             assert_eq!(review.run.run_id, run.run.run_id);
             assert!(review.core_aligned);
             assert!(review.proposal_artifact.is_some());
@@ -851,6 +865,10 @@ mod tests {
         assert!(local_ui.contains("function renderRunPlanText(plan)"));
         assert!(local_ui.contains("case \"/plan\":"));
         assert!(local_ui.contains("invoke(\"local_run_plan\""));
+        assert!(local_ui.contains("function renderRunCompactText(compact)"));
+        assert!(local_ui.contains("case \"/compact\":"));
+        assert!(local_ui.contains("invoke(\"local_run_compact\""));
+        assert!(local_ui.contains("compact.textContent = \"Compact\""));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));

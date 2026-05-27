@@ -5,9 +5,9 @@ use structure_local_core::{
 use structure_local_runtime::ProposalReview;
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
-    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCoreTrace, LocalRunPlan,
-    LocalRunReview, LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult, RunSummary,
-    RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace,
+    LocalRunPlan, LocalRunReview, LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult,
+    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
     WorktreeSnapshot,
 };
 
@@ -878,6 +878,64 @@ pub(crate) fn print_artifacts(artifacts: &[ArtifactRecord]) {
             artifact.artifact_id, artifact.kind, artifact.size_bytes, artifact.path
         );
     }
+}
+
+pub(crate) fn print_run_compact(compact: &LocalRunCompact) {
+    println!("Run compact");
+    println!("  run:       {}", compact.run.run_id);
+    println!("  workspace: {}", compact.run.workspace_id);
+    println!("  status:    {}", compact.status);
+    println!(
+        "  core:      {}",
+        if compact.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        }
+    );
+    println!("  events:    {}", compact.event_count);
+    println!("  tools:     {}", compact.tool_call_count);
+    println!(
+        "  model:     {} req / {} resp / {} net",
+        compact.model_usage.model_request_count,
+        compact.model_usage.model_response_count,
+        compact.model_usage.network_request_count
+    );
+    if compact.model_usage.total_tokens > 0 {
+        println!(
+            "  tokens:    {} prompt / {} completion / {} total",
+            compact.model_usage.prompt_tokens,
+            compact.model_usage.completion_tokens,
+            compact.model_usage.total_tokens
+        );
+    }
+    println!();
+    println!("Summary");
+    println!("  {}", compact.summary);
+    if !compact.carry_forward_items.is_empty() {
+        println!();
+        println!("Carry Forward");
+        for item in &compact.carry_forward_items {
+            println!("  - {item}");
+        }
+    }
+    if !compact.next_actions.is_empty() {
+        println!();
+        println!("Next Actions");
+        for action in &compact.next_actions {
+            println!("  - {action}");
+        }
+    }
+    if !compact.artifact_paths.is_empty() {
+        println!();
+        println!("Artifacts");
+        for path in &compact.artifact_paths {
+            println!("  - {path}");
+        }
+    }
+    println!();
+    println!("Continuation Context");
+    println!("{}", compact.continuation_context);
 }
 
 pub(crate) fn print_artifact_preview(preview: &ArtifactPreview) {

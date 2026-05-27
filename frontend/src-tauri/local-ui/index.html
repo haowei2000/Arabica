@@ -1302,6 +1302,11 @@
         return invoke("local_run_plan", { runId });
       }
 
+      async function localRunCompact(runId) {
+        if (!invoke) return null;
+        return invoke("local_run_compact", { runId });
+      }
+
       async function localRunReview(runId) {
         if (!invoke) return null;
         return invoke("local_run_review", { runId });
@@ -1897,6 +1902,14 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewRunPlanForRun(turn.run_id);
           });
+          const compact = document.createElement("button");
+          compact.type = "button";
+          compact.textContent = "Compact";
+          compact.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunCompactForRun(turn.run_id);
+          });
           const continueRun = document.createElement("button");
           continueRun.type = "button";
           continueRun.textContent = "Continue";
@@ -1950,7 +1963,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, plan, review, continueRun, retryRun, proposal);
+          actions.append(meta, inspect, plan, compact, review, continueRun, retryRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2498,6 +2511,44 @@ ${steps.map((step) => {
         }).join("\n") || "No plan steps recorded."}`;
       }
 
+      function renderRunCompactText(compact) {
+        if (!compact) return "Run compact unavailable.";
+        const usage = compact.model_usage ?? {};
+        const carry = (compact.carry_forward_items ?? [])
+          .map((item) => `- ${item}`)
+          .join("\n") || "- No carry-forward items derived.";
+        const actions = (compact.next_actions ?? [])
+          .map((action) => `- ${action}`)
+          .join("\n") || "- No immediate follow-up action required.";
+        const artifacts = (compact.artifact_paths ?? [])
+          .map((path) => `- ${path}`)
+          .join("\n") || "- none";
+        return `Run Compact
+Run: ${compact.run?.run_id ?? "unknown"}
+Workspace: ${compact.run?.workspace_id ?? "unknown"}
+Status: ${compact.status ?? "unknown"}
+Core: ${compact.core_aligned ? "aligned" : "drift"}
+Events: ${compact.event_count ?? 0}
+Tools: ${compact.tool_call_count ?? 0}
+Model: ${usage.model_request_count ?? 0} requests / ${usage.model_response_count ?? 0} responses / ${usage.network_request_count ?? 0} network
+Tokens: ${usage.prompt_tokens ?? 0} prompt / ${usage.completion_tokens ?? 0} completion / ${usage.total_tokens ?? 0} total
+
+Summary
+${compact.summary ?? "No summary derived."}
+
+Carry Forward
+${carry}
+
+Next Actions
+${actions}
+
+Artifacts
+${artifacts}
+
+Continuation Context
+${compact.continuation_context ?? ""}`;
+      }
+
       function renderRunReviewText(review) {
         if (!review) return "Run review unavailable.";
         const proposal = review.proposal_artifact
@@ -2627,6 +2678,16 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function previewRunCompactForRun(runId) {
+        eventLogEl.textContent = "Compacting run context...";
+        try {
+          const compact = await localRunCompact(runId);
+          eventLogEl.textContent = renderRunCompactText(compact);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
       async function performContinuationRun(runId, extraInstruction = "") {
         eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
         setInFlightRun(
@@ -2723,6 +2784,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /gc [run_id] [retain_last]
 /tools [run_id]
 /plan [run_id]
+/compact [run_id]
 /trace [run_id]
 /review [run_id]
 /evidence [run_id]
@@ -2925,6 +2987,15 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               return true;
             }
             await previewRunPlanForRun(runId);
+            return true;
+          }
+          case "/compact": {
+            const runId = commandRunId(parts);
+            if (!runId) {
+              eventLogEl.textContent = "No run selected.";
+              return true;
+            }
+            await previewRunCompactForRun(runId);
             return true;
           }
           case "/trace":

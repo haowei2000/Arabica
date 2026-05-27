@@ -416,6 +416,21 @@ pub struct LocalRunReview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalRunCompact {
+    pub run: RunSummary,
+    pub status: String,
+    pub core_aligned: bool,
+    pub event_count: usize,
+    pub tool_call_count: usize,
+    pub model_usage: ModelUsageSummary,
+    pub artifact_paths: Vec<String>,
+    pub summary: String,
+    pub carry_forward_items: Vec<String>,
+    pub next_actions: Vec<String>,
+    pub continuation_context: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunTranscript {
     pub run: RunSummary,
     pub chat_turn: Option<ChatTurn>,
