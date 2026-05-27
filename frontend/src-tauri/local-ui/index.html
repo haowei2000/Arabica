@@ -1002,6 +1002,7 @@
             <button id="session-continue" type="button">Session Continue</button>
             <button id="session-usage" type="button">Session Usage</button>
             <button id="run-status" type="button">Run Status</button>
+            <button id="record-checkpoint" type="button">Record Decision</button>
             <button id="show-tasks" type="button">Tasks</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
@@ -1125,6 +1126,7 @@
       const sessionContinueEl = document.querySelector("#session-continue");
       const sessionUsageEl = document.querySelector("#session-usage");
       const runStatusEl = document.querySelector("#run-status");
+      const recordCheckpointEl = document.querySelector("#record-checkpoint");
       const showTasksEl = document.querySelector("#show-tasks");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
@@ -1669,6 +1671,11 @@
         runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
       }
 
+      function setCheckpointBusy(isBusy) {
+        recordCheckpointEl.disabled = isBusy;
+        recordCheckpointEl.textContent = isBusy ? "Recording Decision" : "Record Decision";
+      }
+
       function setTasksBusy(isBusy) {
         showTasksEl.disabled = isBusy;
         showTasksEl.textContent = isBusy ? "Loading Tasks" : "Tasks";
@@ -2007,6 +2014,14 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewRunReviewForRun(turn.run_id);
           });
+          const decision = document.createElement("button");
+          decision.type = "button";
+          decision.textContent = "Decision";
+          decision.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await recordDecisionForRun(turn.run_id);
+          });
           const plan = document.createElement("button");
           plan.type = "button";
           plan.textContent = "Plan";
@@ -2076,7 +2091,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, status, plan, compact, review, continueRun, retryRun, proposal);
+          actions.append(meta, inspect, status, plan, compact, review, decision, continueRun, retryRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2955,6 +2970,38 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      function promptForDecisionNote(runId) {
+        const selectedText = agentPromptEl.value.trim();
+        if (selectedText && !selectedText.startsWith("/")) {
+          return selectedText;
+        }
+        return window.prompt(`Record a human decision for ${runId}`, "")?.trim() ?? "";
+      }
+
+      async function recordDecisionForRun(runId, note = null) {
+        const selectedRunId = runId ?? state.selectedRunId ?? state.runs[0]?.run_id ?? null;
+        if (!selectedRunId) {
+          eventLogEl.textContent = "No run selected.";
+          return null;
+        }
+        const decisionNote = (note ?? promptForDecisionNote(selectedRunId)).trim();
+        if (!decisionNote) {
+          eventLogEl.textContent = "Decision recording cancelled.";
+          return null;
+        }
+        const checkpoint = await recordRunCheckpoint(selectedRunId, decisionNote);
+        eventLogEl.textContent = `Run Checkpoint
+${checkpoint.checkpoint_id}
+Run: ${checkpoint.run_id}
+Workspace: ${checkpoint.workspace_id}
+Note: ${checkpoint.note}`;
+        if (agentPromptEl.value.trim() === decisionNote) {
+          agentPromptEl.value = "";
+        }
+        await refresh();
+        return checkpoint;
+      }
+
       async function previewWorkspaceCompact() {
         eventLogEl.textContent = "Compacting workspace session...";
         try {
@@ -3436,13 +3483,7 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               eventLogEl.textContent = "Usage: /checkpoint [run_id] <note>";
               return true;
             }
-            const checkpoint = await recordRunCheckpoint(runId, note);
-            eventLogEl.textContent = `Run Checkpoint
-${checkpoint.checkpoint_id}
-Run: ${checkpoint.run_id}
-Workspace: ${checkpoint.workspace_id}
-Note: ${checkpoint.note}`;
-            await refresh();
+            await recordDecisionForRun(runId, note);
             return true;
           }
           case "/evidence": {
@@ -4556,6 +4597,16 @@ ${events || "No events recorded."}`;
           await previewRunStatusForRun(runId);
         } finally {
           setRunStatusBusy(false);
+        }
+      });
+      recordCheckpointEl.addEventListener("click", async () => {
+        setCheckpointBusy(true);
+        try {
+          await recordDecisionForRun(state.selectedRunId ?? state.runs[0]?.run_id ?? null);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setCheckpointBusy(false);
         }
       });
       showTasksEl.addEventListener("click", async () => {

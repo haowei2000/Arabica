@@ -412,9 +412,11 @@ into runtime calls:
   scheduler concept.
   Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
   compact attempt review and next-action guidance as CLI/TUI.
-  Desktop `/checkpoint [run-id] <note>` calls `record_local_run_checkpoint`,
-  giving the app the same event-sourced human decision path as CLI and carrying
-  those notes into run compacts and continuations.
+  Desktop `/checkpoint [run-id] <note>`, the visible Record Decision action,
+  and each chat turn's Decision action call `record_local_run_checkpoint`,
+  giving the app the same event-sourced human decision path as CLI while
+  presenting it as a desktop agent workflow. Those notes are carried into run
+  compacts and continuations.
   Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
   `review_local_proposal`, giving the app the same target-safety, patch-context,
   and explicit-approval checks as CLI before any proposal apply while recording

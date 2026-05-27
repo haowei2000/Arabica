@@ -1057,6 +1057,9 @@ mod tests {
         assert!(local_ui.contains("Run Checkpoints"));
         assert!(local_ui.contains("case \"/checkpoint\":"));
         assert!(local_ui.contains("invoke(\"record_local_run_checkpoint\""));
+        assert!(local_ui.contains("id=\"record-checkpoint\""));
+        assert!(local_ui.contains("function recordDecisionForRun"));
+        assert!(local_ui.contains("setCheckpointBusy(true)"));
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
         assert!(local_ui.contains("Worktree Changes"));
@@ -1149,9 +1152,11 @@ mod tests {
         assert!(local_ui.contains("className = \"chat-actions\""));
         assert!(local_ui.contains("inspect.addEventListener(\"click\", () => selectRun(turn));"));
         assert!(local_ui.contains("review.textContent = \"Review\""));
+        assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
         assert!(local_ui.contains("await previewRunPlanForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewRunReviewForRun(turn.run_id);"));
+        assert!(local_ui.contains("await recordDecisionForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
     }
 
