@@ -258,7 +258,7 @@ into runtime calls:
   render a grouped agent command map for run loop, workspace context, run
   evidence, session, and proposal actions while keeping benchmark work outside
   the local agent surface. `/select <run-id>`,
-  `/last`, `/history`, `/continue [run-id] [instruction]`, `/resume`,
+  `/last`, `/history`, `/rerun [n]`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/tasks`, `/task`, `/task-status`, `/task-done`, `/usage [run-id]`,
   `/review [run-id]`, `/plan [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   `/risk`, `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
@@ -278,7 +278,10 @@ into runtime calls:
   sources, and replayed assistant turns.
   `/history` renders persisted chat/code-agent turns from
   `LocalAgentRuntime::chat_turns`, so session recall is grounded in stored
-  Structure runs rather than a separate terminal buffer.
+  Structure runs rather than a separate terminal buffer. `/rerun [n]` selects
+  one of those persisted history prompts and starts a fresh Structure local run
+  through `run_prompt_attempt`, while the `/rerun` command itself is recorded as
+  a `command_turn_recorded` workspace event.
   `/usage` is the lightweight model-call view over the same
   `RunEvidenceSummary`, so terminal sessions can inspect request counts,
   network-backed calls, token usage, and core alignment without opening the

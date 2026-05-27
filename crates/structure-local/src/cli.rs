@@ -1337,6 +1337,10 @@ fn handle_chat_session_command(
             print!("{}", render_chat_history(&turns));
             Ok(true)
         }
+        "/rerun" | "/repeat" => {
+            run_history_prompt_from_session(runtime, repo_root, json, state, command_body)?;
+            Ok(true)
+        }
         "/tasks" => {
             let status = parts.next();
             let tasks =
@@ -1821,6 +1825,45 @@ fn run_continuation_from_session(
     Ok(())
 }
 
+fn run_history_prompt_from_session(
+    runtime: &LocalAgentRuntime,
+    repo_root: &PathBuf,
+    json: bool,
+    state: &mut ChatSessionState,
+    command_body: &str,
+) -> Result<()> {
+    let turns = local_result(runtime.chat_turns(state.workspace_id.as_deref(), 20))?;
+    let (index, prompt) = match select_history_prompt_for_rerun(&turns, command_body) {
+        Ok(selection) => selection,
+        Err(message) => {
+            println!("{message}");
+            return Ok(());
+        }
+    };
+    println!(
+        "Rerunning history #{index} through Structure local runtime: {}",
+        truncate_history_line(&prompt, 160)
+    );
+    let request = RunRequest {
+        prompt,
+        workspace_id: state.workspace_id.clone(),
+        mode: Some(state.mode.clone()),
+    };
+    let attempt = if json {
+        local_result(runtime.run_prompt_attempt(request))?
+    } else {
+        run_prompt_with_live_events(repo_root, request)?
+    };
+    state.workspace_id = Some(attempt.run.workspace_id.clone());
+    state.last_run_id = Some(attempt.run.run_id.clone());
+    if json {
+        println!("{}", serde_json::to_string_pretty(&attempt)?);
+    } else {
+        print_chat_attempt(&attempt);
+    }
+    Ok(())
+}
+
 fn run_workspace_continuation_from_session(
     runtime: &LocalAgentRuntime,
     repo_root: &PathBuf,
@@ -1903,6 +1946,32 @@ fn parse_run_scoped_text_args(
     }
 }
 
+fn select_history_prompt_for_rerun(
+    turns: &[ChatTurn],
+    command_body: &str,
+) -> std::result::Result<(usize, String), String> {
+    if turns.is_empty() {
+        return Err("No persisted chat turns for this workspace.".to_string());
+    }
+    let index = if command_body.trim().is_empty() {
+        1
+    } else {
+        command_body
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| "Usage: /rerun [history-number]".to_string())?
+    };
+    if index == 0 {
+        return Err("History numbers start at 1.".to_string());
+    }
+    let Some(turn) = turns.get(index - 1) else {
+        return Err(format!(
+            "History #{index} is not available. Use /history to inspect recent turns."
+        ));
+    };
+    Ok((index, turn.user_message.clone()))
+}
+
 fn parse_agent_mode(value: Option<&str>, chat_only: bool) -> Result<LocalAgentMode> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some("chat") => Ok(LocalAgentMode::Chat),
@@ -1940,6 +2009,7 @@ fn print_chat_session_help(state: &ChatSessionState) {
     println!("  /rate <src> <1-5>     Rate a source for the selected run");
     println!("  /runs                 List recent runs in this workspace");
     println!("  /history              Show recent persisted chat/code-agent turns");
+    println!("  /rerun [n]            Start a fresh run from a history prompt");
     println!("  /tasks [status]       List workspace tasks");
     println!("  /task <title>         Create a task linked to the selected run");
     println!("  /task-status <id> <s> Update a task status");
@@ -1979,7 +2049,7 @@ fn print_chat_session_help(state: &ChatSessionState) {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /map, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /history, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+    "/help, /map, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /history, /rerun, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
 }
 
 fn render_chat_session_command_map(state: &ChatSessionState) -> String {
@@ -1998,6 +2068,7 @@ fn render_chat_session_command_map(state: &ChatSessionState) -> String {
     text.push_str("Run Loop\n");
     text.push_str("- prompt text -> run_prompt_attempt -> Structure run events\n");
     text.push_str("- /history -> persisted chat/code-agent turns from local run events\n");
+    text.push_str("- /rerun [n] -> fresh run from a persisted history prompt\n");
     text.push_str("- /continue, /resume -> fresh run from selected transcript/evidence\n");
     text.push_str("- /retry -> fresh retry run with explicit retry instruction\n");
     text.push_str("- /mode chat|code -> switch chat/code_agent on the same runtime contract\n\n");
@@ -2193,10 +2264,14 @@ fn render_chat_history(turns: &[ChatTurn]) -> String {
         text.push_str("No persisted chat turns for this workspace.\n");
         return text;
     }
-    for turn in turns {
+    for (index, turn) in turns.iter().enumerate() {
         text.push_str(&format!(
-            "- {} / {} / {} / {} event(s)\n",
-            turn.run_id, turn.status, turn.mode, turn.event_count
+            "- #{} {} / {} / {} / {} event(s)\n",
+            index + 1,
+            turn.run_id,
+            turn.status,
+            turn.mode,
+            turn.event_count
         ));
         text.push_str(&format!(
             "  You: {}\n",
@@ -3356,6 +3431,7 @@ mod tests {
         assert!(summary.contains("/rate"));
         assert!(summary.contains("/events"));
         assert!(summary.contains("/history"));
+        assert!(summary.contains("/rerun"));
         assert!(summary.contains("/gc"));
         assert!(summary.contains("/tools"));
         assert!(summary.contains("/plan"));
@@ -3386,6 +3462,7 @@ mod tests {
         assert!(map.contains("Run Loop"));
         assert!(map.contains("prompt text -> run_prompt_attempt -> Structure run events"));
         assert!(map.contains("/history -> persisted chat/code-agent turns"));
+        assert!(map.contains("/rerun [n] -> fresh run from a persisted history prompt"));
         assert!(map.contains("Workspace Context"));
         assert!(map.contains("/context, /doctor, /llm"));
         assert!(map.contains("Run Evidence"));
@@ -3444,9 +3521,55 @@ mod tests {
         let history = render_chat_history(&turns);
 
         assert!(history.contains("Chat History"));
-        assert!(history.contains("run_history / finished / code_agent / 7 event(s)"));
+        assert!(history.contains("#1 run_history / finished / code_agent / 7 event(s)"));
         assert!(history.contains("You: inspect @core/structure_core.json"));
         assert!(history.contains("Structure: Core-aligned response"));
+    }
+
+    #[test]
+    fn cli_selects_persisted_history_prompt_for_rerun() {
+        let turns = vec![
+            ChatTurn {
+                run_id: "run_recent".to_string(),
+                workspace_id: "hist".to_string(),
+                mode: "code_agent".to_string(),
+                user_message: "recent prompt".to_string(),
+                assistant_message: Some("recent response".to_string()),
+                status: "finished".to_string(),
+                event_count: 5,
+                created_at_ms: 2,
+                updated_at_ms: 3,
+            },
+            ChatTurn {
+                run_id: "run_older".to_string(),
+                workspace_id: "hist".to_string(),
+                mode: "chat".to_string(),
+                user_message: "older prompt".to_string(),
+                assistant_message: None,
+                status: "failed".to_string(),
+                event_count: 4,
+                created_at_ms: 1,
+                updated_at_ms: 2,
+            },
+        ];
+
+        assert_eq!(
+            select_history_prompt_for_rerun(&turns, "").unwrap(),
+            (1, "recent prompt".to_string())
+        );
+        assert_eq!(
+            select_history_prompt_for_rerun(&turns, "2").unwrap(),
+            (2, "older prompt".to_string())
+        );
+        assert!(select_history_prompt_for_rerun(&turns, "0")
+            .unwrap_err()
+            .contains("start at 1"));
+        assert!(select_history_prompt_for_rerun(&turns, "nope")
+            .unwrap_err()
+            .contains("Usage: /rerun"));
+        assert!(select_history_prompt_for_rerun(&turns, "3")
+            .unwrap_err()
+            .contains("not available"));
     }
 
     #[test]
