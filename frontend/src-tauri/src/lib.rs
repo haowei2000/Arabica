@@ -850,6 +850,8 @@ mod tests {
 
         assert!(local_ui.contains("className = \"chat-actions\""));
         assert!(local_ui.contains("inspect.addEventListener(\"click\", () => selectRun(turn));"));
+        assert!(local_ui.contains("review.textContent = \"Review\""));
+        assert!(local_ui.contains("await previewRunReviewForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
     }
 

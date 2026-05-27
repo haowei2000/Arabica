@@ -1853,6 +1853,14 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           inspect.type = "button";
           inspect.textContent = "Inspect";
           inspect.addEventListener("click", () => selectRun(turn));
+          const review = document.createElement("button");
+          review.type = "button";
+          review.textContent = "Review";
+          review.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunReviewForRun(turn.run_id);
+          });
           const continueRun = document.createElement("button");
           continueRun.type = "button";
           continueRun.textContent = "Continue";
@@ -1889,7 +1897,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, continueRun, proposal);
+          actions.append(meta, inspect, review, continueRun, proposal);
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2504,6 +2512,16 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function previewRunReviewForRun(runId) {
+        eventLogEl.textContent = "Loading run review...";
+        try {
+          const review = await localRunReview(runId);
+          eventLogEl.textContent = renderRunReviewText(review);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
       async function performContinuationRun(runId, extraInstruction = "") {
         eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
         setInFlightRun(
@@ -2790,8 +2808,7 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               eventLogEl.textContent = "No run selected.";
               return true;
             }
-            const review = await localRunReview(runId);
-            eventLogEl.textContent = renderRunReviewText(review);
+            await previewRunReviewForRun(runId);
             return true;
           }
           case "/evidence": {
