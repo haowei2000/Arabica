@@ -3490,6 +3490,92 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         return "Retry the previous request as a fresh Structure local run. Use the persisted transcript, events, evidence, workspace context, and current repository state; do not mutate the old run.";
       }
 
+      async function selectHistoryPromptForRerun(parts) {
+        const indexText = parts[0] ?? "1";
+        const index = Number.parseInt(indexText, 10);
+        if (!Number.isInteger(index) || index < 1) {
+          eventLogEl.textContent = "Usage: /rerun [history-number]";
+          return null;
+        }
+        const turns = state.chatTurns.length ? state.chatTurns : await localChatTurns();
+        if (!state.chatTurns.length) {
+          renderChat(turns);
+        }
+        if (!turns.length) {
+          eventLogEl.textContent = "No persisted chat turns for this workspace.";
+          return null;
+        }
+        const turn = turns[index - 1];
+        if (!turn) {
+          eventLogEl.textContent = `History #${index} is not available. Use /history to inspect recent turns.`;
+          return null;
+        }
+        return {
+          index,
+          prompt: turn.user_message,
+          runId: turn.run_id,
+        };
+      }
+
+      async function performPromptRun(prompt, options = {}) {
+        const label = options.label ?? prompt;
+        const heading = options.heading ?? "Run";
+        eventLogEl.textContent = `Running Structure local event loop in ${state.agentMode} mode...`;
+        setInFlightRun(
+          label,
+          "running",
+          `Working through the Structure local event loop in ${state.agentMode} mode...`,
+        );
+        try {
+          await primeWorkspaceEventCursor();
+          startLiveEventPolling();
+          const attempt = await runLocalAgentAttempt(prompt);
+          await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
+          const result = attempt.result;
+          state.workspaceEventCursor = Math.max(
+            state.workspaceEventCursor,
+            ...attempt.events.map((runEvent) => runEvent.sequence),
+          );
+          renderEventTimeline(attempt.events, attempt.run.run_id, true);
+          eventLogEl.textContent = `${heading}: ${attempt.run.run_id}
+Workspace: ${attempt.run.workspace_id}
+Status: ${attempt.run.status}
+Mode: ${state.agentMode}
+${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
+
+Events
+${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
+          setInFlightRun(
+            label,
+            attempt.run.status,
+            result
+              ? result.final_response.slice(0, 2400)
+              : `Run failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
+            { preserveLive: true },
+          );
+          await refresh();
+          clearInFlightRun();
+          if (!result) {
+            eventLogEl.textContent += "\n\nThe failed run is still recorded and visible in the event trace.";
+            return attempt;
+          }
+          if (state.agentMode === "code_agent") {
+            try {
+              const proposal = await latestProposal(result.run.run_id);
+              renderArtifactPreview(proposal);
+              eventLogEl.textContent += "\n\nLatest proposal opened in Preview.";
+            } catch (error) {
+              eventLogEl.textContent += `\n\nNo proposal preview opened: ${error}`;
+            }
+          }
+          return attempt;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          setInFlightRun(label, "failed", String(error), { preserveLive: true });
+          throw error;
+        }
+      }
+
       function renderDesktopCommandHelp() {
         eventLogEl.textContent = `Desktop Agent Command Map
 Workspace: ${activeWorkspaceId()}
@@ -3499,6 +3585,7 @@ Selected run: ${state.selectedRunId ?? state.runs[0]?.run_id ?? "none"}
 Run Loop
 - prompt text -> local_agent_run_attempt -> Structure run events
 - /history -> persisted chat/code-agent turns from local run events
+- /rerun [n] -> fresh run from a persisted history prompt
 - /continue, /resume, /retry -> fresh runs from selected transcript/evidence
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
 
@@ -3534,6 +3621,7 @@ Detailed Slash Commands
 /workspace <id>
 /runs
 /history
+/rerun [history-number]
 /tasks [status]
 /task <title>
 /task-status <task_id> <status> [note]
@@ -3663,6 +3751,20 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
           case "/history":
           case "/chat-history": {
             await previewChatHistory();
+            return true;
+          }
+          case "/rerun":
+          case "/repeat": {
+            const selection = await selectHistoryPromptForRerun(parts);
+            if (!selection) return true;
+            try {
+              await performPromptRun(selection.prompt, {
+                label: `Rerun history #${selection.index}: ${selection.prompt}`,
+                heading: `History Rerun #${selection.index}`,
+              });
+            } finally {
+              stopLiveEventPolling();
+            }
             return true;
           }
           case "/select": {
@@ -4809,59 +4911,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           return;
         }
         setAgentBusy(true);
-        eventLogEl.textContent = `Running Structure local event loop in ${state.agentMode} mode...`;
-        setInFlightRun(
-          prompt,
-          "running",
-          `Working through the Structure local event loop in ${state.agentMode} mode...`,
-        );
         try {
-          await primeWorkspaceEventCursor();
-          startLiveEventPolling();
-          const attempt = await runLocalAgentAttempt(prompt);
-          await pollWorkspaceEvents({ silent: true, autoSelectLatest: true }).catch(() => {});
-          const result = attempt.result;
-          state.workspaceEventCursor = Math.max(
-            state.workspaceEventCursor,
-            ...attempt.events.map((runEvent) => runEvent.sequence),
-          );
-          renderEventTimeline(attempt.events, attempt.run.run_id, true);
-          eventLogEl.textContent = `Run: ${attempt.run.run_id}
-Workspace: ${attempt.run.workspace_id}
-Status: ${attempt.run.status}
-Mode: ${state.agentMode}
-${result ? `Artifact: ${result.artifact_path}` : `Error: ${attempt.error ?? "unknown error"}`}
-
-Events
-${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${runEvent.canonical_flow_id ?? "event"}`).join("\n")}`;
-          setInFlightRun(
-            prompt,
-            attempt.run.status,
-            result
-              ? result.final_response.slice(0, 2400)
-              : `Run failed but remains inspectable: ${attempt.error ?? "unknown error"}`,
-            { preserveLive: true },
-          );
-          await refresh();
-          clearInFlightRun();
-          if (!result) {
-            eventLogEl.textContent += "\n\nThe failed run is still recorded and visible in the event trace.";
-            return;
-          }
-          agentPromptEl.value = "";
-          resetComposerHistoryNavigation();
-          if (state.agentMode === "code_agent") {
-            try {
-              const proposal = await latestProposal(result.run.run_id);
-              renderArtifactPreview(proposal);
-              eventLogEl.textContent += "\n\nLatest proposal opened in Preview.";
-            } catch (error) {
-              eventLogEl.textContent += `\n\nNo proposal preview opened: ${error}`;
-            }
+          const attempt = await performPromptRun(prompt);
+          if (attempt.result) {
+            agentPromptEl.value = "";
+            resetComposerHistoryNavigation();
           }
         } catch (error) {
           eventLogEl.textContent = String(error);
-          setInFlightRun(prompt, "failed", String(error), { preserveLive: true });
         } finally {
           stopLiveEventPolling();
           setAgentBusy(false);

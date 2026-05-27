@@ -392,7 +392,7 @@ into runtime calls:
   In-flight chat bubbles consume that same feed to show the current live event
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
-  `/runs`, `/history`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
+  `/runs`, `/history`, `/rerun [n]`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
   `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/compact`, `/session`, `/trace`, `/review`, `/risk`, `/dry-run`, `/apply --dry-run`, and `/rollback`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
@@ -411,7 +411,9 @@ into runtime calls:
   browser-only buffer. The desktop composer also rebuilds its prompt/command
   recall history from persisted `local_chat_turns` and `local_command_turns`,
   so app navigation remains grounded in Structure Core run and workspace
-  events rather than a frontend-only draft list.
+  events rather than a frontend-only draft list. Desktop `/rerun [n]` uses
+  those persisted `local_chat_turns` as fresh `local_agent_run_attempt` input,
+  matching CLI `/rerun` without introducing a desktop-only history model.
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`
   diagnostic, and Core parity report.

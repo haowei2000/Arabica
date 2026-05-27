@@ -1262,6 +1262,13 @@ mod tests {
         assert!(local_ui.contains("function resetComposerHistoryNavigation()"));
         assert!(local_ui.contains("canRecallComposerHistory(event)"));
         assert!(local_ui.contains("event.key === \"ArrowUp\" || event.key === \"ArrowDown\""));
+        assert!(local_ui.contains("function selectHistoryPromptForRerun(parts)"));
+        assert!(local_ui.contains("function performPromptRun(prompt, options = {})"));
+        assert!(local_ui.contains("case \"/rerun\":"));
+        assert!(local_ui.contains("case \"/repeat\":"));
+        assert!(local_ui.contains("await performPromptRun(selection.prompt"));
+        assert!(local_ui.contains("/rerun [history-number]"));
+        assert!(local_ui.contains("History Rerun #${selection.index}"));
         assert!(local_ui.contains("syncComposerHistory();"));
         assert!(local_ui.contains("resetComposerHistoryNavigation();"));
     }
