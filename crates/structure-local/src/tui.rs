@@ -14,9 +14,9 @@ use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentContext, LocalAgentMode,
     LocalAgentRuntime, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
     LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall,
-    ProposalApplyResult, ProposalReview, ProposalRollbackResult, RunAttempt, RunEvidenceSummary,
-    RunRequest, RunSummary, RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest,
-    WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
+    LocalToolTraceEntry, ProposalApplyResult, ProposalReview, ProposalRollbackResult, RunAttempt,
+    RunEvidenceSummary, RunRequest, RunSummary, RunTranscript, WorkspaceCompact,
+    WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -560,6 +560,22 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_selected_run_tool_trace(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let trace = local_result(runtime.run_tool_trace(&run.run_id))?;
+        self.pending_apply_artifact_id = None;
+        self.preview = Some(TuiPreview {
+            path: format!("tool trace / {}", run.run_id),
+            text: render_tool_trace(&run, &trace),
+        });
+        self.notice = format!("Tool trace: {} calls for {}", trace.len(), run.run_id);
+        Ok(())
+    }
+
     fn preview_selected_run_plan(&mut self, repo_root: &Path) -> Result<()> {
         let Some(run) = self.runs.get(self.selected).cloned() else {
             self.notice = "No run selected".to_string();
@@ -950,6 +966,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('d') => state.preview_worktree_snapshot(repo_root)?,
                     KeyCode::Char('t') => state.preview_selected_run_transcript(repo_root)?,
                     KeyCode::Char('l') => state.preview_selected_run_plan(repo_root)?,
+                    KeyCode::Char('O') => state.preview_selected_run_tool_trace(repo_root)?,
                     KeyCode::Char('C') => state.preview_selected_run_compact(repo_root)?,
                     KeyCode::Char('z') => state.preview_selected_run_core_trace(repo_root)?,
                     KeyCode::Char('b') => state.preview_selected_run_review(repo_root)?,
@@ -1047,7 +1064,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1135,7 +1152,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, A context, H doctor, i status, t transcript, l plan, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
+        "press j/k to select, A context, H doctor, i status, t transcript, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1329,7 +1346,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  C compact";
+    let controls = "q quit  r refresh  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  O tools";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1426,6 +1443,11 @@ fn truncate(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     out.push_str("...");
     out
+}
+
+fn compact_json(value: &serde_json::Value) -> String {
+    let raw = serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
+    truncate(&raw, 600)
 }
 
 fn local_result<T>(result: std::result::Result<T, String>) -> Result<T> {
@@ -1910,6 +1932,48 @@ fn render_run_core_trace(trace: &LocalRunCoreTrace) -> String {
             step.primitive_id,
             step.payload_summary
         ));
+    }
+    text
+}
+
+fn render_tool_trace(run: &RunSummary, trace: &[LocalToolTraceEntry]) -> String {
+    let mut text = String::new();
+    text.push_str("Tool Trace\n");
+    text.push_str(&format!("Run: {}\n", run.run_id));
+    text.push_str(&format!("Workspace: {}\n", run.workspace_id));
+    text.push_str(&format!("Status: {}\n", run.status));
+    text.push_str(&format!("Tool calls: {}\n\n", trace.len()));
+    if trace.is_empty() {
+        text.push_str("No tool calls recorded.\n");
+        return text;
+    }
+    for entry in trace {
+        let status = match entry.success {
+            Some(true) => "ok",
+            Some(false) => "failed",
+            None => "pending",
+        };
+        text.push_str(&format!(
+            "{} / {} / req={} / done={} / {}\n",
+            entry.call_id,
+            entry.name,
+            entry
+                .requested_sequence
+                .map(|sequence| sequence.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            entry
+                .completed_sequence
+                .map(|sequence| sequence.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            status
+        ));
+        text.push_str(&format!("  input: {}\n", compact_json(&entry.input)));
+        if let Some(output) = &entry.output {
+            text.push_str(&format!("  output: {}\n", compact_json(output)));
+        }
+        if let Some(error) = &entry.error {
+            text.push_str(&format!("  error: {error}\n"));
+        }
     }
     text
 }
@@ -2755,6 +2819,13 @@ mod tests {
             assert!(plan_preview.text.contains("Run Plan"));
             assert!(plan_preview.text.contains("Steps:"));
             assert!(plan_preview.text.contains("Model:"));
+
+            state.preview_selected_run_tool_trace(&root)?;
+            let tool_preview = state.preview.as_ref().expect("tool trace preview");
+            assert!(tool_preview.path.starts_with("tool trace / run_"));
+            assert!(tool_preview.text.contains("Tool Trace"));
+            assert!(tool_preview.text.contains("Tool calls:"));
+            assert!(tool_preview.text.contains("list_workspace"));
 
             state.preview_selected_run_compact(&root)?;
             let compact_preview = state.preview.as_ref().expect("run compact preview");

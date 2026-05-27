@@ -353,7 +353,9 @@ into runtime calls:
   the selected run transcript, `l` to inspect the event-derived agent plan,
   `z` to inspect the same Core flow/primitive trace
   as CLI `runs trace`, `b` to inspect the same post-run review as CLI
-  `runs review`, and `e` to inspect the same local evidence bundle.
+  `runs review`, `O` to inspect the selected run's paired
+  `tool_call_requested` / `tool_call_completed` trace, and `e` to inspect the
+  same local evidence bundle.
   Proposal controls `g`, `h`, `u`, and `y` prefer the selected run's code-change
   proposal before falling back to the latest workspace proposal, preserving the
   inspect-risk-review-apply loop around a chosen run.
