@@ -265,7 +265,10 @@ into runtime calls:
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
   evidence summary, preserving the event-sourced audit trail instead of editing
-  an old run in place.
+  an old run in place. Successful interactive slash commands are also persisted
+  through `LocalAgentRuntime::record_command_turn` as `command_turn_recorded`
+  workspace events, so the terminal agent loop has the same durable command
+  audit trail as the desktop chat.
   `uv run structure retry <run-id>` and interactive `/retry [run-id]` use the
   same continuation request path with an explicit retry instruction, so a failed
   or unsatisfactory run can be tried again as a new audited run while preserving

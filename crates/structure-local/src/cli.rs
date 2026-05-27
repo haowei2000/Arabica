@@ -916,9 +916,31 @@ fn run_chat_agent(repo_root: &PathBuf, args: ChatArgs) -> Result<()> {
             continue;
         }
         if prompt.starts_with('/') {
-            if !handle_chat_session_command(&runtime, repo_root, args.json, &mut state, prompt)? {
+            let handled = match handle_chat_session_command(
+                &runtime, repo_root, args.json, &mut state, prompt,
+            ) {
+                Ok(handled) => handled,
+                Err(error) => {
+                    let _ = record_chat_session_command_turn(
+                        &runtime,
+                        state.workspace_id.as_deref(),
+                        prompt,
+                        "error",
+                        &format!("CLI slash command failed: {error}"),
+                    );
+                    return Err(error);
+                }
+            };
+            if !handled {
                 break;
             }
+            record_chat_session_command_turn(
+                &runtime,
+                state.workspace_id.as_deref(),
+                prompt,
+                "ok",
+                "CLI slash command completed. Detailed output was rendered to the terminal; this event preserves the command in Structure workspace history.",
+            )?;
             continue;
         }
         let request = RunRequest {
@@ -1753,6 +1775,17 @@ fn session_mode_label(mode: &LocalAgentMode) -> &'static str {
     }
 }
 
+fn record_chat_session_command_turn(
+    runtime: &LocalAgentRuntime,
+    workspace_id: Option<&str>,
+    input: &str,
+    status: &str,
+    output: &str,
+) -> Result<()> {
+    local_result(runtime.record_command_turn(workspace_id, input, output, status, "cli"))?;
+    Ok(())
+}
+
 fn run_continuation_from_session(
     runtime: &LocalAgentRuntime,
     repo_root: &PathBuf,
@@ -1995,7 +2028,7 @@ fn render_chat_session_command_map(state: &ChatSessionState) -> String {
 
     text.push_str("Invariant\n");
     text.push_str(
-        "Every command above stays inside structure-local-runtime and reads or writes Structure Core-aligned events. Benchmark adapters stay outside this CLI surface.\n",
+        "Every command above stays inside structure-local-runtime and reads or writes Structure Core-aligned events; interactive slash commands are persisted as command_turn_recorded workspace events. Benchmark adapters stay outside this CLI surface.\n",
     );
     text
 }
@@ -3359,7 +3392,39 @@ mod tests {
         assert!(map.contains("/plan, /tools, /trace, /review"));
         assert!(map.contains("Session And Proposals"));
         assert!(map.contains("/risk, /dry-run, /apply, /rollback"));
+        assert!(map.contains("command_turn_recorded workspace events"));
         assert!(map.contains("Benchmark adapters stay outside this CLI surface"));
+    }
+
+    #[test]
+    fn cli_records_slash_command_turns_as_workspace_events() {
+        let root = unique_repo("cli-command-turn");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        record_chat_session_command_turn(
+            &runtime,
+            Some("cli"),
+            "/status",
+            "ok",
+            "CLI slash command completed.",
+        )
+        .unwrap();
+
+        let turns = runtime.command_turns(Some("cli"), 10).unwrap();
+        let feed = runtime
+            .workspace_event_feed(Some("cli"), Some(0), 10)
+            .unwrap();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].input, "/status");
+        assert_eq!(turns[0].surface, "cli");
+        assert!(feed.events.iter().any(|event| {
+            event.kind == "command_turn_recorded"
+                && event.payload["input"] == "/status"
+                && event.payload["surface"] == "cli"
+        }));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
