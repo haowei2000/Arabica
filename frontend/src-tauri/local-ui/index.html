@@ -2107,6 +2107,14 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             renderRuns(state.runs);
             await previewRunStatusForRun(turn.run_id, `/run-status ${turn.run_id}`);
           });
+          const usage = document.createElement("button");
+          usage.type = "button";
+          usage.textContent = "Usage";
+          usage.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunUsageForRun(turn.run_id, `/usage ${turn.run_id}`);
+          });
           const review = document.createElement("button");
           review.type = "button";
           review.textContent = "Review";
@@ -2255,6 +2263,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             meta,
             inspect,
             status,
+            usage,
             plan,
             tools,
             trace,
@@ -3214,6 +3223,18 @@ Opened in Preview${runId ? " for the selected run." : "."}`;
         }
       }
 
+      async function previewRunUsageForRun(runId, commandInput = null) {
+        eventLogEl.textContent = "Loading model usage...";
+        try {
+          const evidence = await localRunEvidence(runId);
+          eventLogEl.textContent = renderUsageText(evidence);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Model usage loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewRunToolTraceForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading tool trace...";
         try {
@@ -4073,8 +4094,7 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               eventLogEl.textContent = "No run selected.";
               return true;
             }
-            const evidence = await localRunEvidence(runId);
-            eventLogEl.textContent = renderUsageText(evidence);
+            await previewRunUsageForRun(runId);
             return true;
           }
           case "/source":

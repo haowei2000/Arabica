@@ -426,8 +426,9 @@ into runtime calls:
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`
   diagnostic, and Core parity report.
-  Desktop `/usage [run-id]` mirrors the CLI model-call shortcut and renders the
-  same `model_usage` evidence summary from Rust.
+  Desktop `/usage [run-id]` and per-turn Usage actions mirror the CLI
+  model-call shortcut and render the same `model_usage` evidence summary from
+  Rust. Per-turn Usage actions are recorded as `/usage <run-id>` command turns.
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
   `local_run_event_gc` preview as the CLI, keeping event visibility policy
   inspectable inside the app chat loop.
@@ -496,12 +497,12 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/plan/tools/trace/compact/review/continue/retry/proposal
+  thread exposes per-turn inspect/usage/plan/tools/trace/compact/review/continue/retry/proposal
   actions so chat history remains a navigable view over run evidence rather than
-  a detached transcript. Per-turn Inspect, Status, Plan, Tools, Trace, Compact, and
+  a detached transcript. Per-turn Inspect, Status, Usage, Plan, Tools, Trace, Compact, and
   Review actions append `/inspect <run-id>`, `/run-status <run-id>`,
-  `/plan <run-id>`, `/tools <run-id>`, `/trace <run-id>`, `/compact <run-id>`, and
-  `/review <run-id>` command turns while still reading from the Rust local
+  `/usage <run-id>`, `/plan <run-id>`, `/tools <run-id>`, `/trace <run-id>`,
+  `/compact <run-id>`, and `/review <run-id>` command turns while still reading from the Rust local
   runtime. Per-turn Proposal actions append
   `/proposal <run-id>` command turns while opening the selected run's code-change
   proposal in Preview.
