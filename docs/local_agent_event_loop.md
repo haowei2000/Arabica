@@ -254,7 +254,10 @@ into runtime calls:
 - CLI doctor: `uv run structure doctor --workspace <id> --mode code_agent
   --json` combines the local snapshot, real `OPENAI__` diagnostic, Structure
   Core parity report, and assembled agent context as a pre-run health gate.
-- CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
+- CLI session inspection: inside `uv run structure chat`, `/help` and `/map`
+  render a grouped agent command map for run loop, workspace context, run
+  evidence, session, and proposal actions while keeping benchmark work outside
+  the local agent surface. `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/tasks`, `/task`, `/task-status`, `/task-done`, `/usage [run-id]`,
   `/review [run-id]`, `/plan [run-id]`, `/trace [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,

@@ -1087,8 +1087,8 @@ fn handle_chat_session_command(
         .unwrap_or_default();
     match command {
         "/quit" | "/exit" => Ok(false),
-        "/help" => {
-            print_chat_session_help();
+        "/help" | "/map" | "/commands" => {
+            print_chat_session_help(state);
             Ok(true)
         }
         "/status" => {
@@ -1877,8 +1877,10 @@ fn parse_agent_mode(value: Option<&str>, chat_only: bool) -> Result<LocalAgentMo
     }
 }
 
-fn print_chat_session_help() {
-    println!("Structure local session commands");
+fn print_chat_session_help(state: &ChatSessionState) {
+    print!("{}", render_chat_session_command_map(state));
+    println!();
+    println!("Detailed slash commands");
     println!("  @path[:line] prompt    Attach a repo-relative file before model planning");
     println!("  /status               Show workspace, mode, selected run, and LLM env");
     println!("  /llm                  Check the configured OPENAI__ API endpoint");
@@ -1938,7 +1940,57 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+    "/help, /map, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+}
+
+fn render_chat_session_command_map(state: &ChatSessionState) -> String {
+    let mut text = String::new();
+    text.push_str("Structure CLI Agent Command Map\n");
+    text.push_str(&format!(
+        "Workspace: {}\n",
+        state.workspace_id.as_deref().unwrap_or("default")
+    ));
+    text.push_str(&format!("Mode: {}\n", session_mode_label(&state.mode)));
+    text.push_str(&format!(
+        "Selected run: {}\n\n",
+        state.last_run_id.as_deref().unwrap_or("none")
+    ));
+
+    text.push_str("Run Loop\n");
+    text.push_str("- prompt text -> run_prompt_attempt -> Structure run events\n");
+    text.push_str("- /continue, /resume -> fresh run from selected transcript/evidence\n");
+    text.push_str("- /retry -> fresh retry run with explicit retry instruction\n");
+    text.push_str("- /mode chat|code -> switch chat/code_agent on the same runtime contract\n\n");
+
+    text.push_str("Workspace Context\n");
+    text.push_str(
+        "- /workspace, /context, /doctor, /llm, /worktree -> pre-run health and context\n",
+    );
+    text.push_str("- /source, /remember, /recall, /forget, /sources -> path-addressed knowledge\n");
+    text.push_str("- /rate -> source_rated feedback replayed into future context\n");
+    text.push_str(
+        "- /tasks, /task, /task-status, /task-done -> workspace/run-linked task events\n",
+    );
+    text.push_str("- /ls, /search, /read, /cmd -> allowlisted local tools recorded as events\n\n");
+
+    text.push_str("Run Evidence\n");
+    text.push_str("- /run-status, /events, /transcript, /inspect -> selected run inspection\n");
+    text.push_str("- /plan, /tools, /trace, /review -> event-derived agent reasoning views\n");
+    text.push_str("- /compact, /evidence, /usage, /gc -> continuation and audit boundaries\n");
+    text.push_str(
+        "- /checkpoint, /decision -> human feedback replayed into continuation context\n\n",
+    );
+
+    text.push_str("Session And Proposals\n");
+    text.push_str("- /session, /session-continue, /session-usage -> workspace session handoff\n");
+    text.push_str("- /artifacts, /proposal, /diff -> local artifact and proposal disclosure\n");
+    text.push_str("- /risk, /dry-run, /apply, /rollback -> review-gated code proposal loop\n\n");
+
+    text.push_str("Invariant\n");
+    text.push_str(
+        "Every command above stays inside structure-local-runtime and reads or writes Structure Core-aligned events. Benchmark adapters stay outside this CLI surface.\n",
+    );
+    text
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -3213,6 +3265,7 @@ mod tests {
         let summary = chat_session_command_summary();
 
         assert!(summary.contains("/worktree"));
+        assert!(summary.contains("/map"));
         assert!(summary.contains("/status"));
         assert!(summary.contains("/doctor"));
         assert!(summary.contains("/context"));
@@ -3235,6 +3288,31 @@ mod tests {
         assert!(summary.contains("/risk"));
         assert!(summary.contains("/dry-run"));
         assert!(!summary.contains("benchmark"));
+    }
+
+    #[test]
+    fn cli_chat_session_command_map_groups_agent_actions_by_core_loop() {
+        let state = ChatSessionState {
+            workspace_id: Some("cli-map".to_string()),
+            mode: LocalAgentMode::CodeAgent,
+            last_run_id: Some("run_selected".to_string()),
+        };
+
+        let map = render_chat_session_command_map(&state);
+
+        assert!(map.contains("Structure CLI Agent Command Map"));
+        assert!(map.contains("Workspace: cli-map"));
+        assert!(map.contains("Mode: code_agent"));
+        assert!(map.contains("Selected run: run_selected"));
+        assert!(map.contains("Run Loop"));
+        assert!(map.contains("prompt text -> run_prompt_attempt -> Structure run events"));
+        assert!(map.contains("Workspace Context"));
+        assert!(map.contains("/context, /doctor, /llm"));
+        assert!(map.contains("Run Evidence"));
+        assert!(map.contains("/plan, /tools, /trace, /review"));
+        assert!(map.contains("Session And Proposals"));
+        assert!(map.contains("/risk, /dry-run, /apply, /rollback"));
+        assert!(map.contains("Benchmark adapters stay outside this CLI surface"));
     }
 
     #[test]
