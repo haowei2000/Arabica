@@ -391,7 +391,11 @@ into runtime calls:
   mutating the previous run.
   Desktop `/context` and the visible Agent Context action call the shared
   `local_agent_context` Tauri command so the app shows the same assembled
-  context the CLI sees before a run starts.
+  context the CLI sees before a run starts; the visible action is also appended
+  to the chat thread as a `/context` command turn.
+  Desktop `/doctor` and the visible Doctor action append the same `/doctor`
+  command turn after combining the Rust session status, real `OPENAI__`
+  diagnostic, and Core parity report.
   Desktop `/usage [run-id]` mirrors the CLI model-call shortcut and renders the
   same `model_usage` evidence summary from Rust.
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive

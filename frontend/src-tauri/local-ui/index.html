@@ -4722,8 +4722,10 @@ ${events || "No events recorded."}`;
         try {
           const context = await localAgentContext();
           eventLogEl.textContent = renderAgentContextText(context);
+          appendCommandMessage("/context", eventLogEl.textContent || "Agent context loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          appendCommandMessage("/context", eventLogEl.textContent, "error");
         } finally {
           setContextBusy(false);
         }
@@ -4738,9 +4740,11 @@ ${events || "No events recorded."}`;
             coreParityReport(),
           ]);
           eventLogEl.textContent = renderDoctorText(status, diagnostic, parity);
+          appendCommandMessage("/doctor", eventLogEl.textContent || "Doctor completed.");
           if (state.snapshot) renderCoreContract(state.snapshot.core_manifest ?? fallbackCoreManifest(), parity);
         } catch (error) {
           eventLogEl.textContent = String(error);
+          appendCommandMessage("/doctor", eventLogEl.textContent, "error");
         } finally {
           setDoctorBusy(false);
         }

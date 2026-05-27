@@ -1047,6 +1047,7 @@ mod tests {
         assert!(local_ui.contains("id=\"show-context\""));
         assert!(local_ui.contains("setContextBusy(true)"));
         assert!(local_ui.contains("eventLogEl.textContent = renderAgentContextText(context);"));
+        assert!(local_ui.contains("appendCommandMessage(\"/context\""));
         assert!(local_ui.contains("case \"/context\":"));
         assert!(local_ui.contains("case \"/remember\":"));
         assert!(local_ui.contains("case \"/recall\":"));
@@ -1129,6 +1130,7 @@ mod tests {
         assert!(local_ui.contains("setDoctorBusy(true)"));
         assert!(local_ui
             .contains("eventLogEl.textContent = renderDoctorText(status, diagnostic, parity);"));
+        assert!(local_ui.contains("appendCommandMessage(\"/doctor\""));
         assert!(local_ui.contains("case \"/diff\":"));
         assert!(local_ui.contains("/diff [run_id]"));
     }
