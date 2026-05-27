@@ -388,9 +388,9 @@ into runtime calls:
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
   `local_run_event_gc` preview as the CLI, keeping event visibility policy
   inspectable inside the app chat loop.
-  Desktop `/tools [run-id]` calls `local_run_tool_trace`, giving the app the
-  same ordered tool-call explanation as the CLI without re-parsing raw events
-  in JavaScript.
+  Desktop `/tools [run-id]`, the Tool Trace action, and per-turn Tools actions
+  call `local_run_tool_trace`, giving the app the same ordered tool-call
+  explanation as the CLI/TUI without re-parsing raw events in JavaScript.
   Desktop `/run-status [run-id]`, the Run Status action, and per-turn Status
   actions call `local_run_status`, giving the app the same latest-event,
   usage, tool, artifact, Core alignment, and next-action snapshot as CLI/TUI.

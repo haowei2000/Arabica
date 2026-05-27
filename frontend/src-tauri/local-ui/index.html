@@ -1002,6 +1002,7 @@
             <button id="session-continue" type="button">Session Continue</button>
             <button id="session-usage" type="button">Session Usage</button>
             <button id="run-status" type="button">Run Status</button>
+            <button id="run-tools" type="button">Tool Trace</button>
             <button id="record-checkpoint" type="button">Record Decision</button>
             <button id="show-tasks" type="button">Tasks</button>
             <button id="poll-events" type="button">Poll Events</button>
@@ -1126,6 +1127,7 @@
       const sessionContinueEl = document.querySelector("#session-continue");
       const sessionUsageEl = document.querySelector("#session-usage");
       const runStatusEl = document.querySelector("#run-status");
+      const runToolsEl = document.querySelector("#run-tools");
       const recordCheckpointEl = document.querySelector("#record-checkpoint");
       const showTasksEl = document.querySelector("#show-tasks");
       const pollEventsEl = document.querySelector("#poll-events");
@@ -1671,6 +1673,11 @@
         runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
       }
 
+      function setRunToolsBusy(isBusy) {
+        runToolsEl.disabled = isBusy;
+        runToolsEl.textContent = isBusy ? "Loading Tools" : "Tool Trace";
+      }
+
       function setCheckpointBusy(isBusy) {
         recordCheckpointEl.disabled = isBusy;
         recordCheckpointEl.textContent = isBusy ? "Recording Decision" : "Record Decision";
@@ -2030,6 +2037,14 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewRunPlanForRun(turn.run_id);
           });
+          const tools = document.createElement("button");
+          tools.type = "button";
+          tools.textContent = "Tools";
+          tools.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunToolTraceForRun(turn.run_id);
+          });
           const compact = document.createElement("button");
           compact.type = "button";
           compact.textContent = "Compact";
@@ -2091,7 +2106,19 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             renderRuns(state.runs);
             await previewProposalForRun(turn.run_id);
           });
-          actions.append(meta, inspect, status, plan, compact, review, decision, continueRun, retryRun, proposal);
+          actions.append(
+            meta,
+            inspect,
+            status,
+            plan,
+            tools,
+            compact,
+            review,
+            decision,
+            continueRun,
+            retryRun,
+            proposal,
+          );
           assistant.append(assistantRole, assistantText, actions);
 
           chatThreadEl.append(user, assistant);
@@ -2940,6 +2967,16 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function previewRunToolTraceForRun(runId) {
+        eventLogEl.textContent = "Loading tool trace...";
+        try {
+          const trace = await localRunToolTrace(runId);
+          eventLogEl.textContent = renderToolTraceText(trace);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
       async function previewTasks(status = null) {
         eventLogEl.textContent = "Loading workspace tasks...";
         try {
@@ -3407,8 +3444,7 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               eventLogEl.textContent = "No run selected.";
               return true;
             }
-            const trace = await localRunToolTrace(runId);
-            eventLogEl.textContent = renderToolTraceText(trace);
+            await previewRunToolTraceForRun(runId);
             return true;
           }
           case "/plan": {
@@ -4597,6 +4633,19 @@ ${events || "No events recorded."}`;
           await previewRunStatusForRun(runId);
         } finally {
           setRunStatusBusy(false);
+        }
+      });
+      runToolsEl.addEventListener("click", async () => {
+        const runId = state.selectedRunId ?? state.runs[0]?.run_id;
+        if (!runId) {
+          eventLogEl.textContent = "No run selected.";
+          return;
+        }
+        setRunToolsBusy(true);
+        try {
+          await previewRunToolTraceForRun(runId);
+        } finally {
+          setRunToolsBusy(false);
         }
       });
       recordCheckpointEl.addEventListener("click", async () => {

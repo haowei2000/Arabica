@@ -1071,6 +1071,9 @@ mod tests {
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));
         assert!(local_ui.contains("function renderEventGcText(preview)"));
         assert!(local_ui.contains("case \"/gc\":"));
+        assert!(local_ui.contains("id=\"run-tools\""));
+        assert!(local_ui.contains("setRunToolsBusy(true)"));
+        assert!(local_ui.contains("function previewRunToolTraceForRun"));
         assert!(local_ui.contains("function renderToolTraceText(trace)"));
         assert!(local_ui.contains("case \"/tools\":"));
         assert!(local_ui.contains("function renderRunPlanText(plan)"));
@@ -1154,7 +1157,9 @@ mod tests {
         assert!(local_ui.contains("review.textContent = \"Review\""));
         assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
+        assert!(local_ui.contains("tools.textContent = \"Tools\""));
         assert!(local_ui.contains("await previewRunPlanForRun(turn.run_id);"));
+        assert!(local_ui.contains("await previewRunToolTraceForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewRunReviewForRun(turn.run_id);"));
         assert!(local_ui.contains("await recordDecisionForRun(turn.run_id);"));
         assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
