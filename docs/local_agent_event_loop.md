@@ -432,6 +432,10 @@ into runtime calls:
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
   `local_run_event_gc` preview as the CLI, keeping event visibility policy
   inspectable inside the app chat loop.
+  Desktop `/events [run-id]` and per-turn Events actions call
+  `local_run_events`, making the raw immutable run stream a first-class
+  desktop chat action instead of hiding it inside transcript inspection.
+  Per-turn Events actions are recorded as `/events <run-id>` command turns.
   Desktop `/tools [run-id]`, the Tool Trace action, and per-turn Tools actions
   call `local_run_tool_trace`, giving the app the same ordered tool-call
   explanation as the CLI/TUI without re-parsing raw events in JavaScript. The
@@ -497,13 +501,13 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/usage/plan/tools/trace/compact/review/continue/retry/proposal
+  thread exposes per-turn inspect/usage/events/plan/tools/trace/compact/review/continue/retry/proposal
   actions so chat history remains a navigable view over run evidence rather than
-  a detached transcript. Per-turn Inspect, Status, Usage, Plan, Tools, Trace, Compact, and
+  a detached transcript. Per-turn Inspect, Status, Usage, Events, Plan, Tools, Trace, Compact, and
   Review actions append `/inspect <run-id>`, `/run-status <run-id>`,
-  `/usage <run-id>`, `/plan <run-id>`, `/tools <run-id>`, `/trace <run-id>`,
-  `/compact <run-id>`, and `/review <run-id>` command turns while still reading from the Rust local
-  runtime. Per-turn Proposal actions append
+  `/usage <run-id>`, `/events <run-id>`, `/plan <run-id>`, `/tools <run-id>`,
+  `/trace <run-id>`, `/compact <run-id>`, and `/review <run-id>` command turns
+  while still reading from the Rust local runtime. Per-turn Proposal actions append
   `/proposal <run-id>` command turns while opening the selected run's code-change
   proposal in Preview.
   The per-turn Continue button uses the current composer text as an optional

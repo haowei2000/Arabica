@@ -2115,6 +2115,14 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             renderRuns(state.runs);
             await previewRunUsageForRun(turn.run_id, `/usage ${turn.run_id}`);
           });
+          const events = document.createElement("button");
+          events.type = "button";
+          events.textContent = "Events";
+          events.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunEventsForRun(turn.run_id, `/events ${turn.run_id}`);
+          });
           const review = document.createElement("button");
           review.type = "button";
           review.textContent = "Review";
@@ -2264,6 +2272,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             inspect,
             status,
             usage,
+            events,
             plan,
             tools,
             trace,
@@ -3235,6 +3244,20 @@ Opened in Preview${runId ? " for the selected run." : "."}`;
         }
       }
 
+      async function previewRunEventsForRun(runId, commandInput = null) {
+        eventLogEl.textContent = "Loading run events...";
+        try {
+          const events = await localRunEvents(runId);
+          renderEventTimeline(events, runId, true);
+          eventLogEl.textContent = `Events
+${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`).join("\n")}`;
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Run events loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewRunToolTraceForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading tool trace...";
         try {
@@ -3967,10 +3990,7 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
               eventLogEl.textContent = "No run selected.";
               return true;
             }
-            const events = await localRunEvents(runId);
-            renderEventTimeline(events, runId, true);
-            eventLogEl.textContent = `Events
-${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"}`).join("\n")}`;
+            await previewRunEventsForRun(runId);
             return true;
           }
           case "/gc": {

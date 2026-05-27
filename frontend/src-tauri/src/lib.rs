@@ -1131,6 +1131,9 @@ mod tests {
         assert!(local_ui.contains("function previewRunUsageForRun"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("previewRunUsageForRun(runId);"));
+        assert!(local_ui.contains("function previewRunEventsForRun"));
+        assert!(local_ui.contains("case \"/events\":"));
+        assert!(local_ui.contains("previewRunEventsForRun(runId);"));
         assert!(local_ui.contains("function renderEventGcText(preview)"));
         assert!(local_ui.contains("case \"/gc\":"));
         assert!(local_ui.contains("id=\"run-tools\""));
@@ -1251,6 +1254,7 @@ mod tests {
         assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
         assert!(local_ui.contains("usage.textContent = \"Usage\""));
+        assert!(local_ui.contains("events.textContent = \"Events\""));
         assert!(local_ui.contains("tools.textContent = \"Tools\""));
         assert!(local_ui.contains("trace.textContent = \"Trace\""));
         assert!(local_ui.contains("rerunRun.textContent = \"Rerun\""));
@@ -1263,6 +1267,7 @@ mod tests {
             local_ui.contains("previewRunStatusForRun(turn.run_id, `/run-status ${turn.run_id}`)")
         );
         assert!(local_ui.contains("previewRunUsageForRun(turn.run_id, `/usage ${turn.run_id}`)"));
+        assert!(local_ui.contains("previewRunEventsForRun(turn.run_id, `/events ${turn.run_id}`)"));
         assert!(local_ui.contains("previewRunPlanForRun(turn.run_id, `/plan ${turn.run_id}`)"));
         assert!(
             local_ui.contains("previewRunToolTraceForRun(turn.run_id, `/tools ${turn.run_id}`)")
