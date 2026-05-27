@@ -162,6 +162,7 @@ into runtime calls:
 - Noninteractive CLI continuation: `uv run structure continue <run-id>
   [instruction]` is the scriptable counterpart to interactive `/continue`,
   TUI `f`, and desktop Continue. It loads the source run transcript/evidence,
+  derives the same compact continuation context exposed by `runs compact`,
   creates a fresh run through the shared `ContinuationRequest`, and can emit the
   same `RunAttempt` JSON envelope for automation.
 - CLI parity checks: `uv run structure parity --json` reads the shared

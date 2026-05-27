@@ -2051,42 +2051,21 @@ fn build_continuation_prompt(
     transcript: &RunTranscript,
     extra_instruction: Option<&str>,
 ) -> String {
-    let assistant_message = transcript
-        .chat_turn
-        .as_ref()
-        .and_then(|turn| turn.assistant_message.as_deref())
-        .or(transcript.final_response.as_deref())
-        .unwrap_or("No assistant response was recorded.");
-    let assistant_excerpt = continuation_response_excerpt(assistant_message);
-    let artifact_paths = if transcript.evidence.artifact_paths.is_empty() {
-        "none".to_string()
-    } else {
-        transcript.evidence.artifact_paths.join("\n")
-    };
+    let compact = run_compact_from_transcript(transcript);
     let extra_instruction = extra_instruction
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("Continue the same task from the previous run using the persisted transcript, event evidence, workspace context, and current repository state.");
 
     format!(
-        "Continue from Structure local run `{run_id}` in workspace `{workspace_id}`.\n\n\
-Previous user prompt:\n{previous_prompt}\n\n\
-Previous assistant response summary:\n{assistant_summary}\n\n\
-Previous run evidence:\n- status: {status}\n- events: {event_count}\n- completed tool calls: {tool_call_count}\n- core aligned: {core_aligned}\n- artifacts:\n{artifact_paths}\n\n\
+        "Continue from Structure local run `{run_id}` in workspace `{workspace_id}` using the compacted Structure event context below.\n\n\
+This compact context is the durable continuation boundary for the new run. It is derived from immutable Structure events, run evidence, artifacts, model usage, and Core trace metadata; do not treat it as an opaque chat buffer.\n\n\
+{compact_context}\n\n\
 Produce the next assistant response now. Treat the continuation instruction as the active user request for this new run.\n\n\
 Continuation instruction:\n{extra_instruction}\n",
         run_id = transcript.run.run_id,
         workspace_id = transcript.run.workspace_id,
-        previous_prompt = truncate_for_prompt(
-            &transcript.run.prompt,
-            CONTINUATION_SNIPPET_MAX_CHARS,
-        ),
-        assistant_summary =
-            truncate_for_prompt(&assistant_excerpt, CONTINUATION_SNIPPET_MAX_CHARS),
-        status = transcript.run.status,
-        event_count = transcript.events.len(),
-        tool_call_count = transcript.evidence.tool_call_count,
-        core_aligned = transcript.evidence.core_trace.core_aligned,
+        compact_context = compact.continuation_context,
     )
 }
 
@@ -3922,7 +3901,19 @@ new file mode 100644
             .run
             .prompt
             .contains("Say the remembered phrase back."));
-        assert!(continuation.run.prompt.contains("core aligned: true"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Compact Structure context"));
+        assert!(continuation.run.prompt.contains("Core aligned: true"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("durable continuation boundary"));
+        assert!(continuation
+            .run
+            .prompt
+            .contains("Structure Core event, path, disclosure, and evidence"));
         assert!(continuation
             .events
             .iter()
