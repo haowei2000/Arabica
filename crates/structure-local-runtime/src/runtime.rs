@@ -4,7 +4,7 @@ use crate::model::{
 use crate::store::{new_id, now_ms, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
-    AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
+    AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CommandTurn, CoreExecutionTrace,
     EventGcPreview, EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact,
     LocalRunCoreTrace, LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview,
@@ -489,6 +489,49 @@ impl LocalAgentRuntime {
                 created_at_ms: run.created_at_ms,
                 updated_at_ms: run.updated_at_ms,
             });
+        }
+        Ok(turns)
+    }
+
+    pub fn record_command_turn(
+        &self,
+        workspace_id: Option<&str>,
+        input: &str,
+        output: &str,
+        status: &str,
+        surface: &str,
+    ) -> Result<CommandTurn, String> {
+        let workspace_id = workspace_id.unwrap_or("default");
+        self.ensure_workspace(Some(workspace_id.to_string()))?;
+        let turn = CommandTurn {
+            workspace_id: workspace_id.to_string(),
+            input: input.to_string(),
+            output: output.to_string(),
+            status: status.to_string(),
+            surface: surface.to_string(),
+            created_at_ms: now_ms(),
+        };
+        self.store
+            .append_event(workspace_id, None, RunEventKind::CommandTurnRecorded, &turn)?;
+        Ok(turn)
+    }
+
+    pub fn command_turns(
+        &self,
+        workspace_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CommandTurn>, String> {
+        let workspace_id = workspace_id.unwrap_or("default");
+        let scan_limit = limit.clamp(1, 100).saturating_mul(10).max(100);
+        let events = self.store.workspace_events(workspace_id, scan_limit)?;
+        let mut turns = events
+            .into_iter()
+            .filter(|event| event.kind == "command_turn_recorded")
+            .filter_map(|event| serde_json::from_value::<CommandTurn>(event.payload).ok())
+            .collect::<Vec<_>>();
+        let excess = turns.len().saturating_sub(limit);
+        if excess > 0 {
+            turns.drain(0..excess);
         }
         Ok(turns)
     }
@@ -2855,6 +2898,12 @@ fn event_payload_summary(event: &crate::types::LocalEvent) -> String {
             .and_then(|value| value.as_str())
             .unwrap_or("chat")
             .to_string(),
+        "command_turn_recorded" => format!(
+            "{} {} {}",
+            json_str(&event.payload, "surface", "surface"),
+            json_str(&event.payload, "input", "command"),
+            json_str(&event.payload, "status", "ok")
+        ),
         "workspace_context_loaded" => format!(
             "mode={} instructions={} knowledge={} turns={}",
             json_str(&event.payload, "mode", "unknown"),
@@ -4963,6 +5012,40 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_records_desktop_command_turns_as_workspace_events() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("command-turn-events");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+
+        let turn = runtime
+            .record_command_turn(
+                Some("desktop"),
+                "/context",
+                "Agent Context\nWorkspace: desktop",
+                "ok",
+                "desktop",
+            )
+            .unwrap();
+        let turns = runtime.command_turns(Some("desktop"), 10).unwrap();
+        let feed = runtime
+            .workspace_event_feed(Some("desktop"), Some(0), 10)
+            .unwrap();
+
+        assert_eq!(turn.input, "/context");
+        assert_eq!(turn.surface, "desktop");
+        assert_eq!(turn.status, "ok");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].output, "Agent Context\nWorkspace: desktop");
+        assert!(feed.events.iter().any(|event| {
+            event.kind == "command_turn_recorded"
+                && event.canonical_flow_id == "event"
+                && event.primitive_id == "event_audit"
+        }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_records_manual_workspace_tool_events() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("manual-tool-events");
@@ -5745,6 +5828,7 @@ User-facing follow-up.\n\n\
             fn local_workspace_usage() {} local_workspace_usage,
             fn local_tasks() {} fn create_local_task() {} fn update_local_task_status() {}
             fn local_chat_turns() {} local_chat_turns,
+            fn local_command_turns() {} fn record_local_command_turn() {}
             fn create_local_workspace() {} fn local_workspaces() {}
             fn local_repo_entries() {} fn local_repo_search() {} fn read_local_repo_file() {}
             fn add_local_knowledge() {} fn read_local_knowledge_source() {}

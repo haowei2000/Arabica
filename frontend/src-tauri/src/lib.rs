@@ -230,6 +230,26 @@ fn local_chat_turns(
 }
 
 #[tauri::command]
+fn local_command_turns(
+    workspace_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<structure_local_runtime::CommandTurn>, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.command_turns(workspace_id.as_deref(), limit.unwrap_or(20))
+}
+
+#[tauri::command]
+fn record_local_command_turn(
+    workspace_id: Option<String>,
+    input: String,
+    output: String,
+    status: String,
+) -> Result<structure_local_runtime::CommandTurn, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.record_command_turn(workspace_id.as_deref(), &input, &output, &status, "desktop")
+}
+
+#[tauri::command]
 fn local_runs(
     workspace_id: Option<String>,
     limit: Option<usize>,
@@ -580,6 +600,8 @@ pub fn run() {
             local_agent_continue_attempt,
             local_workspace_continue_attempt,
             local_chat_turns,
+            local_command_turns,
+            record_local_command_turn,
             local_runs,
             create_local_workspace,
             local_workspaces,
@@ -722,6 +744,13 @@ mod tests {
             )?;
             let turns = local_chat_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
+            let command_turn = record_local_command_turn(
+                Some(workspace.workspace_id.clone()),
+                "/context".to_string(),
+                "Agent Context\nWorkspace: desktop-test".to_string(),
+                "ok".to_string(),
+            )?;
+            let command_turns = local_command_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let source_rating = rate_local_knowledge_source(
                 source.source_id.clone(),
                 Some(run.run.run_id.clone()),
@@ -931,6 +960,11 @@ mod tests {
             assert!(turns.iter().any(|item| item.run_id == run.run.run_id));
             assert!(turns.iter().any(|item| item.run_id == chat_run.run.run_id));
             assert!(runs.iter().any(|item| item.run_id == run.run.run_id));
+            assert_eq!(command_turn.input, "/context");
+            assert_eq!(command_turn.surface, "desktop");
+            assert!(command_turns
+                .iter()
+                .any(|item| item.input == "/context" && item.status == "ok"));
             assert_eq!(transcript.run.run_id, run.run.run_id);
             assert!(transcript.chat_turn.is_some());
             assert_eq!(transcript.evidence.event_count, transcript.events.len());
@@ -962,6 +996,11 @@ mod tests {
                 .any(|event| event.canonical_flow_id == "evidence"));
             assert!(!replay.events.is_empty());
             assert!(!feed.events.is_empty());
+            assert!(replay.events.iter().any(|event| {
+                event.run_id.is_none()
+                    && event.kind == "command_turn_recorded"
+                    && event.payload["input"] == "/context"
+            }));
             assert!(replay.events.iter().any(|event| {
                 event.run_id.is_none()
                     && event.kind == "tool_call_requested"
@@ -1080,9 +1119,13 @@ mod tests {
         assert!(local_ui.contains("case \"/commands\":"));
         assert!(local_ui.contains("case \"/history\":"));
         assert!(local_ui.contains("case \"/chat-history\":"));
+        assert!(local_ui.contains("invoke(\"local_command_turns\""));
+        assert!(local_ui.contains("invoke(\"record_local_command_turn\""));
         assert!(local_ui.contains("function renderChatHistoryText(turns)"));
         assert!(local_ui.contains("function previewChatHistory(commandInput = null)"));
+        assert!(local_ui.contains("function renderCommandMessages(messages)"));
         assert!(local_ui.contains("renderChat(turns);"));
+        assert!(local_ui.contains("recordLocalCommandTurn(input, output, status).catch"));
         assert!(local_ui.contains("/history -> persisted chat/code-agent turns"));
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("case \"/usage\":"));

@@ -1290,6 +1290,21 @@
         return invoke("local_chat_turns", { workspaceId: activeWorkspaceId(), limit: 20 });
       }
 
+      async function localCommandTurns() {
+        if (!invoke) return [];
+        return invoke("local_command_turns", { workspaceId: activeWorkspaceId(), limit: 20 });
+      }
+
+      async function recordLocalCommandTurn(input, output, status) {
+        if (!invoke) return null;
+        return invoke("record_local_command_turn", {
+          workspaceId: activeWorkspaceId(),
+          input,
+          output: String(output ?? "").slice(0, 12000),
+          status,
+        });
+      }
+
       async function localRuns() {
         if (!invoke) return [];
         return invoke("local_runs", { workspaceId: activeWorkspaceId(), limit: 8 });
@@ -2241,6 +2256,16 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
         renderChatThread();
       }
 
+      function renderCommandMessages(messages) {
+        state.commandMessages = (messages ?? []).map((message) => ({
+          input: message.input,
+          output: message.output,
+          status: message.status,
+          created_at_ms: message.created_at_ms,
+        }));
+        renderChatThread();
+      }
+
       function setInFlightRun(prompt, status, message, options = {}) {
         const preserveLive = options.preserveLive === true;
         const existingKeys = preserveLive ? state.inFlightRun?.eventKeys ?? [] : [];
@@ -2279,7 +2304,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
         renderChatThread();
       }
 
-      function appendCommandMessage(input, output, status = "ok") {
+      function appendCommandMessage(input, output, status = "ok", { persist = true } = {}) {
         state.commandMessages = [
           ...state.commandMessages,
           {
@@ -2290,6 +2315,9 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
           },
         ].slice(-20);
         renderChatThread();
+        if (persist) {
+          recordLocalCommandTurn(input, output, status).catch(() => {});
+        }
       }
 
       function eventDetail(event) {
@@ -2315,6 +2343,8 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             return withTaxonomy(`${(payload.sources ?? []).length} knowledge sources`);
           case "run_checkpoint_recorded":
             return withTaxonomy(`checkpoint / ${(payload.note ?? "").slice(0, 96)}`);
+          case "command_turn_recorded":
+            return withTaxonomy(`${payload.surface ?? "desktop"} / ${payload.input ?? "command"} / ${payload.status ?? "ok"}`);
           case "artifact_written":
             return withTaxonomy(`${payload.kind ?? "artifact"} / ${payload.path ?? ""}`);
           case "code_change_proposed":
@@ -4573,10 +4603,11 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           }
           renderWorkspaces(workspaces);
 
-          const [snapshot, runs, turns, knowledge, artifacts, parityReport, worktree] = await Promise.all([
+          const [snapshot, runs, turns, commandTurns, knowledge, artifacts, parityReport, worktree] = await Promise.all([
             localSnapshot(),
             localRuns(),
             localChatTurns(),
+            localCommandTurns(),
             localKnowledge(),
             localArtifacts(),
             coreParityReport(),
@@ -4587,6 +4618,7 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           }
           renderRuns(runs);
           renderChat(turns);
+          renderCommandMessages(commandTurns);
           renderKnowledge(knowledge);
           renderWorktree(worktree);
           state.artifacts = artifacts;

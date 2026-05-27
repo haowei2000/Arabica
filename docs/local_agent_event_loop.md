@@ -395,7 +395,11 @@ into runtime calls:
   Desktop `/context` and the visible Agent Context action call the shared
   `local_agent_context` Tauri command so the app shows the same assembled
   context the CLI sees before a run starts; the visible action is also appended
-  to the chat thread as a `/context` command turn.
+  to the chat thread as a `/context` command turn. Desktop command turns are
+  written through `record_local_command_turn` as `command_turn_recorded`
+  workspace events and restored through `local_command_turns`, so command
+  output survives refresh/reopen as Structure event history rather than a
+  browser-only buffer.
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`
   diagnostic, and Core parity report.
@@ -511,7 +515,8 @@ into runtime calls:
   evidence-bundle controls now append `/worktree`, `/replay`, `/artifact`,
   `/parity`, and `/bundle` command turns to the same chat thread, keeping
   workspace/context inspection inside the agent conversation rather than as a
-  detached dashboard.
+  detached dashboard; those command turns use the same persisted event path as
+  slash-command output.
   `local_evidence_bundle` exposes the same reproducibility artifact as the
   CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
   `benchmarks/adapters/`.

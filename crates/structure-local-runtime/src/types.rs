@@ -28,6 +28,7 @@ pub enum RunEventKind {
     RunCreated,
     TaskCreated,
     TaskUpdated,
+    CommandTurnRecorded,
     ChatMessageRecorded,
     PromptReceived,
     AgentStepPlanned,
@@ -55,6 +56,7 @@ impl RunEventKind {
             Self::RunCreated => "run_created",
             Self::TaskCreated => "task_created",
             Self::TaskUpdated => "task_updated",
+            Self::CommandTurnRecorded => "command_turn_recorded",
             Self::ChatMessageRecorded => "chat_message_recorded",
             Self::PromptReceived => "prompt_received",
             Self::AgentStepPlanned => "agent_step_planned",
@@ -91,7 +93,8 @@ pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
         | "code_change_applied"
         | "code_change_reverted"
         | "task_updated" => ("feedback", "event_audit"),
-        "chat_message_recorded"
+        "command_turn_recorded"
+        | "chat_message_recorded"
         | "agent_step_planned"
         | "model_requested"
         | "model_responded"
@@ -243,6 +246,16 @@ pub struct ChatTurn {
     pub event_count: usize,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandTurn {
+    pub workspace_id: String,
+    pub input: String,
+    pub output: String,
+    pub status: String,
+    pub surface: String,
+    pub created_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

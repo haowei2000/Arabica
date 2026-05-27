@@ -14,9 +14,9 @@ pub use runtime::{
 pub use store::SqliteLocalStore;
 pub use tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 pub use types::{
-    ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace, EventGcPreview, EventGcSummary,
-    KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
-    LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
+    ArtifactPreview, ArtifactRecord, ChatTurn, CommandTurn, CoreExecutionTrace, EventGcPreview,
+    EventGcSummary, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode,
+    LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
     LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalRunStatusEvent,
     LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, LocalToolResult, LocalToolTraceEntry,
     ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, ProposalReview, ProposalReviewCheck,
