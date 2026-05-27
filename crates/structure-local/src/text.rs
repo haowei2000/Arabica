@@ -7,8 +7,8 @@ use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace,
     LocalRunPlan, LocalRunReview, LocalToolTraceEntry, RunAttempt, RunEvidenceSummary, RunResult,
-    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorktreeSnapshot,
+    RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceEventFeed, WorkspaceReplay,
+    WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -1001,6 +1001,57 @@ pub(crate) fn print_workspace_replay(replay: &WorkspaceReplay) {
             );
         }
     }
+}
+
+pub(crate) fn print_workspace_compact(compact: &WorkspaceCompact) {
+    println!("Workspace compact");
+    println!("  workspace: {}", compact.workspace_id);
+    println!("  events:    {}", compact.event_count);
+    println!("  runs:      {}", compact.run_count);
+    println!("  knowledge: {}", compact.knowledge_source_count);
+    println!("  artifacts: {}", compact.artifact_count);
+    println!(
+        "  core:      {}",
+        if compact.core_aligned {
+            "aligned"
+        } else {
+            "drift"
+        }
+    );
+    if let Some(sequence) = compact.last_sequence {
+        println!("  last seq:  {sequence}");
+    }
+    println!();
+    println!("Summary");
+    println!("  {}", compact.summary);
+    if !compact.recent_runs.is_empty() {
+        println!();
+        println!("Recent Runs");
+        for run in &compact.recent_runs {
+            println!(
+                "  - {} / {} / events={} / tools={}",
+                run.run_id, run.status, run.event_count, run.tool_call_count
+            );
+            println!("    {}", run.prompt_summary);
+        }
+    }
+    if !compact.carry_forward_items.is_empty() {
+        println!();
+        println!("Carry Forward");
+        for item in &compact.carry_forward_items {
+            println!("  - {item}");
+        }
+    }
+    if !compact.next_actions.is_empty() {
+        println!();
+        println!("Next Actions");
+        for action in &compact.next_actions {
+            println!("  - {action}");
+        }
+    }
+    println!();
+    println!("Continuation Context");
+    println!("{}", compact.continuation_context);
 }
 
 pub(crate) fn print_workspace_event_feed(feed: &WorkspaceEventFeed) {

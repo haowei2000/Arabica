@@ -11,7 +11,8 @@ use crate::types::{
     LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary,
     ProposalApplyResult, ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind,
     RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -398,6 +399,38 @@ impl LocalAgentRuntime {
             artifacts,
             last_sequence,
         })
+    }
+
+    pub fn workspace_compact(
+        &self,
+        workspace_id: Option<&str>,
+        limit: usize,
+    ) -> Result<WorkspaceCompact, String> {
+        let replay = self.workspace_replay(workspace_id, limit)?;
+        let mut recent_runs = Vec::new();
+        for run in &replay.runs {
+            let Ok(transcript) = self.run_transcript(&run.run_id) else {
+                continue;
+            };
+            let compact = run_compact_from_transcript(&transcript);
+            recent_runs.push(WorkspaceCompactRun {
+                run_id: run.run_id.clone(),
+                status: run.status.clone(),
+                prompt_summary: one_line_compact(&run.prompt, 320),
+                response_summary: run
+                    .final_response
+                    .as_deref()
+                    .map(continuation_response_excerpt)
+                    .map(|response| one_line_compact(&response, 480)),
+                event_count: compact.event_count,
+                tool_call_count: compact.tool_call_count,
+                model_usage: compact.model_usage,
+                artifact_paths: compact.artifact_paths,
+                core_aligned: compact.core_aligned,
+                updated_at_ms: run.updated_at_ms,
+            });
+        }
+        Ok(workspace_compact_from_replay(replay, recent_runs))
     }
 
     pub fn workspace_event_feed(
@@ -1580,6 +1613,243 @@ fn run_review_next_actions(
         actions.push("No immediate follow-up action required.".to_string());
     }
     actions
+}
+
+fn workspace_compact_from_replay(
+    replay: WorkspaceReplay,
+    recent_runs: Vec<WorkspaceCompactRun>,
+) -> WorkspaceCompact {
+    let core_trace =
+        build_core_execution_trace(&replay.events).unwrap_or_else(|_| CoreExecutionTrace {
+            manifest_schema_version: "unknown".to_string(),
+            event_count: replay.events.len(),
+            flow_ids: Vec::new(),
+            primitive_ids: Vec::new(),
+            invalid_flow_ids: Vec::new(),
+            invalid_primitive_ids: Vec::new(),
+            core_aligned: false,
+        });
+    let latest_run = recent_runs.iter().max_by_key(|run| run.updated_at_ms);
+    let failed_runs = recent_runs
+        .iter()
+        .filter(|run| run.status == RunStatus::Failed.as_str())
+        .count();
+    let proposal_artifacts = replay
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == "code_change_proposal")
+        .count();
+
+    let mut carry_forward_items = Vec::new();
+    if let Some(run) = latest_run {
+        carry_forward_items.push(format!(
+            "Latest run: {} / {} / {}",
+            run.run_id, run.status, run.prompt_summary
+        ));
+        if let Some(response) = &run.response_summary {
+            carry_forward_items.push(format!("Latest response: {response}"));
+        }
+    }
+    if !recent_runs.is_empty() {
+        carry_forward_items.push(format!(
+            "Recent runs: {}",
+            recent_runs
+                .iter()
+                .map(|run| format!("{}({})", run.run_id, run.status))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !replay.knowledge_sources.is_empty() {
+        carry_forward_items.push(format!(
+            "Knowledge sources: {}",
+            replay
+                .knowledge_sources
+                .iter()
+                .map(|source| source.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !replay.artifacts.is_empty() {
+        carry_forward_items.push(format!(
+            "Artifacts: {}",
+            replay
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    carry_forward_items.push(format!(
+        "Core path: {}",
+        if core_trace.flow_ids.is_empty() {
+            "none".to_string()
+        } else {
+            core_trace.flow_ids.join(" -> ")
+        }
+    ));
+    carry_forward_items.push(format!(
+        "Primitive path: {}",
+        if core_trace.primitive_ids.is_empty() {
+            "none".to_string()
+        } else {
+            core_trace.primitive_ids.join(" -> ")
+        }
+    ));
+    if let Some(sequence) = replay.last_sequence {
+        carry_forward_items.push(format!("Workspace event cursor: #{sequence}"));
+    }
+
+    let mut next_actions = Vec::new();
+    if let Some(run) = latest_run {
+        next_actions.push(format!(
+            "Continue from latest run {} when the next user request depends on this session.",
+            run.run_id
+        ));
+    } else {
+        next_actions
+            .push("Start a new local chat or code-agent run in this workspace.".to_string());
+    }
+    if failed_runs > 0 {
+        next_actions.push(format!(
+            "Inspect {failed_runs} failed run(s) before using this compact for handoff."
+        ));
+    }
+    if proposal_artifacts > 0 {
+        next_actions.push(format!(
+            "Review {proposal_artifacts} code-change proposal artifact(s) with risk checks before apply."
+        ));
+    }
+    if replay.knowledge_sources.is_empty() {
+        next_actions.push(
+            "Add workspace knowledge if future turns need persistent local context.".to_string(),
+        );
+    }
+    if !core_trace.core_aligned {
+        next_actions
+            .push("Inspect Core trace drift before trusting this workspace compact.".to_string());
+    }
+
+    let summary = format!(
+        "Workspace {} has {} events, {} recent runs, {} knowledge sources, and {} artifacts. Core alignment is {}.",
+        replay.workspace_id,
+        replay.events.len(),
+        recent_runs.len(),
+        replay.knowledge_sources.len(),
+        replay.artifacts.len(),
+        if core_trace.core_aligned { "aligned" } else { "drifted" },
+    );
+    let continuation_context = workspace_continuation_context(
+        &replay,
+        &recent_runs,
+        &summary,
+        &carry_forward_items,
+        &next_actions,
+        &core_trace,
+    );
+
+    WorkspaceCompact {
+        workspace_id: replay.workspace_id.clone(),
+        generated_at_ms: now_ms(),
+        event_count: replay.events.len(),
+        run_count: recent_runs.len(),
+        knowledge_source_count: replay.knowledge_sources.len(),
+        artifact_count: replay.artifacts.len(),
+        last_sequence: replay.last_sequence,
+        core_aligned: core_trace.core_aligned,
+        flow_path: core_trace.flow_ids,
+        primitive_path: core_trace.primitive_ids,
+        recent_runs,
+        summary,
+        carry_forward_items,
+        next_actions,
+        continuation_context,
+    }
+}
+
+fn workspace_continuation_context(
+    replay: &WorkspaceReplay,
+    recent_runs: &[WorkspaceCompactRun],
+    summary: &str,
+    carry_forward_items: &[String],
+    next_actions: &[String],
+    core_trace: &CoreExecutionTrace,
+) -> String {
+    let runs = if recent_runs.is_empty() {
+        "- none".to_string()
+    } else {
+        recent_runs
+            .iter()
+            .map(|run| {
+                format!(
+                    "- {} / {} / events={} / tools={} / prompt={}",
+                    run.run_id,
+                    run.status,
+                    run.event_count,
+                    run.tool_call_count,
+                    run.prompt_summary
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let carry = if carry_forward_items.is_empty() {
+        "- No carry-forward items were derived.".to_string()
+    } else {
+        carry_forward_items
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let actions = if next_actions.is_empty() {
+        "- No immediate follow-up action required.".to_string()
+    } else {
+        next_actions
+            .iter()
+            .map(|action| format!("- {action}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        "Compact Structure workspace context for `{workspace_id}`.\n\n\
+Summary: {summary}\n\
+Events: {events}\n\
+Runs: {runs_count}\n\
+Knowledge sources: {knowledge_count}\n\
+Artifacts: {artifact_count}\n\
+Last event sequence: {last_sequence}\n\
+Core aligned: {core_aligned}\n\
+Flow path: {flow_path}\n\
+Primitive path: {primitive_path}\n\n\
+Recent runs:\n{runs}\n\n\
+Carry forward:\n{carry}\n\n\
+Next actions:\n{actions}\n\n\
+Use this compact as a session handoff boundary for local chat/code-agent work. Preserve Structure Core event, path, disclosure, source-evaluation, GC, and evidence concepts when continuing.",
+        workspace_id = replay.workspace_id,
+        events = replay.events.len(),
+        runs_count = recent_runs.len(),
+        knowledge_count = replay.knowledge_sources.len(),
+        artifact_count = replay.artifacts.len(),
+        last_sequence = replay
+            .last_sequence
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        core_aligned = core_trace.core_aligned,
+        flow_path = if core_trace.flow_ids.is_empty() {
+            "none".to_string()
+        } else {
+            core_trace.flow_ids.join(" -> ")
+        },
+        primitive_path = if core_trace.primitive_ids.is_empty() {
+            "none".to_string()
+        } else {
+            core_trace.primitive_ids.join(" -> ")
+        },
+    )
 }
 
 fn run_compact_from_transcript(transcript: &RunTranscript) -> LocalRunCompact {
@@ -3538,6 +3808,54 @@ mod tests {
     }
 
     #[test]
+    fn local_runtime_compacts_workspace_session_from_replay_evidence() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("workspace-compact");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        runtime
+            .add_text_knowledge_source(Some("paper".to_string()), "session facts")
+            .unwrap();
+        let first = runtime
+            .run_prompt(RunRequest {
+                prompt: "Remember the workspace compact session.".to_string(),
+                workspace_id: Some("paper".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let second = runtime
+            .run_continuation_attempt(ContinuationRequest {
+                run_id: first.run.run_id.clone(),
+                extra_instruction: Some("Continue the same workspace session.".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let compact = runtime.workspace_compact(Some("paper"), 10).unwrap();
+
+        assert_eq!(compact.workspace_id, "paper");
+        assert!(compact.core_aligned);
+        assert!(compact.event_count > 0);
+        assert!(compact.run_count >= 2);
+        assert_eq!(compact.knowledge_source_count, 1);
+        assert!(compact
+            .recent_runs
+            .iter()
+            .any(|run| run.run_id == second.run.run_id));
+        assert!(compact
+            .carry_forward_items
+            .iter()
+            .any(|item| item.contains("Latest run")));
+        assert!(compact
+            .continuation_context
+            .contains("Compact Structure workspace context"));
+        assert!(compact
+            .continuation_context
+            .contains("session handoff boundary"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_runtime_exposes_workspace_event_feed_cursor() {
         let _env = OpenAiEnvGuard::clear();
         let root = unique_repo("event-feed");
@@ -4316,7 +4634,7 @@ User-facing follow-up.\n\n\
             run_core run_surfaces run_chat_agent run_continue_agent run_continuation_from_session run_local_agent
             WorkspaceCommand::Create WorkspaceCommand::List WorkspaceCommand::Show
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
-            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay
+            RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact
             ArtifactsCommand::List ArtifactsCommand::Show
             ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
             "#,
@@ -4335,6 +4653,7 @@ User-facing follow-up.\n\n\
             fn local_run_transcript() {} fn local_run_events() {} fn local_run_core_trace() {} fn local_run_review() {}
             fn local_workspace_event_feed() {} local_workspace_event_feed,
             fn local_workspace_replay() {} local_workspace_replay,
+            fn local_workspace_compact() {} local_workspace_compact,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,
             fn apply_local_proposal() {}
             "#,

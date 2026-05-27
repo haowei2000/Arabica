@@ -998,6 +998,7 @@
             </div>
             <div id="event-timeline" class="event-timeline" aria-label="Latest local run event trace"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
+            <button id="session-compact" type="button">Session Compact</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
             <button id="show-doctor" type="button">Doctor</button>
@@ -1114,6 +1115,7 @@
       const runAgentEl = document.querySelector("#run-agent");
       const agentModeButtons = Array.from(document.querySelectorAll("[data-agent-mode]"));
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
+      const sessionCompactEl = document.querySelector("#session-compact");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
       const showDoctorEl = document.querySelector("#show-doctor");
@@ -1320,6 +1322,11 @@
       async function localWorkspaceReplay() {
         if (!invoke) return null;
         return invoke("local_workspace_replay", { workspaceId: activeWorkspaceId(), limit: 60 });
+      }
+
+      async function localWorkspaceCompact() {
+        if (!invoke) return null;
+        return invoke("local_workspace_compact", { workspaceId: activeWorkspaceId(), limit: 12 });
       }
 
       async function localWorkspaceEventFeed(afterSequence = state.workspaceEventCursor) {
@@ -1580,6 +1587,11 @@
       function setReplayBusy(isBusy) {
         replayWorkspaceEl.disabled = isBusy;
         replayWorkspaceEl.textContent = isBusy ? "Replaying" : "Replay Workspace";
+      }
+
+      function setSessionCompactBusy(isBusy) {
+        sessionCompactEl.disabled = isBusy;
+        sessionCompactEl.textContent = isBusy ? "Compacting Session" : "Session Compact";
       }
 
       function setPollEventsBusy(isBusy) {
@@ -2549,6 +2561,44 @@ Continuation Context
 ${compact.continuation_context ?? ""}`;
       }
 
+      function renderWorkspaceCompactText(compact) {
+        if (!compact) return "Workspace compact unavailable.";
+        const runs = (compact.recent_runs ?? [])
+          .map((run) => `- ${run.run_id} / ${run.status} / events=${run.event_count} / tools=${run.tool_call_count}\n  ${run.prompt_summary}`)
+          .join("\n") || "- none";
+        const carry = (compact.carry_forward_items ?? [])
+          .map((item) => `- ${item}`)
+          .join("\n") || "- No carry-forward items derived.";
+        const actions = (compact.next_actions ?? [])
+          .map((action) => `- ${action}`)
+          .join("\n") || "- No immediate follow-up action required.";
+        return `Workspace Compact
+Workspace: ${compact.workspace_id ?? activeWorkspaceId()}
+Events: ${compact.event_count ?? 0}
+Runs: ${compact.run_count ?? 0}
+Knowledge sources: ${compact.knowledge_source_count ?? 0}
+Artifacts: ${compact.artifact_count ?? 0}
+Last event sequence: ${compact.last_sequence ?? "none"}
+Core: ${compact.core_aligned ? "aligned" : "drift"}
+Flow Path: ${(compact.flow_path ?? []).join(" -> ") || "none"}
+Primitive Path: ${(compact.primitive_path ?? []).join(" -> ") || "none"}
+
+Summary
+${compact.summary ?? "No summary derived."}
+
+Recent Runs
+${runs}
+
+Carry Forward
+${carry}
+
+Next Actions
+${actions}
+
+Continuation Context
+${compact.continuation_context ?? ""}`;
+      }
+
       function renderRunReviewText(review) {
         if (!review) return "Run review unavailable.";
         const proposal = review.proposal_artifact
@@ -2688,6 +2738,16 @@ Opened in Preview for the selected run.`;
         }
       }
 
+      async function previewWorkspaceCompact() {
+        eventLogEl.textContent = "Compacting workspace session...";
+        try {
+          const compact = await localWorkspaceCompact();
+          eventLogEl.textContent = renderWorkspaceCompactText(compact);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        }
+      }
+
       async function performContinuationRun(runId, extraInstruction = "") {
         eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
         setInFlightRun(
@@ -2785,6 +2845,8 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /tools [run_id]
 /plan [run_id]
 /compact [run_id]
+/session
+/workspace-compact
 /trace [run_id]
 /review [run_id]
 /evidence [run_id]
@@ -2996,6 +3058,11 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               return true;
             }
             await previewRunCompactForRun(runId);
+            return true;
+          }
+          case "/session":
+          case "/workspace-compact": {
+            await previewWorkspaceCompact();
             return true;
           }
           case "/trace":
@@ -4035,6 +4102,14 @@ ${events || "No events recorded."}`;
           eventLogEl.textContent = String(error);
         } finally {
           setReplayBusy(false);
+        }
+      });
+      sessionCompactEl.addEventListener("click", async () => {
+        setSessionCompactBusy(true);
+        try {
+          await previewWorkspaceCompact();
+        } finally {
+          setSessionCompactBusy(false);
         }
       });
       pollEventsEl.addEventListener("click", async () => {

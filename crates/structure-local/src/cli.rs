@@ -6,7 +6,8 @@ use crate::text::{
     print_run_core_trace, print_run_evidence_summary, print_run_plan, print_run_review,
     print_run_summary, print_run_transcript, print_runs, print_snapshot, print_source_rating,
     print_surface_parity_report, print_surfaces, print_tool_trace, print_workspace,
-    print_workspace_event_feed, print_workspace_replay, print_workspaces, print_worktree_snapshot,
+    print_workspace_compact, print_workspace_event_feed, print_workspace_replay, print_workspaces,
+    print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -215,6 +216,7 @@ enum WorkspaceCommand {
     List(ListWorkspacesArgs),
     Show(ShowWorkspaceArgs),
     Replay(WorkspaceReplayArgs),
+    Compact(WorkspaceCompactArgs),
     Events(WorkspaceEventsArgs),
 }
 
@@ -311,6 +313,16 @@ struct WorkspaceReplayArgs {
     #[arg(long)]
     workspace: Option<String>,
     #[arg(long, default_value_t = 50)]
+    limit: usize,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceCompactArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long, default_value_t = 8)]
     limit: usize,
     #[arg(long)]
     json: bool,
@@ -1434,6 +1446,12 @@ fn handle_chat_session_command(
             print_workspace_replay(&replay);
             Ok(true)
         }
+        "/session" | "/workspace-compact" => {
+            let compact =
+                local_result(runtime.workspace_compact(state.workspace_id.as_deref(), 12))?;
+            print_workspace_compact(&compact);
+            Ok(true)
+        }
         other => {
             println!("Unknown command: {other}");
             println!("Use /help to list session commands.");
@@ -1568,11 +1586,12 @@ fn print_chat_session_help() {
     println!("  /dry-run [id|run]     Preview proposal application without writing");
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
     println!("  /replay               Replay workspace event stream");
+    println!("  /session              Show workspace/session compact context");
     println!("  /quit                 Exit");
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2016,6 +2035,15 @@ fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
                 print_workspace_replay(&replay);
             }
         }
+        WorkspaceCommand::Compact(args) => {
+            let compact =
+                local_result(runtime.workspace_compact(args.workspace.as_deref(), args.limit))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&compact)?);
+            } else {
+                print_workspace_compact(&compact);
+            }
+        }
         WorkspaceCommand::Events(args) => {
             let feed = local_result(runtime.workspace_event_feed(
                 args.workspace.as_deref(),
@@ -2425,6 +2453,31 @@ mod tests {
     }
 
     #[test]
+    fn cli_workspace_compact_command_accepts_json_output() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "workspace",
+            "compact",
+            "--workspace",
+            "paper",
+            "--limit",
+            "4",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Workspace {
+            command: WorkspaceCommand::Compact(args),
+        } = cli.command
+        else {
+            panic!("expected workspace compact command");
+        };
+        assert_eq!(args.workspace.as_deref(), Some("paper"));
+        assert_eq!(args.limit, 4);
+        assert!(args.json);
+    }
+
+    #[test]
     fn cli_proposals_review_command_accepts_json_output() {
         let cli =
             Cli::try_parse_from(["structure-local", "proposals", "review", "art_1", "--json"])
@@ -2462,6 +2515,7 @@ mod tests {
         assert!(summary.contains("/trace"));
         assert!(summary.contains("/review"));
         assert!(summary.contains("/compact"));
+        assert!(summary.contains("/session"));
         assert!(summary.contains("/diff"));
         assert!(summary.contains("/risk"));
         assert!(summary.contains("/dry-run"));

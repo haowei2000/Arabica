@@ -14,7 +14,7 @@ use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
     LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
     LocalToolCall, ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest,
-    RunSummary, RunTranscript, WorkspaceSummary, WorktreeSnapshot,
+    RunSummary, RunTranscript, WorkspaceCompact, WorkspaceSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -638,6 +638,20 @@ impl TuiState {
         Ok(())
     }
 
+    fn preview_workspace_compact(&mut self, repo_root: &Path) -> Result<()> {
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let compact = local_result(runtime.workspace_compact(Some(&self.active_workspace_id), 12))?;
+        self.preview = Some(TuiPreview {
+            path: format!("workspace compact / {}", compact.workspace_id),
+            text: render_workspace_compact(&compact),
+        });
+        self.notice = format!(
+            "Workspace compact: {} runs, {} events",
+            compact.run_count, compact.event_count
+        );
+        Ok(())
+    }
+
     fn preview_worktree_snapshot(&mut self, repo_root: &Path) -> Result<()> {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let worktree = runtime.worktree_snapshot();
@@ -770,6 +784,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('y') => state.apply_pending_proposal(repo_root)?,
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
+                    KeyCode::Char('S') => state.preview_workspace_compact(repo_root)?,
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
                     KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
                     KeyCode::PageUp => state.move_selection(-5),
@@ -851,7 +866,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  d worktree  l plan  C compact  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f follow-up  d worktree  l plan  C compact  S session  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -939,7 +954,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, t transcript, l plan, C compact, z trace, b review, f follow-up, n local check",
+        "press j/k to select, t transcript, l plan, C compact, S session, z trace, b review, f follow-up, n local check",
         width,
     )?;
     muted_at(
@@ -1109,7 +1124,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  f follow-up  ! cmd  t transcript  l plan  C compact  b review  g proposal  h risk";
+    let controls = "q quit  r refresh  c prompt  f follow-up  ! cmd  t transcript  l plan  C compact  S session  b review  g proposal  h risk";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1586,6 +1601,48 @@ fn render_run_review(review: &LocalRunReview) -> String {
     text
 }
 
+fn render_workspace_compact(compact: &WorkspaceCompact) -> String {
+    let mut text = String::new();
+    text.push_str("Workspace Compact\n");
+    text.push_str(&format!("Workspace: {}\n", compact.workspace_id));
+    text.push_str(&format!("Events: {}\n", compact.event_count));
+    text.push_str(&format!("Runs: {}\n", compact.run_count));
+    text.push_str(&format!("Knowledge: {}\n", compact.knowledge_source_count));
+    text.push_str(&format!("Artifacts: {}\n", compact.artifact_count));
+    text.push_str(&format!("Core aligned: {}\n", compact.core_aligned));
+    if let Some(sequence) = compact.last_sequence {
+        text.push_str(&format!("Last sequence: {sequence}\n"));
+    }
+    text.push_str("\nSummary\n");
+    text.push_str(&compact.summary);
+    text.push('\n');
+    if !compact.recent_runs.is_empty() {
+        text.push_str("\nRecent Runs\n");
+        for run in compact.recent_runs.iter().take(12) {
+            text.push_str(&format!(
+                "- {} / {} / events={} / tools={}\n",
+                run.run_id, run.status, run.event_count, run.tool_call_count
+            ));
+            text.push_str(&format!("  {}\n", run.prompt_summary));
+        }
+    }
+    if !compact.carry_forward_items.is_empty() {
+        text.push_str("\nCarry Forward\n");
+        for item in &compact.carry_forward_items {
+            text.push_str(&format!("- {item}\n"));
+        }
+    }
+    if !compact.next_actions.is_empty() {
+        text.push_str("\nNext Actions\n");
+        for action in &compact.next_actions {
+            text.push_str(&format!("- {action}\n"));
+        }
+    }
+    text.push_str("\nContinuation Context\n");
+    text.push_str(&compact.continuation_context);
+    text
+}
+
 fn render_run_attempt(attempt: &RunAttempt) -> String {
     let mut text = String::new();
     text.push_str("Run Attempt\n");
@@ -1961,6 +2018,15 @@ mod tests {
             assert!(compact_preview.text.contains("Run Compact"));
             assert!(compact_preview.text.contains("Carry Forward"));
             assert!(compact_preview.text.contains("Continuation Context"));
+
+            state.preview_workspace_compact(&root)?;
+            let session_preview = state.preview.as_ref().expect("workspace compact preview");
+            assert!(session_preview
+                .path
+                .starts_with("workspace compact / tui-preview"));
+            assert!(session_preview.text.contains("Workspace Compact"));
+            assert!(session_preview.text.contains("Recent Runs"));
+            assert!(session_preview.text.contains("session handoff boundary"));
 
             state.preview_selected_run_review(&root)?;
             let review_preview = state.preview.as_ref().expect("run review preview");

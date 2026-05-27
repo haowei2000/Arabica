@@ -197,6 +197,11 @@ into runtime calls:
   artifacts, model usage, and Core trace. It is the local equivalent of a
   Codex-style context compaction boundary, but the boundary is computed from
   Structure events rather than a detached chat buffer.
+- CLI workspace compact: `uv run structure workspace compact --workspace <id>
+  --json` returns a session handoff object derived from workspace replay,
+  recent run compacts, knowledge sources, artifacts, and Core flow/primitive
+  paths. Interactive `/session` renders the same object inside the local agent
+  terminal.
 - CLI core trace: `uv run structure runs trace <run-id> --json` returns the
   paper-facing execution path derived from the same immutable events. It keeps
   the collapsed Structure flow path (`goal -> address -> ...`) and primitive
@@ -312,7 +317,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/trace`, `/review`, `/risk`, `/dry-run`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/compact`, `/session`, `/trace`, `/review`, `/risk`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
@@ -338,6 +343,9 @@ into runtime calls:
   `local_run_compact`, showing the same continuation-ready context boundary as
   CLI/TUI. The app can therefore support long local chat/code-agent sessions
   without inventing a desktop-only memory model.
+  Desktop `/session`, `/workspace-compact`, and the Session Compact action call
+  `local_workspace_compact`, giving the desktop app the same workspace/session
+  handoff object as CLI/TUI while staying inside the local Rust runtime.
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.

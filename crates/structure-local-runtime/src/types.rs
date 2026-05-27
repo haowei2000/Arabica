@@ -450,6 +450,39 @@ pub struct WorkspaceReplay {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCompact {
+    pub workspace_id: String,
+    pub generated_at_ms: i64,
+    pub event_count: usize,
+    pub run_count: usize,
+    pub knowledge_source_count: usize,
+    pub artifact_count: usize,
+    pub last_sequence: Option<i64>,
+    pub core_aligned: bool,
+    pub flow_path: Vec<String>,
+    pub primitive_path: Vec<String>,
+    pub recent_runs: Vec<WorkspaceCompactRun>,
+    pub summary: String,
+    pub carry_forward_items: Vec<String>,
+    pub next_actions: Vec<String>,
+    pub continuation_context: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCompactRun {
+    pub run_id: String,
+    pub status: String,
+    pub prompt_summary: String,
+    pub response_summary: Option<String>,
+    pub event_count: usize,
+    pub tool_call_count: usize,
+    pub model_usage: ModelUsageSummary,
+    pub artifact_paths: Vec<String>,
+    pub core_aligned: bool,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceEventFeed {
     pub workspace_id: String,
     pub after_sequence: i64,
