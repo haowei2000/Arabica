@@ -2029,7 +2029,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           decision.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await recordDecisionForRun(turn.run_id);
+            await recordDecisionForRun(turn.run_id, null, "/checkpoint");
           });
           const plan = document.createElement("button");
           plan.type = "button";
@@ -2106,7 +2106,7 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
           proposal.addEventListener("click", async () => {
             state.selectedRunId = turn.run_id;
             renderRuns(state.runs);
-            await previewProposalForRun(turn.run_id);
+            await previewProposalForRun(turn.run_id, `/proposal ${turn.run_id}`);
           });
           actions.append(
             meta,
@@ -2931,7 +2931,7 @@ Structure: ${transcript.chat_turn.assistant_message ?? "No assistant message rec
         }
       }
 
-      async function previewProposalForRun(runId) {
+      async function previewProposalForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading code-change proposal...";
         try {
           const preview = await latestProposal(runId);
@@ -2943,9 +2943,11 @@ Path: ${preview.artifact.path}
 Read: ${formatBytes(preview.bytes_read)}
 Truncated: ${preview.truncated}
 
-Opened in Preview for the selected run.`;
+Opened in Preview${runId ? " for the selected run." : "."}`;
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Proposal opened.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
@@ -3029,10 +3031,11 @@ Opened in Preview for the selected run.`;
         return window.prompt(`Record a human decision for ${runId}`, "")?.trim() ?? "";
       }
 
-      async function recordDecisionForRun(runId, note = null) {
+      async function recordDecisionForRun(runId, note = null, commandInput = null) {
         const selectedRunId = runId ?? state.selectedRunId ?? state.runs[0]?.run_id ?? null;
         if (!selectedRunId) {
           eventLogEl.textContent = "No run selected.";
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
           return null;
         }
         const decisionNote = (note ?? promptForDecisionNote(selectedRunId)).trim();
@@ -3040,17 +3043,27 @@ Opened in Preview for the selected run.`;
           eventLogEl.textContent = "Decision recording cancelled.";
           return null;
         }
-        const checkpoint = await recordRunCheckpoint(selectedRunId, decisionNote);
-        eventLogEl.textContent = `Run Checkpoint
+        const input = commandInput === "/checkpoint"
+          ? `/checkpoint ${selectedRunId} ${decisionNote}`
+          : commandInput;
+        try {
+          const checkpoint = await recordRunCheckpoint(selectedRunId, decisionNote);
+          eventLogEl.textContent = `Run Checkpoint
 ${checkpoint.checkpoint_id}
 Run: ${checkpoint.run_id}
 Workspace: ${checkpoint.workspace_id}
 Note: ${checkpoint.note}`;
-        if (agentPromptEl.value.trim() === decisionNote) {
-          agentPromptEl.value = "";
+          if (input) appendCommandMessage(input, eventLogEl.textContent || "Decision recorded.");
+          if (agentPromptEl.value.trim() === decisionNote) {
+            agentPromptEl.value = "";
+          }
+          await refresh();
+          return checkpoint;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (input) appendCommandMessage(input, eventLogEl.textContent, "error");
+          throw error;
         }
-        await refresh();
-        return checkpoint;
       }
 
       async function previewWorkspaceCompact(commandInput = null) {
@@ -4706,7 +4719,11 @@ ${events || "No events recorded."}`;
       recordCheckpointEl.addEventListener("click", async () => {
         setCheckpointBusy(true);
         try {
-          await recordDecisionForRun(state.selectedRunId ?? state.runs[0]?.run_id ?? null);
+          await recordDecisionForRun(
+            state.selectedRunId ?? state.runs[0]?.run_id ?? null,
+            null,
+            "/checkpoint",
+          );
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {
@@ -4795,16 +4812,10 @@ ${preview.preview}`;
       previewProposalEl.addEventListener("click", async () => {
         setProposalBusy(true);
         try {
-          const preview = await latestProposal(state.selectedRunId);
-          renderArtifactPreview(preview);
-          eventLogEl.textContent = `Code Change Proposal
-ID: ${preview.artifact.artifact_id}
-Run: ${preview.artifact.run_id}
-Path: ${preview.artifact.path}
-Read: ${formatBytes(preview.bytes_read)}
-Truncated: ${preview.truncated}
-
-Opened in Preview${state.selectedRunId ? " for the selected run." : "."}`;
+          await previewProposalForRun(
+            state.selectedRunId,
+            state.selectedRunId ? `/proposal ${state.selectedRunId}` : "/proposal",
+          );
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {

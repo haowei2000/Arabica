@@ -1187,8 +1187,8 @@ mod tests {
             local_ui.contains("previewRunCompactForRun(turn.run_id, `/compact ${turn.run_id}`)")
         );
         assert!(local_ui.contains("previewRunReviewForRun(turn.run_id, `/review ${turn.run_id}`)"));
-        assert!(local_ui.contains("await recordDecisionForRun(turn.run_id);"));
-        assert!(local_ui.contains("await previewProposalForRun(turn.run_id);"));
+        assert!(local_ui.contains("recordDecisionForRun(turn.run_id, null, \"/checkpoint\")"));
+        assert!(local_ui.contains("previewProposalForRun(turn.run_id, `/proposal ${turn.run_id}`)"));
     }
 
     #[test]
@@ -1203,6 +1203,9 @@ mod tests {
         assert!(local_ui.contains("function rollbackPreviewProposal"));
         assert!(local_ui.contains("invoke(\"review_local_proposal\""));
         assert!(local_ui.contains("invoke(\"rollback_local_proposal\""));
+        assert!(local_ui.contains("function previewProposalForRun(runId, commandInput = null)"));
+        assert!(local_ui.contains("previewProposalForRun("));
+        assert!(local_ui.contains("`/proposal ${state.selectedRunId}`"));
         assert!(local_ui.contains("case \"/risk\":"));
         assert!(local_ui.contains("function reviewPreviewProposal"));
         assert!(local_ui.contains("await applyProposal(artifactId, true)"));

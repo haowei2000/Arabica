@@ -444,7 +444,8 @@ into runtime calls:
   and each chat turn's Decision action call `record_local_run_checkpoint`,
   giving the app the same event-sourced human decision path as CLI while
   presenting it as a desktop agent workflow. Those notes are carried into run
-  compacts and continuations.
+  compacts and continuations. Visible and per-turn decision actions append
+  `/checkpoint <run-id> <note>` command turns after the note is recorded.
   Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
   `review_local_proposal`, giving the app the same target-safety, patch-context,
   and explicit-approval checks as CLI before any proposal apply while recording
@@ -465,7 +466,9 @@ into runtime calls:
   a detached transcript. Per-turn Status, Plan, Tools, Compact, and Review
   actions append `/run-status <run-id>`, `/plan <run-id>`, `/tools <run-id>`,
   `/compact <run-id>`, and `/review <run-id>` command turns while still reading
-  from the Rust local runtime.
+  from the Rust local runtime. Per-turn Proposal actions append
+  `/proposal <run-id>` command turns while opening the selected run's code-change
+  proposal in Preview.
   The per-turn Continue button uses the current composer text as an optional
   continuation instruction, matching the slash-command path while keeping
   normal chat interaction mouse-accessible.
