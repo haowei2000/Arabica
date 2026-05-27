@@ -197,6 +197,9 @@ into runtime calls:
   alignment, flow/primitive paths, model/tool counts, failed tool count,
   response/proposal artifacts, and next actions such as dry-run/apply or
   continue.
+- CLI context preview: `uv run structure context --workspace <id> --mode
+  code_agent --json` materializes the same assembled Rust context used before
+  model planning, without starting a run.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`,
@@ -283,8 +286,9 @@ into runtime calls:
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
   run's transcript and evidence.
-  Desktop `/context` calls the shared `local_agent_context` Tauri command so
-  the app shows the same assembled context the CLI sees before a run starts.
+  Desktop `/context` and the visible Agent Context action call the shared
+  `local_agent_context` Tauri command so the app shows the same assembled
+  context the CLI sees before a run starts.
   Desktop `/usage [run-id]` mirrors the CLI model-call shortcut and renders the
   same `model_usage` evidence summary from Rust.
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive

@@ -999,6 +999,7 @@
             <div id="event-timeline" class="event-timeline" aria-label="Latest local run event trace"></div>
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="poll-events" type="button">Poll Events</button>
+            <button id="show-context" type="button">Agent Context</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Selected Proposal</button>
             <button id="apply-proposal" type="button">Apply Proposal</button>
@@ -1111,6 +1112,7 @@
       const agentModeButtons = Array.from(document.querySelectorAll("[data-agent-mode]"));
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const pollEventsEl = document.querySelector("#poll-events");
+      const showContextEl = document.querySelector("#show-context");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
       const applyProposalEl = document.querySelector("#apply-proposal");
@@ -1564,6 +1566,11 @@
       function setPollEventsBusy(isBusy) {
         pollEventsEl.disabled = isBusy;
         pollEventsEl.textContent = isBusy ? "Polling" : "Poll Events";
+      }
+
+      function setContextBusy(isBusy) {
+        showContextEl.disabled = isBusy;
+        showContextEl.textContent = isBusy ? "Loading Context" : "Agent Context";
       }
 
       function setArtifactBusy(isBusy) {
@@ -3799,6 +3806,18 @@ ${events || "No events recorded."}`;
           eventLogEl.textContent = String(error);
         } finally {
           setPollEventsBusy(false);
+        }
+      });
+      showContextEl.addEventListener("click", async () => {
+        setContextBusy(true);
+        eventLogEl.textContent = "Loading assembled agent context...";
+        try {
+          const context = await localAgentContext();
+          eventLogEl.textContent = renderAgentContextText(context);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setContextBusy(false);
         }
       });
       previewArtifactEl.addEventListener("click", async () => {

@@ -41,6 +41,7 @@ struct Cli {
 enum Command {
     Status(StatusArgs),
     Worktree(WorktreeArgs),
+    Context(ContextArgs),
     Surfaces(SurfacesArgs),
     Core(CoreArgs),
     Parity(ParityArgs),
@@ -86,6 +87,16 @@ struct StatusArgs {
 
 #[derive(Debug, Args)]
 struct WorktreeArgs {
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ContextArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long, value_name = "chat|code_agent")]
+    mode: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -425,6 +436,7 @@ pub(crate) fn run() -> Result<()> {
     match cli.command {
         Command::Status(args) => run_status(&repo_root, args)?,
         Command::Worktree(args) => run_worktree(&repo_root, args)?,
+        Command::Context(args) => run_context(&repo_root, args)?,
         Command::Surfaces(args) => run_surfaces(args)?,
         Command::Core(args) => run_core(args)?,
         Command::Parity(args) => run_parity(&repo_root, args)?,
@@ -481,6 +493,18 @@ fn run_worktree(repo_root: &PathBuf, args: WorktreeArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&worktree)?);
     } else {
         print_worktree_snapshot(&worktree);
+    }
+    Ok(())
+}
+
+fn run_context(repo_root: &PathBuf, args: ContextArgs) -> Result<()> {
+    let mode = parse_agent_mode(args.mode.as_deref(), false)?;
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let context = local_result(runtime.agent_context(args.workspace.as_deref(), Some(mode)))?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&context)?);
+    } else {
+        print_agent_context(&context);
     }
     Ok(())
 }
@@ -2114,6 +2138,27 @@ mod tests {
         let Command::Worktree(args) = cli.command else {
             panic!("expected worktree command");
         };
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_context_command_accepts_workspace_mode_and_json() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "context",
+            "--workspace",
+            "paper",
+            "--mode",
+            "chat",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Context(args) = cli.command else {
+            panic!("expected context command");
+        };
+        assert_eq!(args.workspace.as_deref(), Some("paper"));
+        assert_eq!(args.mode.as_deref(), Some("chat"));
         assert!(args.json);
     }
 

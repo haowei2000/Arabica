@@ -789,6 +789,9 @@ mod tests {
 
         assert!(local_ui.contains("function renderEvidenceText(evidence)"));
         assert!(local_ui.contains("function renderAgentContextText(context)"));
+        assert!(local_ui.contains("id=\"show-context\""));
+        assert!(local_ui.contains("setContextBusy(true)"));
+        assert!(local_ui.contains("eventLogEl.textContent = renderAgentContextText(context);"));
         assert!(local_ui.contains("case \"/context\":"));
         assert!(local_ui.contains("case \"/remember\":"));
         assert!(local_ui.contains("case \"/recall\":"));
