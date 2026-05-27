@@ -820,6 +820,10 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_run_review\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
         assert!(local_ui.contains("case \"/doctor\":"));
+        assert!(local_ui.contains("id=\"show-doctor\""));
+        assert!(local_ui.contains("setDoctorBusy(true)"));
+        assert!(local_ui
+            .contains("eventLogEl.textContent = renderDoctorText(status, diagnostic, parity);"));
         assert!(local_ui.contains("case \"/diff\":"));
         assert!(local_ui.contains("/diff [run_id]"));
     }

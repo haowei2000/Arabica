@@ -1000,6 +1000,7 @@
             <button id="replay-workspace" type="button">Replay Workspace</button>
             <button id="poll-events" type="button">Poll Events</button>
             <button id="show-context" type="button">Agent Context</button>
+            <button id="show-doctor" type="button">Doctor</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Selected Proposal</button>
             <button id="apply-proposal" type="button">Apply Proposal</button>
@@ -1113,6 +1114,7 @@
       const replayWorkspaceEl = document.querySelector("#replay-workspace");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
+      const showDoctorEl = document.querySelector("#show-doctor");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
       const applyProposalEl = document.querySelector("#apply-proposal");
@@ -1571,6 +1573,11 @@
       function setContextBusy(isBusy) {
         showContextEl.disabled = isBusy;
         showContextEl.textContent = isBusy ? "Loading Context" : "Agent Context";
+      }
+
+      function setDoctorBusy(isBusy) {
+        showDoctorEl.disabled = isBusy;
+        showDoctorEl.textContent = isBusy ? "Checking" : "Doctor";
       }
 
       function setArtifactBusy(isBusy) {
@@ -3818,6 +3825,23 @@ ${events || "No events recorded."}`;
           eventLogEl.textContent = String(error);
         } finally {
           setContextBusy(false);
+        }
+      });
+      showDoctorEl.addEventListener("click", async () => {
+        setDoctorBusy(true);
+        eventLogEl.textContent = "Checking local agent runtime...";
+        try {
+          const [status, diagnostic, parity] = await Promise.all([
+            localSessionStatus(),
+            localLlmDiagnostic(),
+            coreParityReport(),
+          ]);
+          eventLogEl.textContent = renderDoctorText(status, diagnostic, parity);
+          if (state.snapshot) renderCoreContract(state.snapshot.core_manifest ?? fallbackCoreManifest(), parity);
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setDoctorBusy(false);
         }
       });
       previewArtifactEl.addEventListener("click", async () => {

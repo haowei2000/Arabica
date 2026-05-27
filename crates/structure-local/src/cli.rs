@@ -21,8 +21,8 @@ use structure_local_core::{
     LocalSnapshot,
 };
 use structure_local_runtime::{
-    ContinuationRequest, LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic, LocalToolCall,
-    ProposalApplyResult, RunAttempt, RunRequest,
+    ContinuationRequest, LocalAgentContext, LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic,
+    LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -42,6 +42,7 @@ enum Command {
     Status(StatusArgs),
     Worktree(WorktreeArgs),
     Context(ContextArgs),
+    Doctor(DoctorArgs),
     Surfaces(SurfacesArgs),
     Core(CoreArgs),
     Parity(ParityArgs),
@@ -93,6 +94,16 @@ struct WorktreeArgs {
 
 #[derive(Debug, Args)]
 struct ContextArgs {
+    #[arg(long)]
+    workspace: Option<String>,
+    #[arg(long, value_name = "chat|code_agent")]
+    mode: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct DoctorArgs {
     #[arg(long)]
     workspace: Option<String>,
     #[arg(long, value_name = "chat|code_agent")]
@@ -437,6 +448,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Status(args) => run_status(&repo_root, args)?,
         Command::Worktree(args) => run_worktree(&repo_root, args)?,
         Command::Context(args) => run_context(&repo_root, args)?,
+        Command::Doctor(args) => run_doctor(&repo_root, args)?,
         Command::Surfaces(args) => run_surfaces(args)?,
         Command::Core(args) => run_core(args)?,
         Command::Parity(args) => run_parity(&repo_root, args)?,
@@ -505,6 +517,43 @@ fn run_context(repo_root: &PathBuf, args: ContextArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&context)?);
     } else {
         print_agent_context(&context);
+    }
+    Ok(())
+}
+
+fn run_doctor(repo_root: &PathBuf, args: DoctorArgs) -> Result<()> {
+    let mode = parse_agent_mode(args.mode.as_deref(), false)?;
+    let snapshot = local_result(collect_snapshot(repo_root))?;
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let diagnostic = runtime.llm_diagnostic();
+    let parity = local_result(structure_local_core::verify_structure_core_parity_for_repo(
+        repo_root,
+    ))?;
+    let context = local_result(runtime.agent_context(args.workspace.as_deref(), Some(mode)))?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "snapshot": snapshot,
+                "llm_diagnostic": diagnostic,
+                "surface_parity": parity,
+                "agent_context": context,
+            }))?
+        );
+    } else {
+        print!(
+            "{}",
+            render_local_doctor_report(&diagnostic, &parity, &context)
+        );
+    }
+    if !diagnostic.ok {
+        return Err(anyhow!(diagnostic
+            .error
+            .clone()
+            .unwrap_or_else(|| "LLM diagnostic failed".to_string())));
+    }
+    if !parity.passed {
+        return Err(anyhow!("Structure Core surface parity failed"));
     }
     Ok(())
 }
@@ -1484,6 +1533,66 @@ fn render_chat_session_doctor(
     text
 }
 
+fn render_local_doctor_report(
+    diagnostic: &LocalLlmDiagnostic,
+    parity: &structure_local_core::SurfaceParityReport,
+    context: &LocalAgentContext,
+) -> String {
+    let passed_checks = parity.checks.iter().filter(|check| check.passed).count();
+    let failed_checks = parity.checks.len().saturating_sub(passed_checks);
+    let mut text = String::new();
+    text.push_str("Structure local doctor\n");
+    text.push_str(&format!("  workspace:    {}\n", context.workspace_id));
+    text.push_str(&format!("  mode:         {}\n", context.mode));
+    text.push_str(&format!("  repo:         {}\n", context.repo_root));
+    text.push_str(&format!("  runtime db:   {}\n", context.runtime_db));
+    text.push_str(&format!(
+        "  llm:          {} / {}\n",
+        if diagnostic.ok { "ok" } else { "not ok" },
+        diagnostic.provider
+    ));
+    text.push_str(&format!("  configured:   {}\n", diagnostic.configured));
+    text.push_str(&format!(
+        "  model:        {}\n",
+        diagnostic.model.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!(
+        "  endpoint:     {}\n",
+        diagnostic.endpoint.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!(
+        "  core parity: {}\n",
+        if parity.passed {
+            "passed"
+        } else {
+            "needs attention"
+        }
+    ));
+    text.push_str(&format!(
+        "  checks:       {} ok / {} fail\n",
+        passed_checks, failed_checks
+    ));
+    text.push_str(&format!(
+        "  context:      {} instruction(s), {} knowledge source(s), {} recent turn(s)\n",
+        context.agent_instructions.len(),
+        context.knowledge_sources.len(),
+        context.recent_turns.len()
+    ));
+    text.push_str(&format!(
+        "  worktree:     {} / {} change(s)\n",
+        if context.worktree.clean {
+            "clean"
+        } else {
+            "dirty"
+        },
+        context.worktree.changed_files.len()
+    ));
+    if let Some(error) = &diagnostic.error {
+        text.push_str(&format!("  error:        {}\n", error));
+    }
+    text
+}
+
 fn execute_session_tool(
     runtime: &LocalAgentRuntime,
     workspace_id: Option<String>,
@@ -2159,6 +2268,27 @@ mod tests {
         };
         assert_eq!(args.workspace.as_deref(), Some("paper"));
         assert_eq!(args.mode.as_deref(), Some("chat"));
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_doctor_command_accepts_workspace_mode_and_json() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "doctor",
+            "--workspace",
+            "default",
+            "--mode",
+            "code-agent",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Doctor(args) = cli.command else {
+            panic!("expected doctor command");
+        };
+        assert_eq!(args.workspace.as_deref(), Some("default"));
+        assert_eq!(args.mode.as_deref(), Some("code-agent"));
         assert!(args.json);
     }
 

@@ -200,6 +200,9 @@ into runtime calls:
 - CLI context preview: `uv run structure context --workspace <id> --mode
   code_agent --json` materializes the same assembled Rust context used before
   model planning, without starting a run.
+- CLI doctor: `uv run structure doctor --workspace <id> --mode code_agent
+  --json` combines the local snapshot, real `OPENAI__` diagnostic, Structure
+  Core parity report, and assembled agent context as a pre-run health gate.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
   `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`,
@@ -302,9 +305,10 @@ into runtime calls:
   scheduler concept.
   Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
   compact attempt review and next-action guidance as CLI/TUI.
-  Desktop `/doctor` mirrors CLI `/doctor`: it gathers `local_session_status`,
-  `local_llm_diagnostic`, and `core_parity_report` through Tauri commands and
-  renders the local health check inside the chat/code-agent loop.
+  Desktop `/doctor` and the visible Doctor action mirror CLI `/doctor`: they
+  gather `local_session_status`, `local_llm_diagnostic`, and
+  `core_parity_report` through Tauri commands and render the local health check
+  inside the chat/code-agent loop.
   Normal prompt submissions appear immediately as in-flight local chat turns
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
