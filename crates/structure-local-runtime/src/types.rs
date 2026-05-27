@@ -34,6 +34,7 @@ pub enum RunEventKind {
     WorkspaceContextLoaded,
     KnowledgeRetrieved,
     SourceRated,
+    RunCheckpointRecorded,
     ModelRequested,
     ModelResponded,
     ToolCallRequested,
@@ -60,6 +61,7 @@ impl RunEventKind {
             Self::WorkspaceContextLoaded => "workspace_context_loaded",
             Self::KnowledgeRetrieved => "knowledge_retrieved",
             Self::SourceRated => "source_rated",
+            Self::RunCheckpointRecorded => "run_checkpoint_recorded",
             Self::ModelRequested => "model_requested",
             Self::ModelResponded => "model_responded",
             Self::ToolCallRequested => "tool_call_requested",
@@ -84,7 +86,8 @@ pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
         "artifact_written" | "code_change_proposed" | "run_finished" | "run_failed" => {
             ("evidence", "reproducible_evidence")
         }
-        "code_change_reviewed"
+        "run_checkpoint_recorded"
+        | "code_change_reviewed"
         | "code_change_applied"
         | "code_change_reverted"
         | "task_updated" => ("feedback", "event_audit"),
@@ -164,6 +167,15 @@ pub struct SourceRating {
     pub note: String,
     pub source_title: String,
     pub source_path: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunCheckpoint {
+    pub checkpoint_id: String,
+    pub run_id: String,
+    pub workspace_id: String,
+    pub note: String,
     pub created_at_ms: i64,
 }
 
@@ -371,6 +383,7 @@ pub struct RunEvidenceSummary {
     pub prompt_references: Vec<String>,
     pub knowledge_sources: Vec<KnowledgeSource>,
     pub source_ratings: Vec<SourceRating>,
+    pub checkpoints: Vec<RunCheckpoint>,
     pub event_gc: EventGcSummary,
     pub artifact_paths: Vec<String>,
     pub artifacts: Vec<ArtifactRecord>,

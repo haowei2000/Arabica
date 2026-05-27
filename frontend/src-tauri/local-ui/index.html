@@ -1334,6 +1334,11 @@
         return invoke("local_run_review", { runId });
       }
 
+      async function recordRunCheckpoint(runId, note) {
+        if (!invoke) return null;
+        return invoke("record_local_run_checkpoint", { runId, note });
+      }
+
       async function localRunStatus(runId) {
         if (!invoke) return null;
         return invoke("local_run_status", { runId });
@@ -2192,6 +2197,8 @@ Checks: ${passedChecks} ok / ${failedChecks} fail`;
             return withTaxonomy(`${payload.name ?? "tool"} success=${payload.success ?? false}`);
           case "knowledge_retrieved":
             return withTaxonomy(`${(payload.sources ?? []).length} knowledge sources`);
+          case "run_checkpoint_recorded":
+            return withTaxonomy(`checkpoint / ${(payload.note ?? "").slice(0, 96)}`);
           case "artifact_written":
             return withTaxonomy(`${payload.kind ?? "artifact"} / ${payload.path ?? ""}`);
           case "code_change_proposed":
@@ -2483,6 +2490,7 @@ The original file was not deleted.`;
         if (!evidence) return "Evidence unavailable.";
         const knowledgeSources = evidence.knowledge_sources ?? [];
         const sourceRatings = evidence.source_ratings ?? [];
+        const checkpoints = evidence.checkpoints ?? [];
         const promptReferences = evidence.prompt_references ?? [];
         const agentInstructionPaths = evidence.agent_instruction_paths ?? [];
         const worktreeChanges = evidence.worktree?.changed_files ?? [];
@@ -2505,6 +2513,7 @@ Worktree: ${evidence.worktree ? `${evidence.worktree.clean ? "clean" : "dirty"} 
 Prompt refs: ${promptReferences.length}
 Knowledge sources: ${knowledgeSources.length}
 Source ratings: ${sourceRatings.length}
+Checkpoints: ${checkpoints.length}
 Event GC: ${eventGc.retained_event_count ?? 0} retained / ${eventGc.filtered_event_count ?? 0} filtered / ${eventGc.policy_id ?? "unknown"}
 Artifacts: ${artifactPaths.length}
 Response chars: ${evidence.final_response_chars}
@@ -2517,6 +2526,9 @@ ${knowledgeSources.map((source) => `- ${source.title}: ${source.path}`).join("\n
 
 Source Ratings
 ${sourceRatings.map((rating) => `- ${rating.source_title}: ${rating.rating}/5${rating.note ? ` / ${rating.note}` : ""}`).join("\n") || "No source ratings recorded."}
+
+Run Checkpoints
+${checkpoints.map((checkpoint) => `- ${checkpoint.checkpoint_id}: ${checkpoint.note}`).join("\n") || "No run checkpoints recorded."}
 
 Prompt References
 ${promptReferences.map((path) => `- @${path}`).join("\n") || "No prompt file references used."}
@@ -3116,6 +3128,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /workspace-usage
 /trace [run_id]
 /review [run_id]
+/checkpoint [run_id] <note>
 /evidence [run_id]
 /usage [run_id]
 /source <absolute-path>
@@ -3412,6 +3425,24 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               return true;
             }
             await previewRunReviewForRun(runId);
+            return true;
+          }
+          case "/checkpoint":
+          case "/decision": {
+            const explicitRun = parts[0]?.startsWith("run_") ? parts.shift() : null;
+            const runId = explicitRun ?? state.selectedRunId ?? state.runs[0]?.run_id ?? null;
+            const note = parts.join(" ").trim();
+            if (!runId || !note) {
+              eventLogEl.textContent = "Usage: /checkpoint [run_id] <note>";
+              return true;
+            }
+            const checkpoint = await recordRunCheckpoint(runId, note);
+            eventLogEl.textContent = `Run Checkpoint
+${checkpoint.checkpoint_id}
+Run: ${checkpoint.run_id}
+Workspace: ${checkpoint.workspace_id}
+Note: ${checkpoint.note}`;
+            await refresh();
             return true;
           }
           case "/evidence": {

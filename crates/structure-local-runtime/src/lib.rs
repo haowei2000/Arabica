@@ -20,8 +20,8 @@ pub use types::{
     LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalRunStatusEvent,
     LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, LocalToolResult, LocalToolTraceEntry,
     ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, ProposalReview, ProposalReviewCheck,
-    ProposalRollbackResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
-    RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceCompactRun,
+    ProposalRollbackResult, RunAttempt, RunCheckpoint, RunEventKind, RunEvidenceSummary, RunResult,
+    RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceCompactRun,
     WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageRun,
     WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };

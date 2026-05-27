@@ -7,9 +7,9 @@ use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, EventGcPreview, KnowledgeSource, KnowledgeSourcePreview,
     LocalAgentContext, LocalEvent, LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace,
     LocalRunPlan, LocalRunReview, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolTraceEntry,
-    RunAttempt, RunEvidenceSummary, RunResult, RunSummary, RunTranscript, SourceRating,
-    WorkspaceCompact, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageSummary,
-    WorktreeSnapshot,
+    RunAttempt, RunCheckpoint, RunEvidenceSummary, RunResult, RunSummary, RunTranscript,
+    SourceRating, WorkspaceCompact, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -384,6 +384,16 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
             );
         }
     }
+    if !evidence.checkpoints.is_empty() {
+        println!("  checkpoints:");
+        for checkpoint in &evidence.checkpoints {
+            println!(
+                "    {}  {}",
+                checkpoint.checkpoint_id,
+                first_line(&checkpoint.note)
+            );
+        }
+    }
     if !evidence.event_kinds.is_empty() {
         println!("  event kinds: {}", evidence.event_kinds.join(", "));
     }
@@ -525,6 +535,16 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
                 } else {
                     rating.note.as_str()
                 }
+            );
+        }
+    }
+    if !transcript.evidence.checkpoints.is_empty() {
+        println!("  checkpoints:");
+        for checkpoint in &transcript.evidence.checkpoints {
+            println!(
+                "    {}  {}",
+                checkpoint.checkpoint_id,
+                first_line(&checkpoint.note)
             );
         }
     }
@@ -1106,6 +1126,14 @@ pub(crate) fn print_proposal_review(review: &ProposalReview) {
             println!("  [{}] {} - {}", check.status, check.id, check.message);
         }
     }
+}
+
+pub(crate) fn print_run_checkpoint(checkpoint: &RunCheckpoint) {
+    println!("Run checkpoint");
+    println!("  id:        {}", checkpoint.checkpoint_id);
+    println!("  run:       {}", checkpoint.run_id);
+    println!("  workspace: {}", checkpoint.workspace_id);
+    println!("  note:      {}", checkpoint.note);
 }
 
 pub(crate) fn print_workspace_replay(replay: &WorkspaceReplay) {

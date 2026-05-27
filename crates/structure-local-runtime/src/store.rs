@@ -929,6 +929,8 @@ mod tests {
             RunEventKind::AgentStepPlanned,
             RunEventKind::WorkspaceContextLoaded,
             RunEventKind::KnowledgeRetrieved,
+            RunEventKind::SourceRated,
+            RunEventKind::RunCheckpointRecorded,
             RunEventKind::ModelRequested,
             RunEventKind::ModelResponded,
             RunEventKind::ToolCallRequested,

@@ -10,10 +10,10 @@ use crate::types::{
     LocalRunCoreTrace, LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview,
     LocalRunStatusEvent, LocalRunStatusSnapshot, LocalTaskRecord, LocalToolCall, LocalToolResult,
     LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult, ProposalReview,
-    ProposalReviewCheck, ProposalRollbackResult, RunAttempt, RunEventKind, RunEvidenceSummary,
-    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceCompact,
-    WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageRun,
-    WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
+    ProposalReviewCheck, ProposalRollbackResult, RunAttempt, RunCheckpoint, RunEventKind,
+    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
+    WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -359,6 +359,31 @@ impl LocalAgentRuntime {
             &rating,
         )?;
         Ok(rating)
+    }
+
+    pub fn record_run_checkpoint(&self, run_id: &str, note: &str) -> Result<RunCheckpoint, String> {
+        let note = note.trim();
+        if note.is_empty() {
+            return Err("checkpoint note must not be empty".to_string());
+        }
+        if note.chars().count() > 4_000 {
+            return Err("checkpoint note must be 4000 characters or fewer".to_string());
+        }
+        let run = self.run_by_id(run_id)?;
+        let checkpoint = RunCheckpoint {
+            checkpoint_id: new_id("chk"),
+            run_id: run.run_id.clone(),
+            workspace_id: run.workspace_id.clone(),
+            note: note.to_string(),
+            created_at_ms: now_ms(),
+        };
+        self.store.append_event(
+            &checkpoint.workspace_id,
+            Some(&checkpoint.run_id),
+            RunEventKind::RunCheckpointRecorded,
+            &checkpoint,
+        )?;
+        Ok(checkpoint)
     }
 
     pub fn create_task(
@@ -1064,6 +1089,7 @@ impl LocalAgentRuntime {
         let mut worktree = None;
         let mut prompt_references = Vec::new();
         let mut source_ratings = Vec::new();
+        let mut checkpoints = Vec::new();
         let mut tool_call_count = 0;
         let mut model_usage = ModelUsageSummary::default();
 
@@ -1179,6 +1205,13 @@ impl LocalAgentRuntime {
                         source_ratings.push(rating);
                     }
                 }
+                "run_checkpoint_recorded" => {
+                    if let Ok(checkpoint) =
+                        serde_json::from_value::<RunCheckpoint>(event.payload.clone())
+                    {
+                        checkpoints.push(checkpoint);
+                    }
+                }
                 "tool_call_completed" => {
                     tool_call_count += 1;
                 }
@@ -1215,6 +1248,7 @@ impl LocalAgentRuntime {
             prompt_references,
             knowledge_sources,
             source_ratings,
+            checkpoints,
             event_gc,
             artifact_paths,
             artifacts,
@@ -2243,6 +2277,30 @@ fn workspace_compact_from_replay(
                 .join(", ")
         ));
     }
+    let checkpoints = replay
+        .events
+        .iter()
+        .filter(|event| event.kind == RunEventKind::RunCheckpointRecorded.as_str())
+        .filter_map(|event| serde_json::from_value::<RunCheckpoint>(event.payload.clone()).ok())
+        .collect::<Vec<_>>();
+    if !checkpoints.is_empty() {
+        carry_forward_items.push(format!(
+            "Human checkpoints: {}",
+            checkpoints
+                .iter()
+                .rev()
+                .take(8)
+                .map(|checkpoint| {
+                    format!(
+                        "{}: {}",
+                        checkpoint.run_id,
+                        one_line_compact(&checkpoint.note, 180)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ));
+    }
     if !replay.artifacts.is_empty() {
         carry_forward_items.push(format!(
             "Artifacts: {}",
@@ -2552,6 +2610,17 @@ fn run_compact_from_transcript(transcript: &RunTranscript) -> LocalRunCompact {
                 .map(|source| source.path.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
+        ));
+    }
+    if !evidence.checkpoints.is_empty() {
+        carry_forward_items.push(format!(
+            "Human checkpoints: {}",
+            evidence
+                .checkpoints
+                .iter()
+                .map(|checkpoint| one_line_compact(&checkpoint.note, 220))
+                .collect::<Vec<_>>()
+                .join(" | ")
         ));
     }
     if let Some(worktree) = &evidence.worktree {
@@ -2881,6 +2950,15 @@ fn event_payload_summary(event: &crate::types::LocalEvent) -> String {
             "{} {}/5",
             json_str(&event.payload, "source_title", "source"),
             json_u64(&event.payload, "rating")
+        ),
+        "run_checkpoint_recorded" => format!(
+            "checkpoint {}",
+            event
+                .payload
+                .get("note")
+                .and_then(|value| value.as_str())
+                .map(|note| compact_summary(note, 96))
+                .unwrap_or_else(|| "recorded".to_string())
         ),
         "run_finished" => "terminal finished".to_string(),
         "run_failed" => event
@@ -4205,6 +4283,58 @@ mod tests {
             knowledge_event.payload["sources"][0]["source_id"],
             useful.source_id
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_records_run_checkpoint_into_continuation_context() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("run-checkpoint");
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Create a checkpointable plan.".to_string(),
+                workspace_id: Some("checkpoints".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+
+        let checkpoint = runtime
+            .record_run_checkpoint(
+                &result.run.run_id,
+                "User decision: keep the Rust local runtime as the source of truth.",
+            )
+            .unwrap();
+
+        assert_eq!(checkpoint.run_id, result.run.run_id);
+        let events = runtime.run_events(&result.run.run_id).unwrap();
+        assert!(events.iter().any(|event| {
+            event.kind == "run_checkpoint_recorded"
+                && event.canonical_flow_id == "feedback"
+                && event.primitive_id == "event_audit"
+        }));
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        assert_eq!(evidence.checkpoints.len(), 1);
+        assert!(evidence
+            .checkpoints
+            .first()
+            .is_some_and(|item| item.note.contains("source of truth")));
+        let compact = runtime.run_compact(&result.run.run_id).unwrap();
+        assert!(compact.continuation_context.contains("Human checkpoints"));
+        assert!(compact.continuation_context.contains("source of truth"));
+
+        let continuation = runtime
+            .run_continuation_attempt(ContinuationRequest {
+                run_id: result.run.run_id.clone(),
+                extra_instruction: Some("Continue with the checkpoint.".to_string()),
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        assert!(continuation
+            .run
+            .prompt
+            .contains("User decision: keep the Rust local runtime"));
 
         fs::remove_dir_all(root).unwrap();
     }

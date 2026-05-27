@@ -236,6 +236,11 @@ into runtime calls:
   alignment, flow/primitive paths, model/tool counts, failed tool count,
   response/proposal artifacts, and next actions such as dry-run/apply or
   continue.
+- CLI human checkpoint: `uv run structure runs checkpoint <run-id> <note...>`
+  and interactive `/checkpoint [run-id] <note>` append a
+  `run_checkpoint_recorded` feedback event to the selected run. Run compacts and
+  continuations carry those checkpoint notes forward, so operator decisions are
+  part of the Structure event boundary instead of a detached chat aside.
 - CLI tasks: `uv run structure tasks list/add/update/done` stores local
   workspace tasks in the Rust runtime and records `task_created` /
   `task_updated` events. Tasks can be linked to the selected run, so planning
@@ -284,6 +289,9 @@ into runtime calls:
   `/review [run-id]` renders the same post-run review as `runs review`, giving
   interactive sessions a compact Codex-style summary before deciding whether
   to inspect tools, continue, dry-run, or apply.
+  `/checkpoint [run-id] <note>` records a human decision as a
+  `run_checkpoint_recorded` event for the selected run; `/compact` and
+  `/continue` replay those notes as part of the durable continuation boundary.
   `/doctor` combines the local session snapshot, the same `OPENAI__`
   diagnostic used by `/llm`, and the Structure Core parity verifier without
   starting an agent run.
@@ -402,6 +410,9 @@ into runtime calls:
   scheduler concept.
   Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
   compact attempt review and next-action guidance as CLI/TUI.
+  Desktop `/checkpoint [run-id] <note>` calls `record_local_run_checkpoint`,
+  giving the app the same event-sourced human decision path as CLI and carrying
+  those notes into run compacts and continuations.
   Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
   `review_local_proposal`, giving the app the same target-safety, patch-context,
   and explicit-approval checks as CLI before any proposal apply while recording

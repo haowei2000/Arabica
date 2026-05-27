@@ -2,12 +2,13 @@ use crate::text::{
     print_agent_context, print_artifact_preview, print_artifacts, print_core_capabilities,
     print_core_manifest, print_event_gc_preview, print_events, print_knowledge_preview,
     print_knowledge_source, print_knowledge_sources, print_local_evidence_bundle,
-    print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_compact,
-    print_run_core_trace, print_run_evidence_summary, print_run_plan, print_run_review,
-    print_run_status_snapshot, print_run_summary, print_run_transcript, print_runs, print_snapshot,
-    print_source_rating, print_surface_parity_report, print_surfaces, print_task, print_tasks,
-    print_tool_trace, print_workspace, print_workspace_compact, print_workspace_event_feed,
-    print_workspace_replay, print_workspace_usage, print_workspaces, print_worktree_snapshot,
+    print_model_usage_summary, print_proposal_review, print_run_attempt, print_run_checkpoint,
+    print_run_compact, print_run_core_trace, print_run_evidence_summary, print_run_plan,
+    print_run_review, print_run_status_snapshot, print_run_summary, print_run_transcript,
+    print_runs, print_snapshot, print_source_rating, print_surface_parity_report, print_surfaces,
+    print_task, print_tasks, print_tool_trace, print_workspace, print_workspace_compact,
+    print_workspace_event_feed, print_workspace_replay, print_workspace_usage, print_workspaces,
+    print_worktree_snapshot,
 };
 use crate::tui;
 use anyhow::{anyhow, Result};
@@ -212,6 +213,7 @@ enum RunsCommand {
     Review(RunReviewArgs),
     Compact(RunCompactArgs),
     Evidence(RunEvidenceArgs),
+    Checkpoint(RunCheckpointArgs),
     Transcript(RunTranscriptArgs),
     Inspect(RunTranscriptArgs),
 }
@@ -298,6 +300,14 @@ struct RunCompactArgs {
 #[derive(Debug, Args)]
 struct RunEvidenceArgs {
     run_id: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RunCheckpointArgs {
+    run_id: String,
+    note: Vec<String>,
     #[arg(long)]
     json: bool,
 }
@@ -1481,6 +1491,21 @@ fn handle_chat_session_command(
             print_run_review(&review);
             Ok(true)
         }
+        "/checkpoint" | "/decision" => {
+            let body = parts.collect::<Vec<_>>().join(" ");
+            let (run_id, note) = parse_run_scoped_text_args(state.last_run_id.clone(), &body);
+            let Some(run_id) = run_id else {
+                println!("No run selected. Run a prompt or use /checkpoint <run_id> <note>.");
+                return Ok(true);
+            };
+            let Some(note) = note else {
+                println!("Usage: /checkpoint [run_id] <note>");
+                return Ok(true);
+            };
+            let checkpoint = local_result(runtime.record_run_checkpoint(&run_id, &note))?;
+            print_run_checkpoint(&checkpoint);
+            Ok(true)
+        }
         "/run-status" | "/run" => {
             let run_id = parts
                 .next()
@@ -1817,6 +1842,29 @@ fn parse_continuation_args(
     }
 }
 
+fn parse_run_scoped_text_args(
+    selected_run_id: Option<String>,
+    command_body: &str,
+) -> (Option<String>, Option<String>) {
+    let command_body = command_body.trim();
+    if command_body.is_empty() {
+        return (selected_run_id, None);
+    }
+
+    let mut parts = command_body.splitn(2, char::is_whitespace);
+    let first = parts.next().unwrap_or_default();
+    if first.starts_with("run_") {
+        let note = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        (Some(first.to_string()), note)
+    } else {
+        (selected_run_id, Some(command_body.to_string()))
+    }
+}
+
 fn parse_agent_mode(value: Option<&str>, chat_only: bool) -> Result<LocalAgentMode> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some("chat") => Ok(LocalAgentMode::Chat),
@@ -1866,6 +1914,7 @@ fn print_chat_session_help() {
     println!("  /plan [run_id]        Show the event-derived agent plan");
     println!("  /trace [run_id]       Show Structure Core flow/primitive execution path");
     println!("  /review [run_id]      Show attempt review and next actions");
+    println!("  /checkpoint [run] <n> Record a human decision for future continuation");
     println!(
         "  /run-status [run_id]  Show run state, latest event, usage, artifacts, and next actions"
     );
@@ -1889,7 +1938,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /tasks, /task, /task-status, /task-done, /events, /gc, /tools, /plan, /trace, /review, /checkpoint, /run-status, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2284,6 +2333,15 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&evidence)?);
             } else {
                 print_run_evidence_summary(&evidence);
+            }
+        }
+        RunsCommand::Checkpoint(args) => {
+            let note = args.note.join(" ");
+            let checkpoint = local_result(runtime.record_run_checkpoint(&args.run_id, &note))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&checkpoint)?);
+            } else {
+                print_run_checkpoint(&checkpoint);
             }
         }
         RunsCommand::Transcript(args) => {
@@ -2915,6 +2973,32 @@ mod tests {
             panic!("expected runs compact command");
         };
         assert_eq!(args.run_id, "run_1");
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_runs_checkpoint_command_accepts_note_and_json_output() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "runs",
+            "checkpoint",
+            "run_1",
+            "keep",
+            "the",
+            "current",
+            "plan",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Runs {
+            command: RunsCommand::Checkpoint(args),
+        } = cli.command
+        else {
+            panic!("expected runs checkpoint command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert_eq!(args.note, vec!["keep", "the", "current", "plan"]);
         assert!(args.json);
     }
 

@@ -326,6 +326,15 @@ fn local_run_review(run_id: String) -> Result<structure_local_runtime::LocalRunR
 }
 
 #[tauri::command]
+fn record_local_run_checkpoint(
+    run_id: String,
+    note: String,
+) -> Result<structure_local_runtime::RunCheckpoint, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.record_run_checkpoint(&run_id, &note)
+}
+
+#[tauri::command]
 fn local_run_status(
     run_id: String,
 ) -> Result<structure_local_runtime::LocalRunStatusSnapshot, String> {
@@ -584,6 +593,7 @@ pub fn run() {
             local_run_plan,
             local_run_compact,
             local_run_review,
+            record_local_run_checkpoint,
             local_run_status,
             local_run_transcript,
             local_workspace_replay,
@@ -718,6 +728,10 @@ mod tests {
                 4,
                 Some("desktop grounding".to_string()),
             )?;
+            let checkpoint = record_local_run_checkpoint(
+                run.run.run_id.clone(),
+                "Desktop human checkpoint: keep Structure Core as the event loop.".to_string(),
+            )?;
             let event_gc = local_run_event_gc(run.run.run_id.clone(), Some(4))?;
             let tool_trace = local_run_tool_trace(run.run.run_id.clone())?;
             let transcript = local_run_transcript(run.run.run_id.clone())?;
@@ -801,6 +815,8 @@ mod tests {
                 source_rating.run_id.as_deref(),
                 Some(run.run.run_id.as_str())
             );
+            assert_eq!(checkpoint.run_id, run.run.run_id);
+            assert!(checkpoint.note.contains("Structure Core"));
             assert_eq!(event_gc.summary.policy_id, "retain_last_n_events");
             assert_eq!(event_gc.summary.retained_event_count, 4);
             assert_eq!(
@@ -923,6 +939,10 @@ mod tests {
                 .primitive_ids
                 .contains(&"reproducible_evidence".to_string()));
             assert_eq!(transcript.evidence.source_ratings.len(), 1);
+            assert_eq!(transcript.evidence.checkpoints.len(), 1);
+            assert!(transcript.evidence.checkpoints[0]
+                .note
+                .contains("Structure Core"));
             assert_eq!(
                 transcript.evidence.event_gc.policy_id,
                 "retain_last_n_events"
@@ -1034,6 +1054,9 @@ mod tests {
         assert!(local_ui.contains("case \"/rate\":"));
         assert!(local_ui.contains("rate_local_knowledge_source"));
         assert!(local_ui.contains("Source Ratings"));
+        assert!(local_ui.contains("Run Checkpoints"));
+        assert!(local_ui.contains("case \"/checkpoint\":"));
+        assert!(local_ui.contains("invoke(\"record_local_run_checkpoint\""));
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
         assert!(local_ui.contains("Worktree Changes"));
