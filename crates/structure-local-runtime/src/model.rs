@@ -478,7 +478,7 @@ impl LocalModelProvider for EnvApiModelProvider {
             request.recent_turns.len()
         ));
         final_response.push_str(&format!("- Mode: `{}`\n\n", request.mode.as_str()));
-        final_response.push_str(content.trim());
+        final_response.push_str(&strip_runtime_response_envelope(content));
         final_response.push_str("\n\n## Tool Evidence Summary\n\n");
         for result in tool_results {
             final_response.push_str(&format!(
@@ -545,6 +545,35 @@ fn render_planning_prompt(request: &ModelRequest, tool_results: &[LocalToolResul
         worktree = render_worktree_for_api(&request.worktree),
         recent_turns = render_recent_turns_for_api(&request.recent_turns),
     )
+}
+
+fn strip_runtime_response_envelope(content: &str) -> String {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("# Structure Local Agent Response") {
+        return trimmed.to_string();
+    }
+
+    let mut body = Vec::new();
+    let mut after_runtime_header = false;
+    for line in trimmed.lines() {
+        if line.starts_with("## Tool Evidence Summary") {
+            break;
+        }
+        if after_runtime_header {
+            body.push(line);
+            continue;
+        }
+        if line.starts_with("- Mode:") || line.starts_with("**Mode:**") {
+            after_runtime_header = true;
+        }
+    }
+
+    let stripped = body.join("\n").trim().to_string();
+    if stripped.is_empty() {
+        "The model returned no assistant body before tool evidence.".to_string()
+    } else {
+        stripped
+    }
 }
 
 fn local_tool_schemas(request: &ModelRequest) -> Vec<serde_json::Value> {
@@ -935,6 +964,25 @@ mod tests {
         assert_eq!(calls[1].call_id, "call_check");
         assert_eq!(calls[1].name, "run_local_command");
         assert_eq!(calls[1].input["argv"][0], "cargo");
+    }
+
+    #[test]
+    fn strips_nested_structure_runtime_envelope_from_api_content() {
+        let content = "# Structure Local Agent Response\n\n\
+This response was produced by the embedded Structure event loop with the environment API model.\n\n\
+- Provider: `local_env_api`\n\
+- Model: `test-model`\n\
+- Run: `run_1`\n\
+- Workspace: `default`\n\
+- Mode: `chat`\n\n\
+The actual assistant answer.\n\n\
+## Tool Evidence Summary\n\n\
+- list_workspace / `tool_1`: ok\n";
+
+        assert_eq!(
+            strip_runtime_response_envelope(content),
+            "The actual assistant answer."
+        );
     }
 
     #[test]

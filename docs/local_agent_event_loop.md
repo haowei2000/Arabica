@@ -250,6 +250,11 @@ into runtime calls:
   conversational or code-agent behavior without bypassing the same
   event-sourced runtime. The older `chat --chat-only` flag remains as a
   compatibility alias for `--mode chat`.
+- API model synthesis: when an `OPENAI__` model echoes the Structure response
+  envelope, the Rust runtime strips that nested envelope before persisting the
+  assistant response. CLI, TUI, and desktop therefore share one clean
+  event-loop response format instead of patching duplicated headers per
+  surface.
 - Benchmarks: benchmark execution and report relinking are owned by dedicated
   adapters under `benchmarks/adapters/`, not by the local CLI/TUI or desktop
   app surfaces.
