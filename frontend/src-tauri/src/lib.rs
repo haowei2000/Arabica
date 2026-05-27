@@ -1088,6 +1088,7 @@ mod tests {
         assert!(local_ui.contains("function previewRunToolTraceForRun"));
         assert!(local_ui.contains("function renderToolTraceText(trace)"));
         assert!(local_ui.contains("case \"/tools\":"));
+        assert!(local_ui.contains("previewRunToolTraceForRun(runId, `/tools ${runId}`)"));
         assert!(local_ui.contains("function renderRunPlanText(plan)"));
         assert!(local_ui.contains("case \"/plan\":"));
         assert!(local_ui.contains("invoke(\"local_run_plan\""));
@@ -1098,6 +1099,7 @@ mod tests {
         assert!(local_ui.contains("function renderWorkspaceCompactText(compact)"));
         assert!(local_ui.contains("case \"/session\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_compact\""));
+        assert!(local_ui.contains("previewWorkspaceCompact(\"/session\")"));
         assert!(local_ui.contains("id=\"session-continue\""));
         assert!(local_ui.contains("function performWorkspaceContinuationRun"));
         assert!(local_ui.contains("case \"/session-continue\":"));
@@ -1107,6 +1109,7 @@ mod tests {
         assert!(local_ui.contains("active_task_count"));
         assert!(local_ui.contains("case \"/session-usage\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_usage\""));
+        assert!(local_ui.contains("previewWorkspaceUsage(\"/session-usage\")"));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));
@@ -1118,10 +1121,12 @@ mod tests {
         assert!(local_ui.contains("function renderRunStatusText(status)"));
         assert!(local_ui.contains("case \"/run-status\":"));
         assert!(local_ui.contains("invoke(\"local_run_status\""));
+        assert!(local_ui.contains("previewRunStatusForRun(runId, `/run-status ${runId}`)"));
         assert!(local_ui.contains("id=\"show-tasks\""));
         assert!(local_ui.contains("function renderTasksText(tasks)"));
         assert!(local_ui.contains("case \"/tasks\":"));
         assert!(local_ui.contains("invoke(\"local_tasks\""));
+        assert!(local_ui.contains("previewTasks(null, \"/tasks\")"));
         assert!(local_ui.contains("invoke(\"create_local_task\""));
         assert!(local_ui.contains("invoke(\"update_local_task_status\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));

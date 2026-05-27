@@ -403,15 +403,20 @@ into runtime calls:
   inspectable inside the app chat loop.
   Desktop `/tools [run-id]`, the Tool Trace action, and per-turn Tools actions
   call `local_run_tool_trace`, giving the app the same ordered tool-call
-  explanation as the CLI/TUI without re-parsing raw events in JavaScript.
+  explanation as the CLI/TUI without re-parsing raw events in JavaScript. The
+  visible Tool Trace action is also recorded as a `/tools <run-id>` chat command
+  turn.
   Desktop `/run-status [run-id]`, the Run Status action, and per-turn Status
   actions call `local_run_status`, giving the app the same latest-event,
-  usage, tool, artifact, Core alignment, and next-action snapshot as CLI/TUI.
+  usage, tool, artifact, Core alignment, and next-action snapshot as CLI/TUI;
+  the visible Run Status action is recorded as a `/run-status <run-id>` chat
+  command turn.
   Desktop `/tasks`, `/task`, `/task-status`, `/task-done`, and the Tasks action
   call `local_tasks`, `create_local_task`, and `update_local_task_status`,
   keeping agent work items as workspace/run-linked Structure events rather than
   a desktop-only checklist. Those same task records are rendered in Agent
-  Context, Session Compact, Session Usage, replay, and evidence-bundle views.
+  Context, Session Compact, Session Usage, replay, and evidence-bundle views;
+  the visible Tasks action is recorded as a `/tasks` command turn.
   Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
   showing progress as a derived view over immutable Structure planning/model/tool
   events rather than a desktop-only state machine.
@@ -421,13 +426,15 @@ into runtime calls:
   without inventing a desktop-only memory model.
   Desktop `/session`, `/workspace-compact`, and the Session Compact action call
   `local_workspace_compact`, giving the desktop app the same workspace/session
-  handoff object as CLI/TUI while staying inside the local Rust runtime.
+  handoff object as CLI/TUI while staying inside the local Rust runtime. The
+  visible action is recorded as a `/session` command turn.
   Desktop `/session-continue`, `/workspace-continue`, and the Session Continue
   action call `local_workspace_continue_attempt`, turning that compact handoff
   into a fresh run with the same local event loop and Core trace semantics.
   Desktop `/session-usage`, `/workspace-usage`, and the Session Usage action
   call `local_workspace_usage`, showing the same session-level model, token,
-  tool, artifact, and Core totals as CLI/TUI.
+  tool, artifact, and Core totals as CLI/TUI; the visible action is recorded as
+  a `/session-usage` command turn.
   Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
   same Structure Core flow/primitive path as CLI without introducing a desktop
   scheduler concept.

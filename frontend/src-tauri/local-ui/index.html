@@ -2959,33 +2959,39 @@ Opened in Preview for the selected run.`;
         }
       }
 
-      async function previewRunStatusForRun(runId) {
+      async function previewRunStatusForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading run status...";
         try {
           const status = await localRunStatus(runId);
           eventLogEl.textContent = renderRunStatusText(status);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Run status loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
-      async function previewRunToolTraceForRun(runId) {
+      async function previewRunToolTraceForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading tool trace...";
         try {
           const trace = await localRunToolTrace(runId);
           eventLogEl.textContent = renderToolTraceText(trace);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Tool trace loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
-      async function previewTasks(status = null) {
+      async function previewTasks(status = null, commandInput = null) {
         eventLogEl.textContent = "Loading workspace tasks...";
         try {
           const tasks = await localTasks(status);
           eventLogEl.textContent = renderTasksText(tasks);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Tasks loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
@@ -3041,23 +3047,27 @@ Note: ${checkpoint.note}`;
         return checkpoint;
       }
 
-      async function previewWorkspaceCompact() {
+      async function previewWorkspaceCompact(commandInput = null) {
         eventLogEl.textContent = "Compacting workspace session...";
         try {
           const compact = await localWorkspaceCompact();
           eventLogEl.textContent = renderWorkspaceCompactText(compact);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Session compact loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
-      async function previewWorkspaceUsage() {
+      async function previewWorkspaceUsage(commandInput = null) {
         eventLogEl.textContent = "Loading workspace session usage...";
         try {
           const usage = await localWorkspaceUsage();
           eventLogEl.textContent = renderWorkspaceUsageText(usage);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Session usage loaded.");
         } catch (error) {
           eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
         }
       }
 
@@ -4633,7 +4643,7 @@ ${events || "No events recorded."}`;
       sessionCompactEl.addEventListener("click", async () => {
         setSessionCompactBusy(true);
         try {
-          await previewWorkspaceCompact();
+          await previewWorkspaceCompact("/session");
         } finally {
           setSessionCompactBusy(false);
         }
@@ -4652,7 +4662,7 @@ ${events || "No events recorded."}`;
       sessionUsageEl.addEventListener("click", async () => {
         setSessionUsageBusy(true);
         try {
-          await previewWorkspaceUsage();
+          await previewWorkspaceUsage("/session-usage");
         } finally {
           setSessionUsageBusy(false);
         }
@@ -4665,7 +4675,7 @@ ${events || "No events recorded."}`;
         }
         setRunStatusBusy(true);
         try {
-          await previewRunStatusForRun(runId);
+          await previewRunStatusForRun(runId, `/run-status ${runId}`);
         } finally {
           setRunStatusBusy(false);
         }
@@ -4678,7 +4688,7 @@ ${events || "No events recorded."}`;
         }
         setRunToolsBusy(true);
         try {
-          await previewRunToolTraceForRun(runId);
+          await previewRunToolTraceForRun(runId, `/tools ${runId}`);
         } finally {
           setRunToolsBusy(false);
         }
@@ -4700,7 +4710,7 @@ ${events || "No events recorded."}`;
       showTasksEl.addEventListener("click", async () => {
         setTasksBusy(true);
         try {
-          await previewTasks();
+          await previewTasks(null, "/tasks");
         } finally {
           setTasksBusy(false);
         }
