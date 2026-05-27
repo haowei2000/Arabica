@@ -391,8 +391,9 @@ into runtime calls:
   A segmented `Chat` / `Code Agent` mode control drives the same `mode` field
   passed to the Rust runtime as `/mode`, keeping visible desktop interaction and
   command-style interaction on one event loop.
-  `local_workspace_event_feed` powers the Poll Events action and live in-flight
-  run polling from a persisted cursor.
+  `local_workspace_event_feed` powers the Workspace Events action,
+  `/workspace-events` slash command, and live in-flight run polling from a
+  persisted cursor.
   In-flight chat bubbles consume that same feed to show the current live event
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
@@ -547,7 +548,7 @@ into runtime calls:
   latest-run transcript from successful or failed attempts.
   Worktree refresh, workspace replay, artifact preview, Core parity, and
   evidence-bundle controls now append `/worktree`, `/replay`, `/artifact`,
-  `/parity`, and `/bundle` command turns to the same chat thread, keeping
+  `/parity`, `/bundle`, and `/workspace-events` command turns to the same chat thread, keeping
   workspace/context inspection inside the agent conversation rather than as a
   detached dashboard; those command turns use the same persisted event path as
   slash-command output.

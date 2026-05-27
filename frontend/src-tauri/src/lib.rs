@@ -1163,6 +1163,13 @@ mod tests {
         assert!(local_ui.contains("case \"/session-usage\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_usage\""));
         assert!(local_ui.contains("previewWorkspaceUsage(\"/session-usage\")"));
+        assert!(local_ui.contains("function renderWorkspaceEventFeedText(feed)"));
+        assert!(local_ui.contains("function previewWorkspaceEvents(commandInput = null)"));
+        assert!(local_ui.contains("case \"/workspace-events\":"));
+        assert!(local_ui.contains("case \"/events-feed\":"));
+        assert!(local_ui.contains("previewWorkspaceEvents(\"/workspace-events\")"));
+        assert!(local_ui.contains("/workspace-events -> cursor-based workspace event feed"));
+        assert!(local_ui.contains("appendCommandMessage(commandInput, eventLogEl.textContent || \"Workspace events loaded.\");"));
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));

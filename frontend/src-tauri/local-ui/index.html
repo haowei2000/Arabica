@@ -1006,7 +1006,7 @@
             <button id="command-map" type="button">Command Map</button>
             <button id="record-checkpoint" type="button">Record Decision</button>
             <button id="show-tasks" type="button">Tasks</button>
-            <button id="poll-events" type="button">Poll Events</button>
+            <button id="poll-events" type="button">Workspace Events</button>
             <button id="show-context" type="button">Agent Context</button>
             <button id="show-doctor" type="button">Doctor</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
@@ -1710,7 +1710,7 @@
 
       function setPollEventsBusy(isBusy) {
         pollEventsEl.disabled = isBusy;
-        pollEventsEl.textContent = isBusy ? "Polling" : "Poll Events";
+        pollEventsEl.textContent = isBusy ? "Polling" : "Workspace Events";
       }
 
       function setContextBusy(isBusy) {
@@ -1874,6 +1874,22 @@ Artifacts: ${replay.artifacts.length}
 Last sequence: ${replay.last_sequence ?? "none"}
 
 ${events || "No events recorded."}`;
+      }
+
+      function renderWorkspaceEventFeedText(feed) {
+        if (!feed) return "Workspace event feed unavailable.";
+        const feedEvents = feed.events ?? [];
+        const events = feedEvents
+          .map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.primitive_id ?? "event_audit"} / ${event.run_id ?? "workspace"}`)
+          .join("\n");
+        return `Workspace Event Feed
+Workspace: ${feed.workspace_id}
+After sequence: ${feed.after_sequence}
+Last sequence: ${feed.last_sequence ?? "none"}
+Next after sequence: ${feed.next_after_sequence}
+Events: ${feedEvents.length}
+
+${events || "No new events."}`;
       }
 
       function renderAgentContextText(context) {
@@ -2555,6 +2571,20 @@ ${events || "No new events."}`;
           throw error;
         } finally {
           liveEventPollInFlight = false;
+        }
+      }
+
+      async function previewWorkspaceEvents(commandInput = null) {
+        eventLogEl.textContent = `Polling workspace events after #${state.workspaceEventCursor}...`;
+        try {
+          const feed = await pollWorkspaceEvents({ silent: true, autoSelectLatest: true });
+          eventLogEl.textContent = renderWorkspaceEventFeedText(feed);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Workspace events loaded.");
+          return feed;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+          throw error;
         }
       }
 
@@ -3719,6 +3749,7 @@ Run Evidence
 
 Session And Proposals
 - /session, /session-continue, /session-usage -> workspace session handoff
+- /workspace-events -> cursor-based workspace event feed
 - /artifacts, /artifact, /proposal, /diff -> local artifact and proposal disclosure
 - /risk, /dry-run, /apply, /rollback -> review-gated code proposal loop
 
@@ -3760,6 +3791,8 @@ Detailed Slash Commands
 /workspace-continue [instruction]
 /session-usage
 /workspace-usage
+/workspace-events
+/events-feed
 /trace [run_id]
 /review [run_id]
 /checkpoint [run_id] <note>
@@ -4061,6 +4094,12 @@ ${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") 
           case "/session-usage":
           case "/workspace-usage": {
             await previewWorkspaceUsage();
+            return true;
+          }
+          case "/workspace-events":
+          case "/events-feed":
+          case "/feed": {
+            await previewWorkspaceEvents();
             return true;
           }
           case "/trace":
@@ -5238,9 +5277,8 @@ Stderr truncated: ${result.output.stderr_truncated}`;
       });
       pollEventsEl.addEventListener("click", async () => {
         setPollEventsBusy(true);
-        eventLogEl.textContent = `Polling workspace events after #${state.workspaceEventCursor}...`;
         try {
-          await pollWorkspaceEvents({ silent: false, autoSelectLatest: true });
+          await previewWorkspaceEvents("/workspace-events");
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {
