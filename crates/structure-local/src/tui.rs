@@ -42,6 +42,7 @@ enum TuiInputKind {
     AgentPrompt,
     FollowUpPrompt,
     SessionFollowUpPrompt,
+    RunCheckpoint,
     KnowledgePath,
     SourceRating,
     WorkspaceId,
@@ -54,6 +55,7 @@ impl TuiInputKind {
             Self::AgentPrompt => "Custom agent prompt",
             Self::FollowUpPrompt => "Follow-up instruction",
             Self::SessionFollowUpPrompt => "Session follow-up instruction",
+            Self::RunCheckpoint => "Human decision checkpoint",
             Self::KnowledgePath => "Knowledge file path",
             Self::SourceRating => "Source rating",
             Self::WorkspaceId => "Workspace id",
@@ -66,6 +68,7 @@ impl TuiInputKind {
             Self::AgentPrompt => "Type a prompt and press Enter",
             Self::FollowUpPrompt => "Type a follow-up for the selected run",
             Self::SessionFollowUpPrompt => "Type a follow-up for the whole workspace session",
+            Self::RunCheckpoint => "Type a human decision note for the selected run",
             Self::KnowledgePath => "Type an absolute or repo-relative file path",
             Self::SourceRating => "Type [source_id] <1-5> [note]; source_id defaults to latest",
             Self::WorkspaceId => "Type a workspace id to create or open",
@@ -215,6 +218,7 @@ impl TuiState {
             TuiInputKind::SessionFollowUpPrompt => {
                 self.run_session_follow_up_prompt(repo_root, value)
             }
+            TuiInputKind::RunCheckpoint => self.record_run_checkpoint(repo_root, value),
             TuiInputKind::KnowledgePath => self.add_knowledge_path(repo_root, value),
             TuiInputKind::SourceRating => self.rate_knowledge_source(repo_root, value),
             TuiInputKind::WorkspaceId => self.open_or_create_workspace(repo_root, value),
@@ -291,6 +295,24 @@ impl TuiState {
             path: format!("session continuation / {}", attempt.run.run_id),
             text: preview,
         });
+        self.notice = notice;
+        Ok(())
+    }
+
+    fn record_run_checkpoint(&mut self, repo_root: &Path, note: String) -> Result<()> {
+        let Some(run_id) = self.selected_run_id().map(str::to_string) else {
+            self.notice = "No run selected for checkpoint".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let checkpoint = local_result(runtime.record_run_checkpoint(&run_id, &note))?;
+        self.preview = Some(TuiPreview {
+            path: format!("run checkpoint / {}", checkpoint.run_id),
+            text: render_run_checkpoint(&checkpoint),
+        });
+        self.pending_apply_artifact_id = None;
+        let notice = format!("Checkpoint recorded: {}", checkpoint.checkpoint_id);
+        self.refresh(repo_root)?;
         self.notice = notice;
         Ok(())
     }
@@ -871,6 +893,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('c') => state.begin_input(TuiInputKind::AgentPrompt),
                     KeyCode::Char('f') => state.begin_input(TuiInputKind::FollowUpPrompt),
                     KeyCode::Char('F') => state.begin_input(TuiInputKind::SessionFollowUpPrompt),
+                    KeyCode::Char('D') => state.begin_input(TuiInputKind::RunCheckpoint),
                     KeyCode::Char('s') => state.begin_input(TuiInputKind::KnowledgePath),
                     KeyCode::Char('R') => state.begin_input(TuiInputKind::SourceRating),
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
@@ -976,7 +999,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f run-follow  F session-follow  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "m mode  o workspace  c prompt  f run-follow  F session-follow  D decision  i status  l plan  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1064,7 +1087,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press j/k to select, i status, t transcript, l plan, C compact, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
+        "press j/k to select, i status, t transcript, l plan, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
         width,
     )?;
     muted_at(
@@ -1094,7 +1117,7 @@ fn draw_reports(
             .find(|evidence| evidence.run.run_id == run.run_id)
             .map(|evidence| {
                 format!(
-                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} gc, {} artifacts]",
+                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} checkpoints, {} gc, {} artifacts]",
                     evidence.event_count,
                     evidence.tool_call_count,
                     evidence.agent_instruction_paths.len(),
@@ -1105,6 +1128,7 @@ fn draw_reports(
                         .unwrap_or_default(),
                     evidence.knowledge_sources.len(),
                     evidence.source_ratings.len(),
+                    evidence.checkpoints.len(),
                     evidence.event_gc.filtered_event_count,
                     evidence.artifacts.len()
                 )
@@ -1257,7 +1281,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "q quit  r refresh  c prompt  f run-follow  F session-follow  ! cmd  t transcript  l plan  C compact  S session  U usage  b review  g proposal  h risk";
+    let controls = "q quit  r refresh  c prompt  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  C compact  S session  b review";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1414,7 +1438,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
     } else {
         for evidence in &bundle.run_evidence {
             text.push_str(&format!(
-                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} gc-filtered, {} artifacts\n",
+                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} checkpoints, {} gc-filtered, {} artifacts\n",
                 evidence.run.run_id,
                 evidence.event_count,
                 evidence.tool_call_count,
@@ -1426,6 +1450,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
                     .unwrap_or_default(),
                 evidence.knowledge_sources.len(),
                 evidence.source_ratings.len(),
+                evidence.checkpoints.len(),
                 evidence.event_gc.filtered_event_count,
                 evidence.artifacts.len()
             ));
@@ -1456,6 +1481,19 @@ fn render_worktree_snapshot(worktree: &WorktreeSnapshot) -> String {
             text.push_str(&format!("- {} {}\n", change.status, change.path));
         }
     }
+    text
+}
+
+fn render_run_checkpoint(checkpoint: &structure_local_runtime::RunCheckpoint) -> String {
+    let mut text = String::new();
+    text.push_str("Run Checkpoint\n");
+    text.push_str(&format!("ID: {}\n", checkpoint.checkpoint_id));
+    text.push_str(&format!("Run: {}\n", checkpoint.run_id));
+    text.push_str(&format!("Workspace: {}\n", checkpoint.workspace_id));
+    text.push_str(&format!("Created: {}\n\n", checkpoint.created_at_ms));
+    text.push_str("Human Decision\n");
+    text.push_str(&checkpoint.note);
+    text.push('\n');
     text
 }
 
@@ -1509,6 +1547,17 @@ fn render_run_transcript(transcript: &RunTranscript) -> String {
         "Artifacts: {}\n\n",
         transcript.evidence.artifact_paths.len()
     ));
+
+    if !transcript.evidence.checkpoints.is_empty() {
+        text.push_str("Run Checkpoints\n");
+        for checkpoint in &transcript.evidence.checkpoints {
+            text.push_str(&format!(
+                "- {}: {}\n",
+                checkpoint.checkpoint_id, checkpoint.note
+            ));
+        }
+        text.push('\n');
+    }
 
     if let Some(worktree) = &transcript.evidence.worktree {
         if !worktree.changed_files.is_empty() {
@@ -2446,6 +2495,71 @@ mod tests {
                 .run
                 .prompt
                 .contains("Compact Structure workspace context"));
+            Ok(())
+        })();
+
+        fs::remove_dir_all(root).ok();
+        for (key, value) in previous_openai {
+            restore_env(key, value);
+        }
+        result.unwrap();
+    }
+
+    #[test]
+    fn tui_records_checkpoint_for_selected_run_and_compact_context() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_openai = openai_env_keys()
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in openai_env_keys() {
+            std::env::remove_var(key);
+        }
+
+        let root = unique_repo("tui-checkpoint");
+        let snapshot = local_result(collect_snapshot(&root)).unwrap();
+        let mut state = TuiState::new(TuiStateInit {
+            snapshot,
+            runs: Vec::new(),
+            run_evidence: Vec::new(),
+            workspaces: Vec::new(),
+            active_workspace_id: "tui-checkpoint".to_string(),
+            knowledge_sources: Vec::new(),
+            tasks: Vec::new(),
+            artifacts: Vec::new(),
+        });
+
+        let result = (|| -> Result<()> {
+            state.run_custom_prompt(&root, "Create a checkpointable local plan.".to_string())?;
+            let run_id = state.runs.first().unwrap().run_id.clone();
+            let note = "Human decision: keep Structure Core as the TUI scheduler.";
+
+            state.record_run_checkpoint(&root, note.to_string())?;
+
+            assert!(state.notice.starts_with("Checkpoint recorded: chk_"));
+            let checkpoint_preview = state.preview.as_ref().expect("checkpoint preview");
+            assert!(checkpoint_preview.path.starts_with("run checkpoint / run_"));
+            assert!(checkpoint_preview.text.contains("Run Checkpoint"));
+            assert!(checkpoint_preview.text.contains(note));
+
+            let runtime = local_result(LocalAgentRuntime::open(&root))?;
+            let evidence = local_result(runtime.run_evidence_summary(&run_id))?;
+            assert_eq!(evidence.checkpoints.len(), 1);
+            assert_eq!(evidence.checkpoints[0].note, note);
+            assert!(state
+                .run_evidence
+                .iter()
+                .any(|evidence| evidence.run.run_id == run_id && evidence.checkpoints.len() == 1));
+
+            state.preview_selected_run_transcript(&root)?;
+            let transcript_preview = state.preview.as_ref().expect("transcript preview");
+            assert!(transcript_preview.text.contains("Run Checkpoints"));
+            assert!(transcript_preview.text.contains(note));
+
+            state.preview_selected_run_compact(&root)?;
+            let compact_preview = state.preview.as_ref().expect("compact preview");
+            assert!(compact_preview.text.contains("Human checkpoints"));
+            assert!(compact_preview.text.contains(note));
             Ok(())
         })();
 

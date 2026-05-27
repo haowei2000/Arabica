@@ -335,8 +335,10 @@ into runtime calls:
   path registration bound to `s`, knowledge registration removal bound to `x`,
   allowlisted local command execution bound to `!`, and a local workspace check
   bound to `n`; `!` commands are persisted as workspace tool events. `R` records
-  a source rating for the selected run or workspace. It also
-  surfaces knowledge and artifact previews through the same runtime. Custom
+  a source rating for the selected run or workspace, and `D` records a selected
+  run human decision as the same `run_checkpoint_recorded` event used by CLI
+  `/checkpoint` and desktop `/checkpoint`. It also surfaces knowledge and
+  artifact previews through the same runtime. Custom
   prompt and workspace-check runs open a `RunAttempt` preview immediately, so
   successful and failed TUI runs both expose their event trace without leaving
   the local terminal UI. Press `f` to continue the selected run through the
