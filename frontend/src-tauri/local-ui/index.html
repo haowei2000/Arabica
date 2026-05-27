@@ -1001,6 +1001,7 @@
             <button id="session-compact" type="button">Session Compact</button>
             <button id="session-continue" type="button">Session Continue</button>
             <button id="session-usage" type="button">Session Usage</button>
+            <button id="show-runs" type="button">Runs</button>
             <button id="run-status" type="button">Run Status</button>
             <button id="run-tools" type="button">Tool Trace</button>
             <button id="command-map" type="button">Command Map</button>
@@ -1127,6 +1128,7 @@
       const sessionCompactEl = document.querySelector("#session-compact");
       const sessionContinueEl = document.querySelector("#session-continue");
       const sessionUsageEl = document.querySelector("#session-usage");
+      const showRunsEl = document.querySelector("#show-runs");
       const runStatusEl = document.querySelector("#run-status");
       const runToolsEl = document.querySelector("#run-tools");
       const commandMapEl = document.querySelector("#command-map");
@@ -1688,6 +1690,11 @@
         sessionUsageEl.textContent = isBusy ? "Loading Usage" : "Session Usage";
       }
 
+      function setRunsBusy(isBusy) {
+        showRunsEl.disabled = isBusy;
+        showRunsEl.textContent = isBusy ? "Loading Runs" : "Runs";
+      }
+
       function setRunStatusBusy(isBusy) {
         runStatusEl.disabled = isBusy;
         runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
@@ -2074,6 +2081,44 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
           button.append(title, prompt);
           button.addEventListener("click", () => selectRun(run));
           runListEl.append(button);
+        }
+      }
+
+      function renderRunsText(runs) {
+        const rows = (runs ?? [])
+          .map((run) => {
+            const selected = run.run_id === state.selectedRunId ? "selected" : "run";
+            const response = run.final_response
+              ? ` / response ${run.final_response.length} chars`
+              : "";
+            return `- ${selected}: ${run.run_id} / ${run.status} / updated ${run.updated_at_ms}${response}
+  prompt: ${run.prompt}`;
+          })
+          .join("\n");
+        return `Recent Runs
+Workspace: ${activeWorkspaceId()}
+Shown: ${(runs ?? []).length}
+Selected run: ${state.selectedRunId ?? "none"}
+
+${rows || "No runs recorded."}`;
+      }
+
+      async function previewRuns(commandInput = null) {
+        eventLogEl.textContent = "Loading recent Structure runs...";
+        try {
+          const runs = await localRuns();
+          state.runs = runs;
+          if (!runs.some((run) => run.run_id === state.selectedRunId)) {
+            state.selectedRunId = runs[0]?.run_id ?? null;
+          }
+          renderRuns(runs);
+          eventLogEl.textContent = renderRunsText(runs);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Runs loaded.");
+          return runs;
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+          throw error;
         }
       }
 
@@ -3729,6 +3774,7 @@ Selected run: ${state.selectedRunId ?? state.runs[0]?.run_id ?? "none"}
 
 Run Loop
 - prompt text -> local_agent_run_attempt -> Structure run events
+- /runs or visible Runs -> recent Structure runs from local runtime
 - /history -> persisted chat/code-agent turns from local run events
 - /rerun [n] or per-turn Rerun -> fresh run from a persisted history prompt
 - /continue, /resume, /retry -> fresh runs from selected transcript/evidence
@@ -3889,11 +3935,7 @@ Detailed Slash Commands
             return true;
           }
           case "/runs": {
-            const runs = await localRuns();
-            state.runs = runs;
-            renderRuns(runs);
-            eventLogEl.textContent = `Recent Runs
-${runs.map((run) => `${run.run_id} / ${run.status} / ${run.prompt}`).join("\n") || "No runs recorded."}`;
+            await previewRuns();
             return true;
           }
           case "/history":
@@ -5221,6 +5263,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewWorkspaceUsage("/session-usage");
         } finally {
           setSessionUsageBusy(false);
+        }
+      });
+      showRunsEl.addEventListener("click", async () => {
+        setRunsBusy(true);
+        try {
+          await previewRuns("/runs");
+        } finally {
+          setRunsBusy(false);
         }
       });
       runStatusEl.addEventListener("click", async () => {

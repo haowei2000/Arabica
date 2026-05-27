@@ -1163,6 +1163,14 @@ mod tests {
         assert!(local_ui.contains("case \"/session-usage\":"));
         assert!(local_ui.contains("invoke(\"local_workspace_usage\""));
         assert!(local_ui.contains("previewWorkspaceUsage(\"/session-usage\")"));
+        assert!(local_ui.contains("id=\"show-runs\""));
+        assert!(local_ui.contains("function renderRunsText(runs)"));
+        assert!(local_ui.contains("function previewRuns(commandInput = null)"));
+        assert!(local_ui.contains("case \"/runs\":"));
+        assert!(local_ui.contains("previewRuns(\"/runs\")"));
+        assert!(
+            local_ui.contains("/runs or visible Runs -> recent Structure runs from local runtime")
+        );
         assert!(local_ui.contains("function renderWorkspaceEventFeedText(feed)"));
         assert!(local_ui.contains("function previewWorkspaceEvents(commandInput = null)"));
         assert!(local_ui.contains("case \"/workspace-events\":"));

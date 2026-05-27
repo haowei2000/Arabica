@@ -107,8 +107,9 @@ The same event log is also exposed as a cursor-based workspace feed through
 `workspace_event_feed`. CLI and desktop callers can request events after a known
 sequence number and receive `next_after_sequence`, which gives local app/TUI
 surfaces an in-process analogue of the service SSE replay cursor without
-starting an API server. The desktop shell uses this cursor both for manual Poll
-Events and for short-lived live polling while a local agent run is in flight.
+starting an API server. The desktop shell uses this cursor both for the manual
+Workspace Events action and for short-lived live polling while a local agent run
+is in flight.
 The human-readable CLI uses the same cursor to print live event progress during
 non-JSON `run` and `chat` execution while preserving machine-readable JSON
 output for scripts. Manual CLI session tools, TUI commands, and desktop
@@ -391,6 +392,9 @@ into runtime calls:
   A segmented `Chat` / `Code Agent` mode control drives the same `mode` field
   passed to the Rust runtime as `/mode`, keeping visible desktop interaction and
   command-style interaction on one event loop.
+  `local_runs` powers both the Recent Runs sidebar and a visible Runs action
+  that records `/runs` as command-turn history, so desktop run navigation stays
+  inside the same chat/code-agent loop as slash commands.
   `local_workspace_event_feed` powers the Workspace Events action,
   `/workspace-events` slash command, and live in-flight run polling from a
   persisted cursor.
@@ -546,9 +550,9 @@ into runtime calls:
   file-context mechanism as CLI/TUI prompts without hand-copying paths. The UI
   renders both workspace feed events and an inspectable
   latest-run transcript from successful or failed attempts.
-  Worktree refresh, workspace replay, artifact preview, Core parity, and
+  Runs inspection, worktree refresh, workspace replay, artifact preview, Core parity, and
   evidence-bundle controls now append `/worktree`, `/replay`, `/artifact`,
-  `/parity`, `/bundle`, and `/workspace-events` command turns to the same chat thread, keeping
+  `/parity`, `/bundle`, `/runs`, and `/workspace-events` command turns to the same chat thread, keeping
   workspace/context inspection inside the agent conversation rather than as a
   detached dashboard; those command turns use the same persisted event path as
   slash-command output.
