@@ -782,6 +782,18 @@ fn handle_chat_session_command(
             print!("{}", render_llm_diagnostic(&diagnostic));
             Ok(true)
         }
+        "/doctor" => {
+            let snapshot = local_result(collect_snapshot(runtime.repo_root()))?;
+            let diagnostic = runtime.llm_diagnostic();
+            let parity = local_result(
+                structure_local_core::verify_structure_core_parity_for_repo(runtime.repo_root()),
+            )?;
+            print!(
+                "{}",
+                render_chat_session_doctor(state, &snapshot, &diagnostic, &parity)
+            );
+            Ok(true)
+        }
         "/context" | "/ctx" => {
             let context = local_result(
                 runtime.agent_context(state.workspace_id.as_deref(), Some(state.mode.clone())),
@@ -1212,6 +1224,7 @@ fn print_chat_session_help() {
     println!("  @path[:line] prompt    Attach a repo-relative file before model planning");
     println!("  /status               Show workspace, mode, selected run, and LLM env");
     println!("  /llm                  Check the configured OPENAI__ API endpoint");
+    println!("  /doctor               Check local runtime, OPENAI__, and Core parity");
     println!("  /context              Show assembled agent context without starting a run");
     println!("  /worktree             Show current branch and changed files");
     println!("  /dirty                Alias for /worktree");
@@ -1246,7 +1259,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /runs, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /runs, /continue, /usage, /transcript, /proposal, /diff, /dry-run, /apply, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -1282,6 +1295,62 @@ fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot
         "  model:        {}\n",
         config.model_name.as_deref().unwrap_or("not set")
     ));
+    text
+}
+
+fn render_chat_session_doctor(
+    state: &ChatSessionState,
+    snapshot: &LocalSnapshot,
+    diagnostic: &LocalLlmDiagnostic,
+    parity: &structure_local_core::SurfaceParityReport,
+) -> String {
+    let passed_checks = parity.checks.iter().filter(|check| check.passed).count();
+    let failed_checks = parity.checks.len().saturating_sub(passed_checks);
+    let mut text = String::new();
+    text.push_str("Structure local doctor\n");
+    text.push_str(&format!(
+        "  workspace:    {}\n",
+        state.workspace_id.as_deref().unwrap_or("default")
+    ));
+    text.push_str(&format!(
+        "  mode:         {}\n",
+        session_mode_label(&state.mode)
+    ));
+    text.push_str(&format!("  repo:         {}\n", snapshot.repo_root));
+    text.push_str(&format!("  runtime:      {}\n", snapshot.runtime_dir));
+    text.push_str(&format!(
+        "  llm:          {} / {}\n",
+        if diagnostic.ok { "ok" } else { "not ok" },
+        diagnostic.provider
+    ));
+    text.push_str(&format!("  configured:   {}\n", diagnostic.configured));
+    text.push_str(&format!(
+        "  model:        {}\n",
+        diagnostic.model.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!(
+        "  endpoint:     {}\n",
+        diagnostic.endpoint.as_deref().unwrap_or("not set")
+    ));
+    text.push_str(&format!(
+        "  core parity: {}\n",
+        if parity.passed {
+            "passed"
+        } else {
+            "needs attention"
+        }
+    ));
+    text.push_str(&format!("  schema:       {}\n", parity.schema_version));
+    text.push_str(&format!("  surfaces:     {}\n", parity.surface_count));
+    text.push_str(&format!("  primitives:   {}\n", parity.primitive_count));
+    text.push_str(&format!("  capabilities: {}\n", parity.capability_count));
+    text.push_str(&format!(
+        "  checks:       {} ok / {} fail\n",
+        passed_checks, failed_checks
+    ));
+    if let Some(error) = &diagnostic.error {
+        text.push_str(&format!("  error:        {}\n", error));
+    }
     text
 }
 
@@ -1898,6 +1967,7 @@ mod tests {
 
         assert!(summary.contains("/worktree"));
         assert!(summary.contains("/status"));
+        assert!(summary.contains("/doctor"));
         assert!(summary.contains("/context"));
         assert!(summary.contains("/continue"));
         assert!(summary.contains("/usage"));

@@ -189,7 +189,7 @@ into runtime calls:
   core flow/primitive taxonomy without re-stitching those concepts in each UI.
 - CLI session inspection: inside `uv run structure chat`, `/select <run-id>`,
   `/last`, `/continue [run-id] [instruction]`, `/resume`,
-  `/status`, `/context`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
+  `/status`, `/llm`, `/doctor`, `/context`, `/usage [run-id]`, `/transcript [run-id]`, `/inspect [run-id]`, `/proposal`, `/diff`,
   `/dry-run`, and `/apply` make run inspection, continuation, and proposal review part of
   the live agent terminal instead of a separate dashboard workflow. `/continue`
   starts a new Structure local run from the selected run's transcript and
@@ -202,6 +202,9 @@ into runtime calls:
   `RunEvidenceSummary`, so terminal sessions can inspect request counts,
   network-backed calls, token usage, and core alignment without opening the
   full transcript.
+  `/doctor` combines the local session snapshot, the same `OPENAI__`
+  diagnostic used by `/llm`, and the Structure Core parity verifier without
+  starting an agent run.
   Interactive `/dry-run` and `/apply` without `--yes` preview proposal
   application; writing requires an explicit `/apply --yes`.
   `/remember <text>` persists a short text note into the local workspace
@@ -244,7 +247,7 @@ into runtime calls:
   run polling from a persisted cursor.
   In-flight chat bubbles consume that same feed to show the current live event
   count and latest Structure event while a run or continuation is executing.
-  The composer accepts slash commands such as `/status`, `/mode`, `/workspace`,
+  The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/transcript`, `/search`,
   `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/dry-run`, and `/apply --dry-run`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
@@ -255,6 +258,9 @@ into runtime calls:
   the app shows the same assembled context the CLI sees before a run starts.
   Desktop `/usage [run-id]` mirrors the CLI model-call shortcut and renders the
   same `model_usage` evidence summary from Rust.
+  Desktop `/doctor` mirrors CLI `/doctor`: it gathers `local_session_status`,
+  `local_llm_diagnostic`, and `core_parity_report` through Tauri commands and
+  renders the local health check inside the chat/code-agent loop.
   Normal prompt submissions appear immediately as in-flight local chat turns
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.

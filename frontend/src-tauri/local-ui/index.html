@@ -1706,6 +1706,31 @@ Response: ${diagnostic.response_preview ?? "none"}
 Error: ${diagnostic.error ?? "none"}`;
       }
 
+      function renderDoctorText(status, diagnostic, parity) {
+        const llm = status.llm_config ?? fallbackLlmConfig();
+        const checks = parity?.checks ?? [];
+        const passedChecks = checks.filter((check) => check.passed).length;
+        const failedChecks = checks.length - passedChecks;
+        return `Structure Local Doctor
+Workspace: ${status.workspace_id}
+Mode: ${status.mode}
+Repository: ${status.repo_root}
+Runtime: ${status.runtime_dir}
+Database: ${status.runtime_db}
+
+LLM: ${diagnostic.ok ? "ok" : "not ok"} / ${diagnostic.provider}
+Configured: ${diagnostic.configured}
+Model: ${diagnostic.model ?? llm.model_name ?? "not set"}
+Endpoint: ${diagnostic.endpoint ?? "not set"}
+
+Core parity: ${parity?.passed ? "passed" : "needs attention"}
+Schema: ${parity?.schema_version ?? "unknown"}
+Surfaces: ${parity?.surface_count ?? 0}
+Primitives: ${parity?.primitive_count ?? 0}
+Capabilities: ${parity?.capability_count ?? 0}
+Checks: ${passedChecks} ok / ${failedChecks} fail`;
+      }
+
       function renderWorkspaces(workspaces) {
         state.workspaces = workspaces;
         workspaceSelectEl.replaceChildren();
@@ -2421,6 +2446,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
         eventLogEl.textContent = `Desktop Agent Commands
 /status
 /llm
+/doctor
 /context
 /worktree
 /mode chat|code
@@ -2465,6 +2491,15 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
           case "/llm": {
             const diagnostic = await localLlmDiagnostic();
             eventLogEl.textContent = renderLlmDiagnostic(diagnostic);
+            return true;
+          }
+          case "/doctor": {
+            const [status, diagnostic, parity] = await Promise.all([
+              localSessionStatus(),
+              localLlmDiagnostic(),
+              coreParityReport(),
+            ]);
+            eventLogEl.textContent = renderDoctorText(status, diagnostic, parity);
             return true;
           }
           case "/context":

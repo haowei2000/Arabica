@@ -697,6 +697,8 @@ mod tests {
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("eventLogEl.textContent = renderUsageText(evidence);"));
+        assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
+        assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("case \"/diff\":"));
         assert!(local_ui.contains("/diff [run_id]"));
     }
@@ -802,6 +804,8 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_agent_run_attempt\""));
         assert!(local_ui.contains("invoke(\"local_agent_continue_attempt\""));
         assert!(local_ui.contains("invoke(\"local_session_status\""));
+        assert!(local_ui.contains("invoke(\"local_llm_diagnostic\""));
+        assert!(local_ui.contains("invoke(\"core_parity_report\""));
         assert!(local_ui.contains("invoke(\"local_agent_context\""));
         assert!(local_ui.contains("invoke(\"remember_local_knowledge\""));
         assert!(local_ui.contains("invoke(\"read_local_knowledge_source\""));
