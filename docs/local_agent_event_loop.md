@@ -504,6 +504,11 @@ into runtime calls:
   file-context mechanism as CLI/TUI prompts without hand-copying paths. The UI
   renders both workspace feed events and an inspectable
   latest-run transcript from successful or failed attempts.
+  Worktree refresh, workspace replay, artifact preview, Core parity, and
+  evidence-bundle controls now append `/worktree`, `/replay`, `/artifact`,
+  `/parity`, and `/bundle` command turns to the same chat thread, keeping
+  workspace/context inspection inside the agent conversation rather than as a
+  detached dashboard.
   `local_evidence_bundle` exposes the same reproducibility artifact as the
   CLI/TUI. Benchmark execution stays in the dedicated Python adapters under
   `benchmarks/adapters/`.

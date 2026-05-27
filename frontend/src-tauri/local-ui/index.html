@@ -1841,6 +1841,23 @@ Changes: ${changes.length}
 ${changes.map((change) => `- ${change.status} ${change.path}`).join("\n") || "No changed files."}`;
       }
 
+      function renderWorkspaceReplayText(replay) {
+        if (!replay) return "Workspace replay unavailable.";
+        const events = (replay.events ?? [])
+          .map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.run_id ?? "workspace"}`)
+          .join("\n");
+        return `Workspace Replay
+Workspace: ${replay.workspace_id}
+Events: ${replay.events.length}
+Runs: ${replay.runs.length}
+Knowledge sources: ${replay.knowledge_sources.length}
+Tasks: ${(replay.tasks ?? []).length}
+Artifacts: ${replay.artifacts.length}
+Last sequence: ${replay.last_sequence ?? "none"}
+
+${events || "No events recorded."}`;
+      }
+
       function renderAgentContextText(context) {
         if (!context) return "Agent context unavailable.";
         const instructions = context.agent_instructions ?? [];
@@ -1913,6 +1930,44 @@ Surfaces: ${parity?.surface_count ?? 0}
 Primitives: ${parity?.primitive_count ?? 0}
 Capabilities: ${parity?.capability_count ?? 0}
 Checks: ${passedChecks} ok / ${failedChecks} fail`;
+      }
+
+      function renderParityText(report) {
+        if (!report) return "Parity report unavailable outside the desktop runtime.";
+        const checks = report.checks
+          .map((check) => {
+            const details = check.details?.length
+              ? `\n${check.details.map((detail) => `  - ${detail}`).join("\n")}`
+              : "";
+            return `${check.passed ? "OK" : "FAIL"} ${check.id}: ${check.summary}${details}`;
+          })
+          .join("\n");
+        return `Surface Parity
+Schema: ${report.schema_version}
+Passed: ${report.passed}
+Surfaces: ${report.surface_count}
+Primitives: ${report.primitive_count}
+Capabilities: ${report.capability_count}
+
+${checks}`;
+      }
+
+      function renderEvidenceBundleText(bundle) {
+        if (!bundle) return "Evidence bundle unavailable outside the desktop runtime.";
+        return `Local Evidence Bundle
+Schema: ${bundle.schema_version}
+Workspace: ${bundle.workspace_id}
+Generated: ${bundle.generated_at_ms}
+Parity passed: ${bundle.parity_report.passed}
+Events: ${bundle.workspace_replay.events.length}
+Runs: ${bundle.workspace_replay.runs.length}
+Knowledge sources: ${bundle.workspace_replay.knowledge_sources.length}
+Tasks: ${(bundle.workspace_replay.tasks ?? []).length}
+Artifacts: ${bundle.workspace_replay.artifacts.length}
+Run evidence records: ${bundle.run_evidence.length}
+
+Recent Artifacts
+${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join("\n") || "No artifacts found."}`;
       }
 
       function renderWorkspaces(workspaces) {
@@ -3090,6 +3145,95 @@ Note: ${checkpoint.note}`;
         }
       }
 
+      async function previewWorktree(commandInput = null) {
+        eventLogEl.textContent = "Refreshing worktree snapshot...";
+        try {
+          const worktree = await localWorktreeSnapshot();
+          renderWorktree(worktree);
+          eventLogEl.textContent = renderWorktreeText(worktree);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Worktree loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
+      async function previewWorkspaceReplay(commandInput = null, { refreshAfter = false } = {}) {
+        eventLogEl.textContent = "Replaying workspace event stream...";
+        try {
+          const replay = await localWorkspaceReplay();
+          state.workspaceEventCursor = replay.last_sequence ?? state.workspaceEventCursor;
+          renderEventTimeline(replay.events, null, false);
+          eventLogEl.textContent = renderWorkspaceReplayText(replay);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Workspace replay loaded.");
+          if (refreshAfter) await refresh();
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
+      async function previewArtifactById(artifactId = null, commandInput = null) {
+        eventLogEl.textContent = "Loading artifact preview...";
+        try {
+          if (state.artifacts.length === 0) {
+            state.artifacts = await localArtifacts();
+          }
+          const artifact = artifactId
+            ? state.artifacts.find((item) => item.artifact_id === artifactId) ?? { artifact_id: artifactId }
+            : state.artifacts[0];
+          if (!artifact) {
+            eventLogEl.textContent = "No local artifacts indexed yet.";
+            if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent);
+            return;
+          }
+          const preview = await readArtifact(artifact.artifact_id);
+          renderArtifactPreview(preview);
+          eventLogEl.textContent = `Artifact
+ID: ${preview.artifact.artifact_id}
+Run: ${preview.artifact.run_id}
+Kind: ${preview.artifact.kind}
+Path: ${preview.artifact.path}
+Read: ${formatBytes(preview.bytes_read)}
+Truncated: ${preview.truncated}
+
+${preview.preview}`;
+          const input = commandInput === "/artifact"
+            ? `/artifact ${preview.artifact.artifact_id}`
+            : commandInput;
+          if (input) appendCommandMessage(input, eventLogEl.textContent || "Artifact loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
+      async function previewCoreParity(commandInput = null) {
+        eventLogEl.textContent = "Checking Core parity...";
+        try {
+          const report = state.parityReport ?? (await coreParityReport());
+          state.parityReport = report;
+          eventLogEl.textContent = renderParityText(report);
+          if (report) renderCoreContract(state.snapshot?.core_manifest ?? fallbackCoreManifest(), report);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Parity report loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
+      async function previewEvidenceBundle(commandInput = null) {
+        eventLogEl.textContent = "Loading local evidence bundle...";
+        try {
+          const bundle = await localEvidenceBundle();
+          eventLogEl.textContent = renderEvidenceBundleText(bundle);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Evidence bundle loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function performContinuationRun(runId, extraInstruction = "") {
         eventLogEl.textContent = `Continuing ${runId} through the Structure local event loop...`;
         setInFlightRun(
@@ -3220,7 +3364,7 @@ Run Loop
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
 
 Workspace Context
-- /workspace, /context, /doctor, /llm, /worktree -> pre-run health and context
+- /workspace, /context, /doctor, /llm, /worktree, /parity -> pre-run health and context
 - /source, /remember, /recall, /forget, /sources -> path-addressed knowledge
 - /rate -> source_rated feedback replayed into future context
 - /tasks, /task, /task-status, /task-done -> workspace/run-linked task events
@@ -3229,12 +3373,12 @@ Workspace Context
 Run Evidence
 - /run-status, /events, /transcript, /inspect -> selected run inspection
 - /plan, /tools, /trace, /review -> event-derived agent reasoning views
-- /compact, /evidence, /usage, /gc -> continuation and audit boundaries
+- /compact, /evidence, /bundle, /usage, /gc -> continuation and audit boundaries
 - /checkpoint, /decision -> human feedback replayed into continuation context
 
 Session And Proposals
 - /session, /session-continue, /session-usage -> workspace session handoff
-- /artifacts, /proposal, /diff -> local artifact and proposal disclosure
+- /artifacts, /artifact, /proposal, /diff -> local artifact and proposal disclosure
 - /risk, /dry-run, /apply, /rollback -> review-gated code proposal loop
 
 Invariant
@@ -3246,6 +3390,7 @@ Detailed Slash Commands
 /doctor
 /context
 /worktree
+/parity
 /mode chat|code
 /workspace <id>
 /runs
@@ -3276,6 +3421,7 @@ Detailed Slash Commands
 /review [run_id]
 /checkpoint [run_id] <note>
 /evidence [run_id]
+/bundle
 /usage [run_id]
 /source <absolute-path>
 /remember <text>
@@ -3287,6 +3433,7 @@ Detailed Slash Commands
 /read <repo-relative-path>
 /cmd <allowlisted command>
 /artifacts
+/artifact [artifact_id]
 /proposal [run_id]
 /diff [run_id]
 /risk [run_id|artifact_id]
@@ -3330,9 +3477,11 @@ Detailed Slash Commands
             return true;
           }
           case "/worktree": {
-            const worktree = await localWorktreeSnapshot();
-            renderWorktree(worktree);
-            eventLogEl.textContent = renderWorktreeText(worktree);
+            await previewWorktree();
+            return true;
+          }
+          case "/parity": {
+            await previewCoreParity();
             return true;
           }
           case "/mode": {
@@ -3596,6 +3745,10 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
             eventLogEl.textContent = renderEvidenceText(evidence);
             return true;
           }
+          case "/bundle": {
+            await previewEvidenceBundle();
+            return true;
+          }
           case "/usage": {
             const runId = commandRunId(parts);
             if (!runId) {
@@ -3721,6 +3874,10 @@ ${sourceRating.note ? `Note: ${sourceRating.note}` : "Note: none"}`;
 ${artifacts.map((artifact) => `${artifact.artifact_id} / ${artifact.kind} / ${artifact.path}`).join("\n") || "No artifacts recorded."}`;
             return true;
           }
+          case "/artifact": {
+            await previewArtifactById(parts[0] ?? null);
+            return true;
+          }
           case "/proposal":
           case "/diff": {
             const runId = parts[0] ?? state.selectedRunId ?? null;
@@ -3809,12 +3966,7 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
             return true;
           }
           case "/replay": {
-            const replay = await localWorkspaceReplay();
-            renderEventTimeline(replay.events, null, false);
-            eventLogEl.textContent = `Workspace Replay
-Workspace: ${replay.workspace_id}
-Events: ${replay.events.length}
-Last sequence: ${replay.last_sequence ?? 0}`;
+            await previewWorkspaceReplay();
             return true;
           }
           default:
@@ -4599,13 +4751,8 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
       });
       refreshWorktreeEl.addEventListener("click", async () => {
         setWorktreeBusy(true);
-        eventLogEl.textContent = "Refreshing worktree snapshot...";
         try {
-          const worktree = await localWorktreeSnapshot();
-          renderWorktree(worktree);
-          eventLogEl.textContent = renderWorktreeText(worktree);
-        } catch (error) {
-          eventLogEl.textContent = String(error);
+          await previewWorktree("/worktree");
         } finally {
           setWorktreeBusy(false);
         }
@@ -4677,26 +4824,8 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
       });
       replayWorkspaceEl.addEventListener("click", async () => {
         setReplayBusy(true);
-        eventLogEl.textContent = "Replaying workspace event stream...";
         try {
-          const replay = await localWorkspaceReplay();
-          state.workspaceEventCursor = replay.last_sequence ?? state.workspaceEventCursor;
-          const events = replay.events
-            .map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_flow_id ?? "event"} / ${event.run_id ?? "workspace"}`)
-            .join("\n");
-          eventLogEl.textContent = `Workspace Replay
-Workspace: ${replay.workspace_id}
-Events: ${replay.events.length}
-Runs: ${replay.runs.length}
-Knowledge sources: ${replay.knowledge_sources.length}
-Tasks: ${(replay.tasks ?? []).length}
-Artifacts: ${replay.artifacts.length}
-Last sequence: ${replay.last_sequence ?? "none"}
-
-${events || "No events recorded."}`;
-          await refresh();
-        } catch (error) {
-          eventLogEl.textContent = String(error);
+          await previewWorkspaceReplay("/replay", { refreshAfter: true });
         } finally {
           setReplayBusy(false);
         }
@@ -4827,26 +4956,7 @@ ${events || "No events recorded."}`;
       previewArtifactEl.addEventListener("click", async () => {
         setArtifactBusy(true);
         try {
-          if (state.artifacts.length === 0) {
-            state.artifacts = await localArtifacts();
-          }
-          const artifact = state.artifacts[0];
-          if (!artifact) {
-            eventLogEl.textContent = "No local artifacts indexed yet.";
-            return;
-          }
-          const preview = await readArtifact(artifact.artifact_id);
-          eventLogEl.textContent = `Artifact
-ID: ${preview.artifact.artifact_id}
-Run: ${preview.artifact.run_id}
-Kind: ${preview.artifact.kind}
-Path: ${preview.artifact.path}
-Read: ${formatBytes(preview.bytes_read)}
-Truncated: ${preview.truncated}
-
-${preview.preview}`;
-        } catch (error) {
-          eventLogEl.textContent = String(error);
+          await previewArtifactById(null, "/artifact");
         } finally {
           setArtifactBusy(false);
         }
@@ -4918,31 +5028,7 @@ ${preview.preview}`;
       showParityEl.addEventListener("click", async () => {
         setParityBusy(true);
         try {
-          const report = state.parityReport ?? (await coreParityReport());
-          state.parityReport = report;
-          if (!report) {
-            eventLogEl.textContent = "Parity report unavailable outside the desktop runtime.";
-            return;
-          }
-          const checks = report.checks
-            .map((check) => {
-              const details = check.details?.length
-                ? `\n${check.details.map((detail) => `  - ${detail}`).join("\n")}`
-                : "";
-              return `${check.passed ? "OK" : "FAIL"} ${check.id}: ${check.summary}${details}`;
-            })
-            .join("\n");
-          eventLogEl.textContent = `Surface Parity
-Schema: ${report.schema_version}
-Passed: ${report.passed}
-Surfaces: ${report.surface_count}
-Primitives: ${report.primitive_count}
-Capabilities: ${report.capability_count}
-
-${checks}`;
-          renderCoreContract(state.snapshot?.core_manifest ?? fallbackCoreManifest(), report);
-        } catch (error) {
-          eventLogEl.textContent = String(error);
+          await previewCoreParity("/parity");
         } finally {
           setParityBusy(false);
         }
@@ -4950,27 +5036,7 @@ ${checks}`;
       showBundleEl.addEventListener("click", async () => {
         setBundleBusy(true);
         try {
-          const bundle = await localEvidenceBundle();
-          if (!bundle) {
-            eventLogEl.textContent = "Evidence bundle unavailable outside the desktop runtime.";
-            return;
-          }
-          eventLogEl.textContent = `Local Evidence Bundle
-Schema: ${bundle.schema_version}
-Workspace: ${bundle.workspace_id}
-Generated: ${bundle.generated_at_ms}
-Parity passed: ${bundle.parity_report.passed}
-Events: ${bundle.workspace_replay.events.length}
-Runs: ${bundle.workspace_replay.runs.length}
-Knowledge sources: ${bundle.workspace_replay.knowledge_sources.length}
-Tasks: ${(bundle.workspace_replay.tasks ?? []).length}
-Artifacts: ${bundle.workspace_replay.artifacts.length}
-Run evidence records: ${bundle.run_evidence.length}
-
-Recent Artifacts
-${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join("\n") || "No artifacts found."}`;
-        } catch (error) {
-          eventLogEl.textContent = String(error);
+          await previewEvidenceBundle("/bundle");
         } finally {
           setBundleBusy(false);
         }

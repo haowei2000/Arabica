@@ -1138,6 +1138,16 @@ mod tests {
         assert!(local_ui.contains("appendCommandMessage(\"/doctor\""));
         assert!(local_ui.contains("case \"/diff\":"));
         assert!(local_ui.contains("/diff [run_id]"));
+        assert!(local_ui.contains("case \"/parity\":"));
+        assert!(local_ui.contains("case \"/bundle\":"));
+        assert!(local_ui.contains("case \"/artifact\":"));
+        assert!(local_ui.contains("function previewCoreParity(commandInput = null)"));
+        assert!(local_ui.contains("function previewEvidenceBundle(commandInput = null)"));
+        assert!(local_ui
+            .contains("function previewArtifactById(artifactId = null, commandInput = null)"));
+        assert!(local_ui.contains("previewCoreParity(\"/parity\")"));
+        assert!(local_ui.contains("previewEvidenceBundle(\"/bundle\")"));
+        assert!(local_ui.contains("previewArtifactById(null, \"/artifact\")"));
     }
 
     #[test]
@@ -1249,7 +1259,13 @@ mod tests {
         assert!(local_ui.contains("id=\"refresh-worktree\""));
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("function renderWorktree(worktree)"));
+        assert!(local_ui.contains("function previewWorktree(commandInput = null)"));
         assert!(local_ui.contains("case \"/worktree\":"));
+        assert!(local_ui.contains("previewWorktree(\"/worktree\")"));
+        assert!(local_ui.contains("function renderWorkspaceReplayText(replay)"));
+        assert!(local_ui.contains("function previewWorkspaceReplay(commandInput = null"));
+        assert!(local_ui.contains("case \"/replay\":"));
+        assert!(local_ui.contains("previewWorkspaceReplay(\"/replay\", { refreshAfter: true })"));
     }
 
     #[test]
