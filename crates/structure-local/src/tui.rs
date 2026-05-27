@@ -13,9 +13,9 @@ use structure_local_core::{
 use structure_local_runtime::{
     ArtifactRecord, ContinuationRequest, KnowledgeSource, LocalAgentMode, LocalAgentRuntime,
     LocalEvidenceBundle, LocalRunCompact, LocalRunCoreTrace, LocalRunPlan, LocalRunReview,
-    LocalToolCall, ProposalApplyResult, ProposalReview, RunAttempt, RunEvidenceSummary, RunRequest,
-    RunSummary, RunTranscript, WorkspaceCompact, WorkspaceContinuationRequest, WorkspaceSummary,
-    WorkspaceUsageSummary, WorktreeSnapshot,
+    LocalToolCall, ProposalApplyResult, ProposalReview, ProposalRollbackResult, RunAttempt,
+    RunEvidenceSummary, RunRequest, RunSummary, RunTranscript, WorkspaceCompact,
+    WorkspaceContinuationRequest, WorkspaceSummary, WorkspaceUsageSummary, WorktreeSnapshot,
 };
 
 pub(crate) fn run_tui(repo_root: &Path) -> Result<()> {
@@ -605,6 +605,26 @@ impl TuiState {
         Ok(())
     }
 
+    fn rollback_latest_proposal(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(artifact) =
+            select_proposal_artifact(&self.artifacts, self.selected_run_id()).cloned()
+        else {
+            self.notice = "No code-change proposal to rollback".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let result = local_result(runtime.rollback_code_change_proposal(&artifact.artifact_id))?;
+        self.preview = Some(TuiPreview {
+            path: format!("proposal rollback / {}", result.artifact.artifact_id),
+            text: render_proposal_rollback_result(&result),
+        });
+        self.pending_apply_artifact_id = None;
+        let notice = format!("Rolled back proposal for {}", result.target_path);
+        self.refresh(repo_root)?;
+        self.notice = notice;
+        Ok(())
+    }
+
     fn selected_run_id(&self) -> Option<&str> {
         self.runs.get(self.selected).map(|run| run.run_id.as_str())
     }
@@ -831,6 +851,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('h') => state.review_latest_proposal_risk(repo_root)?,
                     KeyCode::Char('u') => state.preview_latest_proposal_apply(repo_root)?,
                     KeyCode::Char('y') => state.apply_pending_proposal(repo_root)?,
+                    KeyCode::Char('Y') => state.rollback_latest_proposal(repo_root)?,
                     KeyCode::Char('v') => state.preview_parity_report(repo_root)?,
                     KeyCode::Char('e') => state.preview_evidence_bundle(repo_root)?,
                     KeyCode::Char('S') => state.preview_workspace_compact(repo_root)?,
@@ -1124,7 +1145,7 @@ fn draw_reports(
             out,
             x,
             artifacts_y + 1,
-            "press a for latest artifact, g selected proposal, h risk, u dry-run, y apply",
+            "press a for latest artifact, g selected proposal, h risk, u dry-run, y apply, Y rollback",
             width,
         )?;
         write_at(out, x, artifacts_y + 2, &artifact_text, width)?;
@@ -1797,6 +1818,25 @@ fn render_proposal_apply_result(result: &ProposalApplyResult) -> String {
     } else {
         text.push_str("The apply action was recorded as code_change_applied.\n\n");
     }
+    text.push_str(&result.preview);
+    text
+}
+
+fn render_proposal_rollback_result(result: &ProposalRollbackResult) -> String {
+    let mut text = String::new();
+    text.push_str("Proposal Rollback\n");
+    text.push_str(&format!("Artifact: {}\n", result.artifact.artifact_id));
+    text.push_str(&format!("Run: {}\n", result.artifact.run_id));
+    text.push_str(&format!("Workspace: {}\n", result.artifact.workspace_id));
+    text.push_str(&format!("Target: {}\n", result.target_path));
+    text.push_str(&format!(
+        "Backup: {} / {}\n",
+        result.backup_artifact.artifact_id, result.backup_artifact.path
+    ));
+    text.push_str(&format!("Restored: {}\n", result.restored));
+    text.push_str(&format!("Target existed: {}\n", result.target_existed));
+    text.push_str(&format!("Bytes written: {}\n\n", result.bytes_written));
+    text.push_str("The rollback action was recorded as code_change_reverted.\n\n");
     text.push_str(&result.preview);
     text
 }

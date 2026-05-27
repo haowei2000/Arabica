@@ -38,6 +38,7 @@ pub enum RunEventKind {
     ToolCallCompleted,
     CodeChangeProposed,
     CodeChangeApplied,
+    CodeChangeReverted,
     ArtifactWritten,
     RunFinished,
     RunFailed,
@@ -60,6 +61,7 @@ impl RunEventKind {
             Self::ToolCallCompleted => "tool_call_completed",
             Self::CodeChangeProposed => "code_change_proposed",
             Self::CodeChangeApplied => "code_change_applied",
+            Self::CodeChangeReverted => "code_change_reverted",
             Self::ArtifactWritten => "artifact_written",
             Self::RunFinished => "run_finished",
             Self::RunFailed => "run_failed",
@@ -76,7 +78,7 @@ pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
         "artifact_written" | "code_change_proposed" | "run_finished" | "run_failed" => {
             ("evidence", "reproducible_evidence")
         }
-        "code_change_applied" => ("feedback", "event_audit"),
+        "code_change_applied" | "code_change_reverted" => ("feedback", "event_audit"),
         "chat_message_recorded"
         | "agent_step_planned"
         | "model_requested"
@@ -244,10 +246,23 @@ pub struct ArtifactPreview {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposalApplyResult {
     pub artifact: ArtifactRecord,
+    pub backup_artifact: Option<ArtifactRecord>,
     pub target_path: String,
+    pub target_existed: bool,
     pub applied: bool,
     pub dry_run: bool,
     pub added_lines: usize,
+    pub bytes_written: u64,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposalRollbackResult {
+    pub artifact: ArtifactRecord,
+    pub backup_artifact: ArtifactRecord,
+    pub target_path: String,
+    pub restored: bool,
+    pub target_existed: bool,
     pub bytes_written: u64,
     pub preview: String,
 }

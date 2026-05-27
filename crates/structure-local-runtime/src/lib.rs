@@ -19,10 +19,10 @@ pub use types::{
     LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact, LocalRunCoreTrace,
     LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview, LocalToolCall,
     LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary, ProposalApplyResult,
-    ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult,
-    RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceCompact, WorkspaceCompactRun,
-    WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorkspaceUsageRun,
-    WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
+    ProposalReview, ProposalReviewCheck, ProposalRollbackResult, RunAttempt, RunEventKind,
+    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
+    WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 
 #[cfg(test)]

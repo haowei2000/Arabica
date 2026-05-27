@@ -1075,6 +1075,7 @@
                 <button id="preview-review" type="button">Risk</button>
                 <button id="preview-dry-run" type="button">Dry Run</button>
                 <button id="preview-apply" type="button" data-primary="true">Apply</button>
+                <button id="preview-rollback" type="button">Rollback</button>
                 <button id="clear-preview" type="button">Clear</button>
               </div>
             </div>
@@ -1096,6 +1097,7 @@
       const previewReviewEl = document.querySelector("#preview-review");
       const previewDryRunEl = document.querySelector("#preview-dry-run");
       const previewApplyEl = document.querySelector("#preview-apply");
+      const previewRollbackEl = document.querySelector("#preview-rollback");
       const reportSummaryEl = document.querySelector("#report-summary");
       const repoEl = document.querySelector("#repo");
       const coreVersionEl = document.querySelector("#core-version");
@@ -1405,6 +1407,11 @@
         return invoke("apply_local_proposal", { artifactId, dryRun });
       }
 
+      async function rollbackProposal(artifactId) {
+        if (!invoke) throw new Error("Desktop runtime unavailable.");
+        return invoke("rollback_local_proposal", { artifactId });
+      }
+
       async function reviewProposal(artifactId) {
         if (!invoke) throw new Error("Desktop runtime unavailable.");
         return invoke("review_local_proposal", { artifactId });
@@ -1657,9 +1664,11 @@
         previewReviewEl.disabled = isBusy;
         previewDryRunEl.disabled = isBusy;
         previewApplyEl.disabled = isBusy;
+        previewRollbackEl.disabled = isBusy;
         previewReviewEl.textContent = isBusy && action === "review" ? "Reviewing" : "Risk";
         previewDryRunEl.textContent = isBusy && action === "dry-run" ? "Checking" : "Dry Run";
         previewApplyEl.textContent = isBusy && action === "apply" ? "Applying" : "Apply";
+        previewRollbackEl.textContent = isBusy && action === "rollback" ? "Rolling Back" : "Rollback";
       }
 
       function setParityBusy(isBusy) {
@@ -2222,6 +2231,7 @@ ${events || "No new events."}`;
         previewReviewEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
+        previewRollbackEl.hidden = true;
         eventLogEl.textContent = `Event
 Sequence: ${event.sequence}
 Kind: ${event.kind}
@@ -2982,6 +2992,7 @@ ${attempt.events.map((runEvent) => `#${runEvent.sequence} ${runEvent.kind} / ${r
 /risk [run_id|artifact_id]
 /dry-run [run_id|artifact_id]
 /apply [run_id|artifact_id] [--dry-run] [--yes]
+/rollback [artifact_id]
 /replay`;
       }
 
@@ -3418,6 +3429,21 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
             await refresh();
             return true;
           }
+          case "/rollback":
+          case "/revert": {
+            const selected = parts.find((part) => !part.startsWith("--")) ?? null;
+            const preview = await resolveProposalPreview(selected);
+            const result = await rollbackProposal(preview.artifact.artifact_id);
+            eventLogEl.textContent = `Proposal Rolled Back
+ID: ${result.artifact.artifact_id}
+Run: ${result.artifact.run_id}
+Target: ${result.target_path}
+Backup: ${result.backup_artifact.artifact_id}
+Restored: ${result.restored}
+Bytes written: ${formatBytes(result.bytes_written)}`;
+            await refresh();
+            return true;
+          }
           case "/replay": {
             const replay = await localWorkspaceReplay();
             renderEventTimeline(replay.events, null, false);
@@ -3605,6 +3631,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         previewReviewEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
+        previewRollbackEl.hidden = true;
         previewMetaEl.textContent = `${artifact.kind} / ${formatBytes(artifact.size_bytes)} / ${artifact.run_id}`;
         previewEl.textContent = "Loading...";
 
@@ -3630,6 +3657,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         previewReviewEl.hidden = !isProposal;
         previewDryRunEl.hidden = !isProposal;
         previewApplyEl.hidden = !isProposal;
+        previewRollbackEl.hidden = !isProposal;
         previewMetaEl.textContent = `${artifactPreview.artifact.kind} / ${formatBytes(artifactPreview.bytes_read)} read / ${artifactPreview.artifact.run_id}`;
         renderReportSummary(null);
         previewEl.textContent = formatPreview(
@@ -3654,6 +3682,7 @@ Last sequence: ${replay.last_sequence ?? 0}`;
         previewReviewEl.hidden = false;
         previewDryRunEl.hidden = false;
         previewApplyEl.hidden = false;
+        previewRollbackEl.hidden = false;
         previewMetaEl.textContent = `Proposal review / ${checked.target_path}`;
         renderReportSummary([
           ["Target", checked.target_path],
@@ -3693,6 +3722,40 @@ ID: ${result.artifact.artifact_id}
 Run: ${result.artifact.run_id}
 Target: ${result.target_path}
 Added lines: ${result.added_lines}
+Bytes written: ${formatBytes(result.bytes_written)}`;
+        await refresh();
+        return result;
+      }
+
+      async function rollbackPreviewProposal(selection = null) {
+        const preview = state.previewArtifact?.kind === "code_change_proposal" && !selection
+          ? { artifact: state.previewArtifact }
+          : await resolveProposalPreview(selection);
+        const result = await rollbackProposal(preview.artifact.artifact_id);
+        state.selectedPath = result.artifact.artifact_id;
+        previewEmptyEl.hidden = true;
+        previewEl.hidden = false;
+        clearPreviewEl.hidden = false;
+        previewActionsEl.hidden = false;
+        previewAttachEl.hidden = true;
+        previewReviewEl.hidden = false;
+        previewDryRunEl.hidden = false;
+        previewApplyEl.hidden = false;
+        previewRollbackEl.hidden = false;
+        previewMetaEl.textContent = `Proposal rollback / ${result.target_path}`;
+        renderReportSummary([
+          ["Target", result.target_path],
+          ["Backup", result.backup_artifact.artifact_id],
+          ["Mode", "rolled back"],
+          ["Bytes", formatBytes(result.bytes_written)],
+        ]);
+        previewEl.textContent = result.preview || "Target was removed because it did not exist before apply.";
+        eventLogEl.textContent = `Proposal Rolled Back
+ID: ${result.artifact.artifact_id}
+Run: ${result.artifact.run_id}
+Target: ${result.target_path}
+Backup: ${result.backup_artifact.artifact_id}
+Restored: ${result.restored}
 Bytes written: ${formatBytes(result.bytes_written)}`;
         await refresh();
         return result;
@@ -3756,6 +3819,7 @@ Bytes written: ${formatBytes(result.bytes_written)}`;
         previewReviewEl.hidden = true;
         previewDryRunEl.hidden = true;
         previewApplyEl.hidden = true;
+        previewRollbackEl.hidden = true;
         if (!result.success) {
           previewMetaEl.textContent = `${result.name} failed`;
           previewEl.textContent = result.error ?? "Tool failed.";
@@ -4368,6 +4432,16 @@ Opened in Preview${state.selectedRunId ? " for the selected run." : "."}`;
         setPreviewProposalBusy(true, "apply");
         try {
           await reviewPreviewProposal({ dryRun: false });
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setPreviewProposalBusy(false);
+        }
+      });
+      previewRollbackEl.addEventListener("click", async () => {
+        setPreviewProposalBusy(true, "rollback");
+        try {
+          await rollbackPreviewProposal();
         } catch (error) {
           eventLogEl.textContent = String(error);
         } finally {

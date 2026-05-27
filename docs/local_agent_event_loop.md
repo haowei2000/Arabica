@@ -96,7 +96,10 @@ diff becomes the proposal artifact with `proposal_source=model_diff`; otherwise
 the runtime writes a deterministic fallback proposal with
 `proposal_source=runtime_fallback`. Applying a proposal parses its unified diff,
 verifies target context inside the repository root, refuses sensitive
-configuration targets, and records the explicit `code_change_applied` event.
+configuration targets, writes a rollback backup artifact before changing the
+target, and records the explicit `code_change_applied` event. Rolling back an
+applied proposal restores that backup or removes a newly-created target, then
+records `code_change_reverted`.
 The deterministic offline fallback targets `docs/local-code-agent-proposal.md`
 so smoke tests and demos do not mutate inspected source files.
 
@@ -278,7 +281,9 @@ into runtime calls:
   and patch context against the current workspace, and report whether apply can
   proceed through the explicit approval gate.
   Interactive `/dry-run` and `/apply` without `--yes` preview proposal
-  application; writing requires an explicit `/apply --yes`.
+  application; writing requires an explicit `/apply --yes`. Interactive
+  `/rollback` and `uv run structure proposals rollback <artifact-id>` restore
+  the backup captured before apply.
   `/remember <text>` persists a short text note into the local workspace
   knowledge directory and registers it as a normal `KnowledgeSource`, so later
   runs retrieve it through the same Structure context path as file-backed
@@ -333,7 +338,7 @@ into runtime calls:
   count and latest Structure event while a run or continuation is executing.
   The composer accepts slash commands such as `/status`, `/llm`, `/doctor`, `/mode`, `/workspace`,
   `/runs`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
-  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/compact`, `/session`, `/trace`, `/review`, `/risk`, `/dry-run`, and `/apply --dry-run`, so
+  `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/compact`, `/session`, `/trace`, `/review`, `/risk`, `/dry-run`, `/apply --dry-run`, and `/rollback`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
   a separate operator dashboard. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
@@ -376,6 +381,9 @@ into runtime calls:
   Desktop `/risk [artifact-id|run-id]` and the preview Risk action call
   `review_local_proposal`, giving the app the same target-safety, patch-context,
   and explicit-approval checks as CLI before any proposal apply.
+  Desktop `/rollback [artifact-id]` and the preview Rollback action call
+  `rollback_local_proposal`, restoring the backup artifact recorded before
+  apply and keeping rollback evidence in the local Structure event stream.
   Desktop `/doctor` and the visible Doctor action mirror CLI `/doctor`: they
   gather `local_session_status`, `local_llm_diagnostic`, and
   `core_parity_report` through Tauri commands and render the local health check

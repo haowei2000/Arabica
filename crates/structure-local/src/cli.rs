@@ -23,7 +23,8 @@ use structure_local_core::{
 };
 use structure_local_runtime::{
     ContinuationRequest, LocalAgentContext, LocalAgentMode, LocalAgentRuntime, LocalLlmDiagnostic,
-    LocalToolCall, ProposalApplyResult, RunAttempt, RunRequest, WorkspaceContinuationRequest,
+    LocalToolCall, ProposalApplyResult, ProposalRollbackResult, RunAttempt, RunRequest,
+    WorkspaceContinuationRequest,
 };
 
 pub(crate) const PREVIEW_MAX_BYTES: u64 = 1_000_000;
@@ -421,6 +422,7 @@ enum ProposalsCommand {
     Show(ShowProposalArgs),
     Review(ReviewProposalArgs),
     Apply(ApplyProposalArgs),
+    Rollback(RollbackProposalArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -494,6 +496,13 @@ struct ApplyProposalArgs {
     artifact_id: String,
     #[arg(long)]
     dry_run: bool,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RollbackProposalArgs {
+    artifact_id: String,
     #[arg(long)]
     json: bool,
 }
@@ -1506,6 +1515,23 @@ fn handle_chat_session_command(
             );
             Ok(true)
         }
+        "/rollback" | "/revert" => {
+            let artifact_id = match parts.next().map(str::to_string) {
+                Some(value) => value,
+                None => {
+                    let preview = local_result(latest_proposal_preview(
+                        runtime,
+                        state.workspace_id.as_deref(),
+                        state.last_run_id.as_deref(),
+                        PREVIEW_MAX_BYTES,
+                    ))?;
+                    preview.artifact.artifact_id
+                }
+            };
+            let result = local_result(runtime.rollback_code_change_proposal(&artifact_id))?;
+            print!("{}", render_proposal_rollback_result(&result));
+            Ok(true)
+        }
         "/replay" => {
             let replay = local_result(runtime.workspace_replay(state.workspace_id.as_deref(), 40))?;
             print_workspace_replay(&replay);
@@ -1694,6 +1720,7 @@ fn print_chat_session_help() {
     println!("  /risk [id|run]        Review proposal target, patch checks, and apply risk");
     println!("  /dry-run [id|run]     Preview proposal application without writing");
     println!("  /apply [id|run]       Dry-run a proposal; add --yes to apply after review");
+    println!("  /rollback [artifact]  Restore the backup recorded before proposal apply");
     println!("  /replay               Replay workspace event stream");
     println!("  /session              Show workspace/session compact context");
     println!("  /session-continue [msg] Continue from the compact workspace/session context");
@@ -1701,7 +1728,7 @@ fn print_chat_session_help() {
 }
 
 fn chat_session_command_summary() -> &'static str {
-    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /quit"
+    "/help, /status, /llm, /doctor, /context, /worktree, /mode, /workspace, /ls, /search, /read, /source, /remember, /recall, /forget, /rate, /runs, /events, /gc, /tools, /plan, /trace, /review, /compact, /session, /session-continue, /session-usage, /continue, /retry, /usage, /transcript, /proposal, /diff, /risk, /dry-run, /apply, /rollback, /quit"
 }
 
 fn render_chat_session_status(state: &ChatSessionState, snapshot: &LocalSnapshot) -> String {
@@ -2342,6 +2369,14 @@ fn run_proposals(repo_root: &PathBuf, command: ProposalsCommand) -> Result<()> {
                 );
             }
         }
+        ProposalsCommand::Rollback(args) => {
+            let result = local_result(runtime.rollback_code_change_proposal(&args.artifact_id))?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", render_proposal_rollback_result(&result));
+            }
+        }
     }
     Ok(())
 }
@@ -2419,6 +2454,10 @@ fn render_proposal_apply_result(
         selected_run_id.unwrap_or(&result.artifact.run_id)
     ));
     text.push_str(&format!("  target:      {}\n", result.target_path));
+    if let Some(backup) = &result.backup_artifact {
+        text.push_str(&format!("  backup:      {}\n", backup.artifact_id));
+    }
+    text.push_str(&format!("  existed:     {}\n", result.target_existed));
     text.push_str(&format!("  added lines: {}\n", result.added_lines));
     text.push_str(&format!("  bytes:       {}\n", result.bytes_written));
     text.push_str(&format!("  dry run:     {}\n", result.dry_run));
@@ -2427,6 +2466,31 @@ fn render_proposal_apply_result(
         if result.dry_run {
             text.push_str("Review this preview, then rerun /apply with --yes to write.\n\n");
         }
+        text.push_str(&result.preview);
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+    text
+}
+
+fn render_proposal_rollback_result(result: &ProposalRollbackResult) -> String {
+    let mut text = String::new();
+    text.push_str(&format!(
+        "Rolled back proposal {}\n",
+        result.artifact.artifact_id
+    ));
+    text.push_str(&format!("  run:         {}\n", result.artifact.run_id));
+    text.push_str(&format!("  target:      {}\n", result.target_path));
+    text.push_str(&format!(
+        "  backup:      {}\n",
+        result.backup_artifact.artifact_id
+    ));
+    text.push_str(&format!("  restored:    {}\n", result.restored));
+    text.push_str(&format!("  existed:     {}\n", result.target_existed));
+    text.push_str(&format!("  bytes:       {}\n", result.bytes_written));
+    if !result.preview.is_empty() {
+        text.push('\n');
         text.push_str(&result.preview);
         if !text.ends_with('\n') {
             text.push('\n');
@@ -2455,7 +2519,9 @@ mod tests {
                 size_bytes: 128,
                 created_at_ms: 1,
             },
+            backup_artifact: None,
             target_path: "docs/local-code-agent-proposal.md".to_string(),
+            target_existed: false,
             applied: false,
             dry_run: true,
             preview: "Patch preview\n+Evidence line".to_string(),
@@ -2690,6 +2756,27 @@ mod tests {
         } = cli.command
         else {
             panic!("expected proposals review command");
+        };
+        assert_eq!(args.artifact_id, "art_1");
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_proposals_rollback_command_accepts_json_output() {
+        let cli = Cli::try_parse_from([
+            "structure-local",
+            "proposals",
+            "rollback",
+            "art_1",
+            "--json",
+        ])
+        .unwrap();
+
+        let Command::Proposals {
+            command: ProposalsCommand::Rollback(args),
+        } = cli.command
+        else {
+            panic!("expected proposals rollback command");
         };
         assert_eq!(args.artifact_id, "art_1");
         assert!(args.json);

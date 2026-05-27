@@ -9,10 +9,10 @@ use crate::types::{
     LocalAgentMode, LocalEvent, LocalEvidenceBundle, LocalLlmDiagnostic, LocalRunCompact,
     LocalRunCoreTrace, LocalRunCoreTraceStep, LocalRunPlan, LocalRunPlanStep, LocalRunReview,
     LocalToolCall, LocalToolResult, LocalToolTraceEntry, ModelTokenUsage, ModelUsageSummary,
-    ProposalApplyResult, ProposalReview, ProposalReviewCheck, RunAttempt, RunEventKind,
-    RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript, SourceRating,
-    WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
-    WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
+    ProposalApplyResult, ProposalReview, ProposalReviewCheck, ProposalRollbackResult, RunAttempt,
+    RunEventKind, RunEvidenceSummary, RunResult, RunStatus, RunSummary, RunTranscript,
+    SourceRating, WorkspaceCompact, WorkspaceCompactRun, WorkspaceEventFeed, WorkspaceReplay,
+    WorkspaceSummary, WorkspaceUsageRun, WorkspaceUsageSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -661,8 +661,21 @@ impl LocalAgentRuntime {
         };
         let patched_text = apply_parsed_patch(&current_text, &patch)?;
         let bytes_written = patched_text.len() as u64;
+        let target_existed = target.exists();
+        let mut backup_artifact = None;
 
         if !dry_run {
+            let backup_path = self.write_proposal_backup_artifact(
+                &artifact.run_id,
+                &artifact.artifact_id,
+                &current_text,
+            )?;
+            backup_artifact = Some(self.store.add_artifact(
+                &artifact.run_id,
+                &artifact.workspace_id,
+                "code_change_backup",
+                backup_path,
+            )?);
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|err| format!("failed to create proposal target directory: {err}"))?;
@@ -679,7 +692,9 @@ impl LocalAgentRuntime {
 
         let result = ProposalApplyResult {
             artifact,
+            backup_artifact,
             target_path: target.display().to_string(),
+            target_existed,
             applied: !dry_run,
             dry_run,
             added_lines: patch.added_line_count(),
@@ -690,6 +705,59 @@ impl LocalAgentRuntime {
             &result.artifact.workspace_id,
             Some(&result.artifact.run_id),
             RunEventKind::CodeChangeApplied,
+            &result,
+        )?;
+        Ok(result)
+    }
+
+    pub fn rollback_code_change_proposal(
+        &self,
+        artifact_id: &str,
+    ) -> Result<ProposalRollbackResult, String> {
+        let artifact = self.artifact(artifact_id)?;
+        if artifact.kind != "code_change_proposal" {
+            return Err(format!(
+                "artifact {} is {}, not code_change_proposal",
+                artifact.artifact_id, artifact.kind
+            ));
+        }
+        let apply_result = self.latest_applied_proposal_event(&artifact)?;
+        let backup_artifact = apply_result.backup_artifact.clone().ok_or_else(|| {
+            "latest applied proposal did not record a rollback backup artifact".to_string()
+        })?;
+        let target = PathBuf::from(&apply_result.target_path);
+        let backup_text = fs::read_to_string(&backup_artifact.path)
+            .map_err(|err| format!("failed to read proposal rollback backup: {err}"))?;
+
+        if apply_result.target_existed {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|err| format!("failed to create rollback target directory: {err}"))?;
+            }
+            fs::write(&target, &backup_text)
+                .map_err(|err| format!("failed to restore proposal target: {err}"))?;
+        } else if target.exists() {
+            fs::remove_file(&target)
+                .map_err(|err| format!("failed to remove newly-created proposal target: {err}"))?;
+        }
+
+        let result = ProposalRollbackResult {
+            artifact,
+            backup_artifact,
+            target_path: target.display().to_string(),
+            restored: true,
+            target_existed: apply_result.target_existed,
+            bytes_written: if apply_result.target_existed {
+                backup_text.len() as u64
+            } else {
+                0
+            },
+            preview: backup_text.chars().take(4000).collect(),
+        };
+        self.store.append_event(
+            &result.artifact.workspace_id,
+            Some(&result.artifact.run_id),
+            RunEventKind::CodeChangeReverted,
             &result,
         )?;
         Ok(result)
@@ -1041,6 +1109,43 @@ impl LocalAgentRuntime {
         fs::write(&path, response)
             .map_err(|err| format!("failed to write local response artifact: {err}"))?;
         Ok(path)
+    }
+
+    fn write_proposal_backup_artifact(
+        &self,
+        run_id: &str,
+        proposal_artifact_id: &str,
+        current_text: &str,
+    ) -> Result<PathBuf, String> {
+        let artifact_dir = self.runtime_dir.join("artifacts").join(run_id);
+        fs::create_dir_all(&artifact_dir)
+            .map_err(|err| format!("failed to create proposal backup directory: {err}"))?;
+        let path = artifact_dir.join(format!("{proposal_artifact_id}.rollback.txt"));
+        fs::write(&path, current_text)
+            .map_err(|err| format!("failed to write proposal rollback backup: {err}"))?;
+        Ok(path)
+    }
+
+    fn latest_applied_proposal_event(
+        &self,
+        artifact: &ArtifactRecord,
+    ) -> Result<ProposalApplyResult, String> {
+        self.run_events(&artifact.run_id)?
+            .into_iter()
+            .rev()
+            .filter(|event| event.kind == RunEventKind::CodeChangeApplied.as_str())
+            .filter_map(|event| serde_json::from_value::<ProposalApplyResult>(event.payload).ok())
+            .find(|result| {
+                result.applied
+                    && !result.dry_run
+                    && result.artifact.artifact_id == artifact.artifact_id
+            })
+            .ok_or_else(|| {
+                format!(
+                    "no applied code-change event found for proposal {}",
+                    artifact.artifact_id
+                )
+            })
     }
 
     fn write_code_change_proposal_artifact(
@@ -4265,15 +4370,33 @@ mod tests {
         assert!(!applied.dry_run);
         assert!(applied.added_lines >= 1);
         assert!(applied.bytes_written > 0);
+        assert!(!applied.target_existed);
+        let backup = applied
+            .backup_artifact
+            .as_ref()
+            .expect("apply should persist rollback backup");
+        assert_eq!(backup.kind, "code_change_backup");
         let target_text = fs::read_to_string(&applied.target_path).unwrap();
         assert!(target_text.contains("Proposed Structure local code-agent change"));
         assert!(applied
             .target_path
             .ends_with("docs/local-code-agent-proposal.md"));
+
+        let rollback = runtime
+            .rollback_code_change_proposal(&proposal.artifact_id)
+            .unwrap();
+        assert!(rollback.restored);
+        assert!(!rollback.target_existed);
+        assert_eq!(rollback.backup_artifact.artifact_id, backup.artifact_id);
+        assert!(!Path::new(&rollback.target_path).exists());
+
         let events = runtime.run_events(&result.run.run_id).unwrap();
         assert!(events
             .iter()
             .any(|event| event.kind == "code_change_applied"));
+        assert!(events
+            .iter()
+            .any(|event| event.kind == "code_change_reverted"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -4861,7 +4984,7 @@ User-facing follow-up.\n\n\
             KnowledgeCommand::Add KnowledgeCommand::Show KnowledgeCommand::Remove
             RunsCommand::Events RunsCommand::Trace RunsCommand::Review RunsCommand::Transcript WorkspaceCommand::Events WorkspaceCommand::Replay WorkspaceCommand::Compact WorkspaceCommand::Continue WorkspaceCommand::Usage
             ArtifactsCommand::List ArtifactsCommand::Show
-            ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply
+            ProposalsCommand::List ProposalsCommand::Show ProposalsCommand::Apply ProposalsCommand::Rollback
             "#,
         );
         write_file(
@@ -4882,7 +5005,7 @@ User-facing follow-up.\n\n\
             fn local_workspace_replay() {} local_workspace_replay,
             fn local_workspace_compact() {} local_workspace_compact,
             fn local_artifacts() {} fn read_local_artifact() {} read_local_artifact,
-            fn apply_local_proposal() {}
+            fn apply_local_proposal() {} fn rollback_local_proposal() {}
             "#,
         );
         write_file(

@@ -492,6 +492,14 @@ fn apply_local_proposal(
     runtime.apply_code_change_proposal(&artifact_id, dry_run.unwrap_or(false))
 }
 
+#[tauri::command]
+fn rollback_local_proposal(
+    artifact_id: String,
+) -> Result<structure_local_runtime::ProposalRollbackResult, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.rollback_code_change_proposal(&artifact_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -543,6 +551,7 @@ pub fn run() {
             latest_local_proposal,
             review_local_proposal,
             apply_local_proposal,
+            rollback_local_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Structure desktop app");
@@ -671,6 +680,9 @@ mod tests {
                 review_local_proposal(proposal_preview.artifact.artifact_id.clone())?;
             let dry_apply =
                 apply_local_proposal(proposal_preview.artifact.artifact_id.clone(), Some(true))?;
+            let real_apply =
+                apply_local_proposal(proposal_preview.artifact.artifact_id.clone(), Some(false))?;
+            let rollback = rollback_local_proposal(proposal_preview.artifact.artifact_id.clone())?;
             let chat_artifacts = local_artifacts(
                 Some(workspace.workspace_id.clone()),
                 Some(chat_run.run.run_id.clone()),
@@ -863,6 +875,13 @@ mod tests {
             assert!(dry_apply
                 .preview
                 .contains("Proposed Structure local code-agent change"));
+            assert!(real_apply.applied);
+            assert!(real_apply.backup_artifact.is_some());
+            assert!(rollback.restored);
+            assert_eq!(
+                rollback.artifact.artifact_id,
+                proposal_preview.artifact.artifact_id
+            );
             assert!(chat_artifacts
                 .iter()
                 .all(|artifact| artifact.kind != "code_change_proposal"));
@@ -1011,15 +1030,20 @@ mod tests {
 
         assert!(local_ui.contains("id=\"preview-dry-run\""));
         assert!(local_ui.contains("id=\"preview-apply\""));
+        assert!(local_ui.contains("id=\"preview-rollback\""));
         assert!(local_ui.contains("id=\"preview-review\""));
         assert!(local_ui.contains("function reviewPreviewProposalRisk"));
+        assert!(local_ui.contains("function rollbackPreviewProposal"));
         assert!(local_ui.contains("invoke(\"review_local_proposal\""));
+        assert!(local_ui.contains("invoke(\"rollback_local_proposal\""));
         assert!(local_ui.contains("case \"/risk\":"));
         assert!(local_ui.contains("function reviewPreviewProposal"));
         assert!(local_ui.contains("await applyProposal(artifactId, true)"));
         assert!(local_ui.contains("await applyProposal(artifactId, false)"));
         assert!(local_ui.contains("case \"/dry-run\":"));
+        assert!(local_ui.contains("case \"/rollback\":"));
         assert!(local_ui.contains("/dry-run [run_id|artifact_id]"));
+        assert!(local_ui.contains("/rollback [artifact_id]"));
         assert!(local_ui.contains("state.previewArtifact"));
     }
 
