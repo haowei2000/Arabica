@@ -267,6 +267,36 @@ impl TuiState {
         Ok(())
     }
 
+    fn rerun_selected_prompt(&mut self, repo_root: &Path) -> Result<()> {
+        let Some(source_run) = self.runs.get(self.selected).cloned() else {
+            self.notice = "No run selected for rerun".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let attempt = local_result(runtime.run_prompt_attempt(RunRequest {
+            prompt: source_run.prompt.clone(),
+            workspace_id: Some(source_run.workspace_id.clone()),
+            mode: Some(self.agent_mode.clone()),
+        }))?;
+        self.active_workspace_id = attempt.run.workspace_id.clone();
+        let preview = render_run_attempt(&attempt);
+        let notice = if attempt.result.is_some() {
+            format!("Reran {} as {}", source_run.run_id, attempt.run.run_id)
+        } else {
+            format!(
+                "Rerun failed {} as {}",
+                source_run.run_id, attempt.run.run_id
+            )
+        };
+        self.refresh(repo_root)?;
+        self.preview = Some(TuiPreview {
+            path: format!("history rerun / {}", attempt.run.run_id),
+            text: preview,
+        });
+        self.notice = notice;
+        Ok(())
+    }
+
     fn run_follow_up_prompt(&mut self, repo_root: &Path, instruction: String) -> Result<()> {
         let Some(run_id) = self.selected_run_id().map(str::to_string) else {
             self.notice = "No run selected for follow-up".to_string();
@@ -995,6 +1025,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
+                    KeyCode::Char('N') => state.rerun_selected_prompt(repo_root)?,
                     KeyCode::Char('?') => state.preview_command_map(repo_root)?,
                     KeyCode::Char('A') => state.preview_agent_context(repo_root)?,
                     KeyCode::Char('H') => state.preview_local_doctor(repo_root)?,
@@ -1099,7 +1130,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "? map  m mode  o workspace  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
+            "? map  m mode  o workspace  c prompt  N rerun  A context  H doctor  f run-follow  F session-follow  D decision  i status  l plan  O tools  C compact  S session  U usage  T tasks  z trace  b review  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -1187,7 +1218,7 @@ fn draw_reports(
         out,
         x,
         y + 1,
-        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, n local check",
+        "press ? for command map, j/k to select, A context, H doctor, i status, t transcript, l plan, O tools, C compact, D decision, S session, U usage, T tasks, z trace, b review, f run-follow, F session-follow, N rerun, n local check",
         width,
     )?;
     muted_at(
@@ -1381,7 +1412,7 @@ fn draw_footer(out: &mut impl Write, rows: u16, width: usize, notice: &str) -> R
         return Ok(());
     }
     let footer_y = rows.saturating_sub(1);
-    let controls = "? map  q quit  r refresh  c prompt  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  O tools";
+    let controls = "? map  q quit  r refresh  c prompt  N rerun  A context  H doctor  f run-follow  F session-follow  D decision  ! cmd  t transcript  l plan  O tools";
     let status_width = width.saturating_sub(controls.len() + 2);
     write_at(out, 0, footer_y, controls, width)?;
     if status_width > 0 && !notice.is_empty() {
@@ -1553,6 +1584,7 @@ fn render_tui_command_map(state: &TuiState) -> String {
     text.push_str("Run Loop\n");
     text.push_str("- c prompt -> LocalAgentRuntime::run_prompt_attempt -> Structure run events\n");
     text.push_str("- n local check -> same run loop with a workspace-inspection prompt\n");
+    text.push_str("- N rerun -> fresh run from the selected persisted prompt\n");
     text.push_str("- f run-follow -> run_continuation_attempt from selected transcript/evidence\n");
     text.push_str("- F session-follow -> workspace_continuation_attempt from workspace compact\n");
     text.push_str("- m mode -> switch chat/code_agent without changing the runtime contract\n\n");
@@ -2814,6 +2846,9 @@ mod tests {
         assert!(preview
             .text
             .contains("c prompt -> LocalAgentRuntime::run_prompt_attempt"));
+        assert!(preview
+            .text
+            .contains("N rerun -> fresh run from the selected persisted prompt"));
         assert!(preview.text.contains("Workspace Context"));
         assert!(preview.text.contains("H doctor -> OPENAI__ diagnostic"));
         assert!(preview.text.contains("Run Evidence"));
@@ -2986,6 +3021,20 @@ mod tests {
             assert!(preview.text.contains("Run Attempt"));
             assert!(preview.text.contains("Events"));
             assert!(!state.runs.is_empty());
+            let original_run_id = state.runs.first().unwrap().run_id.clone();
+
+            state.rerun_selected_prompt(&root)?;
+            assert!(state.notice.contains(&original_run_id));
+            assert!(state.notice.contains("Reran"));
+            let rerun_preview = state.preview.as_ref().expect("history rerun preview");
+            assert!(rerun_preview.path.starts_with("history rerun / run_"));
+            assert!(rerun_preview.text.contains("Run Attempt"));
+            assert!(state.runs.len() >= 2);
+
+            let runtime = local_result(LocalAgentRuntime::open(&root))?;
+            let latest = state.runs.first().expect("latest rerun");
+            let transcript = local_result(runtime.run_transcript(&latest.run_id))?;
+            assert_eq!(transcript.run.prompt, "Summarize this workspace.");
 
             state.preview_selected_run_core_trace(&root)?;
             let trace_preview = state.preview.as_ref().expect("core trace preview");

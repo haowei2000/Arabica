@@ -365,7 +365,9 @@ into runtime calls:
   previews through the same runtime. Custom
   prompt and workspace-check runs open a `RunAttempt` preview immediately, so
   successful and failed TUI runs both expose their event trace without leaving
-  the local terminal UI. Press `f` to continue the selected run through the
+  the local terminal UI. Press `N` to rerun the selected persisted prompt as a
+  fresh Structure local run, matching CLI and desktop `/rerun` while using the
+  selected TUI row as the history source. Press `f` to continue the selected run through the
   shared continuation request path, preserving the same transcript/evidence
   grounding used by CLI `/continue` and desktop Continue. Press `t` to inspect
   the selected run transcript, `l` to inspect the event-derived agent plan,
