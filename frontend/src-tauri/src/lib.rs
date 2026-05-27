@@ -1162,6 +1162,11 @@ mod tests {
         assert!(local_ui.contains("function renderCoreTraceText(trace)"));
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));
+        assert!(local_ui.contains("function previewRunCoreTraceForRun"));
+        assert!(local_ui.contains("trace.textContent = \"Trace\""));
+        assert!(
+            local_ui.contains("previewRunCoreTraceForRun(turn.run_id, `/trace ${turn.run_id}`)")
+        );
         assert!(local_ui.contains("function renderRunReviewText(review)"));
         assert!(local_ui.contains("case \"/review\":"));
         assert!(local_ui.contains("invoke(\"local_run_review\""));
@@ -1245,6 +1250,7 @@ mod tests {
         assert!(local_ui.contains("decision.textContent = \"Decision\""));
         assert!(local_ui.contains("plan.textContent = \"Plan\""));
         assert!(local_ui.contains("tools.textContent = \"Tools\""));
+        assert!(local_ui.contains("trace.textContent = \"Trace\""));
         assert!(local_ui.contains("rerunRun.textContent = \"Rerun\""));
         assert!(local_ui.contains("const commandInput = `Rerun ${turn.run_id}`"));
         assert!(local_ui.contains("await performPromptRun(turn.user_message"));
@@ -1257,6 +1263,9 @@ mod tests {
         assert!(local_ui.contains("previewRunPlanForRun(turn.run_id, `/plan ${turn.run_id}`)"));
         assert!(
             local_ui.contains("previewRunToolTraceForRun(turn.run_id, `/tools ${turn.run_id}`)")
+        );
+        assert!(
+            local_ui.contains("previewRunCoreTraceForRun(turn.run_id, `/trace ${turn.run_id}`)")
         );
         assert!(
             local_ui.contains("previewRunCompactForRun(turn.run_id, `/compact ${turn.run_id}`)")

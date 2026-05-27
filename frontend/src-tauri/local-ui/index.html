@@ -2139,6 +2139,14 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             renderRuns(state.runs);
             await previewRunToolTraceForRun(turn.run_id, `/tools ${turn.run_id}`);
           });
+          const trace = document.createElement("button");
+          trace.type = "button";
+          trace.textContent = "Trace";
+          trace.addEventListener("click", async () => {
+            state.selectedRunId = turn.run_id;
+            renderRuns(state.runs);
+            await previewRunCoreTraceForRun(turn.run_id, `/trace ${turn.run_id}`);
+          });
           const compact = document.createElement("button");
           compact.type = "button";
           compact.textContent = "Compact";
@@ -2249,6 +2257,7 @@ ${bundle.workspace_replay.artifacts.map((artifact) => `- ${artifact.path}`).join
             status,
             plan,
             tools,
+            trace,
             compact,
             review,
             decision,
@@ -3217,6 +3226,18 @@ Opened in Preview${runId ? " for the selected run." : "."}`;
         }
       }
 
+      async function previewRunCoreTraceForRun(runId, commandInput = null) {
+        eventLogEl.textContent = "Loading Structure Core trace...";
+        try {
+          const trace = await localRunCoreTrace(runId);
+          eventLogEl.textContent = renderCoreTraceText(trace);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Core trace loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewTasks(status = null, commandInput = null) {
         eventLogEl.textContent = "Loading workspace tasks...";
         try {
@@ -4008,8 +4029,7 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
               eventLogEl.textContent = "No run selected.";
               return true;
             }
-            const trace = await localRunCoreTrace(runId);
-            eventLogEl.textContent = renderCoreTraceText(trace);
+            await previewRunCoreTraceForRun(runId);
             return true;
           }
           case "/review": {

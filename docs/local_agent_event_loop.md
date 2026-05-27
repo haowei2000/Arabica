@@ -465,9 +465,10 @@ into runtime calls:
   call `local_workspace_usage`, showing the same session-level model, token,
   tool, artifact, and Core totals as CLI/TUI; the visible action is recorded as
   a `/session-usage` command turn.
-  Desktop `/trace [run-id]` calls `local_run_core_trace`, giving the app the
-  same Structure Core flow/primitive path as CLI without introducing a desktop
-  scheduler concept.
+  Desktop `/trace [run-id]` and per-turn Trace actions call
+  `local_run_core_trace`, giving the app the same Structure Core flow/primitive
+  path as CLI/TUI without introducing a desktop scheduler concept. Per-turn
+  Trace actions are recorded as `/trace <run-id>` command turns.
   Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
   compact attempt review and next-action guidance as CLI/TUI.
   Desktop `/checkpoint [run-id] <note>`, the visible Record Decision action,
@@ -495,11 +496,11 @@ into runtime calls:
   while the Rust runtime is executing, then collapse back into persisted
   workspace chat turns after refresh.
   Persisted chat turns carry their originating run id and mode, and the desktop
-  thread exposes per-turn inspect/plan/compact/review/continue/retry/proposal
+  thread exposes per-turn inspect/plan/tools/trace/compact/review/continue/retry/proposal
   actions so chat history remains a navigable view over run evidence rather than
-  a detached transcript. Per-turn Inspect, Status, Plan, Tools, Compact, and
+  a detached transcript. Per-turn Inspect, Status, Plan, Tools, Trace, Compact, and
   Review actions append `/inspect <run-id>`, `/run-status <run-id>`,
-  `/plan <run-id>`, `/tools <run-id>`, `/compact <run-id>`, and
+  `/plan <run-id>`, `/tools <run-id>`, `/trace <run-id>`, `/compact <run-id>`, and
   `/review <run-id>` command turns while still reading from the Rust local
   runtime. Per-turn Proposal actions append
   `/proposal <run-id>` command turns while opening the selected run's code-change
