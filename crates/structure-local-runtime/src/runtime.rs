@@ -1,15 +1,15 @@
 use crate::model::{
     selected_planning_provider, selected_synthesis_provider, EnvApiModelProvider, ModelRequest,
 };
-use crate::store::{new_id, SqliteLocalStore};
+use crate::store::{new_id, now_ms, SqliteLocalStore};
 use crate::tools::{BuiltinLocalToolRegistry, LocalToolRegistry};
 use crate::types::{
     AgentInstruction, ArtifactPreview, ArtifactRecord, ChatTurn, CoreExecutionTrace,
     KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent,
     LocalEvidenceBundle, LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage,
     ModelUsageSummary, ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary,
-    RunResult, RunStatus, RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay,
-    WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
+    RunResult, RunStatus, RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed,
+    WorkspaceReplay, WorkspaceSummary, WorktreeChange, WorktreeSnapshot,
 };
 use serde::Serialize;
 use std::env;
@@ -300,6 +300,46 @@ impl LocalAgentRuntime {
         Ok(source)
     }
 
+    pub fn rate_knowledge_source(
+        &self,
+        source_id: &str,
+        run_id: Option<&str>,
+        rating: u8,
+        note: &str,
+    ) -> Result<SourceRating, String> {
+        if !(1..=5).contains(&rating) {
+            return Err("source rating must be between 1 and 5".to_string());
+        }
+        let note = note.trim();
+        if note.chars().count() > 2_000 {
+            return Err("source rating note must be 2000 characters or fewer".to_string());
+        }
+        let source = self.knowledge_source(source_id)?;
+        if let Some(run_id) = run_id {
+            let run = self.run_by_id(run_id)?;
+            if run.workspace_id != source.workspace_id {
+                return Err("source rating run must belong to the same workspace".to_string());
+            }
+        }
+        let rating = SourceRating {
+            source_id: source.source_id.clone(),
+            workspace_id: source.workspace_id.clone(),
+            run_id: run_id.map(str::to_string),
+            rating,
+            note: note.to_string(),
+            source_title: source.title.clone(),
+            source_path: source.path.clone(),
+            created_at_ms: now_ms(),
+        };
+        self.store.append_event(
+            &source.workspace_id,
+            run_id,
+            RunEventKind::SourceRated,
+            &rating,
+        )?;
+        Ok(rating)
+    }
+
     pub fn list_runs(
         &self,
         workspace_id: Option<&str>,
@@ -560,6 +600,7 @@ impl LocalAgentRuntime {
         let mut agent_instruction_paths = Vec::new();
         let mut worktree = None;
         let mut prompt_references = Vec::new();
+        let mut source_ratings = Vec::new();
         let mut tool_call_count = 0;
         let mut model_usage = ModelUsageSummary::default();
 
@@ -668,6 +709,13 @@ impl LocalAgentRuntime {
                         }
                     }
                 }
+                "source_rated" => {
+                    if let Ok(rating) =
+                        serde_json::from_value::<SourceRating>(event.payload.clone())
+                    {
+                        source_ratings.push(rating);
+                    }
+                }
                 "tool_call_completed" => {
                     tool_call_count += 1;
                 }
@@ -702,6 +750,7 @@ impl LocalAgentRuntime {
             worktree,
             prompt_references,
             knowledge_sources,
+            source_ratings,
             artifact_paths,
             artifacts,
             event_kinds,
@@ -2276,6 +2325,52 @@ mod tests {
             .canonical_flow_ids
             .contains(&"disclose".to_string()));
         assert!(transcript.evidence.core_trace.core_aligned);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_runtime_records_source_rating_as_feedback_event() {
+        let _env = OpenAiEnvGuard::clear();
+        let root = unique_repo("source-rating");
+        let source_path = root.join("source.md");
+        fs::write(&source_path, "rating context").unwrap();
+        let runtime = LocalAgentRuntime::open(&root).unwrap();
+        let source = runtime.add_knowledge_source(None, &source_path).unwrap();
+        let result = runtime
+            .run_prompt(RunRequest {
+                prompt: "Use the rated source".to_string(),
+                workspace_id: None,
+                mode: Some(LocalAgentMode::Chat),
+            })
+            .unwrap();
+        let rating = runtime
+            .rate_knowledge_source(
+                &source.source_id,
+                Some(&result.run.run_id),
+                5,
+                "useful grounding",
+            )
+            .unwrap();
+
+        assert_eq!(rating.source_id, source.source_id);
+        assert_eq!(rating.run_id.as_deref(), Some(result.run.run_id.as_str()));
+        let events = runtime.run_events(&result.run.run_id).unwrap();
+        assert!(events.iter().any(|event| {
+            event.kind == "source_rated"
+                && event.canonical_flow_id == "feedback"
+                && event.primitive_id == "source_evaluation"
+        }));
+        let evidence = runtime.run_evidence_summary(&result.run.run_id).unwrap();
+        assert_eq!(evidence.source_ratings.len(), 1);
+        assert_eq!(evidence.source_ratings[0].rating, 5);
+        assert!(evidence
+            .primitive_ids
+            .contains(&"source_evaluation".to_string()));
+        assert!(evidence
+            .canonical_flow_ids
+            .contains(&"feedback".to_string()));
+        assert!(evidence.core_trace.core_aligned);
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -39,6 +39,7 @@ enum TuiInputKind {
     AgentPrompt,
     FollowUpPrompt,
     KnowledgePath,
+    SourceRating,
     WorkspaceId,
     LocalCommand,
 }
@@ -49,6 +50,7 @@ impl TuiInputKind {
             Self::AgentPrompt => "Custom agent prompt",
             Self::FollowUpPrompt => "Follow-up instruction",
             Self::KnowledgePath => "Knowledge file path",
+            Self::SourceRating => "Source rating",
             Self::WorkspaceId => "Workspace id",
             Self::LocalCommand => "Local command argv",
         }
@@ -59,6 +61,7 @@ impl TuiInputKind {
             Self::AgentPrompt => "Type a prompt and press Enter",
             Self::FollowUpPrompt => "Type a follow-up for the selected run",
             Self::KnowledgePath => "Type an absolute or repo-relative file path",
+            Self::SourceRating => "Type [source_id] <1-5> [note]; source_id defaults to latest",
             Self::WorkspaceId => "Type a workspace id to create or open",
             Self::LocalCommand => "Type an allowlisted command, e.g. cargo check --workspace",
         }
@@ -197,6 +200,7 @@ impl TuiState {
             TuiInputKind::AgentPrompt => self.run_custom_prompt(repo_root, value),
             TuiInputKind::FollowUpPrompt => self.run_follow_up_prompt(repo_root, value),
             TuiInputKind::KnowledgePath => self.add_knowledge_path(repo_root, value),
+            TuiInputKind::SourceRating => self.rate_knowledge_source(repo_root, value),
             TuiInputKind::WorkspaceId => self.open_or_create_workspace(repo_root, value),
             TuiInputKind::LocalCommand => self.run_local_command(repo_root, value),
         }
@@ -267,6 +271,32 @@ impl TuiState {
         let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
         let removed = local_result(runtime.remove_knowledge_source(&source.source_id))?;
         let notice = format!("Removed registration for {}", removed.title);
+        self.refresh(repo_root)?;
+        self.notice = notice;
+        Ok(())
+    }
+
+    fn rate_knowledge_source(&mut self, repo_root: &Path, input: String) -> Result<()> {
+        let Some((source_id, rating, note)) =
+            parse_source_rating_input(&input, self.knowledge_sources.first())
+        else {
+            self.notice = "Use [source_id] <1-5> [note]".to_string();
+            return Ok(());
+        };
+        let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+        let run_id = self.selected_run_id().map(str::to_string);
+        let rating = local_result(runtime.rate_knowledge_source(
+            &source_id,
+            run_id.as_deref(),
+            rating,
+            &note,
+        ))?;
+        let notice = format!(
+            "Rated {} {}/5 for {}",
+            rating.source_title,
+            rating.rating,
+            rating.run_id.as_deref().unwrap_or("workspace")
+        );
         self.refresh(repo_root)?;
         self.notice = notice;
         Ok(())
@@ -635,6 +665,7 @@ fn tui_loop(repo_root: &Path, out: &mut impl Write) -> Result<()> {
                     KeyCode::Char('c') => state.begin_input(TuiInputKind::AgentPrompt),
                     KeyCode::Char('f') => state.begin_input(TuiInputKind::FollowUpPrompt),
                     KeyCode::Char('s') => state.begin_input(TuiInputKind::KnowledgePath),
+                    KeyCode::Char('R') => state.begin_input(TuiInputKind::SourceRating),
                     KeyCode::Char('!') => state.begin_input(TuiInputKind::LocalCommand),
                     KeyCode::Char('x') => state.remove_latest_knowledge(repo_root)?,
                     KeyCode::Char('n') => state.run_workspace_check(repo_root)?,
@@ -728,7 +759,7 @@ fn draw_tui(out: &mut impl Write, state: &TuiState) -> Result<()> {
             out,
             0,
             7,
-            "m mode  o workspace  c prompt  f follow-up  d worktree  s knowledge  ! command",
+            "m mode  o workspace  c prompt  f follow-up  d worktree  s knowledge  R rate  ! command",
             width,
         )?,
     }
@@ -846,7 +877,7 @@ fn draw_reports(
             .find(|evidence| evidence.run.run_id == run.run_id)
             .map(|evidence| {
                 format!(
-                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} artifacts]",
+                    "  [{} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} artifacts]",
                     evidence.event_count,
                     evidence.tool_call_count,
                     evidence.agent_instruction_paths.len(),
@@ -856,6 +887,7 @@ fn draw_reports(
                         .map(|worktree| worktree.changed_files.len())
                         .unwrap_or_default(),
                     evidence.knowledge_sources.len(),
+                    evidence.source_ratings.len(),
                     evidence.artifacts.len()
                 )
             })
@@ -1140,7 +1172,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
     } else {
         for evidence in &bundle.run_evidence {
             text.push_str(&format!(
-                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} artifacts\n",
+                "- {}: {} events, {} tools, {} instr, {} worktree, {} sources, {} ratings, {} artifacts\n",
                 evidence.run.run_id,
                 evidence.event_count,
                 evidence.tool_call_count,
@@ -1151,6 +1183,7 @@ fn render_evidence_bundle(bundle: &LocalEvidenceBundle) -> String {
                     .map(|worktree| worktree.changed_files.len())
                     .unwrap_or_default(),
                 evidence.knowledge_sources.len(),
+                evidence.source_ratings.len(),
                 evidence.artifacts.len()
             ));
         }
@@ -1431,6 +1464,32 @@ fn collect_run_evidence(
         .collect()
 }
 
+fn parse_source_rating_input(
+    input: &str,
+    default_source: Option<&KnowledgeSource>,
+) -> Option<(String, u8, String)> {
+    let mut parts = input.split_whitespace().collect::<Vec<_>>();
+    if parts.is_empty() {
+        return None;
+    }
+    if let Ok(rating) = parts[0].parse::<u8>() {
+        if !(1..=5).contains(&rating) {
+            return None;
+        }
+        let source_id = default_source?.source_id.clone();
+        let note = parts.split_off(1).join(" ");
+        return Some((source_id, rating, note));
+    }
+
+    let source_id = parts.remove(0).to_string();
+    let rating = parts.first()?.parse::<u8>().ok()?;
+    if !(1..=5).contains(&rating) {
+        return None;
+    }
+    let note = parts.into_iter().skip(1).collect::<Vec<_>>().join(" ");
+    Some((source_id, rating, note))
+}
+
 fn unavailable_worktree_snapshot() -> WorktreeSnapshot {
     WorktreeSnapshot {
         available: false,
@@ -1527,6 +1586,24 @@ mod tests {
                 .unwrap()
                 .artifact_id,
             "proposal_latest"
+        );
+    }
+
+    #[test]
+    fn tui_source_rating_input_defaults_to_latest_source() {
+        let source = knowledge_source("src_latest");
+
+        let parsed =
+            parse_source_rating_input("5 helpful context", Some(&source)).expect("rating input");
+
+        assert_eq!(parsed.0, "src_latest");
+        assert_eq!(parsed.1, 5);
+        assert_eq!(parsed.2, "helpful context");
+        assert!(parse_source_rating_input("6 too high", Some(&source)).is_none());
+        assert!(parse_source_rating_input("5 no source", None).is_none());
+        assert_eq!(
+            parse_source_rating_input("src_other 3 partial", Some(&source)).unwrap(),
+            ("src_other".to_string(), 3, "partial".to_string())
         );
     }
 
@@ -1635,6 +1712,17 @@ mod tests {
             path: format!("artifacts/{artifact_id}.md"),
             size_bytes: 42,
             created_at_ms: 1,
+        }
+    }
+
+    fn knowledge_source(source_id: &str) -> KnowledgeSource {
+        KnowledgeSource {
+            source_id: source_id.to_string(),
+            workspace_id: "workspace".to_string(),
+            path: format!("/tmp/{source_id}.md"),
+            title: format!("{source_id}.md"),
+            size_bytes: 42,
+            added_at_ms: 1,
         }
     }
 

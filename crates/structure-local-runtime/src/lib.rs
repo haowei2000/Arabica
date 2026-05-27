@@ -16,7 +16,7 @@ pub use types::{
     KnowledgeSourcePreview, LocalAgentContext, LocalAgentMode, LocalEvent, LocalEvidenceBundle,
     LocalLlmDiagnostic, LocalToolCall, LocalToolResult, ModelTokenUsage, ModelUsageSummary,
     ProposalApplyResult, RunAttempt, RunEventKind, RunEvidenceSummary, RunResult, RunStatus,
-    RunSummary, RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    RunSummary, RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
     WorktreeChange, WorktreeSnapshot,
 };
 

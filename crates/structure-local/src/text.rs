@@ -5,7 +5,8 @@ use structure_local_core::{
 use structure_local_runtime::{
     ArtifactPreview, ArtifactRecord, KnowledgeSource, KnowledgeSourcePreview, LocalAgentContext,
     LocalEvent, LocalEvidenceBundle, RunAttempt, RunEvidenceSummary, RunResult, RunSummary,
-    RunTranscript, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary, WorktreeSnapshot,
+    RunTranscript, SourceRating, WorkspaceEventFeed, WorkspaceReplay, WorkspaceSummary,
+    WorktreeSnapshot,
 };
 
 pub(crate) fn print_snapshot(snapshot: &LocalSnapshot) {
@@ -272,6 +273,7 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
     }
     println!("  refs:      {}", evidence.prompt_references.len());
     println!("  knowledge: {}", evidence.knowledge_sources.len());
+    println!("  ratings:   {}", evidence.source_ratings.len());
     println!("  response:  {} chars", evidence.final_response_chars);
     println!(
         "  core:      {} / schema {}",
@@ -323,6 +325,21 @@ pub(crate) fn print_run_evidence_summary(evidence: &RunEvidenceSummary) {
         println!("  sources:");
         for source in &evidence.knowledge_sources {
             println!("    {}  {}", source.title, source.path);
+        }
+    }
+    if !evidence.source_ratings.is_empty() {
+        println!("  source ratings:");
+        for rating in &evidence.source_ratings {
+            println!(
+                "    {}  {}/5  {}",
+                rating.source_title,
+                rating.rating,
+                if rating.note.is_empty() {
+                    "no note"
+                } else {
+                    rating.note.as_str()
+                }
+            );
         }
     }
     if !evidence.event_kinds.is_empty() {
@@ -420,6 +437,7 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
         "  knowledge: {}",
         transcript.evidence.knowledge_sources.len()
     );
+    println!("  ratings:   {}", transcript.evidence.source_ratings.len());
     println!("  artifacts: {}", transcript.evidence.artifact_paths.len());
     if !transcript.evidence.prompt_references.is_empty() {
         println!("  prompt refs:");
@@ -445,6 +463,21 @@ pub(crate) fn print_run_transcript(transcript: &RunTranscript) {
         println!("  sources:");
         for source in &transcript.evidence.knowledge_sources {
             println!("    {}  {}", source.title, source.path);
+        }
+    }
+    if !transcript.evidence.source_ratings.is_empty() {
+        println!("  source ratings:");
+        for rating in &transcript.evidence.source_ratings {
+            println!(
+                "    {}  {}/5  {}",
+                rating.source_title,
+                rating.rating,
+                if rating.note.is_empty() {
+                    "no note"
+                } else {
+                    rating.note.as_str()
+                }
+            );
         }
     }
     if !transcript.evidence.artifact_paths.is_empty() {
@@ -522,6 +555,22 @@ pub(crate) fn print_knowledge_preview(preview: &KnowledgeSourcePreview) {
     print!("{}", preview.preview);
     if preview.truncated && !preview.preview.ends_with('\n') {
         println!();
+    }
+}
+
+pub(crate) fn print_source_rating(rating: &SourceRating) {
+    println!("Source rating");
+    println!("  source:    {}", rating.source_id);
+    println!("  workspace: {}", rating.workspace_id);
+    println!(
+        "  run:       {}",
+        rating.run_id.as_deref().unwrap_or("workspace")
+    );
+    println!("  rating:    {}/5", rating.rating);
+    println!("  title:     {}", rating.source_title);
+    println!("  path:      {}", rating.source_path);
+    if !rating.note.is_empty() {
+        println!("  note:      {}", rating.note);
     }
 }
 

@@ -344,6 +344,22 @@ fn remove_local_knowledge(
 }
 
 #[tauri::command]
+fn rate_local_knowledge_source(
+    source_id: String,
+    run_id: Option<String>,
+    rating: u8,
+    note: Option<String>,
+) -> Result<structure_local_runtime::SourceRating, String> {
+    let runtime = LocalAgentRuntime::open_default()?;
+    runtime.rate_knowledge_source(
+        &source_id,
+        run_id.as_deref(),
+        rating,
+        note.as_deref().unwrap_or(""),
+    )
+}
+
+#[tauri::command]
 fn local_artifacts(
     workspace_id: Option<String>,
     run_id: Option<String>,
@@ -426,6 +442,7 @@ pub fn run() {
             local_knowledge_source,
             read_local_knowledge_source,
             remove_local_knowledge,
+            rate_local_knowledge_source,
             local_artifacts,
             read_local_artifact,
             latest_local_proposal,
@@ -491,6 +508,10 @@ mod tests {
             fs::write(root.join("note.md"), "desktop local repo search").unwrap();
             fs::write(root.join(".env"), "LOCAL_SECRET=secret").unwrap();
             let workspace = create_local_workspace("desktop-test".to_string())?;
+            let source = add_local_knowledge(
+                root.join("note.md").display().to_string(),
+                Some(workspace.workspace_id.clone()),
+            )?;
             let entries = local_repo_entries(Some(workspace.workspace_id.clone()), Some(16))?;
             let search = local_repo_search(
                 Some(workspace.workspace_id.clone()),
@@ -531,6 +552,12 @@ mod tests {
             )?;
             let turns = local_chat_turns(Some(workspace.workspace_id.clone()), Some(5))?;
             let runs = local_runs(Some(workspace.workspace_id.clone()), Some(5))?;
+            let source_rating = rate_local_knowledge_source(
+                source.source_id.clone(),
+                Some(run.run.run_id.clone()),
+                4,
+                Some("desktop grounding".to_string()),
+            )?;
             let transcript = local_run_transcript(run.run.run_id.clone())?;
             let replay = local_workspace_replay(Some(workspace.workspace_id.clone()), Some(200))?;
             let feed =
@@ -584,6 +611,11 @@ mod tests {
                 .contains(root.to_str().unwrap()));
             assert_eq!(run.run.workspace_id, "desktop-test");
             assert_eq!(run.run.status, "finished");
+            assert_eq!(source_rating.rating, 4);
+            assert_eq!(
+                source_rating.run_id.as_deref(),
+                Some(run.run.run_id.as_str())
+            );
             assert_eq!(attempt.run.status, "finished");
             assert!(attempt.result.is_some());
             assert!(attempt.error.is_none());
@@ -602,6 +634,11 @@ mod tests {
                 .evidence
                 .primitive_ids
                 .contains(&"reproducible_evidence".to_string()));
+            assert_eq!(transcript.evidence.source_ratings.len(), 1);
+            assert!(transcript
+                .evidence
+                .primitive_ids
+                .contains(&"source_evaluation".to_string()));
             assert!(transcript.evidence.core_trace.core_aligned);
             assert_eq!(
                 transcript.evidence.core_trace.manifest_schema_version,
@@ -688,6 +725,9 @@ mod tests {
         assert!(local_ui.contains("case \"/remember\":"));
         assert!(local_ui.contains("case \"/recall\":"));
         assert!(local_ui.contains("case \"/forget\":"));
+        assert!(local_ui.contains("case \"/rate\":"));
+        assert!(local_ui.contains("rate_local_knowledge_source"));
+        assert!(local_ui.contains("Source Ratings"));
         assert!(local_ui.contains("Prompt References"));
         assert!(local_ui.contains("Agent Instructions"));
         assert!(local_ui.contains("Worktree Changes"));
@@ -810,6 +850,7 @@ mod tests {
         assert!(local_ui.contains("invoke(\"remember_local_knowledge\""));
         assert!(local_ui.contains("invoke(\"read_local_knowledge_source\""));
         assert!(local_ui.contains("invoke(\"remove_local_knowledge\""));
+        assert!(local_ui.contains("invoke(\"rate_local_knowledge_source\""));
         assert!(local_ui.contains("invoke(\"local_worktree_snapshot\""));
         assert!(local_ui.contains("invoke(\"local_run_transcript\""));
         assert!(!local_ui.contains("fetch("));

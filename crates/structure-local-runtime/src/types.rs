@@ -31,6 +31,7 @@ pub enum RunEventKind {
     AgentStepPlanned,
     WorkspaceContextLoaded,
     KnowledgeRetrieved,
+    SourceRated,
     ModelRequested,
     ModelResponded,
     ToolCallRequested,
@@ -52,6 +53,7 @@ impl RunEventKind {
             Self::AgentStepPlanned => "agent_step_planned",
             Self::WorkspaceContextLoaded => "workspace_context_loaded",
             Self::KnowledgeRetrieved => "knowledge_retrieved",
+            Self::SourceRated => "source_rated",
             Self::ModelRequested => "model_requested",
             Self::ModelResponded => "model_responded",
             Self::ToolCallRequested => "tool_call_requested",
@@ -70,6 +72,7 @@ pub fn event_taxonomy_for_kind(kind: &str) -> (&'static str, &'static str) {
         "workspace_opened" | "workspace_context_loaded" => ("address", "path_addressing"),
         "prompt_received" | "run_created" => ("goal", "event_audit"),
         "knowledge_retrieved" => ("disclose", "multi_level_disclosure"),
+        "source_rated" => ("feedback", "source_evaluation"),
         "artifact_written" | "code_change_proposed" | "run_finished" | "run_failed" => {
             ("evidence", "reproducible_evidence")
         }
@@ -139,6 +142,18 @@ pub struct KnowledgeSourcePreview {
     pub preview: String,
     pub bytes_read: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceRating {
+    pub source_id: String,
+    pub workspace_id: String,
+    pub run_id: Option<String>,
+    pub rating: u8,
+    pub note: String,
+    pub source_title: String,
+    pub source_path: String,
+    pub created_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +292,7 @@ pub struct RunEvidenceSummary {
     pub worktree: Option<WorktreeSnapshot>,
     pub prompt_references: Vec<String>,
     pub knowledge_sources: Vec<KnowledgeSource>,
+    pub source_ratings: Vec<SourceRating>,
     pub artifact_paths: Vec<String>,
     pub artifacts: Vec<ArtifactRecord>,
     pub event_kinds: Vec<String>,
