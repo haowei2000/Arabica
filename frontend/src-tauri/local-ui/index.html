@@ -1004,6 +1004,7 @@
             <button id="show-runs" type="button">Runs</button>
             <button id="run-transcript" type="button">Transcript</button>
             <button id="run-status" type="button">Run Status</button>
+            <button id="run-plan" type="button">Plan</button>
             <button id="run-tools" type="button">Tool Trace</button>
             <button id="command-map" type="button">Command Map</button>
             <button id="record-checkpoint" type="button">Record Decision</button>
@@ -1132,6 +1133,7 @@
       const showRunsEl = document.querySelector("#show-runs");
       const runTranscriptEl = document.querySelector("#run-transcript");
       const runStatusEl = document.querySelector("#run-status");
+      const runPlanEl = document.querySelector("#run-plan");
       const runToolsEl = document.querySelector("#run-tools");
       const commandMapEl = document.querySelector("#command-map");
       const recordCheckpointEl = document.querySelector("#record-checkpoint");
@@ -1705,6 +1707,11 @@
       function setRunStatusBusy(isBusy) {
         runStatusEl.disabled = isBusy;
         runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
+      }
+
+      function setRunPlanBusy(isBusy) {
+        runPlanEl.disabled = isBusy;
+        runPlanEl.textContent = isBusy ? "Loading Plan" : "Plan";
       }
 
       function setRunToolsBusy(isBusy) {
@@ -3806,7 +3813,8 @@ Workspace Context
 Run Evidence
 - /transcript, /inspect, and visible Transcript -> selected run transcript inspection
 - /run-status, /events -> selected run status and raw event inspection
-- /plan, /tools, /trace, /review -> event-derived agent reasoning views
+- /plan and visible Plan -> event-derived agent progress view
+- /tools, /trace, /review -> event-derived agent reasoning views
 - /compact, /evidence, /bundle, /usage, /gc -> continuation and audit boundaries
 - /checkpoint, /decision -> human feedback replayed into continuation context
 
@@ -5314,6 +5322,19 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewRunStatusForRun(runId, `/run-status ${runId}`);
         } finally {
           setRunStatusBusy(false);
+        }
+      });
+      runPlanEl.addEventListener("click", async () => {
+        const runId = state.selectedRunId ?? state.runs[0]?.run_id;
+        if (!runId) {
+          eventLogEl.textContent = "No run selected.";
+          return;
+        }
+        setRunPlanBusy(true);
+        try {
+          await previewRunPlanForRun(runId, `/plan ${runId}`);
+        } finally {
+          setRunPlanBusy(false);
         }
       });
       runToolsEl.addEventListener("click", async () => {

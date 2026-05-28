@@ -1142,9 +1142,13 @@ mod tests {
         assert!(local_ui.contains("function renderToolTraceText(trace)"));
         assert!(local_ui.contains("case \"/tools\":"));
         assert!(local_ui.contains("previewRunToolTraceForRun(runId, `/tools ${runId}`)"));
+        assert!(local_ui.contains("id=\"run-plan\""));
+        assert!(local_ui.contains("setRunPlanBusy(true)"));
         assert!(local_ui.contains("function renderRunPlanText(plan)"));
         assert!(local_ui.contains("case \"/plan\":"));
         assert!(local_ui.contains("invoke(\"local_run_plan\""));
+        assert!(local_ui.contains("previewRunPlanForRun(runId, `/plan ${runId}`)"));
+        assert!(local_ui.contains("/plan and visible Plan -> event-derived agent progress view"));
         assert!(local_ui.contains("function renderRunCompactText(compact)"));
         assert!(local_ui.contains("case \"/compact\":"));
         assert!(local_ui.contains("invoke(\"local_run_compact\""));

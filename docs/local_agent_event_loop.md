@@ -469,9 +469,10 @@ into runtime calls:
   a desktop-only checklist. Those same task records are rendered in Agent
   Context, Session Compact, Session Usage, replay, and evidence-bundle views;
   the visible Tasks action is recorded as a `/tasks` command turn.
-  Desktop `/plan [run-id]` and per-turn Plan actions call `local_run_plan`,
-  showing progress as a derived view over immutable Structure planning/model/tool
-  events rather than a desktop-only state machine.
+  Desktop `/plan [run-id]`, the Plan action, and per-turn Plan actions call
+  `local_run_plan`, showing progress as a derived view over immutable Structure
+  planning/model/tool events rather than a desktop-only state machine. The
+  visible Plan action is recorded as a `/plan <run-id>` chat command turn.
   Desktop `/compact [run-id]` and per-turn Compact actions call
   `local_run_compact`, showing the same continuation-ready context boundary as
   CLI/TUI. The app can therefore support long local chat/code-agent sessions
