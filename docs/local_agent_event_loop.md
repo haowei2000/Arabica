@@ -395,6 +395,11 @@ into runtime calls:
   `local_runs` powers both the Recent Runs sidebar and a visible Runs action
   that records `/runs` as command-turn history, so desktop run navigation stays
   inside the same chat/code-agent loop as slash commands.
+  `local_run_transcript` powers `/transcript`, `/inspect`, per-turn Inspect,
+  and the visible Transcript action; the visible action records
+  `/transcript <run-id>` as command-turn history while rendering the selected
+  run's chat turn, final response, evidence summary, Core trace metadata, and
+  immutable events through the same Rust runtime.
   `local_workspace_event_feed` powers the Workspace Events action,
   `/workspace-events` slash command, and live in-flight run polling from a
   persisted cursor.
@@ -433,6 +438,11 @@ into runtime calls:
   Desktop `/doctor` and the visible Doctor action append the same `/doctor`
   command turn after combining the Rust session status, real `OPENAI__`
   diagnostic, and Core parity report.
+  Desktop `/transcript [run-id]`, `/inspect [run-id]`, the visible Transcript
+  action, and per-turn Inspect actions mirror the CLI transcript view by
+  calling `local_run_transcript` before updating the selected run and event
+  timeline; visible Transcript actions are recorded as
+  `/transcript <run-id>` command turns.
   Desktop `/usage [run-id]` and per-turn Usage actions mirror the CLI
   model-call shortcut and render the same `model_usage` evidence summary from
   Rust. Per-turn Usage actions are recorded as `/usage <run-id>` command turns.

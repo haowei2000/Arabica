@@ -1171,6 +1171,13 @@ mod tests {
         assert!(
             local_ui.contains("/runs or visible Runs -> recent Structure runs from local runtime")
         );
+        assert!(local_ui.contains("id=\"run-transcript\""));
+        assert!(local_ui.contains("function previewRunTranscriptForRun"));
+        assert!(local_ui.contains("setRunTranscriptBusy(true)"));
+        assert!(local_ui.contains("previewRunTranscriptForRun(runId, `/transcript ${runId}`)"));
+        assert!(local_ui.contains(
+            "/transcript, /inspect, and visible Transcript -> selected run transcript inspection"
+        ));
         assert!(local_ui.contains("function renderWorkspaceEventFeedText(feed)"));
         assert!(local_ui.contains("function previewWorkspaceEvents(commandInput = null)"));
         assert!(local_ui.contains("case \"/workspace-events\":"));
