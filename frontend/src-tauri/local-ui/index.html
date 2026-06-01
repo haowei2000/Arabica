@@ -1009,6 +1009,7 @@
             <button id="run-plan" type="button">Plan</button>
             <button id="run-review" type="button">Review</button>
             <button id="run-trace" type="button">Core Trace</button>
+            <button id="run-compact" type="button">Compact</button>
             <button id="run-tools" type="button">Tool Trace</button>
             <button id="command-map" type="button">Command Map</button>
             <button id="record-checkpoint" type="button">Record Decision</button>
@@ -1142,6 +1143,7 @@
       const runPlanEl = document.querySelector("#run-plan");
       const runReviewEl = document.querySelector("#run-review");
       const runTraceEl = document.querySelector("#run-trace");
+      const runCompactEl = document.querySelector("#run-compact");
       const runToolsEl = document.querySelector("#run-tools");
       const commandMapEl = document.querySelector("#command-map");
       const recordCheckpointEl = document.querySelector("#record-checkpoint");
@@ -1740,6 +1742,11 @@
       function setRunTraceBusy(isBusy) {
         runTraceEl.disabled = isBusy;
         runTraceEl.textContent = isBusy ? "Loading Trace" : "Core Trace";
+      }
+
+      function setRunCompactBusy(isBusy) {
+        runCompactEl.disabled = isBusy;
+        runCompactEl.textContent = isBusy ? "Loading Compact" : "Compact";
       }
 
       function setRunToolsBusy(isBusy) {
@@ -3846,8 +3853,9 @@ Run Evidence
 - /plan and visible Plan -> event-derived agent progress view
 - /review and visible Review -> post-run attempt review and next actions
 - /trace and visible Core Trace -> Structure Core flow/primitive path
+- /compact and visible Compact -> continuation-ready run context boundary
 - /tools -> event-derived agent reasoning views
-- /compact, /evidence, /bundle, /usage, /gc -> continuation and audit boundaries
+- /evidence, /bundle, /gc -> continuation and audit boundaries
 - /checkpoint, /decision -> human feedback replayed into continuation context
 
 Session And Proposals
@@ -5419,6 +5427,19 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewRunCoreTraceForRun(runId, `/trace ${runId}`);
         } finally {
           setRunTraceBusy(false);
+        }
+      });
+      runCompactEl.addEventListener("click", async () => {
+        const runId = state.selectedRunId ?? state.runs[0]?.run_id;
+        if (!runId) {
+          eventLogEl.textContent = "No run selected.";
+          return;
+        }
+        setRunCompactBusy(true);
+        try {
+          await previewRunCompactForRun(runId, `/compact ${runId}`);
+        } finally {
+          setRunCompactBusy(false);
         }
       });
       runToolsEl.addEventListener("click", async () => {

@@ -1162,6 +1162,11 @@ mod tests {
         assert!(local_ui.contains("function renderRunCompactText(compact)"));
         assert!(local_ui.contains("case \"/compact\":"));
         assert!(local_ui.contains("invoke(\"local_run_compact\""));
+        assert!(local_ui.contains("id=\"run-compact\""));
+        assert!(local_ui.contains("setRunCompactBusy(true)"));
+        assert!(local_ui.contains("previewRunCompactForRun(runId, `/compact ${runId}`)"));
+        assert!(local_ui
+            .contains("/compact and visible Compact -> continuation-ready run context boundary"));
         assert!(local_ui.contains("compact.textContent = \"Compact\""));
         assert!(local_ui.contains("function renderWorkspaceCompactText(compact)"));
         assert!(local_ui.contains("case \"/session\":"));

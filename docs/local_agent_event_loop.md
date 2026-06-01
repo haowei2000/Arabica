@@ -475,10 +475,11 @@ into runtime calls:
   `local_run_plan`, showing progress as a derived view over immutable Structure
   planning/model/tool events rather than a desktop-only state machine. The
   visible Plan action is recorded as a `/plan <run-id>` chat command turn.
-  Desktop `/compact [run-id]` and per-turn Compact actions call
-  `local_run_compact`, showing the same continuation-ready context boundary as
-  CLI/TUI. The app can therefore support long local chat/code-agent sessions
-  without inventing a desktop-only memory model.
+  Desktop `/compact [run-id]`, the Compact action, and per-turn Compact actions
+  call `local_run_compact`, showing the same continuation-ready context
+  boundary as CLI/TUI. The visible Compact action is recorded as a
+  `/compact <run-id>` chat command turn, so the app can support long local
+  chat/code-agent sessions without inventing a desktop-only memory model.
   Desktop `/session`, `/workspace-compact`, and the Session Compact action call
   `local_workspace_compact`, giving the desktop app the same workspace/session
   handoff object as CLI/TUI while staying inside the local Rust runtime. The
