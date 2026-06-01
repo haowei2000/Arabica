@@ -1482,6 +1482,11 @@ mod tests {
         assert!(local_ui.contains("invoke(\"local_llm_diagnostic\""));
         assert!(local_ui.contains("invoke(\"core_parity_report\""));
         assert!(local_ui.contains("invoke(\"local_agent_context\""));
+        assert!(local_ui.contains("invoke(\"local_knowledge\""));
+        assert!(local_ui.contains("id=\"show-sources\""));
+        assert!(local_ui.contains("function previewKnowledgeSources(commandInput = null)"));
+        assert!(local_ui.contains("setSourcesBusy(true)"));
+        assert!(local_ui.contains("previewKnowledgeSources(\"/sources\")"));
         assert!(local_ui.contains("invoke(\"remember_local_knowledge\""));
         assert!(local_ui.contains("invoke(\"read_local_knowledge_source\""));
         assert!(local_ui.contains("invoke(\"remove_local_knowledge\""));

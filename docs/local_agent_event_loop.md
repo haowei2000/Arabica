@@ -563,6 +563,9 @@ into runtime calls:
   event-sourced part of the selected run evidence rather than a detached UI
   annotation, and the Agent Context view shows the replayed ratings that shape
   subsequent knowledge ordering.
+  The visible Sources action calls `local_knowledge` and appends a `/sources`
+  command turn, keeping current knowledge-source disclosure inside the same
+  event-backed chat thread as slash-command output.
   Repository tool controls call safe list/search/read commands plus
   `run_local_command` for allowlisted local checks; those manual tool calls are
   persisted as workspace events. Visible repository controls append `/ls`,
@@ -572,9 +575,9 @@ into runtime calls:
   file-context mechanism as CLI/TUI prompts without hand-copying paths. The UI
   renders both workspace feed events and an inspectable
   latest-run transcript from successful or failed attempts.
-  Runs inspection, worktree refresh, workspace replay, artifact preview, Core parity, and
+  Runs inspection, worktree refresh, workspace replay, sources inspection, artifact preview, Core parity, and
   evidence-bundle controls now append `/worktree`, `/replay`, `/artifact`,
-  `/parity`, `/bundle`, `/runs`, and `/workspace-events` command turns to the same chat thread, keeping
+  `/sources`, `/parity`, `/bundle`, `/runs`, and `/workspace-events` command turns to the same chat thread, keeping
   workspace/context inspection inside the agent conversation rather than as a
   detached dashboard; those command turns use the same persisted event path as
   slash-command output.

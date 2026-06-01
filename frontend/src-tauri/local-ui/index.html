@@ -1040,6 +1040,7 @@
               <input id="knowledge-path" type="text" placeholder="/absolute/path/to/file.md" />
               <button id="add-knowledge" type="submit">Add</button>
             </form>
+            <button id="show-sources" type="button">Sources</button>
             <div id="knowledge-list" class="knowledge-list"></div>
             <div class="panel-heading">
               <h3>Repository Tools</h3>
@@ -1174,6 +1175,7 @@
       const knowledgeFormEl = document.querySelector("#knowledge-form");
       const knowledgePathEl = document.querySelector("#knowledge-path");
       const addKnowledgeEl = document.querySelector("#add-knowledge");
+      const showSourcesEl = document.querySelector("#show-sources");
       const knowledgeListEl = document.querySelector("#knowledge-list");
       const worktreeStatusEl = document.querySelector("#worktree-status");
       const refreshWorktreeEl = document.querySelector("#refresh-worktree");
@@ -1660,6 +1662,11 @@
       function setKnowledgeBusy(isBusy) {
         addKnowledgeEl.disabled = isBusy;
         addKnowledgeEl.textContent = isBusy ? "Adding" : "Add";
+      }
+
+      function setSourcesBusy(isBusy) {
+        showSourcesEl.disabled = isBusy;
+        showSourcesEl.textContent = isBusy ? "Loading Sources" : "Sources";
       }
 
       function setWorktreeBusy(isBusy) {
@@ -3586,6 +3593,20 @@ Note: ${checkpoint.note}`;
         }
       }
 
+      async function previewKnowledgeSources(commandInput = null) {
+        eventLogEl.textContent = "Loading knowledge sources...";
+        try {
+          const sources = await localKnowledge();
+          renderKnowledge(sources);
+          eventLogEl.textContent = `Knowledge Sources
+${sources.map((source) => `${source.source_id} / ${source.title} / ${source.path}`).join("\n") || "No knowledge sources registered."}`;
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Knowledge sources loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewWorkspaceReplay(commandInput = null, { refreshAfter = false } = {}) {
         eventLogEl.textContent = "Replaying workspace event stream...";
         try {
@@ -4362,10 +4383,7 @@ ${result.preview}`;
             return true;
           }
           case "/sources": {
-            const sources = await localKnowledge();
-            renderKnowledge(sources);
-            eventLogEl.textContent = `Knowledge Sources
-${sources.map((source) => `${source.source_id} / ${source.title} / ${source.path}`).join("\n") || "No knowledge sources registered."}`;
+            await previewKnowledgeSources();
             return true;
           }
           case "/rate": {
@@ -5250,6 +5268,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           eventLogEl.textContent = String(error);
         } finally {
           setKnowledgeBusy(false);
+        }
+      });
+      showSourcesEl.addEventListener("click", async () => {
+        setSourcesBusy(true);
+        try {
+          await previewKnowledgeSources("/sources");
+        } finally {
+          setSourcesBusy(false);
         }
       });
       repoListEl.addEventListener("click", async () => {
