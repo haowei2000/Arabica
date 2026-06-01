@@ -492,8 +492,10 @@ into runtime calls:
   `local_run_core_trace`, giving the app the same Structure Core flow/primitive
   path as CLI/TUI without introducing a desktop scheduler concept. Per-turn
   Trace actions are recorded as `/trace <run-id>` command turns.
-  Desktop `/review [run-id]` calls `local_run_review`, giving the app the same
-  compact attempt review and next-action guidance as CLI/TUI.
+  Desktop `/review [run-id]`, the Review action, and per-turn Review actions
+  call `local_run_review`, giving the app the same compact attempt review and
+  next-action guidance as CLI/TUI. The visible Review action is recorded as a
+  `/review <run-id>` chat command turn.
   Desktop `/checkpoint [run-id] <note>`, the visible Record Decision action,
   and each chat turn's Decision action call `record_local_run_checkpoint`,
   giving the app the same event-sourced human decision path as CLI while

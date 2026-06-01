@@ -1200,6 +1200,11 @@ mod tests {
         assert!(local_ui.contains("function renderRunReviewText(review)"));
         assert!(local_ui.contains("case \"/review\":"));
         assert!(local_ui.contains("invoke(\"local_run_review\""));
+        assert!(local_ui.contains("id=\"run-review\""));
+        assert!(local_ui.contains("setRunReviewBusy(true)"));
+        assert!(local_ui.contains("previewRunReviewForRun(runId, `/review ${runId}`)"));
+        assert!(local_ui
+            .contains("/review and visible Review -> post-run attempt review and next actions"));
         assert!(local_ui.contains("case \"code_change_reviewed\":"));
         assert!(local_ui.contains("id=\"run-status\""));
         assert!(local_ui.contains("function renderRunStatusText(status)"));
