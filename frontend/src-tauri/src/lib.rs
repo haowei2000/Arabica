@@ -1271,13 +1271,17 @@ mod tests {
         assert!(local_ui.contains("/diff [run_id]"));
         assert!(local_ui.contains("case \"/parity\":"));
         assert!(local_ui.contains("case \"/bundle\":"));
+        assert!(local_ui.contains("case \"/artifacts\":"));
         assert!(local_ui.contains("case \"/artifact\":"));
         assert!(local_ui.contains("function previewCoreParity(commandInput = null)"));
         assert!(local_ui.contains("function previewEvidenceBundle(commandInput = null)"));
+        assert!(local_ui.contains("id=\"show-artifacts\""));
+        assert!(local_ui.contains("function previewArtifacts(commandInput = null)"));
         assert!(local_ui
             .contains("function previewArtifactById(artifactId = null, commandInput = null)"));
         assert!(local_ui.contains("previewCoreParity(\"/parity\")"));
         assert!(local_ui.contains("previewEvidenceBundle(\"/bundle\")"));
+        assert!(local_ui.contains("previewArtifacts(\"/artifacts\")"));
         assert!(local_ui.contains("previewArtifactById(null, \"/artifact\")"));
     }
 

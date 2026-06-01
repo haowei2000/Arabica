@@ -1021,6 +1021,7 @@
             <button id="show-status" type="button">Session Status</button>
             <button id="show-llm" type="button">LLM Check</button>
             <button id="show-doctor" type="button">Doctor</button>
+            <button id="show-artifacts" type="button">Artifacts</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Selected Proposal</button>
             <button id="apply-proposal" type="button">Apply Proposal</button>
@@ -1160,6 +1161,7 @@
       const showStatusEl = document.querySelector("#show-status");
       const showLlmEl = document.querySelector("#show-llm");
       const showDoctorEl = document.querySelector("#show-doctor");
+      const showArtifactsEl = document.querySelector("#show-artifacts");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
       const applyProposalEl = document.querySelector("#apply-proposal");
@@ -1812,6 +1814,11 @@
       function setDoctorBusy(isBusy) {
         showDoctorEl.disabled = isBusy;
         showDoctorEl.textContent = isBusy ? "Checking" : "Doctor";
+      }
+
+      function setArtifactsBusy(isBusy) {
+        showArtifactsEl.disabled = isBusy;
+        showArtifactsEl.textContent = isBusy ? "Loading Artifacts" : "Artifacts";
       }
 
       function setArtifactBusy(isBusy) {
@@ -3657,6 +3664,21 @@ ${preview.preview}`;
         }
       }
 
+      async function previewArtifacts(commandInput = null) {
+        eventLogEl.textContent = "Loading local artifacts...";
+        try {
+          const artifacts = await localArtifacts();
+          state.artifacts = artifacts;
+          renderReports();
+          eventLogEl.textContent = `Artifacts
+${artifacts.map((artifact) => `${artifact.artifact_id} / ${artifact.kind} / ${artifact.path}`).join("\n") || "No artifacts recorded."}`;
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent || "Artifacts loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewCoreParity(commandInput = null) {
         eventLogEl.textContent = "Checking Core parity...";
         try {
@@ -3925,7 +3947,7 @@ Run Evidence
 Session And Proposals
 - /session, /session-continue, /session-usage -> workspace session handoff
 - /workspace-events -> cursor-based workspace event feed
-- /artifacts, /artifact, /proposal, /diff -> local artifact and proposal disclosure
+- /artifacts or visible Artifacts, /artifact, /proposal, /diff -> local artifact and proposal disclosure
 - /risk, /dry-run, /apply, /rollback -> review-gated code proposal loop
 
 Invariant
@@ -4432,11 +4454,7 @@ ${sourceRating.note ? `Note: ${sourceRating.note}` : "Note: none"}`;
             return true;
           }
           case "/artifacts": {
-            const artifacts = await localArtifacts();
-            state.artifacts = artifacts;
-            renderReports();
-            eventLogEl.textContent = `Artifacts
-${artifacts.map((artifact) => `${artifact.artifact_id} / ${artifact.kind} / ${artifact.path}`).join("\n") || "No artifacts recorded."}`;
+            await previewArtifacts();
             return true;
           }
           case "/artifact": {
@@ -5648,6 +5666,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewArtifactById(null, "/artifact");
         } finally {
           setArtifactBusy(false);
+        }
+      });
+      showArtifactsEl.addEventListener("click", async () => {
+        setArtifactsBusy(true);
+        try {
+          await previewArtifacts("/artifacts");
+        } finally {
+          setArtifactsBusy(false);
         }
       });
       previewProposalEl.addEventListener("click", async () => {

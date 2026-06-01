@@ -519,6 +519,9 @@ into runtime calls:
   `/dry-run <artifact-id>`, `/apply <artifact-id>`, and
   `/rollback <artifact-id>` command turns; cancelled apply confirmations are
   recorded as cancelled command turns.
+  Desktop `/artifacts` and the visible Artifacts action call `local_artifacts`,
+  keeping the indexed code-agent output list visible as a replayable chat
+  command turn before a user previews or applies a specific proposal artifact.
   Desktop `/rollback [artifact-id]` and the preview Rollback action call
   `rollback_local_proposal`, restoring the backup artifact recorded before
   apply and keeping rollback evidence in the local Structure event stream.
@@ -575,8 +578,8 @@ into runtime calls:
   file-context mechanism as CLI/TUI prompts without hand-copying paths. The UI
   renders both workspace feed events and an inspectable
   latest-run transcript from successful or failed attempts.
-  Runs inspection, worktree refresh, workspace replay, sources inspection, artifact preview, Core parity, and
-  evidence-bundle controls now append `/worktree`, `/replay`, `/artifact`,
+  Runs inspection, worktree refresh, workspace replay, sources inspection, artifacts list, artifact preview, Core parity, and
+  evidence-bundle controls now append `/worktree`, `/replay`, `/artifacts`, `/artifact`,
   `/sources`, `/parity`, `/bundle`, `/runs`, and `/workspace-events` command turns to the same chat thread, keeping
   workspace/context inspection inside the agent conversation rather than as a
   detached dashboard; those command turns use the same persisted event path as
