@@ -450,10 +450,11 @@ into runtime calls:
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
   `local_run_event_gc` preview as the CLI, keeping event visibility policy
   inspectable inside the app chat loop.
-  Desktop `/events [run-id]` and per-turn Events actions call
-  `local_run_events`, making the raw immutable run stream a first-class
+  Desktop `/events [run-id]`, the Events action, and per-turn Events actions
+  call `local_run_events`, making the raw immutable run stream a first-class
   desktop chat action instead of hiding it inside transcript inspection.
-  Per-turn Events actions are recorded as `/events <run-id>` command turns.
+  Visible and per-turn Events actions are recorded as `/events <run-id>`
+  command turns.
   Desktop `/tools [run-id]`, the Tool Trace action, and per-turn Tools actions
   call `local_run_tool_trace`, giving the app the same ordered tool-call
   explanation as the CLI/TUI without re-parsing raw events in JavaScript. The

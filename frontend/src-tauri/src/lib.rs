@@ -1139,6 +1139,11 @@ mod tests {
         assert!(local_ui.contains("function previewRunEventsForRun"));
         assert!(local_ui.contains("case \"/events\":"));
         assert!(local_ui.contains("previewRunEventsForRun(runId);"));
+        assert!(local_ui.contains("id=\"run-events\""));
+        assert!(local_ui.contains("setRunEventsBusy(true)"));
+        assert!(local_ui.contains("previewRunEventsForRun(runId, `/events ${runId}`)"));
+        assert!(local_ui
+            .contains("/events and visible Events -> selected run immutable raw event stream"));
         assert!(local_ui.contains("function renderEventGcText(preview)"));
         assert!(local_ui.contains("case \"/gc\":"));
         assert!(local_ui.contains("id=\"run-tools\""));
