@@ -1391,6 +1391,8 @@ mod tests {
         assert!(local_ui.contains("id=\"preview-apply\""));
         assert!(local_ui.contains("id=\"preview-rollback\""));
         assert!(local_ui.contains("id=\"preview-review\""));
+        assert!(local_ui.contains("id=\"preview-diff\""));
+        assert!(local_ui.contains("setDiffBusy(true)"));
         assert!(local_ui.contains("function reviewPreviewProposalRisk"));
         assert!(local_ui.contains("function rollbackPreviewProposal"));
         assert!(local_ui.contains("invoke(\"review_local_proposal\""));
@@ -1398,6 +1400,7 @@ mod tests {
         assert!(local_ui.contains("function previewProposalForRun(runId, commandInput = null)"));
         assert!(local_ui.contains("previewProposalForRun("));
         assert!(local_ui.contains("`/proposal ${state.selectedRunId}`"));
+        assert!(local_ui.contains("`/diff ${state.selectedRunId}`"));
         assert!(local_ui.contains("case \"/risk\":"));
         assert!(local_ui.contains("function reviewPreviewProposal"));
         assert!(local_ui.contains("commandInput: \"/dry-run\""));

@@ -1024,6 +1024,7 @@
             <button id="show-artifacts" type="button">Artifacts</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Selected Proposal</button>
+            <button id="preview-diff" type="button">Diff</button>
             <button id="apply-proposal" type="button">Apply Proposal</button>
             <button id="show-parity" type="button">Show Parity Report</button>
             <button id="show-bundle" type="button">Show Evidence Bundle</button>
@@ -1164,6 +1165,7 @@
       const showArtifactsEl = document.querySelector("#show-artifacts");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
+      const previewDiffEl = document.querySelector("#preview-diff");
       const applyProposalEl = document.querySelector("#apply-proposal");
       const showParityEl = document.querySelector("#show-parity");
       const showBundleEl = document.querySelector("#show-bundle");
@@ -1829,6 +1831,11 @@
       function setProposalBusy(isBusy) {
         previewProposalEl.disabled = isBusy;
         previewProposalEl.textContent = isBusy ? "Loading Proposal" : "Preview Selected Proposal";
+      }
+
+      function setDiffBusy(isBusy) {
+        previewDiffEl.disabled = isBusy;
+        previewDiffEl.textContent = isBusy ? "Loading Diff" : "Diff";
       }
 
       function setApplyProposalBusy(isBusy) {
@@ -3947,7 +3954,7 @@ Run Evidence
 Session And Proposals
 - /session, /session-continue, /session-usage -> workspace session handoff
 - /workspace-events -> cursor-based workspace event feed
-- /artifacts or visible Artifacts, /artifact, /proposal, /diff -> local artifact and proposal disclosure
+- /artifacts or visible Artifacts, /artifact, /proposal, /diff or visible Diff -> local artifact and proposal disclosure
 - /risk, /dry-run, /apply, /rollback -> review-gated code proposal loop
 
 Invariant
@@ -5687,6 +5694,19 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           eventLogEl.textContent = String(error);
         } finally {
           setProposalBusy(false);
+        }
+      });
+      previewDiffEl.addEventListener("click", async () => {
+        setDiffBusy(true);
+        try {
+          await previewProposalForRun(
+            state.selectedRunId,
+            state.selectedRunId ? `/diff ${state.selectedRunId}` : "/diff",
+          );
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+        } finally {
+          setDiffBusy(false);
         }
       });
       previewAttachEl.addEventListener("click", attachPreviewFileToPrompt);

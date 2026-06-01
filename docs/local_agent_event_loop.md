@@ -542,6 +542,9 @@ into runtime calls:
   while still reading from the Rust local runtime. Per-turn Proposal actions append
   `/proposal <run-id>` command turns while opening the selected run's code-change
   proposal in Preview.
+  The visible Diff action appends `/diff <run-id>` and opens the same selected
+  run proposal preview, keeping proposal disclosure in the chat-native flow
+  before risk review or apply.
   The per-turn Continue button uses the current composer text as an optional
   continuation instruction, matching the slash-command path while keeping
   normal chat interaction mouse-accessible. Per-turn Continue and Retry append
