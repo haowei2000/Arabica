@@ -1018,6 +1018,7 @@
             <button id="show-tasks" type="button">Tasks</button>
             <button id="poll-events" type="button">Workspace Events</button>
             <button id="show-context" type="button">Agent Context</button>
+            <button id="show-status" type="button">Session Status</button>
             <button id="show-llm" type="button">LLM Check</button>
             <button id="show-doctor" type="button">Doctor</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
@@ -1155,6 +1156,7 @@
       const showTasksEl = document.querySelector("#show-tasks");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
+      const showStatusEl = document.querySelector("#show-status");
       const showLlmEl = document.querySelector("#show-llm");
       const showDoctorEl = document.querySelector("#show-doctor");
       const previewArtifactEl = document.querySelector("#preview-artifact");
@@ -1768,6 +1770,11 @@
       function setRunToolsBusy(isBusy) {
         runToolsEl.disabled = isBusy;
         runToolsEl.textContent = isBusy ? "Loading Tools" : "Tool Trace";
+      }
+
+      function setStatusBusy(isBusy) {
+        showStatusEl.disabled = isBusy;
+        showStatusEl.textContent = isBusy ? "Loading Status" : "Session Status";
       }
 
       function setLlmBusy(isBusy) {
@@ -3874,7 +3881,7 @@ Run Loop
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
 
 Workspace Context
-- /workspace, /context, /doctor, /llm, visible LLM Check, /worktree, /parity -> pre-run health and context
+- /workspace, /context, /status, visible Session Status, /doctor, /llm, visible LLM Check, /worktree, /parity -> pre-run health and context
 - /source, /remember, /recall, /forget, /sources -> path-addressed knowledge
 - /rate -> source_rated feedback replayed into future context
 - /tasks, /task, /task-status, /task-done -> workspace/run-linked task events
@@ -5560,6 +5567,20 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           appendCommandMessage("/context", eventLogEl.textContent, "error");
         } finally {
           setContextBusy(false);
+        }
+      });
+      showStatusEl.addEventListener("click", async () => {
+        setStatusBusy(true);
+        eventLogEl.textContent = "Loading desktop session status...";
+        try {
+          const status = await localSessionStatus();
+          eventLogEl.textContent = renderSessionStatus(status);
+          appendCommandMessage("/status", eventLogEl.textContent || "Session status loaded.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          appendCommandMessage("/status", eventLogEl.textContent, "error");
+        } finally {
+          setStatusBusy(false);
         }
       });
       showLlmEl.addEventListener("click", async () => {

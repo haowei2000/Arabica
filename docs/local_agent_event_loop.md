@@ -410,7 +410,10 @@ into runtime calls:
   `/runs`, `/history`, `/rerun [n]`, `/continue [run-id] [instruction]`, `/retry [run-id]`, `/transcript`, `/search`,
   `/read`, `/source`, `/artifacts`, `/proposal`, `/diff`, `/gc`, `/tools`, `/plan`, `/compact`, `/session`, `/trace`, `/review`, `/risk`, `/dry-run`, `/apply --dry-run`, and `/rollback`, so
   desktop interaction can stay in the chat/code-agent loop instead of becoming
-  a separate operator dashboard. Desktop `/continue` calls the same Rust
+  a separate operator dashboard. Desktop `/status` and the visible Session
+  Status action call `local_session_status` and record `/status` as a command
+  turn so workspace/mode/selected-run/OPENAI state is visible without a
+  desktop-only state model. Desktop `/continue` calls the same Rust
   runtime continuation path as the CLI, creating a fresh run from the selected
   run's transcript and evidence. The per-turn Continue action records the same
   `/continue <run-id> ...` command turn after the fresh continuation attempt,
