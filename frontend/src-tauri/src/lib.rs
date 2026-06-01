@@ -1250,6 +1250,12 @@ mod tests {
         assert!(local_ui.contains("invoke(\"create_local_task\""));
         assert!(local_ui.contains("invoke(\"update_local_task_status\""));
         assert!(local_ui.contains("function renderDoctorText(status, diagnostic, parity)"));
+        assert!(local_ui.contains("function renderLlmDiagnostic(diagnostic)"));
+        assert!(local_ui.contains("case \"/llm\":"));
+        assert!(local_ui.contains("id=\"show-llm\""));
+        assert!(local_ui.contains("setLlmBusy(true)"));
+        assert!(local_ui.contains("appendCommandMessage(\"/llm\""));
+        assert!(local_ui.contains("/workspace, /context, /doctor, /llm, visible LLM Check"));
         assert!(local_ui.contains("case \"/doctor\":"));
         assert!(local_ui.contains("id=\"show-doctor\""));
         assert!(local_ui.contains("setDoctorBusy(true)"));

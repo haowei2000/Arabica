@@ -1018,6 +1018,7 @@
             <button id="show-tasks" type="button">Tasks</button>
             <button id="poll-events" type="button">Workspace Events</button>
             <button id="show-context" type="button">Agent Context</button>
+            <button id="show-llm" type="button">LLM Check</button>
             <button id="show-doctor" type="button">Doctor</button>
             <button id="preview-artifact" type="button">Preview Latest Artifact</button>
             <button id="preview-proposal" type="button">Preview Selected Proposal</button>
@@ -1154,6 +1155,7 @@
       const showTasksEl = document.querySelector("#show-tasks");
       const pollEventsEl = document.querySelector("#poll-events");
       const showContextEl = document.querySelector("#show-context");
+      const showLlmEl = document.querySelector("#show-llm");
       const showDoctorEl = document.querySelector("#show-doctor");
       const previewArtifactEl = document.querySelector("#preview-artifact");
       const previewProposalEl = document.querySelector("#preview-proposal");
@@ -1766,6 +1768,11 @@
       function setRunToolsBusy(isBusy) {
         runToolsEl.disabled = isBusy;
         runToolsEl.textContent = isBusy ? "Loading Tools" : "Tool Trace";
+      }
+
+      function setLlmBusy(isBusy) {
+        showLlmEl.disabled = isBusy;
+        showLlmEl.textContent = isBusy ? "Checking LLM" : "LLM Check";
       }
 
       function setCheckpointBusy(isBusy) {
@@ -3867,7 +3874,7 @@ Run Loop
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
 
 Workspace Context
-- /workspace, /context, /doctor, /llm, /worktree, /parity -> pre-run health and context
+- /workspace, /context, /doctor, /llm, visible LLM Check, /worktree, /parity -> pre-run health and context
 - /source, /remember, /recall, /forget, /sources -> path-addressed knowledge
 - /rate -> source_rated feedback replayed into future context
 - /tasks, /task, /task-status, /task-done -> workspace/run-linked task events
@@ -5553,6 +5560,20 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           appendCommandMessage("/context", eventLogEl.textContent, "error");
         } finally {
           setContextBusy(false);
+        }
+      });
+      showLlmEl.addEventListener("click", async () => {
+        setLlmBusy(true);
+        eventLogEl.textContent = "Checking configured LLM API...";
+        try {
+          const diagnostic = await localLlmDiagnostic();
+          eventLogEl.textContent = renderLlmDiagnostic(diagnostic);
+          appendCommandMessage("/llm", eventLogEl.textContent || "LLM check completed.");
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          appendCommandMessage("/llm", eventLogEl.textContent, "error");
+        } finally {
+          setLlmBusy(false);
         }
       });
       showDoctorEl.addEventListener("click", async () => {
