@@ -1126,7 +1126,12 @@ mod tests {
         assert!(local_ui.contains("function renderCommandMessages(messages)"));
         assert!(local_ui.contains("renderChat(turns);"));
         assert!(local_ui.contains("recordLocalCommandTurn(input, output, status).catch"));
-        assert!(local_ui.contains("/history -> persisted chat/code-agent turns"));
+        assert!(local_ui.contains("id=\"show-history\""));
+        assert!(local_ui.contains("setHistoryBusy(true)"));
+        assert!(local_ui.contains("previewChatHistory(\"/history\")"));
+        assert!(local_ui.contains(
+            "/history or visible History -> persisted chat/code-agent turns from local run events"
+        ));
         assert!(local_ui.contains("function renderUsageText(evidence)"));
         assert!(local_ui.contains("function previewRunUsageForRun"));
         assert!(local_ui.contains("case \"/usage\":"));

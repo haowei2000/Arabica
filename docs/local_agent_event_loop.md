@@ -277,9 +277,10 @@ into runtime calls:
   `/context` renders the same Rust-built context snapshot used before model
   planning: workspace id, mode, AGENTS instructions, git worktree, knowledge
   sources, and replayed assistant turns.
-  `/history` renders persisted chat/code-agent turns from
-  `LocalAgentRuntime::chat_turns`, so session recall is grounded in stored
-  Structure runs rather than a separate terminal buffer. `/rerun [n]` selects
+  `/history` and the desktop History action render persisted chat/code-agent
+  turns from `LocalAgentRuntime::chat_turns`, so session recall is grounded in
+  stored Structure runs rather than a separate terminal buffer. The visible
+  History action is recorded as a `/history` command turn. `/rerun [n]` selects
   one of those persisted history prompts and starts a fresh Structure local run
   through `run_prompt_attempt`, while the `/rerun` command itself is recorded as
   a `command_turn_recorded` workspace event.

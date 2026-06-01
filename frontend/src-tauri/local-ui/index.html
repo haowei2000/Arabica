@@ -1002,6 +1002,7 @@
             <button id="session-continue" type="button">Session Continue</button>
             <button id="session-usage" type="button">Session Usage</button>
             <button id="show-runs" type="button">Runs</button>
+            <button id="show-history" type="button">History</button>
             <button id="run-transcript" type="button">Transcript</button>
             <button id="run-status" type="button">Run Status</button>
             <button id="run-usage" type="button">Usage</button>
@@ -1137,6 +1138,7 @@
       const sessionContinueEl = document.querySelector("#session-continue");
       const sessionUsageEl = document.querySelector("#session-usage");
       const showRunsEl = document.querySelector("#show-runs");
+      const showHistoryEl = document.querySelector("#show-history");
       const runTranscriptEl = document.querySelector("#run-transcript");
       const runStatusEl = document.querySelector("#run-status");
       const runUsageEl = document.querySelector("#run-usage");
@@ -1709,6 +1711,11 @@
       function setRunsBusy(isBusy) {
         showRunsEl.disabled = isBusy;
         showRunsEl.textContent = isBusy ? "Loading Runs" : "Runs";
+      }
+
+      function setHistoryBusy(isBusy) {
+        showHistoryEl.disabled = isBusy;
+        showHistoryEl.textContent = isBusy ? "Loading History" : "History";
       }
 
       function setRunTranscriptBusy(isBusy) {
@@ -3854,7 +3861,7 @@ Selected run: ${state.selectedRunId ?? state.runs[0]?.run_id ?? "none"}
 Run Loop
 - prompt text -> local_agent_run_attempt -> Structure run events
 - /runs or visible Runs -> recent Structure runs from local runtime
-- /history -> persisted chat/code-agent turns from local run events
+- /history or visible History -> persisted chat/code-agent turns from local run events
 - /rerun [n] or per-turn Rerun -> fresh run from a persisted history prompt
 - /continue, /resume, /retry -> fresh runs from selected transcript/evidence
 - /mode chat|code -> switch chat/code_agent on the same runtime contract
@@ -5358,6 +5365,14 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewRuns("/runs");
         } finally {
           setRunsBusy(false);
+        }
+      });
+      showHistoryEl.addEventListener("click", async () => {
+        setHistoryBusy(true);
+        try {
+          await previewChatHistory("/history");
+        } finally {
+          setHistoryBusy(false);
         }
       });
       runTranscriptEl.addEventListener("click", async () => {
