@@ -58,6 +58,7 @@ enum Command {
     Continue(ContinueArgs),
     Retry(RetryArgs),
     Inspect(RunTranscriptArgs),
+    RunStatus(RunStatusArgs),
     Runs {
         #[command(subcommand)]
         command: RunsCommand,
@@ -627,6 +628,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Continue(args) => run_continue_agent(&repo_root, args)?,
         Command::Retry(args) => run_retry_agent(&repo_root, args)?,
         Command::Inspect(args) => run_inspect(&repo_root, args)?,
+        Command::RunStatus(args) => run_run_status_alias(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
         Command::Workspace { command } => run_workspace(&repo_root, command)?,
         Command::Tasks { command } => run_tasks(&repo_root, command)?,
@@ -2582,6 +2584,17 @@ fn run_inspect(repo_root: &PathBuf, args: RunTranscriptArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_run_status_alias(repo_root: &PathBuf, args: RunStatusArgs) -> Result<()> {
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let status = local_result(runtime.run_status_snapshot(&args.run_id))?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        print_run_status_snapshot(&status);
+    }
+    Ok(())
+}
+
 fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
     let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
     match command {
@@ -3185,6 +3198,18 @@ mod tests {
 
         let Command::Inspect(args) = cli.command else {
             panic!("expected top-level inspect command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_run_status_alias_accepts_run_id_and_json_output() {
+        let cli =
+            Cli::try_parse_from(["structure-local", "run-status", "run_1", "--json"]).unwrap();
+
+        let Command::RunStatus(args) = cli.command else {
+            panic!("expected top-level run-status command");
         };
         assert_eq!(args.run_id, "run_1");
         assert!(args.json);
