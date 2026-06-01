@@ -57,6 +57,7 @@ enum Command {
     Run(RunArgs),
     Continue(ContinueArgs),
     Retry(RetryArgs),
+    Inspect(RunTranscriptArgs),
     Runs {
         #[command(subcommand)]
         command: RunsCommand,
@@ -625,6 +626,7 @@ pub(crate) fn run() -> Result<()> {
         Command::Run(args) => run_local_agent(&repo_root, args)?,
         Command::Continue(args) => run_continue_agent(&repo_root, args)?,
         Command::Retry(args) => run_retry_agent(&repo_root, args)?,
+        Command::Inspect(args) => run_inspect(&repo_root, args)?,
         Command::Runs { command } => run_runs(&repo_root, command)?,
         Command::Workspace { command } => run_workspace(&repo_root, command)?,
         Command::Tasks { command } => run_tasks(&repo_root, command)?,
@@ -2569,6 +2571,17 @@ fn run_runs(repo_root: &PathBuf, command: RunsCommand) -> Result<()> {
     Ok(())
 }
 
+fn run_inspect(repo_root: &PathBuf, args: RunTranscriptArgs) -> Result<()> {
+    let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
+    let transcript = local_result(runtime.run_transcript(&args.run_id))?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&transcript)?);
+    } else {
+        print_run_transcript(&transcript);
+    }
+    Ok(())
+}
+
 fn run_workspace(repo_root: &PathBuf, command: WorkspaceCommand) -> Result<()> {
     let runtime = local_result(LocalAgentRuntime::open(repo_root))?;
     match command {
@@ -3161,6 +3174,17 @@ mod tests {
         } = cli.command
         else {
             panic!("expected runs status command");
+        };
+        assert_eq!(args.run_id, "run_1");
+        assert!(args.json);
+    }
+
+    #[test]
+    fn cli_inspect_alias_accepts_run_id_and_json_output() {
+        let cli = Cli::try_parse_from(["structure-local", "inspect", "run_1", "--json"]).unwrap();
+
+        let Command::Inspect(args) = cli.command else {
+            panic!("expected top-level inspect command");
         };
         assert_eq!(args.run_id, "run_1");
         assert!(args.json);

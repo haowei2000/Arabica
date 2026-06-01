@@ -255,6 +255,11 @@ into runtime calls:
 - CLI doctor: `uv run structure doctor --workspace <id> --mode code_agent
   --json` combines the local snapshot, real `OPENAI__` diagnostic, Structure
   Core parity report, and assembled agent context as a pre-run health gate.
+- CLI quick inspect: `uv run structure inspect <run-id> --json` is a top-level
+  alias over the same Rust `run_transcript` evidence path as
+  `uv run structure runs inspect <run-id> --json`, so agent-terminal users can
+  reopen a run's transcript, events, evidence, and response without navigating
+  a nested command group.
 - CLI session inspection: inside `uv run structure chat`, `/help` and `/map`
   render a grouped agent command map for run loop, workspace context, run
   evidence, session, and proposal actions while keeping benchmark work outside
