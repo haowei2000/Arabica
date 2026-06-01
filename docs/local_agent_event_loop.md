@@ -488,10 +488,11 @@ into runtime calls:
   call `local_workspace_usage`, showing the same session-level model, token,
   tool, artifact, and Core totals as CLI/TUI; the visible action is recorded as
   a `/session-usage` command turn.
-  Desktop `/trace [run-id]` and per-turn Trace actions call
-  `local_run_core_trace`, giving the app the same Structure Core flow/primitive
-  path as CLI/TUI without introducing a desktop scheduler concept. Per-turn
-  Trace actions are recorded as `/trace <run-id>` command turns.
+  Desktop `/trace [run-id]`, the Core Trace action, and per-turn Trace actions
+  call `local_run_core_trace`, giving the app the same Structure Core
+  flow/primitive path as CLI/TUI without introducing a desktop scheduler
+  concept. Visible and per-turn Trace actions are recorded as
+  `/trace <run-id>` command turns.
   Desktop `/review [run-id]`, the Review action, and per-turn Review actions
   call `local_run_review`, giving the app the same compact attempt review and
   next-action guidance as CLI/TUI. The visible Review action is recorded as a

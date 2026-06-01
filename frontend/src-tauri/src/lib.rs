@@ -1193,6 +1193,11 @@ mod tests {
         assert!(local_ui.contains("case \"/trace\":"));
         assert!(local_ui.contains("invoke(\"local_run_core_trace\""));
         assert!(local_ui.contains("function previewRunCoreTraceForRun"));
+        assert!(local_ui.contains("id=\"run-trace\""));
+        assert!(local_ui.contains("setRunTraceBusy(true)"));
+        assert!(local_ui.contains("previewRunCoreTraceForRun(runId, `/trace ${runId}`)"));
+        assert!(local_ui
+            .contains("/trace and visible Core Trace -> Structure Core flow/primitive path"));
         assert!(local_ui.contains("trace.textContent = \"Trace\""));
         assert!(
             local_ui.contains("previewRunCoreTraceForRun(turn.run_id, `/trace ${turn.run_id}`)")
