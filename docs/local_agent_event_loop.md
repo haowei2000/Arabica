@@ -443,9 +443,10 @@ into runtime calls:
   calling `local_run_transcript` before updating the selected run and event
   timeline; visible Transcript actions are recorded as
   `/transcript <run-id>` command turns.
-  Desktop `/usage [run-id]` and per-turn Usage actions mirror the CLI
-  model-call shortcut and render the same `model_usage` evidence summary from
-  Rust. Per-turn Usage actions are recorded as `/usage <run-id>` command turns.
+  Desktop `/usage [run-id]`, the Usage action, and per-turn Usage actions
+  mirror the CLI model-call shortcut and render the same `model_usage` evidence
+  summary from Rust. Visible and per-turn Usage actions are recorded as
+  `/usage <run-id>` command turns.
   Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
   `local_run_event_gc` preview as the CLI, keeping event visibility policy
   inspectable inside the app chat loop.

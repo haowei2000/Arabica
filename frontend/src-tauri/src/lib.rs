@@ -1131,6 +1131,11 @@ mod tests {
         assert!(local_ui.contains("function previewRunUsageForRun"));
         assert!(local_ui.contains("case \"/usage\":"));
         assert!(local_ui.contains("previewRunUsageForRun(runId);"));
+        assert!(local_ui.contains("id=\"run-usage\""));
+        assert!(local_ui.contains("setRunUsageBusy(true)"));
+        assert!(local_ui.contains("previewRunUsageForRun(runId, `/usage ${runId}`)"));
+        assert!(local_ui
+            .contains("/usage and visible Usage -> model usage and Core-alignment evidence"));
         assert!(local_ui.contains("function previewRunEventsForRun"));
         assert!(local_ui.contains("case \"/events\":"));
         assert!(local_ui.contains("previewRunEventsForRun(runId);"));

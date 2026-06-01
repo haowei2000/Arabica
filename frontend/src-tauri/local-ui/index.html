@@ -1004,6 +1004,7 @@
             <button id="show-runs" type="button">Runs</button>
             <button id="run-transcript" type="button">Transcript</button>
             <button id="run-status" type="button">Run Status</button>
+            <button id="run-usage" type="button">Usage</button>
             <button id="run-plan" type="button">Plan</button>
             <button id="run-review" type="button">Review</button>
             <button id="run-trace" type="button">Core Trace</button>
@@ -1135,6 +1136,7 @@
       const showRunsEl = document.querySelector("#show-runs");
       const runTranscriptEl = document.querySelector("#run-transcript");
       const runStatusEl = document.querySelector("#run-status");
+      const runUsageEl = document.querySelector("#run-usage");
       const runPlanEl = document.querySelector("#run-plan");
       const runReviewEl = document.querySelector("#run-review");
       const runTraceEl = document.querySelector("#run-trace");
@@ -1711,6 +1713,11 @@
       function setRunStatusBusy(isBusy) {
         runStatusEl.disabled = isBusy;
         runStatusEl.textContent = isBusy ? "Loading Status" : "Run Status";
+      }
+
+      function setRunUsageBusy(isBusy) {
+        runUsageEl.disabled = isBusy;
+        runUsageEl.textContent = isBusy ? "Loading Usage" : "Usage";
       }
 
       function setRunPlanBusy(isBusy) {
@@ -3827,6 +3834,7 @@ Workspace Context
 Run Evidence
 - /transcript, /inspect, and visible Transcript -> selected run transcript inspection
 - /run-status, /events -> selected run status and raw event inspection
+- /usage and visible Usage -> model usage and Core-alignment evidence
 - /plan and visible Plan -> event-derived agent progress view
 - /review and visible Review -> post-run attempt review and next actions
 - /trace and visible Core Trace -> Structure Core flow/primitive path
@@ -5338,6 +5346,19 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewRunStatusForRun(runId, `/run-status ${runId}`);
         } finally {
           setRunStatusBusy(false);
+        }
+      });
+      runUsageEl.addEventListener("click", async () => {
+        const runId = state.selectedRunId ?? state.runs[0]?.run_id;
+        if (!runId) {
+          eventLogEl.textContent = "No run selected.";
+          return;
+        }
+        setRunUsageBusy(true);
+        try {
+          await previewRunUsageForRun(runId, `/usage ${runId}`);
+        } finally {
+          setRunUsageBusy(false);
         }
       });
       runPlanEl.addEventListener("click", async () => {
