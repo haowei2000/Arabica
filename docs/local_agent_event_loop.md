@@ -447,9 +447,10 @@ into runtime calls:
   mirror the CLI model-call shortcut and render the same `model_usage` evidence
   summary from Rust. Visible and per-turn Usage actions are recorded as
   `/usage <run-id>` command turns.
-  Desktop `/gc [run-id] [retain-last]` calls the same non-destructive
-  `local_run_event_gc` preview as the CLI, keeping event visibility policy
-  inspectable inside the app chat loop.
+  Desktop `/gc [run-id] [retain-last]` and the Event GC action call the same
+  non-destructive `local_run_event_gc` preview as the CLI, keeping event
+  visibility policy inspectable inside the app chat loop. The visible Event GC
+  action is recorded as a `/gc <run-id>` command turn.
   Desktop `/events [run-id]`, the Events action, and per-turn Events actions
   call `local_run_events`, making the raw immutable run stream a first-class
   desktop chat action instead of hiding it inside transcript inspection.

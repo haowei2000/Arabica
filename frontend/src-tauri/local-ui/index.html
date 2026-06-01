@@ -1010,6 +1010,7 @@
             <button id="run-review" type="button">Review</button>
             <button id="run-trace" type="button">Core Trace</button>
             <button id="run-compact" type="button">Compact</button>
+            <button id="run-gc" type="button">Event GC</button>
             <button id="run-tools" type="button">Tool Trace</button>
             <button id="command-map" type="button">Command Map</button>
             <button id="record-checkpoint" type="button">Record Decision</button>
@@ -1144,6 +1145,7 @@
       const runReviewEl = document.querySelector("#run-review");
       const runTraceEl = document.querySelector("#run-trace");
       const runCompactEl = document.querySelector("#run-compact");
+      const runGcEl = document.querySelector("#run-gc");
       const runToolsEl = document.querySelector("#run-tools");
       const commandMapEl = document.querySelector("#command-map");
       const recordCheckpointEl = document.querySelector("#record-checkpoint");
@@ -1747,6 +1749,11 @@
       function setRunCompactBusy(isBusy) {
         runCompactEl.disabled = isBusy;
         runCompactEl.textContent = isBusy ? "Loading Compact" : "Compact";
+      }
+
+      function setRunGcBusy(isBusy) {
+        runGcEl.disabled = isBusy;
+        runGcEl.textContent = isBusy ? "Loading GC" : "Event GC";
       }
 
       function setRunToolsBusy(isBusy) {
@@ -3391,6 +3398,20 @@ ${events.map((event) => `#${event.sequence} ${event.kind} / ${event.canonical_fl
         }
       }
 
+      async function previewRunEventGcForRun(runId, retainLast = null, commandInput = null) {
+        eventLogEl.textContent = "Loading event GC preview...";
+        try {
+          const preview = await localRunEventGc(runId, retainLast);
+          eventLogEl.textContent = renderEventGcText(preview);
+          if (commandInput) {
+            appendCommandMessage(commandInput, eventLogEl.textContent || "Event GC preview loaded.");
+          }
+        } catch (error) {
+          eventLogEl.textContent = String(error);
+          if (commandInput) appendCommandMessage(commandInput, eventLogEl.textContent, "error");
+        }
+      }
+
       async function previewRunToolTraceForRun(runId, commandInput = null) {
         eventLogEl.textContent = "Loading tool trace...";
         try {
@@ -3854,8 +3875,9 @@ Run Evidence
 - /review and visible Review -> post-run attempt review and next actions
 - /trace and visible Core Trace -> Structure Core flow/primitive path
 - /compact and visible Compact -> continuation-ready run context boundary
+- /gc and visible Event GC -> non-destructive event visibility preview
 - /tools -> event-derived agent reasoning views
-- /evidence, /bundle, /gc -> continuation and audit boundaries
+- /evidence, /bundle -> continuation and audit boundaries
 - /checkpoint, /decision -> human feedback replayed into continuation context
 
 Session And Proposals
@@ -5440,6 +5462,19 @@ Stderr truncated: ${result.output.stderr_truncated}`;
           await previewRunCompactForRun(runId, `/compact ${runId}`);
         } finally {
           setRunCompactBusy(false);
+        }
+      });
+      runGcEl.addEventListener("click", async () => {
+        const runId = state.selectedRunId ?? state.runs[0]?.run_id;
+        if (!runId) {
+          eventLogEl.textContent = "No run selected.";
+          return;
+        }
+        setRunGcBusy(true);
+        try {
+          await previewRunEventGcForRun(runId, null, `/gc ${runId}`);
+        } finally {
+          setRunGcBusy(false);
         }
       });
       runToolsEl.addEventListener("click", async () => {

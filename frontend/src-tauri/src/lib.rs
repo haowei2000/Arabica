@@ -1146,6 +1146,12 @@ mod tests {
             .contains("/events and visible Events -> selected run immutable raw event stream"));
         assert!(local_ui.contains("function renderEventGcText(preview)"));
         assert!(local_ui.contains("case \"/gc\":"));
+        assert!(local_ui.contains("function previewRunEventGcForRun"));
+        assert!(local_ui.contains("id=\"run-gc\""));
+        assert!(local_ui.contains("setRunGcBusy(true)"));
+        assert!(local_ui.contains("previewRunEventGcForRun(runId, null, `/gc ${runId}`)"));
+        assert!(local_ui
+            .contains("/gc and visible Event GC -> non-destructive event visibility preview"));
         assert!(local_ui.contains("id=\"run-tools\""));
         assert!(local_ui.contains("setRunToolsBusy(true)"));
         assert!(local_ui.contains("function previewRunToolTraceForRun"));
