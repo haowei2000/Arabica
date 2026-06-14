@@ -101,7 +101,7 @@ jobs:
         run: uv run pytest tests/unit/ --cov=src/structure --cov-report=xml -q
 
       - name: Upload coverage report
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         if: always()
         with:
           files: coverage.xml
