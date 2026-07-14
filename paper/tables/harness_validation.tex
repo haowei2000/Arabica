@@ -1,0 +1,21 @@
+\begin{table}[t]
+    \centering
+    \small
+    \begin{tabular}{p{0.46\columnwidth}rll}
+        \toprule
+        Validation step & Cases/tests & Score/pass & Tokens \\
+        \midrule
+        Benchmark unit tests & 54 & 54 passed & -- \\
+        Open-source fixture integration & 4 & 4 passed & -- \\
+        LoCoMo FullText fixture & 3 & 1.0000 & 118 \\
+        LoCoMo NaiveRAG fixture & 3 & 1.0000 & 118 \\
+        LongMemEval FullText fixture & 4 & 0.7500 & 150 \\
+        LongMemEval NaiveRAG fixture & 4 & 0.7500 & 150 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Offline harness validation run on 2026-06-24. These
+    checks validate adapters, deterministic scorers, fixture wiring,
+    and paper-table synchronization; they are not reported as live
+    model performance.}
+    \label{tab:harness-validation}
+\end{table}

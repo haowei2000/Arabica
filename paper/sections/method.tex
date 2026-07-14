@@ -5,14 +5,17 @@
 
 We consider an agent $\pi_\theta$ that interacts with an environment
 over discrete steps $t = 1, 2, \dots, T$. At each step the agent
-observes a state $s_t$, consults a context layer $\mathcal{C}_t$,
-produces an action $a_t$ (a natural-language response, a tool call,
-or a context operation), and updates both the environment and the
-context. A \emph{context layer} is a pair $(\mathcal{K}, \mathcal{Q})$
-where $\mathcal{K}$ is a set of keyed entries and $\mathcal{Q}$ is a
-set of query operators. In a flat history, $\mathcal{K}$ is a totally
-ordered sequence and $\mathcal{Q}$ is concatenation. In vector RAG,
-$\mathcal{K}$ is embedded and $\mathcal{Q}$ is top-$k$ similarity.
+observes a state $s_t$, consults a context--memory layer
+$\mathcal{C}_t$, produces an action $a_t$ (a natural-language response,
+a tool call, or a context operation), and updates both the environment
+and the layer. A \emph{context--memory layer} is a pair
+$(\mathcal{K}, \mathcal{Q})$ where $\mathcal{K}$ is a set of keyed
+entries and $\mathcal{Q}$ is a set of query operators. Entries may be
+short-lived working context, long-term memory, tool metadata, retrieved
+knowledge, artifacts, tasks, or audit evidence; the layer manages them
+through one uniform interface. In a flat history, $\mathcal{K}$ is a
+totally ordered sequence and $\mathcal{Q}$ is concatenation. In vector
+RAG, $\mathcal{K}$ is embedded and $\mathcal{Q}$ is top-$k$ similarity.
 We take $\mathcal{K}$ to be a forest of hierarchical paths and let
 $\mathcal{Q}$ include exact lookup, prefix scan, glob match, and
 semantic search, each parameterised by a disclosure level.
@@ -27,15 +30,19 @@ a flat-history baseline.
 \subsection{Overview}
 \label{sec:overview}
 
-\textsc{Structure} has three layers. An \emph{addressing layer} maps
-every durable state to a path such as
-\texttt{/tools/web\_search/schema} or
+\textsc{Structure} implements prompt construction as a materialisation
+contract over two stores. Durable entries form the candidate set for
+long-context disclosure; typed events form the candidate set for
+short-context visibility. The system has three implementation layers. An
+\emph{addressing layer} maps every managed long-context item to a path
+such as \texttt{/tools/web\_search/schema} or
 \texttt{/knowledge/python\_guide/chapter\_3}. A \emph{disclosure layer}
 exposes each entry at three levels via a uniform \texttt{disclose}
 method. An \emph{audit layer} emits every mutation as an immutable
-event on a log that backs both real-time streaming and deterministic
-replay. The three layers are orthogonal: an entry has a path, can be
-disclosed, and is audited regardless of which concrete store holds it.
+event on a log that backs both real-time streaming, short-context
+compression, and deterministic replay. The three layers are
+orthogonal: an entry has a path, can be disclosed, and is audited
+regardless of which concrete store holds it.
 
 % \begin{figure}[t]
 %     \centering
@@ -47,6 +54,57 @@ disclosed, and is audited regardless of which concrete store holds it.
 %     published to the audit log.}
 %     \label{fig:overview}
 % \end{figure}
+
+\subsection{Context Materialisation Contract}
+\label{sec:long_short_context}
+
+The central design choice in \textsc{Structure} is not that agents need
+retrieval, history, tools, or memory; those are already standard. The
+contribution is a reproducible rule for combining them into the prompt.
+
+\paragraph{Long-context candidates.}
+Any state that may be useful beyond the current plan--act cycle is
+stored as an addressable entry. This includes retrieved documents
+(\texttt{/knowledge/...}), durable conversation facts
+(\texttt{/memory/...}), tool schemas and usage notes
+(\texttt{/tools/...}), generated files (\texttt{/artifacts/...}), task
+state (\texttt{/tasks/...}), and run observations
+(\texttt{/runs/<id>/observations/...}). The source does not determine
+the interface: a RAG chunk, a history summary, and a tool schema are
+all queried by path, prefix, glob, or semantic search and are all
+materialised through \textsc{glance}, \textsc{overview}, or
+\textsc{detail}. These entries are candidates for the prompt, not
+automatic prompt content.
+
+\paragraph{Short-context visibility.}
+Events are the unit of short context. Each user message, assistant
+reply, tool call, tool result, retrieval, source rating, and artifact
+mutation is written to the append-only log with
+a type, timestamp, sequence number, and payload. Before every model
+step, a materialiser constructs the visible short context in four
+passes: (1) keep pinned anchors such as the opening task, explicit user
+constraints, final decisions, and artifact mutations; (2) keep recent
+plan--act events whose type-specific TTL has not expired; (3) drop
+noise events such as token deltas, heartbeats, and superseded
+intermediate traces; and (4) protect a recency floor of the most
+recent $k$ events regardless of type. The unpinned portion of the
+result is bounded by the TTL policy, while pinned anchors accumulate
+for the life of the run, so the working context grows with durable
+milestones rather than with the full trajectory.
+
+\paragraph{Prompt assembly.}
+At step $t$, the prompt is assembled from
+$M_t = \mathrm{gc}(\mathcal{E}, t, \Pi) \cup
+\mathrm{select}(\mathcal{K}, q_t, \ell_t)$, where
+$\mathrm{gc}$ returns the compressed event slice and
+$\mathrm{select}$ returns long-context entries from the path space at
+disclosure level $\ell_t$. Thus the paper's testable object is the
+materialiser: which events remain visible, which path entries are
+selected, and at what disclosure level.
+Expired short-context events are not lost: because they remain in the
+log, later executors can summarise, pin, or replay them, and
+evaluators can reconstruct the exact prompt from the event policy and
+path selections.
 
 \subsection{Path-Addressable Context}
 \label{sec:component_a}
@@ -158,14 +216,19 @@ negative = misleading, zero = neutral). Each call emits a
 $(\text{rating\_sum}, \text{rating\_count})$ on the entry, from which the
 mean $\bar r$ is derived.
 
-Retrieval uses $\bar r$ in two ways. At the filter stage, a threshold
-$\tau$ can be applied (\texttt{glob} and \texttt{search} accept a
-minimum rating), discarding entries the agent or prior runs have
-consistently judged harmful. At the ranking stage, a convex combination
+The write path above --- the rating operation, the
+\textsc{context.rated} event, and the denormalised aggregate --- is
+what the released platform implements. The read path is specified as
+part of the contract and consumes $\bar r$ in two ways. At the filter
+stage, a threshold $\tau$ discards entries the agent or prior runs
+have consistently judged harmful. At the ranking stage, a convex
+combination
 $s = \alpha \cdot s_\text{sim} + (1 - \alpha) \cdot \bar r$ blends
 semantic similarity $s_\text{sim}$ with the rating mean, where
 $\alpha \in [0, 1]$ is a per-query hyperparameter defaulting to
-$\alpha = 0.7$. Because ratings are event-sourced, the per-step state is
+$\alpha = 0.7$; the rating ablation (\S\ref{sec:results}) evaluates
+this read path against a no-rating arm.
+Because ratings are event-sourced, the per-step state is
 reproducible: replaying events up to step $t$ reconstructs the exact
 $\bar r$ the agent saw at that step. The mechanism is closest in spirit
 to the reflection tokens of Self-RAG \citep{asai2024selfrag} and the
@@ -180,31 +243,44 @@ Even with multi-level disclosure, an agent's working context grows with
 each step: every tool call, every intermediate thought, every retrieval
 result produces events. Without pruning, the prompt either exceeds the
 window or pushes high-value turns into the middle-of-context
-\citep{liu2024lostmiddle}. Blind truncation by age loses artefacts;
-summarisation hides structure.
+\citep{liu2024lostmiddle}. Blind truncation by age loses artifacts;
+free-form summarisation hides structure.
 
 We introduce an in-loop garbage collector parameterised by an
 \emph{event time-to-live} (TTL) per event type. The collector is a pure
 function $\mathrm{gc}(\mathcal{E}, t, \Pi) \to \mathcal{E}_{\text{live}}$
 that takes a sequence of events $\mathcal{E}$, the current step $t$, and
-a policy $\Pi: \mathcal{T} \to (\text{steps}, \text{seconds}, \text{pin})$
+a policy $\Pi: \mathcal{T} \to (\text{ttl}, \text{pin})$
 defined over event types $\mathcal{T}$, and returns the subset still
-visible. An event $e$ of type $\tau$ with step index $t_e$ is kept iff
-$\Pi(\tau).\text{pin}$ is true, or $t - t_e \leq \Pi(\tau).\text{steps}$
-and $(\text{now} - e.\text{created\_at}) \leq \Pi(\tau).\text{seconds}$.
+visible. An event $e$ of type $\tau$ ages by the events that arrive
+after it: each newer event contributes a decay increment (default
+$1$), and type-specific decay rules let designated successors age an
+event faster --- for example, a \texttt{tool.result} adds $3$ to the
+decay of the preceding \texttt{tool.call}, so answered calls expire
+promptly. $e$ is kept iff $\Pi(\tau).\text{pin}$ is true, its
+accumulated decay is at most $\Pi(\tau).\text{ttl}$, or it falls
+within a recency floor that keeps the most recent $k$ events
+unconditionally ($k{=}100$ per run, $k{=}500$ per workspace by
+default).
 Crucially, events are \emph{not} deleted from storage; only their
 visibility to the agent is gated, so the audit log and offline replay
 remain exact.
 
-The default policy (Appendix, Table~\ref{tab:tools}) pins the opening
-user message, agent replies, and artefact mutations for the life of the
-run; gives tool calls and results a short step-TTL of roughly the width
-of a single plan--act cycle; and assigns zero-step TTLs to
-high-frequency noise events (tokens, heartbeats) so they never enter
-the prompt. Executors may override any entry of $\Pi$ per run. In the
+The default policy (Appendix, Table~\ref{tab:ttl}) pins user and
+assistant messages, run lifecycle milestones, artifact mutations, task
+completions, and system errors for the life of the run;
+gives tool calls and results a short event-TTL of roughly the width of
+a single plan--act cycle; and assigns zero TTLs to high-frequency
+noise events (tokens, heartbeats) so they never enter the prompt. When
+a span has expired but remains semantically useful, an executor can
+promote it: write a structured summary as a long-context entry under
+the run's path (via the ordinary \texttt{create} operator) and let
+disclosure bring it back at \textsc{glance} level. The collector
+itself performs no summarisation.
+Executors may override any entry of $\Pi$ per run. In the
 pathological case where all events are pinned the collector degenerates
 to the flat-history baseline; in the other extreme all but user and
-artefact events expire immediately, approximating a ReAct-style
+artifact events expire immediately, approximating a ReAct-style
 stateless loop \citep{yao2023react}. Everything between those endpoints
 is configuration.
 
@@ -218,10 +294,15 @@ tool and trains the policy end-to-end with a trajectory-segmented RL
 objective (DCPO), reaching $51\%$ context reduction on Qwen2.5-14B.
 Context-Folding \citep{sun2025contextfolding} and AgentFold
 \citep{ye2025agentfold} fold entire sub-trajectories into summary
-nodes, using RL and SFT respectively. All four operate on the
+nodes, using RL and SFT respectively. MemAgent
+\citep{yu2025memagent} optimises a segment-reading and memory-overwrite
+workflow for extreme long-context QA, demonstrating that learned memory
+policies can extend effective context length when retraining is
+available. All five operate on the
 \emph{time} axis of a single trajectory and \emph{destructively} rewrite
 it, either paying a per-step LLM call (AgentDiet, MemAct) or a
-model-specific training cost (MemAct, Context-Folding, AgentFold).
+model-specific training cost (MemAct, Context-Folding, AgentFold,
+MemAgent).
 Our collector occupies a different point in the design space: it
 operates on the \emph{address} axis of a persistent workspace via a
 \emph{declarative, zero-compute} function whose output is a visibility
@@ -230,9 +311,9 @@ every $\mathrm{gc}$ result at step $t$ is byte-exactly reproducible
 from the configuration $\Pi$ alone, and any expired event remains
 available to a later disclosure or replay. We view the learned-policy
 methods above as candidates to be layered \emph{on top of} our
-substrate --- a trained pruner can emit \texttt{event.pin} or
-\texttt{event.expire} events into the log, combining policy quality
-with auditability.
+substrate --- a trained pruner or memory-overwrite policy can express
+its pin, expire, and summarise decisions as first-class events on the
+same log, combining policy quality with auditability.
 
 \subsection{Event-Sourced Audit Layer}
 \label{sec:component_c}
@@ -268,12 +349,11 @@ determines token cost.
 
 We implement \textsc{Structure} as a Python service with an async
 FastAPI surface, a PostgreSQL-backed store (pgvector for embeddings),
-and a Redis Streams event bus. Eleven first-class tools expose the
+and a Redis Streams event bus. Ten first-class tools expose the
 operators above to the agent: \texttt{glance}, \texttt{list},
 \texttt{tree}, \texttt{glob}, \texttt{read}, \texttt{search},
-\texttt{create}, \texttt{update}, \texttt{delete}, a hybrid
-semantic-plus-prefix \texttt{query}, and \texttt{rate} for source
-evaluation. A per-worker in-memory cache,
+\texttt{create}, \texttt{update}, \texttt{delete}, and \texttt{rate}
+for source evaluation. A per-worker in-memory cache,
 invalidated through a Redis dirty flag, reduces warm path lookups
 from roughly $500$\,ms to under $10$\,ms.
 

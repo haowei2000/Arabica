@@ -1,31 +1,22 @@
 % Abstract: 150--250 words.
-Long-running LLM agents accumulate state from tool calls, retrieved
-documents, and intermediate reasoning, and the usual remedy of
-concatenating that state into the prompt collides with both context
-windows and the well-documented middle-of-context degradation.
-Existing agent memory systems either page a flat buffer in and out of
-the window (e.g., MemGPT), cluster notes via learned links (e.g.,
-A-MEM), or attach a vector store as an opaque side-channel. None
-expose a \emph{structured address space} that the agent itself can
-reason about. We present \textsc{Structure}, a context layer in which
-every piece of durable state is placed at a hierarchical path (e.g.,
-\texttt{/tools/web\_search}, \texttt{/knowledge/python\_guide}) and
-exposed at three disclosure levels --- \textsc{glance}, \textsc{overview},
-and \textsc{detail} --- as a first-class operation on the stored object
-rather than a post-hoc summarisation. Agents navigate the space through
-path, prefix, and glob queries, and escalate disclosure only for the
-subset of entries that matter to the current step. Two mechanisms keep
-the layer useful over long runs: an explicit \emph{source-evaluation}
-channel, in which the agent rates each consulted entry and ratings are
-fed back into ordering and thresholding at retrieval time; and an
-\emph{event-level garbage collector} inside the agent loop that prunes
-transient signal (tool outputs, intermediate thoughts, noisy tokens)
-from the working context on a per-type time-to-live, while preserving
-pinned events (user turns, artifacts) and the full append-only audit
-log. We instantiate \textsc{Structure}
-as an open-source orchestration platform and evaluate it on
-long-horizon agent benchmarks against flat-window, vector-RAG, and
-MemGPT-style paging baselines. \todo{Quantitative headline:
-report token reduction, success-rate gain, and latency on the target
-benchmarks.} We release code, configurations, and evaluation scripts
-to support reproduction.
+Long-running LLM agents already rely on familiar context mechanisms:
+retrieval, history buffers, tool descriptions, artifact stores, and
+agent memory. The missing piece is less another memory algorithm than a
+single operational contract for deciding what enters the prompt, what
+remains addressable outside it, and how those decisions can be replayed.
+We present \textsc{Structure}, an event-sourced context manager for
+long-running agents. Durable material is stored behind typed
+hierarchical paths and disclosed through a fixed three-level interface
+(\textsc{glance}, \textsc{overview}, \textsc{detail}); transient
+trajectory is represented as typed events and materialised by a
+deterministic short-context policy that pins task anchors, expires
+recent plan--act signals, drops high-frequency noise, and admits
+structured summary events without rewriting the audit log. This turns
+prompt construction into a reproducible materialisation problem rather
+than a mixture of independent prompt channels. We instantiate
+\textsc{Structure} as an open-source orchestration platform and narrow
+the empirical claim to long-term memory and context-selection
+benchmarks: LongMemEval, LoCoMo, and LongMemEval-V2. The artifact
+includes dataset adapters, deterministic scorers, fixture-level
+integration tests, memory-baseline registries, and live-run scripts
+comparing \textsc{Structure} with full-context and retrieval baselines.

@@ -109,6 +109,56 @@ async def test_structure_memory_uses_context_read_events_batches_and_run_tokens(
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
+async def test_structure_memory_multi_run_ingestion_activates_load_key_and_gc(
+    tmp_path,
+):
+    agent = _structure_agent(tmp_path)
+    case = _case(question="What changed in Berlin after the move?")
+
+    result = await agent.run(case)
+
+    activation = result.metadata["mechanism_activation"]
+    # One prior run per session, each turn ingested as an event.
+    assert activation["multi_run_ingestion"] is True
+    assert activation["prior_run_count"] == 2
+    assert activation["history_event_count"] == 4
+    # 5 turn batches total (4 history + 1 query); only the last 2 stay
+    # LOAD_ALL, so the 3 older history turns must compact to LOAD_KEY.
+    assert activation["load_key_batches"] == 3
+    assert activation["empty_key_batches"] == 0
+    assert activation["load_all_batches"] >= 2
+    assert activation["gc_applied"] is True
+    assert activation["recent_turn_window"] == 2
+
+    messages = agent.reader.client.completions.messages
+    joined = "\n".join(str(message.get("content") or "") for message in messages)
+    # LOAD_KEY batches surface as compact key summaries in the prompt.
+    assert "Context batch key:" in joined
+    # The current query run stays fully visible (tool results included).
+    assert any(message["role"] == "tool" for message in messages)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_structure_path_memory_runs_through_event_pipeline(tmp_path):
+    agent = _agent(tmp_path)
+    agent.reader.client = _FakeClient()
+    case = _case(question="What changed on 5 June 2024?")
+
+    result = await agent.run(case)
+
+    assert result.metadata["adapter"] == "StructurePathMemoryBenchmarkAgent"
+    assert result.metadata["retrieval_mode"] == "path_time"
+    assert result.metadata["context_mode"] == "structure_event_context"
+    assert result.metadata["mechanism_activation"]["load_key_batches"] >= 1
+    assert result.metadata["mechanism_activation"]["multi_run_ingestion"] is True
+    assert result.metadata["selected_context_paths"] == [
+        "benchmarks/path-time-case/chunks/0002-D2"
+    ]
+
+
+@pytest.mark.unit
 def test_structure_path_memory_writes_context_metadata(tmp_path):
     agent = _agent(tmp_path)
     case = _case()
@@ -173,6 +223,61 @@ def test_structure_path_memory_retrieval_does_not_use_gold_fields(tmp_path):
     selected_without_gold, _ = agent.select_contexts_from_store(no_gold)
 
     assert selected_with_gold == selected_without_gold
+
+
+D1_PATH = "benchmarks/path-time-case/chunks/0001-D1"
+D2_PATH = "benchmarks/path-time-case/chunks/0002-D2"
+
+
+@pytest.mark.unit
+def test_rating_blend_reranks_path_memory_selection(tmp_path):
+    agent = _agent(tmp_path)
+    case = _case(question="What changed on 5 June 2024?")
+    agent._insert_case_context(case)
+
+    baseline, _ = agent.select_contexts_from_store(case)
+    assert baseline[0][0] == "D2"
+
+    # Prior runs judged D2 misleading and D1 helpful; the α-blend
+    # (s = α·sim + (1−α)·r̄) must flip the ranking.
+    agent.record_context_rating(case, D2_PATH, -1.0)
+    agent.record_context_rating(case, D1_PATH, 1.0)
+    reranked, _ = agent.select_contexts_from_store(case)
+    assert reranked[0][0] == "D1"
+
+    stats = agent._rating_stats[case.task_id]
+    assert stats["enabled"] is True
+    assert stats["rated_entries"] == 2
+    assert stats["blend_applied"] is True
+
+
+@pytest.mark.unit
+def test_rating_threshold_filters_harmful_entries(tmp_path):
+    agent = _agent(tmp_path)
+    agent.min_rating = -0.5
+    case = _case(question="What changed on 5 June 2024?")
+    agent._insert_case_context(case)
+
+    agent.record_context_rating(case, D2_PATH, -1.0)
+    selected, stored = agent.select_contexts_from_store(case)
+
+    assert len(stored) == 2
+    assert [chunk_id for chunk_id, _ in selected] == ["D1"]
+    assert agent._rating_stats[case.task_id]["filtered_by_rating"] == 1
+
+
+@pytest.mark.unit
+def test_rating_read_path_disabled_restores_baseline(tmp_path):
+    agent = _agent(tmp_path)
+    agent.use_ratings = False
+    case = _case(question="What changed on 5 June 2024?")
+    agent._insert_case_context(case)
+
+    agent.record_context_rating(case, D2_PATH, -1.0)
+    selected, _ = agent.select_contexts_from_store(case)
+
+    assert selected[0][0] == "D2"
+    assert agent._rating_stats[case.task_id]["enabled"] is False
 
 
 @pytest.mark.unit

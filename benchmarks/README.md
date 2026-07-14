@@ -51,6 +51,7 @@ pytest tests/benchmarks -m unit
 # Run the consolidated offline benchmark flow (unit + open-source fixture +
 # memory baseline smoke tests).
 uv run python -m benchmarks.scripts.run_benchmark_integration
+make benchmark
 
 # Export the LightMem/MemBase LoCoMo baseline table used by the paper.
 python -m benchmarks.scripts.lightmem_baseline_report --format markdown

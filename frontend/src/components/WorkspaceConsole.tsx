@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, ChevronDown, ChevronRight, Square, Globe, Download, RefreshCw, CheckCircle2, Circle, XCircle, Clock, AlertCircle, Paperclip } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight, Square, Globe, Download, RefreshCw, AlertCircle, Paperclip } from 'lucide-react';
 import { useChatStore } from '@/stores/useChatStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useRuns } from '@/hooks/useRuns';
@@ -31,7 +31,6 @@ import {
 import { useWorkspaceStream } from '@/hooks/useWorkspaceStream';
 import { useRunEventsStore } from '@/stores/useRunEventsStore';
 import { useRunEvents } from '@/hooks/useRunEvents';
-import { useTasks } from '@/hooks/useTasks';
 import { useArtifacts } from '@/hooks/useArtifacts';
 import { artifactService, type Artifact } from '@/services/artifactService';
 import { chatFileService } from '@/services/chatFileService';
@@ -50,7 +49,6 @@ const RunIcon = APP_ICONS.runs;
 const SaveIcon = APP_ICONS.save;
 const SendIcon = APP_ICONS.send;
 const SettingsIcon = APP_ICONS.settings;
-const TaskIcon = APP_ICONS.tasks;
 const ToolIcon = APP_ICONS.tool;
 
 // ─── Polished Markdown Component ──────────────────────────────────────────
@@ -129,23 +127,6 @@ const HIDDEN_EVENT_TYPES = new Set([
   'agent.heartbeat',
 ]);
 
-
-// ─── Task status helpers ───────────────────────────────────────────────────
-const TASK_STATUS_ICON: Record<string, React.ReactNode> = {
-  pending:     <Clock className="size-3 text-muted-foreground/60 shrink-0" />,
-  in_progress: <Circle className="size-3 text-yellow-400 shrink-0 animate-pulse" />,
-  done:        <CheckCircle2 className="size-3 text-green-500 shrink-0" />,
-  failed:      <XCircle className="size-3 text-red-500 shrink-0" />,
-  cancelled:   <AlertCircle className="size-3 text-muted-foreground/40 shrink-0" />,
-};
-
-const TASK_STATUS_TEXT: Record<string, string> = {
-  pending:     'Pending',
-  in_progress: 'In progress',
-  done:        'Done',
-  failed:      'Failed',
-  cancelled:   'Cancelled',
-};
 
 const ARTIFACT_TYPE_COLOR: Record<string, string> = {
   text:     'bg-blue-500/10 text-blue-400',
@@ -753,20 +734,12 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
   ) ?? false;
   const pollInterval = hasActiveRun ? 3000 : undefined;
 
-  const { data: tasksData, isLoading: tasksLoading } = useTasks(
-    currentWorkspaceId || '',
-    { limit: 100 },
-    { refetchInterval: pollInterval }
-  );
   const { data: artifactsData, isLoading: artifactsLoading } = useArtifacts(
     currentWorkspaceId || '',
     { limit: 100 },
     { refetchInterval: pollInterval }
   );
 
-  const handleRefreshTasks = () => {
-    queryClient.invalidateQueries({ queryKey: ['tasks', currentWorkspaceId] });
-  };
   const handleRefreshArtifacts = () => {
     queryClient.invalidateQueries({ queryKey: ['artifacts', currentWorkspaceId] });
   };
@@ -1209,7 +1182,6 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
             <TabsList className="w-full h-8">
               <TabsTrigger value="runs" className="flex-1" title="Runs"><RunIcon className="size-3.5" /><span className="sr-only">Runs</span></TabsTrigger>
               <TabsTrigger value="context" className="flex-1" title="Context"><ContextIcon className="size-3.5" /><span className="sr-only">Context</span></TabsTrigger>
-              <TabsTrigger value="tasks" className="flex-1" title="Tasks"><TaskIcon className="size-3.5" /><span className="sr-only">Tasks</span></TabsTrigger>
               <TabsTrigger value="results" className="flex-1" title="Results"><ResultIcon className="size-3.5" /><span className="sr-only">Results</span></TabsTrigger>
               <TabsTrigger value="settings" className="flex-1" title="Settings"><SettingsIcon className="size-3.5" /><span className="sr-only">Settings</span></TabsTrigger>
             </TabsList>
@@ -1251,83 +1223,6 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
 
           <TabsContent value="context" className="flex-1 overflow-hidden p-3 mt-0 flex flex-col">
             <WorkspaceContextTree workspaceId={currentWorkspaceId} />
-          </TabsContent>
-
-          <TabsContent value="tasks" className="flex-1 overflow-y-auto p-3 mt-0">
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-1.5">
-                <TaskIcon className="size-3.5 text-muted-foreground" />
-                <span className="text-xs font-semibold">Tasks</span>
-                {tasksData && (
-                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">({tasksData.total})</span>
-                )}
-              </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-6"
-                onClick={handleRefreshTasks}
-                title="Refresh tasks"
-              >
-                <RefreshCw className="size-3" />
-              </Button>
-            </div>
-            {tasksLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="size-5 animate-spin text-muted-foreground/40" />
-              </div>
-            ) : tasksData?.items && tasksData.items.length > 0 ? (
-              <div className="space-y-1">
-                {tasksData.items.map((task) => (
-                  <div
-                    key={task.id}
-                    className="rounded-lg border border-border bg-card px-3 py-2 space-y-1"
-                  >
-                    <div className="flex items-start gap-2">
-                      {TASK_STATUS_ICON[task.status] ?? <Circle className="size-3 shrink-0" />}
-                      <span className="text-xs font-medium leading-tight flex-1 min-w-0 break-words">
-                        {task.title}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 pl-5">
-                      <span className={cn(
-                        'text-[10px] px-1.5 py-0.5 rounded-full',
-                        task.status === 'done'        ? 'bg-green-500/10 text-green-400' :
-                        task.status === 'in_progress' ? 'bg-yellow-500/10 text-yellow-400' :
-                        task.status === 'failed'      ? 'bg-red-500/10 text-red-400' :
-                        task.status === 'cancelled'   ? 'bg-muted text-muted-foreground' :
-                                                        'bg-muted text-muted-foreground/60'
-                      )}>
-                        {TASK_STATUS_TEXT[task.status] ?? task.status}
-                      </span>
-                      {task.assignee && (
-                        <span className="text-[10px] text-muted-foreground/50 truncate">{task.assignee}</span>
-                      )}
-                      {task.run_id && (
-                        <span className="text-[10px] text-muted-foreground/30 font-mono ml-auto">
-                          {task.run_id.slice(0, 8)}
-                        </span>
-                      )}
-                    </div>
-                    {task.description && (
-                      <p className="text-[10px] text-muted-foreground/60 pl-5 line-clamp-2 leading-relaxed">
-                        {task.description}
-                      </p>
-                    )}
-                    {task.result && task.status === 'done' && (
-                      <p className="text-[10px] text-green-400/70 pl-5 line-clamp-2 leading-relaxed">
-                        {task.result}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-10">
-                <TaskIcon className="mx-auto size-6 text-muted-foreground/20 mb-2" />
-                <p className="text-[10px] text-muted-foreground/50">No tasks yet</p>
-              </div>
-            )}
           </TabsContent>
 
           <TabsContent value="results" className="flex-1 overflow-y-auto p-3 mt-0">

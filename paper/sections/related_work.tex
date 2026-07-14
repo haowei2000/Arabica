@@ -33,7 +33,11 @@ guideline in a gradient-free loop; AgentDiet \citep{xu2025agentdiet}
 condenses older trajectory segments past a threshold via a reflection
 LLM call; and Memory-as-Action \citep{zhang2025memact} adds a
 \texttt{prune\_context} action to the agent's action space and trains
-it with a trajectory-segmented RL objective. These methods operate on
+it with a trajectory-segmented RL objective. MemAgent
+\citep{yu2025memagent} similarly treats memory management as a
+trainable long-context workflow, reading documents in segments and
+overwriting a compact memory state through multi-conversation
+reinforcement learning. These methods operate on
 the time axis of a single trajectory and destructively rewrite it;
 our event-level collector (\S\ref{sec:component_gc}) instead operates
 on the address axis of a persistent workspace and is non-destructive,
@@ -67,9 +71,9 @@ long-term memory, and Voyager \citep{wang2023voyager} shows that an
 ever-growing skill library can serve as durable context for an
 embodied agent. Chain-of-thought prompting \citep{wei2022cot}
 established that the content of the prompt drives reasoning quality.
-Our context layer is complementary: it supplies a substrate that these
-loops can read, write, and audit without imposing a particular control
-policy.
+Our context--memory layer is complementary: it supplies a substrate
+that these loops can read, write, and audit without imposing a
+particular control policy.
 
 \paragraph{Long-context models and their limits.}
 A tempting alternative to structured memory is simply a longer
@@ -92,11 +96,13 @@ entities to approximate long-term memory. Toolformer
 \citep{schick2023toolformer} showed that models can learn to call
 external tools, and multi-agent frameworks such as AutoGen
 \citep{wu2023autogen} orchestrate agents that share state through
-conversational channels. In these systems, context management is
-typically an unstated concern: documents arrive, tools are listed,
-conversation history accumulates. Our work promotes context
-management itself to a first-class subsystem, with a defined address
-space, disclosure levels, and audit log.
+conversational channels. In these systems, context and memory
+management are typically split across separate mechanisms: documents
+arrive through retrieval, tools are listed through framework metadata,
+conversation history accumulates in a buffer, and durable memory is
+stored elsewhere. Our work promotes their unified management to a
+first-class subsystem, with a defined address space, disclosure levels,
+and audit log.
 
 \paragraph{Positioning.} The closest prior work falls in two camps.
 On the memory-interface side, MemGPT \citep{packer2023memgpt} and
@@ -108,14 +114,17 @@ Context-Folding \citep{sun2025contextfolding} and Memory-as-Action
 \citep{zhang2025memact} are the most directly comparable:
 Context-Folding collapses sub-trajectories via an RL-trained fold
 policy, and MemAct learns a \texttt{prune\_context} action via
-segmented RL. Both destructively compress along the time axis and
-inherit a model-specific training cost. Our contribution is
+segmented RL. MemAgent \citep{yu2025memagent} pushes this learned
+memory direction toward very long document QA by training an overwrite
+style memory workflow that extrapolates beyond the training context
+length. These approaches destructively compress along the time axis
+and inherit a model-specific training cost. Our contribution is
 orthogonal along both axes: (i) a transparent path-based address
-space combined with per-entry multi-level disclosure, so that
-navigation and detail selection are explicit, inspectable decisions;
-and (ii) a declarative, zero-compute garbage collector that operates
-as a visibility filter over an append-only event log, making
-per-step context byte-exactly reproducible from configuration alone.
+space that unifies tools, retrieved knowledge, artifacts, working
+context, and remembered facts under the same disclosure interface; and
+(ii) a declarative, zero-compute garbage collector that operates as a
+visibility filter over an append-only event log, making per-step
+context byte-exactly reproducible from configuration alone.
 These two primitives compose: a learned pruning policy from
-Context-Folding or MemAct could be expressed as events written into
-our log.
+Context-Folding, MemAct, or MemAgent could be expressed as events
+written into our log.

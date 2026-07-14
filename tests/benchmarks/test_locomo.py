@@ -94,6 +94,20 @@ def test_oracle_echo_scores_perfect_on_locomo_fixture():
 
 
 @pytest.mark.unit
+def test_anti_oracle_wrong_answers_score_zero_on_locomo_fixture():
+    """PROTOCOL.md §6 anti-oracle gate: a degenerate scorer that rewards
+    arbitrary responses must fail this test."""
+    cases = load_locomo(FIXTURE)
+    runner = BenchmarkRunner(
+        benchmark_name="locomo-anti-oracle",
+        agent=EchoAgent(policy=lambda case: "completely unrelated response"),
+        scorer=locomo_qa_scorer,
+    )
+    report = asyncio.run(runner.run(cases))
+    assert report.overall_score == pytest.approx(0.0)
+
+
+@pytest.mark.unit
 def test_memory_baselines_find_fixture_evidence():
     cases = load_locomo(FIXTURE)
     for baseline in ("FullText", "NaiveRAG"):
