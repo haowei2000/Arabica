@@ -26,9 +26,7 @@ def rating_average(rating_sum: float | None, rating_count: int | None) -> float 
     return float(rating_sum or 0.0) / count
 
 
-def passes_rating_threshold(
-    rating_avg: float | None, min_rating: float | None
-) -> bool:
+def passes_rating_threshold(rating_avg: float | None, min_rating: float | None) -> bool:
     """Filter stage: drop entries whose rating mean falls below the threshold.
 
     Unrated entries (``rating_avg is None``) always pass, as does everything
