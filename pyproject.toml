@@ -107,9 +107,7 @@ dev = [
 ]
 
 [project.scripts]
-# 统一服务管理（推荐使用）
-structure = "structure.service_manager:main"
-# 单独服务入口（保留向后兼容）
+# Backend service entry points
 structure-api = "structure.api_cli:run"
 structure-mcp = "structure.mcp_cli:main"
 structure-worker = "structure.worker_cli:main_sync"

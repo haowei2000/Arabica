@@ -9,9 +9,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:e2e": "playwright test",
-    "preview": "vite preview",
-    "desktop:dev": "cargo run --manifest-path src-tauri/Cargo.toml",
-    "desktop:build": "cargo build --release --manifest-path src-tauri/Cargo.toml"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.3",
