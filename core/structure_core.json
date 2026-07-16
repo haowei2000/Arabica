@@ -1,0 +1,384 @@
+{
+  "schema_version": "2026.05",
+  "paper_anchor": {
+    "system_name": "Structure",
+    "thesis": "Long-running LLM agent context should be a structured address space rather than an opaque buffer.",
+    "sections": [
+      "abstract",
+      "introduction",
+      "method",
+      "experiments",
+      "results"
+    ]
+  },
+  "canonical_flow": [
+    {
+      "id": "goal",
+      "name": "Goal",
+      "description": "The user, evaluator, or run defines the objective and budget."
+    },
+    {
+      "id": "address",
+      "name": "Address",
+      "description": "The agent or operator locates durable state by path, prefix, glob, or semantic query."
+    },
+    {
+      "id": "disclose",
+      "name": "Disclose",
+      "description": "The system materializes glance, overview, or detail according to the current need."
+    },
+    {
+      "id": "event",
+      "name": "Event",
+      "description": "Mutations and observations are recorded as ordered events."
+    },
+    {
+      "id": "evidence",
+      "name": "Evidence",
+      "description": "Reports, run state, cost, ratings, and artifacts make the trajectory inspectable."
+    },
+    {
+      "id": "feedback",
+      "name": "Feedback",
+      "description": "Ratings, GC policy, and evaluation outcomes feed back into future retrieval and analysis."
+    }
+  ],
+  "benchmark_report_schema": {
+    "id": "benchmark-report-v1",
+    "family": "BenchmarkReport",
+    "description": "Shared evidence contract for dedicated Structure benchmark adapters.",
+    "required_fields": [
+      "benchmark",
+      "n_cases",
+      "overall_score",
+      "per_ability_score",
+      "mean_cost",
+      "total_cost",
+      "per_case",
+      "per_case_diagnostics",
+      "evidence_summary"
+    ],
+    "cost_fields": [
+      "tokens_prompt",
+      "tokens_completion",
+      "tokens_cached",
+      "cache_creation_tokens",
+      "cache_read_tokens",
+      "steps",
+      "tool_calls",
+      "latency_seconds",
+      "usd_cost"
+    ],
+    "evidence_fields": [
+      "task_id",
+      "score",
+      "adapter",
+      "run_id",
+      "run_status",
+      "event_count",
+      "tool_calls",
+      "artifact_path"
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "core_manifest",
+      "name": "Shared Core Manifest",
+      "primitive_id": "reproducible_evidence",
+      "description": "All surfaces read the same paper/runtime contract and expose the same vocabulary for primitives, flows, surfaces, and run evidence.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local core --json / structure-local surfaces --json",
+          "evidence": "Rust local-core parses core/structure_core.json and CLI/TUI render the parsed contract."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_snapshot / core_manifest Tauri commands",
+          "evidence": "Desktop shell renders the manifest through Rust local-core without requiring a backend service."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "read_only",
+          "entrypoint": "frontend/src/core/structureCore.ts",
+          "evidence": "React imports the manifest as a typed read-only contract while preserving service-backed runtime behavior."
+        }
+      ]
+    },
+    {
+      "id": "local_agent_run_loop",
+      "name": "Local Chat And Code-Agent Loop",
+      "primitive_id": "event_audit",
+      "description": "The Rust local products run an embedded event-sourced chat/code-agent loop with workspace opening, AGENTS.md workspace-instruction loading, git worktree snapshotting, prompt @path and @path:line reference resolution, recent-turn and task-aware context replay, bounded iterative OpenAI-compatible or deterministic tool planning, code search, non-mutating allowlisted local command checks, knowledge loading, tool execution, synthesis, model-diff-backed proposed code-change artifacts, reviewed proposal application, artifact writing, and terminal status.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local llm check / structure-local doctor / structure-local context / structure-local chat / structure-local run / structure-local workspace continue / structure-local workspace usage / structure-local tasks list/add/update/done / structure-local inspect / structure-local run-status / structure-local runs status / structure-local runs plan / structure-local runs compact / structure-local runs review / structure-local runs checkpoint / structure-local runs trace / structure-local proposals list/show/review/apply/rollback / structure-local tui",
+          "evidence": "CLI offers a Codex/OpenCode-style local chat command, exposes /status for workspace/mode/selected-run/OPENAI__ environment state, can run a real OPENAI__ chat-completions diagnostic through `structure-local llm check` and the interactive /llm command, exposes `structure-local doctor` as a pre-run health gate over OPENAI__, Core parity, and the same agent context used for model planning, exposes `structure-local context` and interactive /context as pre-run views over the same Rust-built AGENTS/worktree/knowledge/tasks/recent-turn context passed into model planning, loads repository AGENTS.md instructions and git worktree snapshots through the shared event loop, resolves prompt @path file references before model planning, exposes resolved prompt references, instruction paths, and worktree state in run evidence and transcripts, streams human-readable live workspace events during non-JSON local runs, records successful interactive slash commands as command_turn_recorded workspace events through the shared runtime, exposes /rerun to start a fresh run from a persisted LocalAgentRuntime::chat_turns history prompt while recording the command as a workspace event, exposes /continue, /resume, and `structure-local retry` to create fresh runs from a selected run's compact event/evidence continuation context through the shared runtime instead of mutating old runs, exposes /session-continue and `structure-local workspace continue` to create fresh runs from compact workspace/session handoff context through the same runtime, exposes /session-usage and `structure-local workspace usage` as workspace/session totals for run events, local tools, artifacts, tasks, Core alignment, model network requests, and tokens, exposes /tasks, /task, /task-status, /task-done, and `structure-local tasks` so local agent work can be tracked as workspace/run-linked task_created and task_updated events and replayed into future agent context, exposes /cmd for non-mutating allowlisted local verification commands without a shell, records manual session tool calls as workspace events through a write-time Structure core manifest taxonomy guard, returns JSON RunAttempt with replayed recent workspace turns, tasks, and iterative model-planned local tool calls when OPENAI__ is configured, preserves failed runs as inspectable event traces with CoreExecutionTrace alignment against the Structure core manifest, exposes top-level `structure-local inspect <run-id>` as the same transcript/evidence path as `runs inspect` for fast agent-terminal run review, exposes top-level `structure-local run-status <run-id>` as the same snapshot path as `runs status` for quick terminal run state checks, previews non-destructive event-level GC with /gc retain-last visibility windows, exposes /tools as a paired tool_call_requested/tool_call_completed trace, exposes /run-status and `runs status` as a single-run status snapshot with latest event, model usage, tool failures, artifact pointers, Core alignment, and next actions, exposes /plan and `runs plan` as an event-derived agent progress view, exposes /compact and `runs compact` as an event/evidence-derived continuation context boundary for long local chat/code-agent sessions, exposes /session and `workspace compact` as a workspace/session handoff boundary derived from workspace replay, knowledge, tasks, artifacts, and recent run compacts, exposes /trace and `runs trace` as a Core flow/primitive execution path derived from the same immutable run events, exposes /review and `runs review` as a post-run attempt review with Core alignment, tools, artifacts, and next actions, exposes /checkpoint and `runs checkpoint` as human decision events replayed into compact continuation contexts, persists model-provided unified diffs as proposed code-change artifacts when safe and falls back to runtime-generated review patches otherwise, exposes /risk and `proposals review` as a target-safety, patch-context, and approval-gate review that persists a code_change_reviewed event before apply, records /rate source usefulness feedback as source_rated events for the selected run and replays latest source ratings into future knowledge-source ordering, defaults interactive /apply to dry-run until --yes is supplied, can apply context-verified reviewed proposal patches with a code_change_applied event, can rollback an applied proposal from the backup artifact with a code_change_reverted event, and TUI exposes ? as a grouped command map for run loop, workspace context, run evidence, session, and proposal actions, records ?, A, H, E, and W inspect navigation as command_turn_recorded workspace events, can run prompts, rerun the selected persisted prompt with N as a fresh Structure run, execute the same event-persisted allowlisted local command tool with !, inspect assembled pre-run agent context with A, inspect a pre-run local doctor report with H over OPENAI__, Core parity, and Agent Context, inspect workspace tasks with T, inspect the selected run status snapshot with i, inspect the selected run's complete immutable event stream with E, inspect the selected run's event-derived plan with l, inspect the selected run's paired tool trace with O, record selected-run human decisions with D as run_checkpoint_recorded events, inspect compact continuation context with C, inspect workspace/session compact context with S, inspect cursor-based workspace event feed with W, continue from workspace/session compact context with F, inspect workspace/session usage with U, inspect the selected run's Core trace with z, inspect the selected run review with b, review selected proposal risk with h as a code_change_reviewed event, record source ratings with R, show GC-filtered evidence counts plus checkpoint counts, and preview/dry-run/apply/rollback the selected run's proposal before falling back to the latest reviewed proposal through the same Rust runtime."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_llm_diagnostic / local_session_status / local_agent_run / local_agent_run_attempt / local_agent_continue_attempt / local_workspace_continue_attempt / local_workspace_usage / local_workspace_event_feed / local_runs / local_tasks / create_local_task / update_local_task_status / local_run_transcript / local_run_status / local_run_tool_trace / local_run_plan / local_run_compact / local_workspace_compact / local_run_core_trace / local_run_review / record_local_run_checkpoint / local_chat_turns / local_command_turns / record_local_command_turn / run_local_command / review_local_proposal / apply_local_proposal / rollback_local_proposal",
+          "evidence": "Tauri commands invoke structure-local-runtime directly, expose /help, /map, /commands, and a visible Command Map action as the same grouped agent-loop mental model as CLI/TUI, record visible /map, /context, /status, /doctor, /llm, /worktree, /sources, /parity, /bundle, /artifacts, /artifact, /diff, /replay, /history, /transcript, /run-status, /usage, /events, /plan, /review, /trace, /compact, /gc, /tools, /session, /session-usage, /workspace-events, /runs, and /tasks actions plus per-turn /inspect, /run-status, /usage, /events, /plan, /tools, /trace, /compact, /review, /checkpoint, /continue, /retry, and /proposal actions as command turns in the chat thread, persist those desktop command turns through record_local_command_turn as command_turn_recorded workspace events, replay them through local_command_turns on refresh, rebuild composer history from local_chat_turns and local_command_turns instead of a frontend-only draft buffer, expose /rerun and per-turn Rerun actions to feed a persisted local_chat_turn prompt into a fresh local_agent_run_attempt while recording the visible rerun result as a command_turn_recorded workspace event, record visible repository tools as /ls, /search, /read, and /cmd command turns, record proposal preview Risk, Dry Run, Apply, and Rollback as /risk, /dry-run, /apply, and /rollback command turns including cancelled apply confirmations, expose /status and a visible Session Status action for workspace/mode/selected-run/OPENAI__ environment state, expose /llm and a visible LLM Check action for the same real OPENAI__ chat-completions diagnostic as CLI, render in-flight local prompt status plus persisted chat turns with a visible History action, per-turn inspect command turns, and an inspectable selected-run event trace for successful and failed attempts, load AGENTS.md instructions, git worktree snapshots, prompt @path file references, and workspace tasks through the same runtime before model planning, display instruction paths, worktree state, task state, and resolved prompt references from shared run evidence, replay recent workspace turns into new runs, expose /context and a visible Agent Context action through local_agent_context so users can inspect the same pre-run AGENTS/worktree/knowledge/tasks/recent-turn context as CLI, expose /sources and a visible Sources action through local_knowledge so users can inspect replayed knowledge inputs as command-turn history, expose /doctor and a visible Doctor action through local_session_status, local_llm_diagnostic, and core_parity_report so desktop users can run the same local health gate as CLI before starting a run, expose /continue, /resume, and /retry plus per-turn Continue and Retry actions through local_agent_continue_attempt so desktop follow-ups and retries create fresh event-sourced runs from selected-run compact event/evidence continuation contexts while visible button actions are recorded as command_turn_recorded workspace events, expose /session-continue, /workspace-continue, and a Session Continue action through local_workspace_continue_attempt so desktop follow-ups can create fresh event-sourced runs from compact workspace/session handoff context, expose /session-usage, /workspace-usage, and a Session Usage action through local_workspace_usage so desktop users can inspect workspace/session model, tool, task, artifact, and Core totals without a service backend, expose /workspace-events and a Workspace Events action through local_workspace_event_feed so desktop users can inspect cursor-based workspace event feeds as persisted command-turn history, expose /runs and a Runs action through local_runs so desktop users can inspect recent workspace runs as command-turn history instead of a detached sidebar refresh, expose /transcript, /inspect, a Transcript action, and per-turn Inspect actions through local_run_transcript so desktop users can inspect selected-run chat turns, evidence, final responses, and immutable events as command-turn history, expose /tasks, /task, /task-status, /task-done, and a Tasks action through local_tasks/create_local_task/update_local_task_status so desktop users can track local agent work as workspace/run-linked Structure events replayed into context, expose /gc and a visible Event GC action through local_run_event_gc so event-level GC remains a non-destructive visibility preview while visible GC inspection is recorded as command-turn history, expose /events, a visible Events action, and per-turn Events actions through local_run_events so desktop users can open the same immutable raw run stream as CLI/TUI from chat history while visible Events inspection is recorded as command-turn history, expose /tools, a visible Tool Trace action, and per-turn Tools actions through local_run_tool_trace so the app renders the same paired tool-call explanation as CLI/TUI, expose /run-status, a Run Status action, and per-turn Status actions through local_run_status so desktop users see the same single-run state snapshot as CLI/TUI, expose /usage, a visible Usage action, and per-turn Usage actions through local_run_evidence so desktop users see model request, network call, token, response, and Core-alignment evidence as command-turn history, expose /plan and a visible Plan action through local_run_plan so the app renders the same event-derived agent progress view as CLI/TUI while visible Plan inspection is recorded as command-turn history, expose /compact, a visible Compact action, and per-turn Compact actions through local_run_compact so the app derives a continuation context boundary from immutable events and evidence while visible Compact inspection is recorded as command-turn history, expose /session and Session Compact through local_workspace_compact so the app derives workspace handoff context from replayed events, knowledge, tasks, artifacts, and recent run compacts, expose /trace, a visible Core Trace action, and per-turn Trace actions through local_run_core_trace so desktop shows the same Core flow/primitive path derived from immutable run events while visible Trace inspection is recorded as command-turn history, expose /review, a visible Review action, and per-turn Review actions through local_run_review so desktop shows the same post-run attempt review and next actions as CLI/TUI while visible Review inspection is recorded as command-turn history, expose /checkpoint, a visible Record Decision action, and per-turn Decision actions through record_local_run_checkpoint so human decisions become run-scoped feedback events in later continuation contexts, expose /artifacts and a visible Artifacts action through local_artifacts so desktop users can inspect indexed code-agent outputs as command-turn history before preview/apply, expose /diff and a visible Diff action through latest_local_proposal/read_local_artifact so selected-run proposal disclosure is recorded as command-turn history before risk review, expose /risk through review_local_proposal so desktop users see target safety, patch-context, and approval-gate checks persisted as a code_change_reviewed event before apply, expose /rollback through rollback_local_proposal so desktop users can restore the backup artifact recorded before apply, expose /rate through rate_local_knowledge_source so source usefulness feedback is persisted as source_rated run evidence and replayed into later Agent Context knowledge ordering, expose a non-mutating allowlisted local command panel backed by the same no-shell tool as CLI, record manual repository tools as workspace events through the same write-time Structure core manifest taxonomy guard, use the same model-planned local tool loop as CLI, and expose run events/final responses plus CoreExecutionTrace alignment, selected-run model-diff-backed proposed code-change artifacts, context-verified reviewed proposal application, and event-recorded rollback without a backend service."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "Structure API run creation and SSE streaming",
+          "evidence": "Web run loop remains API-backed and shares event/run vocabulary instead of embedding the local runtime."
+        }
+      ]
+    },
+    {
+      "id": "workspace_context",
+      "name": "Workspace Context And Knowledge",
+      "primitive_id": "path_addressing",
+      "description": "Workspace state keeps stable paths for registered knowledge sources and separates metadata/listing from preview/detail.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local workspace create/list/show/replay and knowledge add/list/show/rate/remove",
+          "evidence": "CLI manages workspace metadata, SQLite knowledge indexes, previews original files, and records source ratings that later influence local context ordering; TUI can create/open workspaces with o, register knowledge paths with s, remove registrations with x, and preview the assembled pre-run Agent Context with A."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "create_local_workspace / local_workspaces / local_repo_entries / local_repo_search / read_local_repo_file / run_local_command / add_local_knowledge / read_local_knowledge_source / remove_local_knowledge",
+          "evidence": "Desktop UI supports workspace selection/creation, safe repository list/search/read and allowlisted command tools with event persistence, plus knowledge source add, preview, rating, and metadata removal through the local runtime."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "Workspace context API and storage services",
+          "evidence": "Web workspace context remains backend-managed but follows path-addressed context semantics."
+        }
+      ]
+    },
+    {
+      "id": "event_replay",
+      "name": "Event Replay",
+      "primitive_id": "event_audit",
+      "description": "Ordered events can be replayed at run or workspace scope for debugging, evaluation evidence, and artifact inspection.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local chat /history / structure-local runs events / structure-local runs status / structure-local runs plan / structure-local runs compact / structure-local runs review / structure-local runs checkpoint / structure-local runs trace / structure-local runs transcript / structure-local workspace events / structure-local workspace replay / structure-local workspace compact / structure-local workspace usage",
+          "evidence": "CLI emits JSON run event streams, top-level inspect transcripts, top-level run status snapshots, run status snapshots, run reviews, compact continuation contexts, workspace/session compacts, workspace/session usage totals, Core flow/primitive traces, shared run transcripts, cursor-based workspace event feeds, and workspace replay bundles for automation; interactive chat also exposes /help and /map as grouped agent command maps plus /select, /last, /history, /rerun, /run-status, /review, /compact, /session, /session-usage, /plan, /trace, /tools, /transcript, and /inspect for live agent-terminal run inspection, with /history rendered from LocalAgentRuntime::chat_turns over persisted runs and /rerun using those persisted prompts as fresh run input. TUI exposes selected-run reruns with N, selected-run transcripts with t, selected-run raw event streams with E, selected-run status snapshots with i, selected-run plans with l, selected-run paired tool traces with O, compact continuation contexts with C, workspace/session compacts with S, cursor-based workspace event feeds with W, workspace/session usage totals with U, selected-run Core traces with z, selected-run reviews with b, and checkpoint counts/notes inside transcript and evidence views, alongside local evidence bundles. Local events include canonical_flow_id and primitive_id so diagnostics map back to the shared Structure core contract."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_chat_turns / local_command_turns / record_local_command_turn / local_runs / local_run_transcript / local_run_status / local_run_plan / local_run_compact / local_workspace_compact / local_workspace_continue_attempt / local_workspace_usage / local_run_review / record_local_run_checkpoint / local_run_core_trace / local_run_events / local_workspace_event_feed / local_workspace_replay",
+          "evidence": "Desktop UI can poll cursor-based workspace events manually, through a /workspace-events command turn, and during local agent runs, replay the workspace stream, continue a workspace/session from compact handoff context, inspect workspace/session usage totals, rerun persisted chat prompts through slash commands and per-turn Rerun actions as fresh Structure runs with visible rerun command turns recorded, and inspect recent workspace run lists, visible persisted chat/code-agent history, command-turn history, run transcripts, visible raw run event streams, event-level GC previews, single-run status snapshots, visible model usage summaries, visible event-derived plans, visible Core traces, visible compact continuation contexts, workspace/session compacts, and visible post-run reviews locally with visible canonical flow, paper primitive labels, chat turns, evidence, next actions, and final responses. The composer also accepts slash commands for grouped command maps, mode switching, workspace selection, recent run lists, chat history, persisted prompt reruns, raw event-stream inspection, Core trace inspection, run status, run plan, run compact context, workspace/session compact context, workspace/session continuation, workspace/session usage, cursor-based workspace event feeds, run review, run inspection, repository tools, knowledge sources, visible artifact lists, artifact previews, proposals, and reviewed proposal application while staying inside the local Rust runtime, and command results are persisted as command_turn_recorded Structure events before being replayed into the chat thread as first-class local interaction turns."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "SSE event stream and replay endpoints",
+          "evidence": "Service runs stream and persist events through the backend event-sourcing layer."
+        }
+      ]
+    },
+    {
+      "id": "artifact_evidence",
+      "name": "Artifact Evidence",
+      "primitive_id": "reproducible_evidence",
+      "description": "Generated assistant responses and proposed code changes are addressable artifacts linked back to runs, events, and costs.",
+      "surface_status": [
+        {
+          "surface_id": "cli_tui",
+          "status": "native",
+          "entrypoint": "structure-local artifacts list/show / structure-local proposals list/show/review/apply/rollback",
+          "evidence": "CLI lists artifact records, previews artifact files by artifact_id, prints proposal risk reviews and dry-run proposal previews before explicit application, persists rollback backups on approved apply, can restore the backup with `proposals rollback` or interactive /rollback, and separates code-change proposals for review; TUI proposal actions prefer the selected run's code-change proposal before falling back to the latest workspace proposal and expose risk review before dry-run/apply/rollback."
+        },
+        {
+          "surface_id": "desktop_app",
+          "status": "native",
+          "entrypoint": "local_artifacts / read_local_artifact / review_local_proposal / apply_local_proposal / rollback_local_proposal",
+          "evidence": "Desktop UI previews local artifacts, exposes visible artifact lists and selected-run proposal diff disclosure, shows proposal risk reviews and dry-run proposal previews, applies reviewed proposals through the Rust runtime, and rolls back applied proposals from the backup artifact recorded in the Structure event stream."
+        },
+        {
+          "surface_id": "web_app",
+          "status": "service_native",
+          "entrypoint": "Run artifacts and persisted cost/report state",
+          "evidence": "Service artifacts are linked to backend runs and persisted evaluation evidence."
+        }
+      ]
+    }
+  ],
+  "primitives": [
+    {
+      "id": "path_addressing",
+      "name": "Path-addressable context",
+      "paper_section": "method: Path-Addressable Context",
+      "invariant": "Durable state has a stable hierarchical path and can be discovered by exact, prefix, glob, or semantic query.",
+      "implementation_contract": "All product surfaces must preserve path identity when rendering, exporting, replaying, or evaluating context state.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Primary live workspace and run context surface."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Local artifact, proposal, and knowledge path inspection surface."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Scriptable path, proposal, and run diagnostics surface."
+        }
+      ]
+    },
+    {
+      "id": "multi_level_disclosure",
+      "name": "Multi-level disclosure",
+      "paper_section": "method: Multi-Level Disclosure",
+      "invariant": "Every context object should be materializable as glance, overview, or detail without changing the underlying state.",
+      "implementation_contract": "Interfaces should separate cheap listing/metadata views from full content previews and should record escalation counts in evaluation artifacts.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Executes disclosure choices during live agent runs."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Maps artifact, proposal, knowledge, metadata, and preview views to the same disclosure ladder for local review."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Exposes list/status/show commands as machine-readable disclosure levels."
+        }
+      ]
+    },
+    {
+      "id": "event_audit",
+      "name": "Event-sourced audit",
+      "paper_section": "method: Event-Sourced Audit Layer",
+      "invariant": "Every mutation is an ordered immutable event that can be streamed live and replayed offline.",
+      "implementation_contract": "Live clients, local apps, and evaluation scripts must keep event identifiers and replay metadata visible in their outputs.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Streams and renders live run/workspace events."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Reads persisted evidence produced by local event replay and agent runs."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Provides reproducible event/report inspection for automation and CI."
+        }
+      ]
+    },
+    {
+      "id": "source_evaluation",
+      "name": "Source evaluation",
+      "paper_section": "method: Source Evaluation via Agent Ratings",
+      "invariant": "Consulted context can receive bounded usefulness ratings that affect filtering, ranking, and later analysis.",
+      "implementation_contract": "Ratings must be event-sourced and reported with enough metadata to separate filtering effects from reranking effects.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Produces and consumes ratings inside the live agent loop."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Surfaces rating evidence and score traces for local review."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Exports rating-aware run summaries and diagnostics."
+        }
+      ]
+    },
+    {
+      "id": "event_gc",
+      "name": "Event-level garbage collection",
+      "paper_section": "method: Event-Level Garbage Collection",
+      "invariant": "GC is a visibility filter over events, not a destructive rewrite of storage.",
+      "implementation_contract": "Run artifacts must include the GC policy and enough event counts to reproduce the live context at each step.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Applies GC policy while constructing the live agent working context."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Displays GC policy and retained/expired event evidence from local artifacts."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Exports GC-aware run evidence for evaluation workflows."
+        }
+      ]
+    },
+    {
+      "id": "reproducible_evidence",
+      "name": "Reproducible evidence",
+      "paper_section": "experiments: Evaluation Metrics and Analysis",
+      "invariant": "Accuracy, token cost, latency, disclosure counts, ratings, and replay identifiers are preserved as inspectable evidence.",
+      "implementation_contract": "All surfaces should expose the same run, event, artifact, and cost vocabulary so paper tables and local diagnostics refer to the same evidence objects.",
+      "surface_roles": [
+        {
+          "surface_id": "web_app",
+          "role": "Creates service-backed runs and records state for evaluation."
+        },
+        {
+          "surface_id": "desktop_app",
+          "role": "Makes local run and artifact evidence inspectable without a backend service."
+        },
+        {
+          "surface_id": "cli_tui",
+          "role": "Provides stable JSON/text outputs for local diagnostics and paper artifact checks."
+        }
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "cli_tui",
+      "name": "CLI/TUI",
+      "entrypoint": "uv run structure ... / structure-local tui",
+      "audience": "Developers and local agent operators",
+      "runtime_model": "Local Rust binary; no backend service required",
+      "primary_jobs": [
+        "Codex-style chat and code-agent runs",
+        "Workspace and knowledge inspection",
+        "Proposal review and application from the terminal"
+      ],
+      "boundary": "Operator tooling only; it should stay scriptable and should not become the product UI."
+    },
+    {
+      "id": "desktop_app",
+      "name": "Desktop App",
+      "entrypoint": "npm run desktop:dev / structure-desktop",
+      "audience": "Local users reviewing Structure artifacts",
+      "runtime_model": "Tauri shell over local files and Rust commands",
+      "primary_jobs": [
+        "Native local chat workspace",
+        "Code-agent event inspection",
+        "Proposal and artifact review flow"
+      ],
+      "boundary": "User-facing local app; it should not expose terminal service controls as its main workflow."
+    },
+    {
+      "id": "web_app",
+      "name": "Web App",
+      "entrypoint": "cd frontend && npm run dev",
+      "audience": "Browser users and collaborative service deployments",
+      "runtime_model": "React UI backed by Structure API services",
+      "primary_jobs": [
+        "Auth and workspaces",
+        "Run creation and streaming",
+        "Service-backed collaboration"
+      ],
+      "boundary": "Service product surface; it remains separate from the offline local app and CLI/TUI."
+    }
+  ]
+}

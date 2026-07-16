@@ -12,10 +12,11 @@ import os
 from pathlib import Path
 import random
 
-from benchmarks.adapters import StructureMemoryBenchmarkAgent
+from benchmarks.adapters import (
+    StructureMemoryBenchmarkAgent,
+    StructurePathMemoryBenchmarkAgent,
+)
 from benchmarks.baselines import (
-    DEFAULT_BASE_URL,
-    DEFAULT_MODEL,
     LLMBenchmarkAgent,
     external_baseline_comparison,
 )
@@ -95,6 +96,11 @@ def _make_agent(
     if method == "StructureMemory":
         return StructureMemoryBenchmarkAgent(
             data_root=output_dir / "structure-context",
+            **common,
+        )
+    if method == "StructurePathMemory":
+        return StructurePathMemoryBenchmarkAgent(
+            data_root=output_dir / "structure-path-context",
             **common,
         )
     raise ValueError(f"unsupported method: {method}")
@@ -412,6 +418,27 @@ def _format_optional_float(value: object, *, digits: int = 4) -> str:
     return str(value)
 
 
+def _require_openai_env() -> tuple[str, str, str]:
+    api_key = os.getenv("OPENAI__API_KEY", "").strip()
+    base_url = os.getenv("OPENAI__BASE_URL", "").strip()
+    model = os.getenv("OPENAI__MODEL", "").strip()
+    missing = [
+        name
+        for name, value in (
+            ("OPENAI__API_KEY", api_key),
+            ("OPENAI__BASE_URL", base_url),
+            ("OPENAI__MODEL", model),
+        )
+        if not value
+    ]
+    if missing:
+        raise SystemExit(
+            "missing LLM environment variables: export "
+            + ", ".join(f"{name}=..." for name in missing)
+        )
+    return api_key, base_url, model
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run full memory benchmarks with fixed reader and judge.",
@@ -430,19 +457,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=("FullText", "NaiveRAG", "StructureMemory"),
+        choices=("FullText", "NaiveRAG", "StructureMemory", "StructurePathMemory"),
         default=["FullText", "NaiveRAG", "StructureMemory"],
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--api-key-env", default="BENCHMARK_LLM_API_KEY")
-    parser.add_argument(
-        "--base-url",
-        default=os.getenv("BENCHMARK_LLM_BASE_URL", DEFAULT_BASE_URL),
-    )
-    parser.add_argument(
-        "--model", default=os.getenv("BENCHMARK_LLM_MODEL", DEFAULT_MODEL)
-    )
     parser.add_argument("--top-k", type=int, default=6)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-cases", type=int)
@@ -471,9 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    api_key = os.getenv(args.api_key_env, "")
-    if not api_key:
-        raise SystemExit(f"missing API key: export {args.api_key_env}=...")
+    api_key, base_url, model = _require_openai_env()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     reports, sample_info = asyncio.run(
@@ -482,8 +499,8 @@ def main(argv: list[str] | None = None) -> int:
             data_dir=args.data_dir,
             methods=args.methods,
             api_key=api_key,
-            base_url=args.base_url,
-            model=args.model,
+            base_url=base_url,
+            model=model,
             top_k=args.top_k,
             temperature=args.temperature,
             max_cases=args.max_cases,
@@ -501,8 +518,8 @@ def main(argv: list[str] | None = None) -> int:
         _report_dict(
             report,
             method=method,
-            reader_model=args.model,
-            reader_base_url=args.base_url,
+            reader_model=model,
+            reader_base_url=base_url,
             judge="benchmark-specific-deterministic-scorer",
             sample_info=sample_info,
         )

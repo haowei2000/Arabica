@@ -567,41 +567,11 @@ class Worker:
 
             workspace_id = str(run.workspace_id)
 
-            # Resolve ChatModel from DB: prefer workspace-pinned model, fall back to default.
-            try:
-                from structure.services.llm.chat_model_crud import ChatModelCRUD
-
-                crud = ChatModelCRUD(ctx.db)
-                chat_model_id = (app_config or {}).get("chat_model_id")
-                chat_model = (
-                    await crud.get_by_id(str(chat_model_id))
-                    if chat_model_id
-                    else await crud.get_default()
-                )
-                if chat_model:
-                    if app_config is None:
-                        app_config = {}
-                    app_config["model_provider"] = chat_model.provider
-                    app_config["model_name"] = chat_model.model_id
-                    if chat_model.api_key_ref:
-                        app_config["api_key"] = chat_model.api_key_ref
-                    if chat_model.base_url:
-                        app_config["base_url"] = chat_model.base_url
-                    if isinstance(chat_model.config, dict) and chat_model.config:
-                        existing_options = app_config.get("model_request_options")
-                        model_request_options = dict(chat_model.config)
-                        if isinstance(existing_options, dict):
-                            model_request_options.update(existing_options)
-                        app_config["model_request_options"] = model_request_options
-                    logger.info(
-                        "_create_executor_for_run: using ChatModel '%s' (%s/%s) for run %s",
-                        chat_model.name,
-                        chat_model.provider,
-                        chat_model.model_id,
-                        run_id,
-                    )
-            except Exception as model_err:
-                logger.warning("Failed to load ChatModel (non-critical): %s", model_err)
+            # LLM API configuration is process-level, not workspace/app-level.
+            # The executor reads OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL
+            # directly so database ChatModel rows cannot override runtime credentials.
+            if app_config is None:
+                app_config = {}
 
             # Pre-warm the workspace context cache so _load_history() inside
             # the executor hits the cache instead of opening a separate DB

@@ -104,6 +104,4 @@ async def test_streaming_reasoning_content_and_request_options_are_preserved():
     assert response.tool_calls[0].arguments == {"query": "x"}
 
     assert client.completions.kwargs["reasoning_effort"] == "high"
-    assert client.completions.kwargs["extra_body"] == {
-        "thinking": {"type": "enabled"}
-    }
+    assert client.completions.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}

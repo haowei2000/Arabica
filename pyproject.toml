@@ -41,10 +41,8 @@ dependencies = [
     # Configuration
     "pydantic-settings>=2.11.0",
     # LLM & AI
-    "dashscope>=1.25.2",
     "langchain>=1.1.0",
     "langchain-community>=0.4.1",
-    "langchain-ollama>=1.0.0",
     "langchain-openai>=1.1.0",
     "fastmcp>=2.13.1",
     # Utilities & Logging
@@ -84,7 +82,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "minio>=7.2.20",
     "jsonpath-ng>=1.7.0",
-    "boto3-stubs~=1.42.36",
+    "boto3-stubs>=1.42.36,<1.44.0",
     "markitdown[all]>=0.1.5",
 ]
 
@@ -109,9 +107,7 @@ dev = [
 ]
 
 [project.scripts]
-# 统一服务管理（推荐使用）
-structure = "structure.service_manager:main"
-# 单独服务入口（保留向后兼容）
+# Backend service entry points
 structure-api = "structure.api_cli:run"
 structure-mcp = "structure.mcp_cli:main"
 structure-worker = "structure.worker_cli:main_sync"

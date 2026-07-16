@@ -5,7 +5,6 @@ import { useKnowledgeList } from '@/hooks/useKnowledge';
 import { useSkills } from '@/hooks/useSkills';
 import { useWorkspaces, useUserContexts, useWorkspaceContexts, useUpdateWorkspace, useReinitWorkspaceContext } from '@/hooks/useWorkspaces';
 import { useTemplates } from '@/hooks/useApps';
-import { useChatModels } from '@/hooks/useLLMModels';
 import { useTriggers } from '@/hooks/useTriggers';
 import type { Workspace, WorkspaceContextConfig } from '@/types/workspace';
 import {
@@ -122,16 +121,11 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   const [selectedExecutorCode, setSelectedExecutorCode] = useState<string>(workspace.executor_code ?? '');
 
   const existingConfig = workspace.executor_config as Record<string, unknown> | null;
-  const [selectedChatModelId, setSelectedChatModelId] = useState<string>(
-    (existingConfig?.chat_model_id as string) ?? ''
-  );
   const [globalEvent, setGlobalEvent] = useState<boolean>(
     existingConfig?.global_event !== undefined ? Boolean(existingConfig.global_event) : true
   );
 
   const { data: templates = [] } = useTemplates();
-  const { data: chatModelsData } = useChatModels({ enabled: true, page_size: 100 });
-  const chatModels = chatModelsData?.items ?? [];
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [selectedKnowledge, setSelectedKnowledge] = useState<Set<string>>(new Set());
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
@@ -249,9 +243,6 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
   const handleSave = async () => {
     try {
       const executorConfig: Record<string, unknown> = { global_event: globalEvent };
-      if (selectedChatModelId) {
-        executorConfig.chat_model_id = selectedChatModelId;
-      }
 
       await updateWorkspace.mutateAsync({
         workspaceId: workspace.id,
@@ -359,31 +350,6 @@ export default function WorkspaceEditModal({ workspace, onClose, onSaved }: Prop
                 {workspace.executor_code && (
                   <p className="text-xs text-muted-foreground">
                     Current: <span className="font-mono">{workspace.executor_code}</span>
-                  </p>
-                )}
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5">
-                <Label htmlFor="ws-model" className="flex items-center gap-1.5 text-sm font-medium">
-                  Model
-                </Label>
-                <select
-                  id="ws-model"
-                  value={selectedChatModelId}
-                  onChange={(e) => setSelectedChatModelId(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                >
-                  <option value="">— use default model —</option>
-                  {chatModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.provider} / {m.model_id}){m.is_default ? ' ★' : ''}
-                    </option>
-                  ))}
-                </select>
-                {chatModels.length === 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    No models configured. Add one in <span className="font-medium">LLM Models</span> settings.
                   </p>
                 )}
               </div>

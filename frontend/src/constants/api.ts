@@ -162,11 +162,6 @@ export const API_ENDPOINTS = {
         DELETE: (id: string) => `/triggers/${id}`,
     },
 
-    // Tasks
-    TASKS: {
-        LIST: (workspaceId: string) => `/workspaces/${workspaceId}/tasks`,
-    },
-
     // Artifacts
     ARTIFACTS: {
         LIST: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts`,

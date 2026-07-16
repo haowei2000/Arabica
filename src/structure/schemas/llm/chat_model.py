@@ -3,13 +3,16 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from structure.schemas.llm.runtime_config import assert_no_runtime_llm_api_config
 from structure.utils.schema_mixins import ResponseMixin
 
 
 class ChatModelCreate(BaseModel):
     """Schema for creating a new chat model configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=255, description="Display name")
     description: str | None = Field(None, description="Model description")
@@ -17,17 +20,13 @@ class ChatModelCreate(BaseModel):
         ...,
         min_length=1,
         max_length=50,
-        description="Provider: openai/anthropic/dashscope/ollama/azure/custom",
+        description="Provider: openai or custom OpenAI-compatible endpoint",
     )
     model_id: str = Field(
         ...,
         min_length=1,
         max_length=255,
-        description="Model identifier, e.g. gpt-4o, qwen-turbo",
-    )
-    base_url: str | None = Field(None, max_length=500, description="API base URL")
-    api_key_ref: str | None = Field(
-        None, max_length=255, description="API key reference name"
+        description="Model identifier, e.g. gpt-4.1-mini",
     )
     max_tokens: int | None = Field(None, gt=0, description="Max output tokens")
     context_window: int | None = Field(None, gt=0, description="Context window size")
@@ -55,16 +54,22 @@ class ChatModelCreate(BaseModel):
     config: dict[str, Any] | None = Field(None, description="Extra configuration")
     meta: dict[str, Any] | None = Field(None, description="Metadata")
 
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "ChatModelCreate":
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        assert_no_runtime_llm_api_config(self.meta, location="meta")
+        return self
+
 
 class ChatModelUpdate(BaseModel):
     """Schema for updating an existing chat model configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     provider: str | None = Field(None, min_length=1, max_length=50)
     model_id: str | None = Field(None, min_length=1, max_length=255)
-    base_url: str | None = Field(None, max_length=500)
-    api_key_ref: str | None = Field(None, max_length=255)
     max_tokens: int | None = Field(None, gt=0)
     context_window: int | None = Field(None, gt=0)
     supports_vision: bool | None = None
@@ -81,6 +86,12 @@ class ChatModelUpdate(BaseModel):
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "ChatModelUpdate":
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        assert_no_runtime_llm_api_config(self.meta, location="meta")
+        return self
+
 
 class ChatModelResponse(ResponseMixin, BaseModel):
     """Schema for chat model response."""
@@ -91,8 +102,6 @@ class ChatModelResponse(ResponseMixin, BaseModel):
     user_id: str | None = None
     provider: str
     model_id: str
-    base_url: str | None = None
-    api_key_ref: str | None = None
     max_tokens: int | None = None
     context_window: int | None = None
     supports_vision: bool
@@ -109,12 +118,6 @@ class ChatModelResponse(ResponseMixin, BaseModel):
     enabled: bool
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def hide_system_api_key(self) -> "ChatModelResponse":
-        if self.is_system and self.api_key_ref:
-            self.api_key_ref = "configured"
-        return self
 
 
 class ChatModelListResponse(BaseModel):

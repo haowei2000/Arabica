@@ -48,6 +48,11 @@ token Pareto; the P2+ entries validate generalisation across regimes.
 # Run the harness self-test (uses EchoAgent + the bundled fixture).
 pytest tests/benchmarks -m unit
 
+# Run the consolidated offline benchmark flow (unit + open-source fixture +
+# memory baseline smoke tests).
+uv run python -m benchmarks.scripts.run_benchmark_integration
+make benchmark
+
 # Export the LightMem/MemBase LoCoMo baseline table used by the paper.
 python -m benchmarks.scripts.lightmem_baseline_report --format markdown
 
@@ -64,10 +69,11 @@ pytest tests/benchmarks/test_longmemeval_v2.py -m unit
 
 # Run a real LLM smoke test through an OpenAI-compatible endpoint.
 # Do not commit the key; keep it in the shell environment.
-export BENCHMARK_LLM_API_KEY=...
+export OPENAI__API_KEY=...
+export OPENAI__BASE_URL=https://api.openai.com/v1
+export OPENAI__MODEL=gpt-4.1-mini
 python -m benchmarks.scripts.run_llm_benchmark \
   --benchmark longmemeval \
-  --model qwen-plus \
   --max-cases 4 \
   --format json
 

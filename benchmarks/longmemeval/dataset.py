@@ -25,9 +25,10 @@ touching the core types.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from benchmarks.core.types import BenchmarkCase
 

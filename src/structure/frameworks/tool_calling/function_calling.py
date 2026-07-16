@@ -1,7 +1,7 @@
 """Function-calling strategy using the OpenAI-compatible ``tools`` parameter.
 
-Works with any provider exposing an OpenAI-compatible chat completions
-endpoint (DashScope / Tongyi, Ollama, vLLM, etc.).
+Works with any provider exposed through the configured OpenAI-compatible
+chat completions endpoint.
 """
 
 from collections.abc import AsyncGenerator

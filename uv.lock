@@ -847,21 +847,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dashscope"
-version = "1.25.2"
-source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
-dependencies = [
-    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "certifi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "websocket-client", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/31/8d/eecb782cbef8296f1a470a5a2f9872346ed38e366d4a63b64242c7556f87/dashscope-1.25.2-py3-none-any.whl", hash = "sha256:8e27925f2d457fc5f4bef0efaae6b5b8b3a0cfeb154ae6b425aae7803e309a11" },
-]
-
-[[package]]
 name = "dataclasses-json"
 version = "0.6.7"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -1603,19 +1588,6 @@ wheels = [
 ]
 
 [[package]]
-name = "langchain-ollama"
-version = "1.0.0"
-source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
-dependencies = [
-    { name = "langchain-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "ollama", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8b/45/d996b4c0e3e7155ff7a110bf24dcb5043fc1405559a2089c11fe97511cc2/langchain_ollama-1.0.0.tar.gz", hash = "sha256:2ea9ad1b0f0ab319d600b9193d1124a8925523a3b943d75a967718e24ec09a8a" }
-wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/91/08/7be292aee722692b13a93316247b57eefb83d4309f5fdfe636cc47786efe/langchain_ollama-1.0.0-py3-none-any.whl", hash = "sha256:5828523fcbd137847490841110a6aedf96b68534e7fe2735715ecf3e835b2391" },
-]
-
-[[package]]
 name = "langchain-openai"
 version = "1.1.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -2281,19 +2253,6 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/69/1b/077b508e3e500e1629d366249c3ccb32f95e50258b231705c09e3c7a4366/olefile-0.47.zip", hash = "sha256:599383381a0bf3dfbd932ca0ca6515acd174ed48870cbf7fee123d698c192c1c" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/17/d3/b64c356a907242d719fc668b71befd73324e47ab46c8ebbbede252c154b2/olefile-0.47-py2.py3-none-any.whl", hash = "sha256:543c7da2a7adadf21214938bb79c83ea12b473a4b6ee4ad4bf854e7715e13d1f" },
-]
-
-[[package]]
-name = "ollama"
-version = "0.6.1"
-source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
-dependencies = [
-    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/9d/5a/652dac4b7affc2b37b95386f8ae78f22808af09d720689e3d7a86b6ed98e/ollama-0.6.1.tar.gz", hash = "sha256:478c67546836430034b415ed64fa890fd3d1ff91781a9d548b3325274e69d7c6" }
-wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/47/4f/4a617ee93d8208d2bcf26b2d8b9402ceaed03e3853c754940e2290fed063/ollama-0.6.1-py3-none-any.whl", hash = "sha256:fc4c984b345735c5486faeee67d8a265214a31cbb828167782dc642ce0a2bf8c" },
 ]
 
 [[package]]
@@ -3826,7 +3785,6 @@ dependencies = [
     { name = "boto3-stubs", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "celery", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "dashscope", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "debugpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastmcp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -3839,7 +3797,6 @@ dependencies = [
     { name = "kaleido", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "langchain", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "langchain-community", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "langchain-ollama", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "langchain-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "langgraph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "langgraph-checkpoint-postgres", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -3898,7 +3855,6 @@ requires-dist = [
     { name = "boto3-stubs", specifier = "~=1.42.36" },
     { name = "celery", specifier = ">=5.6.2" },
     { name = "click", specifier = ">=8.1.0" },
-    { name = "dashscope", specifier = ">=1.25.2" },
     { name = "debugpy", specifier = ">=1.8.19" },
     { name = "fastapi", specifier = ">=0.121.1" },
     { name = "fastmcp", specifier = ">=2.13.1" },
@@ -3911,7 +3867,6 @@ requires-dist = [
     { name = "kaleido", specifier = ">=1.2.0" },
     { name = "langchain", specifier = ">=1.1.0" },
     { name = "langchain-community", specifier = ">=0.4.1" },
-    { name = "langchain-ollama", specifier = ">=1.0.0" },
     { name = "langchain-openai", specifier = ">=1.1.0" },
     { name = "langgraph", specifier = ">=1.0.4" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0.2" },
@@ -4298,15 +4253,6 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/64/6e/62daec357285b927e82263a81f3b4c1790215bc77c42530ce4a69d501a43/wcwidth-0.5.0.tar.gz", hash = "sha256:f89c103c949a693bf563377b2153082bf58e309919dfb7f27b04d862a0089333" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/f2/3e/45583b67c2ff08ad5a582d316fcb2f11d6cf0a50c7707ac09d212d25bc98/wcwidth-0.5.0-py3-none-any.whl", hash = "sha256:1efe1361b83b0ff7877b81ba57c8562c99cf812158b778988ce17ec061095695" },
-]
-
-[[package]]
-name = "websocket-client"
-version = "1.9.0"
-source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98" }
-wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef" },
 ]
 
 [[package]]

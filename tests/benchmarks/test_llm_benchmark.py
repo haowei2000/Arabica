@@ -77,7 +77,7 @@ def test_llm_agent_scores_through_benchmark_runner_with_fake_client():
 
 
 @pytest.mark.unit
-def test_llm_runner_requires_api_key_env():
+def test_llm_runner_requires_openai_env_contract():
     completed = subprocess.run(
         [
             sys.executable,
@@ -94,7 +94,10 @@ def test_llm_runner_requires_api_key_env():
         text=True,
     )
     assert completed.returncode != 0
-    assert "missing API key" in completed.stderr
+    assert "missing LLM environment variables" in completed.stderr
+    assert "OPENAI__API_KEY" in completed.stderr
+    assert "OPENAI__BASE_URL" in completed.stderr
+    assert "OPENAI__MODEL" in completed.stderr
 
 
 @pytest.mark.unit

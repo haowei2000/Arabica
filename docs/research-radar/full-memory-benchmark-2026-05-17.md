@@ -8,9 +8,9 @@ fixed deterministic normalized-match judge.
 
 Reader configuration was loaded from the user's shell:
 
-- `BENCHMARK_LLM_BASE_URL`: `https://token-plan-cn.xiaomimimo.com/v1`
-- `BENCHMARK_LLM_MODEL`: `mimo-v2.5-pro`
-- `BENCHMARK_LLM_API_KEY`: set, not recorded
+- `OPENAI__BASE_URL`: `https://token-plan-cn.xiaomimimo.com/v1`
+- `OPENAI__MODEL`: `mimo-v2.5-pro`
+- `OPENAI__API_KEY`: set, not recorded
 
 ## Data Imported
 

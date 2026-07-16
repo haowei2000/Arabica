@@ -66,7 +66,10 @@ def test_loader_supports_upstream_session_dict_and_adversarial_answer(tmp_path):
     assert case.reference == "7 May 2023"
     assert case.ability == "5"
     assert case.metadata["evidence"] == ["D1:1"]
-    assert case.inputs["sessions"][0][0]["content"] == "session date: 1:56 pm on 8 May, 2023"
+    assert (
+        case.inputs["sessions"][0][0]["content"]
+        == "session date: 1:56 pm on 8 May, 2023"
+    )
 
 
 @pytest.mark.unit
@@ -88,6 +91,20 @@ def test_oracle_echo_scores_perfect_on_locomo_fixture():
     report = asyncio.run(runner.run(cases))
     assert report.n_cases == 3
     assert report.overall_score == pytest.approx(1.0)
+
+
+@pytest.mark.unit
+def test_anti_oracle_wrong_answers_score_zero_on_locomo_fixture():
+    """PROTOCOL.md §6 anti-oracle gate: a degenerate scorer that rewards
+    arbitrary responses must fail this test."""
+    cases = load_locomo(FIXTURE)
+    runner = BenchmarkRunner(
+        benchmark_name="locomo-anti-oracle",
+        agent=EchoAgent(policy=lambda case: "completely unrelated response"),
+        scorer=locomo_qa_scorer,
+    )
+    report = asyncio.run(runner.run(cases))
+    assert report.overall_score == pytest.approx(0.0)
 
 
 @pytest.mark.unit

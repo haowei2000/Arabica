@@ -9,6 +9,7 @@ import AppWorkspacePage from './pages/AppWorkspacePage';
 import DocumentPage from './pages/context/DocumentPage';
 import SkillFilesPage from './pages/context/SkillFilesPage';
 import {useUIStore} from './stores/useUIStore';
+import { STRUCTURE_CORE_MANIFEST, WEB_SURFACE } from './core/structureCore';
 
 // Create QueryClient instance
 const queryClient = new QueryClient({
@@ -28,6 +29,12 @@ function App() {
     useEffect(() => {
         setTheme(theme);
     }, [setTheme, theme]);
+
+    useEffect(() => {
+        document.documentElement.dataset.structureCoreVersion =
+            STRUCTURE_CORE_MANIFEST.schema_version;
+        document.documentElement.dataset.structureSurface = WEB_SURFACE.id;
+    }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

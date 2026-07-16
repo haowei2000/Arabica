@@ -67,4 +67,3 @@ def locomo_qa_scorer(reference: object, response: object) -> float:
             return 1.0
         scores.append(_token_f1(gold, pred))
     return max(scores, default=0.0)
-

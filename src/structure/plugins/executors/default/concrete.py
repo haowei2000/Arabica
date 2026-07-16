@@ -44,6 +44,7 @@ import re
 from time import perf_counter
 from typing import Any, ClassVar
 
+from structure.config.factory import get_settings
 from structure.core.interfaces import (
     Executor,
     WaitingForTool,
@@ -61,10 +62,9 @@ from structure.frameworks.tool_calling import (
 )
 from structure.models.events.event import Event
 from structure.registries.core import register_executor
-from structure.schemas.app import AppConfig
 from structure.schemas.context.tools.execution import ReadContextResult
 from structure.schemas.events.event_payloads import EventType
-from structure.schemas.llm.chat_llm import ChatLLM
+from structure.schemas.llm.runtime_config import assert_no_runtime_llm_api_config
 
 logger = logging.getLogger(__name__)
 
@@ -848,16 +848,13 @@ class DefaultExecutor(Executor):
         "executor_name": "Default Agent",
         "enabled": True,
         "version": 1,
-        "config": AppConfig(
-            model=ChatLLM(provider="tongyi", name="qwen-plus"), context=None
-        ),
+        "config": {},
     }
 
     def __init__(self, config: dict):
+        assert_no_runtime_llm_api_config(config, location="executor.config")
         super().__init__(config)
-        self._config = config  # kept for _resolve_llm_config
-        self.model_provider = config.get("model_provider", "tongyi")
-        self.model_name = config.get("model_name", "qwen-plus")
+        self.model_name = ""
         self.max_history_messages = config.get("max_history_messages", 80)
         self.max_iterations: int = config.get("max_iterations", 10)
         self.tool_schema_mode = config.get("tool_schema_mode", "lazy")
@@ -881,7 +878,7 @@ class DefaultExecutor(Executor):
 
         # ── Dependency-injected abstractions ─────────────────────
         # ── LLM connection info ──────────────────────────────────
-        self._api_key, self._base_url = self._resolve_llm_config()
+        self._api_key, self._base_url, self.model_name = self._resolve_llm_config()
 
         # ── Tool calling strategy ────────────────────────────────
         # Default: OpenAI-compatible native function calling.
@@ -1350,33 +1347,19 @@ class DefaultExecutor(Executor):
 
     # ── LLM config ────────────────────────────────────────────────
 
-    def _resolve_llm_config(self) -> tuple[str, str]:
-        """Return ``(api_key, base_url)`` from the database ChatModel config.
+    def _resolve_llm_config(self) -> tuple[str, str, str]:
+        """Return LLM API config exclusively from the OPENAI__ env contract."""
+        openai_settings = get_settings().openai
+        api_key = (openai_settings.api_key if openai_settings else "").strip()
+        base_url = (openai_settings.base_url if openai_settings else "").strip()
+        model = (openai_settings.model if openai_settings else "").strip()
 
-        Values are injected by the event worker from the default ChatModel
-        record.  Ollama is the only exception — it never needs a real key.
-        """
-        api_key = self._config.get("api_key") or ""
-        base_url = self._config.get("base_url") or ""
-
-        if self.model_provider == "ollama":
-            from structure.config.factory import get_settings
-
-            settings = get_settings()
-            api_key = "ollama"
-            base_url = base_url or (
-                settings.ollama.base_url + "/v1"
-                if settings.ollama
-                else "http://127.0.0.1:11434/v1"
-            )
-            return api_key, base_url
-
-        if not api_key or not base_url:
+        if not api_key or not base_url or not model:
             raise ValueError(
-                "No LLM model configured. Please add a default chat model "
-                "with an API key and base URL in the LLM Models settings page."
+                "No LLM API configured. Set OPENAI__API_KEY, OPENAI__BASE_URL, "
+                "and OPENAI__MODEL."
             )
-        return api_key, base_url
+        return api_key, base_url, model
 
     # Fields the executor always injects automatically — hide from the LLM.
     _AUTO_INJECTED_FIELDS: ClassVar[frozenset[str]] = frozenset(

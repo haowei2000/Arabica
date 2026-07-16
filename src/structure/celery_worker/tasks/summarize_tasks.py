@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 # Maximum number of recent run summaries fed into the workspace prompt.
 _WORKSPACE_RUN_WINDOW = 10
 
-# Default LLM used for summarization (cheap, fast model).
-_SUMMARY_PROVIDER = "tongyi"
-_SUMMARY_MODEL = "qwen-turbo"
+_SUMMARY_PROVIDER = "openai"
 
 
 # ─── LLM helper ───────────────────────────────────────────────────────────────
@@ -40,7 +38,7 @@ def _call_llm(prompt: str) -> str:
 
     from structure.extensions.llm.llm import get_llm
 
-    llm = get_llm(_SUMMARY_MODEL, provider=_SUMMARY_PROVIDER)
+    llm = get_llm(provider=_SUMMARY_PROVIDER)
     response = llm.invoke([HumanMessage(content=prompt)])
     return response.content
 

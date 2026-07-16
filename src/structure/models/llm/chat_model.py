@@ -40,18 +40,12 @@ class ChatModel(Base):
     provider: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        comment="提供商: openai/anthropic/dashscope/ollama/azure/custom",
+        comment="提供商: openai/custom(OpenAI-compatible)",
     )
     model_id: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
-        comment="模型标识符: gpt-4/claude-3-opus/qwen-turbo",
-    )
-
-    # API configuration
-    base_url: Mapped[str | None] = mapped_column(String(500), comment="API基础URL")
-    api_key_ref: Mapped[str | None] = mapped_column(
-        String(255), comment="API密钥引用（存储密钥名称，非实际密钥）"
+        comment="模型标识符: gpt-4.1-mini",
     )
 
     # ChatLLM capabilities

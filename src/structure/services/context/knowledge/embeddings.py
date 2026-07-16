@@ -3,30 +3,17 @@
 import logging
 from typing import Literal
 
-from langchain_ollama import OllamaEmbeddings
 from langchain_openai import OpenAIEmbeddings
 
 logger = logging.getLogger(__name__)
 
-EmbeddingProvider = Literal["tongyi", "dashscope", "openai", "ollama", "custom"]
+EmbeddingProvider = Literal["openai", "custom"]
 
 # Common embedding models and their dimensions
 EMBEDDING_MODELS = {
-    # DashScope/Tongyi models
-    "text-embedding-v3": 1024,
-    "text-embedding-v2": 1536,
-    "text-embedding-v1": 1536,
-    # OpenAI models
     "text-embedding-3-small": 1536,
     "text-embedding-3-large": 3072,
     "text-embedding-ada-002": 1536,
-    # Ollama models (dimensions vary)
-    "nomic-embed-text": 768,
-    "mxbai-embed-large": 1024,
-    "all-minilm": 384,
-    "bge-small": 384,
-    "bge-base": 768,
-    "bge-large": 1024,
 }
 
 # Valid embedding dimensions for our database schema
@@ -38,17 +25,13 @@ class EmbeddingService:
 
     def __init__(
         self,
-        provider: EmbeddingProvider = "tongyi",
-        model: str = "text-embedding-v3",
+        provider: EmbeddingProvider = "openai",
+        model: str = "text-embedding-3-small",
         dimension: int = 1536,
-        api_key: str | None = None,
-        base_url: str | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
         self.dimension = dimension
-        self._api_key = api_key or ""
-        self._base_url = base_url or ""
         self._client = self._create_client()
 
         logger.info(
@@ -56,41 +39,27 @@ class EmbeddingService:
             f"model={model}, dimension={dimension}"
         )
 
-    def _create_client(self) -> OpenAIEmbeddings | OllamaEmbeddings:
-        """Create embedding client based on provider."""
-        match self.provider:
-            case "tongyi" | "dashscope" | "openai" | "custom":
-                if not self._api_key or not self._base_url:
-                    raise ValueError(
-                        "No embedding model configured. Please add a default embedding model "
-                        "with an API key and base URL in the LLM Models settings page."
-                    )
-                return OpenAIEmbeddings(
-                    model=self.model,
-                    openai_api_key=self._api_key,
-                    openai_api_base=self._base_url,
-                    dimensions=self.dimension,
-                )
+    def _create_client(self) -> OpenAIEmbeddings:
+        """Create an OpenAI-compatible embedding client."""
+        from structure.config.factory import get_settings
 
-            case "ollama":
-                from structure.config.factory import get_settings
-
-                settings = get_settings()
-                base_url = self._base_url or (
-                    settings.ollama.base_url
-                    if settings.ollama
-                    else "http://127.0.0.1:11434"
-                )
-                return OllamaEmbeddings(model=self.model, base_url=base_url)
-
-            case _:
-                raise ValueError(f"Unsupported embedding provider: {self.provider}")
-
-    def _uses_dashscope_compatible_api(self) -> bool:
-        """Return True when embeddings should bypass LangChain's OpenAI wrapper."""
-        if self.provider in ("tongyi", "dashscope"):
-            return True
-        return "dashscope.aliyuncs.com" in self._base_url.lower()
+        if self.provider not in ("openai", "custom"):
+            raise ValueError(f"Unsupported embedding provider: {self.provider}")
+        openai_settings = get_settings().openai
+        api_key = (openai_settings.api_key if openai_settings else "").strip()
+        base_url = (openai_settings.base_url if openai_settings else "").strip()
+        model = (openai_settings.model if openai_settings else "").strip()
+        if not api_key or not base_url or not model:
+            raise ValueError(
+                "No embedding model configured. Seed the default embedding model from "
+                "OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL."
+            )
+        return OpenAIEmbeddings(
+            model=self.model,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            dimensions=self.dimension,
+        )
 
     def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text.
@@ -102,9 +71,6 @@ class EmbeddingService:
             list[float]: Embedding vector.
         """
         text = self._sanitize_text(text)
-        # Tongyi/DashScope rejects tokenized input from LangChain — use direct path.
-        if self._uses_dashscope_compatible_api():
-            return self._embed_tongyi_direct([text])[0]
         return self._client.embed_query(text)
 
     @staticmethod
@@ -172,11 +138,7 @@ class EmbeddingService:
             )
 
         try:
-            # For Tongyi/DashScope, use direct API call to avoid langchain issues
-            if self._uses_dashscope_compatible_api():
-                embeddings = self._embed_tongyi_direct(valid_texts)
-            else:
-                embeddings = self._client.embed_documents(valid_texts)
+            embeddings = self._client.embed_documents(valid_texts)
             logger.info(f"Generated {len(embeddings)} embeddings")
             return embeddings
         except Exception as e:
@@ -188,45 +150,6 @@ class EmbeddingService:
             for i, text in enumerate(valid_texts[:3]):
                 logger.error(f"Text {i}: {text[:100]!r}")
             raise
-
-    def _embed_tongyi_direct(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts using direct DashScope-compatible API call.
-
-        Bypasses LangChain to avoid tokenisation issues.
-        """
-        from openai import OpenAI
-
-        api_key = self._api_key
-        base_url = self._base_url
-
-        # Process in batches of 10 strings each
-        all_embeddings = []
-        batch_size = 10
-
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-
-            # url = f"{base_url.rstrip('/')}/embeddings"  # noqa: ERA001
-            url = base_url
-            headers = {  # noqa: F841
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.model,
-                "input": batch,
-                "dimensions": self.dimension,
-                # "encoding_format": "float",  # noqa: ERA001
-            }
-
-            logger.debug(f"DashScope API request: url={url}, texts_count={len(batch)}")
-            client = OpenAI(base_url=url, api_key=api_key)
-            completion = client.embeddings.create(**payload)
-            completion = completion.model_dump()
-            batch_embeddings = [item["embedding"] for item in completion["data"]]
-            all_embeddings.extend(batch_embeddings)
-
-        return all_embeddings
 
     def embed_texts_batch(
         self, texts: list[str], batch_size: int = 100
@@ -295,8 +218,8 @@ class EmbeddingService:
 
 
 def get_embedding_service(
-    provider: EmbeddingProvider = "tongyi",
-    model: str = "text-embedding-v3",
+    provider: EmbeddingProvider = "openai",
+    model: str = "text-embedding-3-small",
     dimension: int | None = None,
 ) -> EmbeddingService:
     """Factory function to create embedding service.

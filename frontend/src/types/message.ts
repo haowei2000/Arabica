@@ -30,7 +30,6 @@ export interface Message {
   from_source: string;
   from_end_user_id?: string;
   from_account_id?: string;
-  model_provider?: string;
   model_id?: string;
   currency: string;
   created_at: string;

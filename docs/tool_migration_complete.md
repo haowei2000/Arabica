@@ -309,8 +309,8 @@ config = {"enable_browser_tools": False}
 
 ```python
 config = {
-    "model_provider": "tongyi",
-    "model_name": "qwen-plus",
+    # LLM API comes only from OPENAI__API_KEY, OPENAI__BASE_URL,
+    # and OPENAI__MODEL.
     "enable_browser_tools": True,
     "server_tools": ["context", "utility"],
 }

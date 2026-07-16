@@ -415,24 +415,17 @@ class ApplicationBootstrap:
         """Create or update system default LLM models from OPENAI__* settings."""
         openai_settings = self.settings.openai
         api_key = (openai_settings.api_key if openai_settings else "").strip()
-        if not api_key:
-            logger.info("Skipping system default LLM seed: OPENAI__API_KEY is not set")
+        base_url = (openai_settings.base_url if openai_settings else "").strip()
+        chat_model_id = (openai_settings.model if openai_settings else "").strip()
+        if not api_key or not base_url or not chat_model_id:
+            logger.info(
+                "Skipping system default LLM seed: OPENAI__API_KEY, "
+                "OPENAI__BASE_URL, and OPENAI__MODEL must all be set"
+            )
             return
 
-        base_url = (
-            (openai_settings.base_url if openai_settings else "")
-            or "https://api.openai.com/v1"
-        ).strip()
-        chat_model_id = (
-            (openai_settings.model if openai_settings else "") or "gpt-4.1-mini"
-        ).strip()
-        embedding_model_id = (
-            (openai_settings.embedding_model if openai_settings else "")
-            or "text-embedding-3-small"
-        ).strip()
-        embedding_dimension = (
-            openai_settings.embedding_dimension if openai_settings else 1536
-        )
+        embedding_model_id = "text-embedding-3-small"
+        embedding_dimension = 1536
 
         try:
             from structure.models.llm.chat_model import ChatModel
@@ -454,8 +447,6 @@ class ApplicationBootstrap:
                         user_id=None,
                         provider="openai",
                         model_id=chat_model_id,
-                        base_url=base_url,
-                        api_key_ref=api_key,
                         supports_function_call=True,
                         supports_streaming=True,
                         is_system=True,
@@ -467,8 +458,6 @@ class ApplicationBootstrap:
                 else:
                     chat_model.name = f"Default OpenAI {chat_model_id}"
                     chat_model.description = "System default chat model for new users"
-                    chat_model.base_url = base_url
-                    chat_model.api_key_ref = api_key
                     chat_model.is_system = True
                     chat_model.is_default = True
                     chat_model.enabled = True
@@ -497,8 +486,6 @@ class ApplicationBootstrap:
                         user_id=None,
                         provider="openai",
                         model_id=embedding_model_id,
-                        base_url=base_url,
-                        api_key_ref=api_key,
                         dimension=embedding_dimension,
                         is_system=True,
                         is_default=True,
@@ -511,8 +498,6 @@ class ApplicationBootstrap:
                     embedding_model.description = (
                         "System default embedding model for new users"
                     )
-                    embedding_model.base_url = base_url
-                    embedding_model.api_key_ref = api_key
                     embedding_model.dimension = embedding_dimension
                     embedding_model.is_system = True
                     embedding_model.is_default = True

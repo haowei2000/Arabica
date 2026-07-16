@@ -29,12 +29,9 @@ DEFAULT_PROCESS_RULE = {
         "search_method": "semantic_search",
         "reranking_enable": False,
         "reranking_mode": None,
-        "reranking_model": {"reranking_provider_name": "", "reranking_model_name": ""},
         "weights": None,
         "top_k": 2,
         "score_threshold_enabled": False,
         "score_threshold": 0,
     },
-    "embedding_model": "",
-    "embedding_model_provider": "",
 }

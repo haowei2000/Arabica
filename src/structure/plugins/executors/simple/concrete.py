@@ -4,8 +4,6 @@ from typing import Any, ClassVar
 
 from structure.plugins.executors.default.concrete import DefaultExecutor
 from structure.registries.core import register_executor
-from structure.schemas.app import AppConfig
-from structure.schemas.llm.chat_llm import ChatLLM
 
 _SYSTEM_PROMPT = """\
 You are a helpful assistant. Answer clearly and concisely.
@@ -23,9 +21,7 @@ class SimpleExecutor(DefaultExecutor):
         "executor_name": "Simple Agent",
         "enabled": True,
         "version": 1,
-        "config": AppConfig(
-            model=ChatLLM(provider="tongyi", name="qwen-plus"), context=None
-        ),
+        "config": {},
     }
 
     def __init__(self, config: dict):

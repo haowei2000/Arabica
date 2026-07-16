@@ -38,4 +38,3 @@ def test_inject_runtime_arguments_preserves_existing_runtime_ids():
     assert injected["run_id"] == "run-1"
     assert injected["arguments"]["workspace_id"] == "inner-workspace"
     assert injected["arguments"]["run_id"] == "inner-run"
-

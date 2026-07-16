@@ -325,8 +325,6 @@ async def hybrid_search_knowledge(
             provider=model_config.provider,
             model=model_config.model_id,
             dimension=model_config.dimension,
-            api_key=model_config.api_key_ref or "",
-            base_url=model_config.base_url or "",
         )
         query_vector = emb_svc.embed_text(q)
     except Exception as e:

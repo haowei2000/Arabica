@@ -152,7 +152,7 @@ Content-Type: application/json
   "agent_template_id": "uuid-of-template",
   "enabled": true,
   "config": {
-    "model_name": "qwen3:30b",
+    "_comment": "LLM API is resolved only from OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL",
     "temperature": 0.7
   },
   "version": 1
@@ -167,7 +167,7 @@ Content-Type: application/json
   "agent_template_id": "uuid-of-template",
   "enabled": true,
   "config": {
-    "model_name": "qwen3:30b",
+    "_comment": "LLM API is resolved only from OPENAI__API_KEY, OPENAI__BASE_URL, and OPENAI__MODEL",
     "temperature": 0.7
   },
   "version": 1,

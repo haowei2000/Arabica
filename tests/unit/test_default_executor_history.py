@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from structure.config.factory import get_settings
 from structure.core.interfaces.executor import WaitingForTool
 from structure.frameworks.tool_calling import (
     ChatMessage,
@@ -16,6 +17,16 @@ from structure.plugins.executors.default.concrete import (
     _unresolved_tool_call_ids,
 )
 from structure.schemas.events.event_payloads import EventType
+
+
+@pytest.fixture(autouse=True)
+def openai_env_contract(monkeypatch):
+    monkeypatch.setenv("OPENAI__API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI__BASE_URL", "http://example.test/v1")
+    monkeypatch.setenv("OPENAI__MODEL", "test-model")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 class _FakeScalarResult:
@@ -68,8 +79,6 @@ def test_system_prompt_head_is_stable_and_runtime_context_is_tail_loaded():
         {
             "workspace_id": workspace_id,
             "run_id": run_id,
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
 
@@ -90,6 +99,33 @@ def test_system_prompt_head_is_stable_and_runtime_context_is_tail_loaded():
     assert f"run_id: {run_id}" in messages[1].content
     assert messages[-1].role == "user"
     assert messages[-1].content == "hello"
+
+
+def test_executor_uses_openai_env_contract():
+    executor = DefaultExecutor(
+        {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "run_id": "00000000-0000-0000-0000-000000000002",
+        }
+    )
+
+    assert executor._api_key == "test-key"
+    assert executor._base_url == "http://example.test/v1"
+    assert executor.model_name == "test-model"
+    assert not hasattr(executor, "model_provider")
+
+
+def test_executor_rejects_legacy_runtime_llm_config_values():
+    with pytest.raises(ValueError, match=r"executor\.config\.api_key"):
+        DefaultExecutor(
+            {
+                "workspace_id": "00000000-0000-0000-0000-000000000001",
+                "run_id": "00000000-0000-0000-0000-000000000002",
+                "api_key": "legacy-key",
+                "base_url": "http://legacy.example/v1",
+                "model_name": "legacy-model",
+            }
+        )
 
 
 def test_prompt_calling_keeps_tools_prompt_out_of_stable_system_head():
@@ -115,8 +151,6 @@ def test_batch_plan_keeps_key_summaries_before_full_tail_events():
         {
             "workspace_id": workspace_id,
             "run_id": run_id,
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
 
@@ -155,8 +189,6 @@ async def test_global_history_orders_by_created_at_then_reverses(monkeypatch):
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
 
@@ -173,8 +205,6 @@ def test_get_messages_and_tools_defaults_to_executor_tool_set():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [_tool_schema("codex_echo_tool")]
@@ -196,8 +226,6 @@ def test_lazy_tool_schema_mode_uses_bootstrap_tools_until_schema_is_read():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [
@@ -219,8 +247,6 @@ def test_lazy_tool_schema_mode_merges_bootstrap_with_selected_schema():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [
@@ -245,8 +271,6 @@ def test_get_messages_and_tools_keeps_tool_description_result_in_conversation():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [
@@ -303,8 +327,6 @@ def test_get_messages_and_tools_filters_forced_tools():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [
@@ -567,8 +589,6 @@ async def test_on_tool_result_replays_when_history_has_all_parallel_results():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor._pending_tool_ids = {"call-a", "call-b"}
@@ -620,8 +640,6 @@ async def test_emit_tool_calls_injects_runtime_ids_into_mcp_arguments_wrapper():
         {
             "workspace_id": workspace_id,
             "run_id": run_id,
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
 
@@ -652,8 +670,6 @@ def test_get_messages_and_tools_can_force_new_tool_after_schema_was_loaded():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [
@@ -694,8 +710,6 @@ def test_get_messages_and_tools_loads_legacy_tool_schema_result():
         {
             "workspace_id": "00000000-0000-0000-0000-000000000001",
             "run_id": "00000000-0000-0000-0000-000000000002",
-            "api_key": "test-key",
-            "base_url": "http://example.test/v1",
         }
     )
     executor.tools_info = [

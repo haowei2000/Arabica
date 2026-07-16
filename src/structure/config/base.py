@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from structure.config.components.auth import AuthConfig
 from structure.config.components.email import EmailConfig
-from structure.config.components.ollama import OllamaConfig
 from structure.config.components.openai import OpenAIConfig
 from structure.config.components.postgres import PostgresConfig
 from structure.config.components.quota import QuotaConfig
@@ -36,16 +35,11 @@ class AppSettings(BaseSettings):
     mcp_cache_enable: bool = False
     app_cache_enable: bool = False
 
-    dashscope_api_key: str = Field(default="", description="DashScope API Key")
     env: str = "development"
     agent_task_name: str = "agent:stream"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if not self.dashscope_api_key:
-            logger.warning(
-                "DashScope API Key is not set. Some features may not work properly."
-            )
         if not self.postgres:
             logging.warning(
                 "PostgreSQL configuration is not set. Database features may not work properly."
@@ -64,6 +58,5 @@ class AppSettings(BaseSettings):
     auth: AuthConfig
     email: EmailConfig = Field(default_factory=EmailConfig)
     quota: QuotaConfig = Field(default_factory=QuotaConfig)
-    ollama: OllamaConfig | None = None
     openai: OpenAIConfig | None = None
     rustfs: RustfsConfig

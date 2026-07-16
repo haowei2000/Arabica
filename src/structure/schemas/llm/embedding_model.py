@@ -3,13 +3,16 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from structure.schemas.llm.runtime_config import assert_no_runtime_llm_api_config
 from structure.utils.schema_mixins import ResponseMixin
 
 
 class EmbeddingModelCreate(BaseModel):
     """Schema for creating a new embedding model configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=255, description="Display name")
     description: str | None = Field(None, description="Model description")
@@ -17,17 +20,13 @@ class EmbeddingModelCreate(BaseModel):
         ...,
         min_length=1,
         max_length=50,
-        description="Provider: openai/dashscope/huggingface/ollama/custom",
+        description="Provider: openai or custom OpenAI-compatible endpoint",
     )
     model_id: str = Field(
         ...,
         min_length=1,
         max_length=255,
         description="Model identifier, e.g. text-embedding-3-small",
-    )
-    base_url: str | None = Field(None, max_length=500, description="API base URL")
-    api_key_ref: str | None = Field(
-        None, max_length=255, description="API key reference name"
     )
     dimension: int = Field(..., gt=0, description="Vector dimension: 384/768/1024/1536")
     max_tokens: int | None = Field(None, gt=0, description="Max input tokens")
@@ -46,16 +45,22 @@ class EmbeddingModelCreate(BaseModel):
     config: dict[str, Any] | None = Field(None, description="Extra configuration")
     meta: dict[str, Any] | None = Field(None, description="Metadata")
 
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "EmbeddingModelCreate":
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        assert_no_runtime_llm_api_config(self.meta, location="meta")
+        return self
+
 
 class EmbeddingModelUpdate(BaseModel):
     """Schema for updating an existing embedding model configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     provider: str | None = Field(None, min_length=1, max_length=50)
     model_id: str | None = Field(None, min_length=1, max_length=255)
-    base_url: str | None = Field(None, max_length=500)
-    api_key_ref: str | None = Field(None, max_length=255)
     dimension: int | None = Field(None, gt=0)
     max_tokens: int | None = Field(None, gt=0)
     supports_batch: bool | None = None
@@ -69,6 +74,12 @@ class EmbeddingModelUpdate(BaseModel):
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def reject_runtime_api_config(self) -> "EmbeddingModelUpdate":
+        assert_no_runtime_llm_api_config(self.config, location="config")
+        assert_no_runtime_llm_api_config(self.meta, location="meta")
+        return self
+
 
 class EmbeddingModelResponse(ResponseMixin, BaseModel):
     """Schema for embedding model response."""
@@ -79,8 +90,6 @@ class EmbeddingModelResponse(ResponseMixin, BaseModel):
     user_id: str | None = None
     provider: str
     model_id: str
-    base_url: str | None = None
-    api_key_ref: str | None = None
     dimension: int
     max_tokens: int | None = None
     supports_batch: bool
@@ -94,12 +103,6 @@ class EmbeddingModelResponse(ResponseMixin, BaseModel):
     enabled: bool
     config: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def hide_system_api_key(self) -> "EmbeddingModelResponse":
-        if self.is_system and self.api_key_ref:
-            self.api_key_ref = "configured"
-        return self
 
 
 class EmbeddingModelListResponse(BaseModel):

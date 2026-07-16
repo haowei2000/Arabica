@@ -34,7 +34,7 @@ Structure is a production-ready backend for running intelligent AI agents at sca
 | **Real-time Streaming** | Server-Sent Events (SSE) for live token-by-token output |
 | **Distributed Workers** | Redis Streams consumer groups, horizontal scaling, stuck-run recovery |
 | **Plugin Architecture** | Decorator-based auto-discovery for executors and tools |
-| **Multi-LLM Support** | Alibaba Tongyi (DashScope), Ollama, OpenAI-compatible endpoints |
+| **LLM Support** | OpenAI-compatible endpoints configured with `OPENAI__*` variables |
 | **Context Store** | Path-addressable workspace context with glob, search, and tree traversal |
 | **Scalability** | Stateless API servers, async I/O, connection pooling (20–30 per pool) |
 | **Observability** | Structured logging, event audit trail, health endpoints, request tracing |
@@ -300,7 +300,7 @@ Tools are described in the system prompt as XML-structured blocks. The LLM outpu
 </tool_result>
 ```
 
-This approach works with any OpenAI-compatible API — including local Ollama models — without requiring native function-calling support.
+This approach works with the configured OpenAI-compatible API without requiring native function-calling support.
 
 ### Trust Hierarchy
 
@@ -460,9 +460,7 @@ Key configuration sections:
 |---|---|---|
 | **Database** | `POSTGRES__*` | PostgreSQL host, port, database, and credentials |
 | **Redis** | `REDIS__*` | Redis host, port, database, and credentials |
-| **DashScope** | `DASHSCOPE_API_KEY` | Alibaba Tongyi API key |
-| **OpenAI** | `OPENAI__API_KEY`, `OPENAI__BASE_URL` | OpenAI-compatible endpoint |
-| **Ollama** | `OLLAMA__*` | Local Ollama server settings |
+| **LLM API** | `OPENAI__API_KEY`, `OPENAI__BASE_URL`, `OPENAI__MODEL` | The only runtime LLM API configuration contract |
 | **Storage** | `RUSTFS__*` | S3-compatible storage credentials |
 
 See `.env.example` for the full list. Replace every `change-me-*` value before
