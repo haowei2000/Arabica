@@ -55,7 +55,7 @@ const ToolIcon = APP_ICONS.tool;
 
 function Markdown({ content }: { content: string }) {
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/50 prose-code:text-primary prose-code:bg-primary/5 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-img:rounded-xl prose-img:border prose-img:border-border/50 prose-img:shadow-sm">
+    <div className="chat-markdown prose prose-sm dark:prose-invert max-w-none prose-code:before:content-none prose-code:after:content-none prose-img:rounded-xl prose-img:border prose-img:border-border/50 prose-img:shadow-sm">
       <ReactMarkdown 
         remarkPlugins={[remarkGfm]}
         components={{
@@ -880,7 +880,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
 
                 {message.role === MessageRole.USER ? (
                   <div className="max-w-[85%] sm:max-w-2xl rounded-xl rounded-br-md px-4 py-2.5 bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all duration-200">
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                    <p className="chat-message-text whitespace-pre-wrap">{message.content}</p>
                     {message.attachments && (
                       <ChatAttachmentChips
                         attachments={message.attachments}
@@ -1137,7 +1137,7 @@ export default function WorkspaceConsole({ onRunCountChange }: WorkspaceConsoleP
                     placeholder="Message… (@tool)"
                     disabled={isStreaming || uploadingFiles}
                     rows={1}
-                    className="flex-1 resize-none bg-transparent px-2 py-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
+                    className="chat-message-text flex-1 resize-none bg-transparent px-2 py-3 text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 max-h-48"
                   />
                 <div className="pr-3 pb-2.5 shrink-0">
                   {isStreaming ? (
