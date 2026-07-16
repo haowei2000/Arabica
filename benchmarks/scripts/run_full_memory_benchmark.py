@@ -27,6 +27,12 @@ from benchmarks.longmemeval_v2 import (
     load_longmemeval_v2_release,
     longmemeval_v2_scorer,
 )
+from benchmarks.protocol_gate import (
+    apply_case_list,
+    case_list_sha256,
+    load_case_list,
+    verify_dataset_checksums,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = REPO_ROOT / "benchmarks" / "data"
@@ -254,6 +260,8 @@ async def run_suite(
     input_cost_per_mtok: float,
     output_cost_per_mtok: float,
     output_dir: Path,
+    case_list: Path | None = None,
+    verify_checksums: bool = True,
 ) -> tuple[list[tuple[str, BenchmarkReport]], dict[str, object]]:
     dataset_path, loader, scorer = _benchmark_config(benchmark, data_dir)
     if not dataset_path.exists():
@@ -261,13 +269,41 @@ async def run_suite(
             f"{dataset_path} does not exist. Run prepare_full_datasets.py first."
         )
 
-    cases, sample_info = sample_cases(
-        loader(dataset_path),
-        sample_mode=sample_mode,
-        sample_seed=sample_seed,
-        max_cases=max_cases,
-        sample_percent=sample_percent,
-    )
+    protocol_info: dict[str, object] = {
+        "checksums_verified": False,
+        "case_list": None,
+        "case_list_sha256": None,
+    }
+    if verify_checksums:
+        verified_files = verify_dataset_checksums(dataset_path, data_dir=data_dir)
+        protocol_info["checksums_verified"] = True
+        protocol_info["verified_files"] = verified_files
+
+    if case_list is not None:
+        frozen_ids = load_case_list(case_list)
+        cases = apply_case_list(loader(dataset_path), frozen_ids)
+        protocol_info["case_list"] = str(case_list)
+        protocol_info["case_list_sha256"] = case_list_sha256(case_list)
+        sample_info = {
+            "sample_mode": "case_list",
+            "sample_seed": None,
+            "sample_percent_requested": None,
+            "sample_percent_effective": (
+                len(cases) / len(frozen_ids) * 100 if frozen_ids else 0.0
+            ),
+            "sample_size": len(cases),
+            "source_cases": len(frozen_ids),
+            "max_cases": None,
+        }
+    else:
+        cases, sample_info = sample_cases(
+            loader(dataset_path),
+            sample_mode=sample_mode,
+            sample_seed=sample_seed,
+            max_cases=max_cases,
+            sample_percent=sample_percent,
+        )
+    sample_info["protocol"] = protocol_info
 
     reports: list[tuple[str, BenchmarkReport]] = []
     for method in methods:
@@ -480,6 +516,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="Evaluate this percentage of the benchmark before applying --max-cases cap.",
     )
+    parser.add_argument(
+        "--case-list",
+        type=Path,
+        help="Frozen case-ID list from benchmarks/protocol/case_lists/; "
+        "overrides sampling flags (PROTOCOL.md section 1.3).",
+    )
+    parser.add_argument(
+        "--allow-unverified-data",
+        action="store_true",
+        help="Skip the dataset checksum gate. Development smoke runs only; "
+        "protocol runs must not set this.",
+    )
     parser.add_argument("--max-context-chars", type=int, default=120_000)
     parser.add_argument("--input-cost-per-mtok", type=float, default=0.0)
     parser.add_argument("--output-cost-per-mtok", type=float, default=0.0)
@@ -511,6 +559,8 @@ def main(argv: list[str] | None = None) -> int:
             input_cost_per_mtok=args.input_cost_per_mtok,
             output_cost_per_mtok=args.output_cost_per_mtok,
             output_dir=args.output_dir,
+            case_list=args.case_list,
+            verify_checksums=not args.allow_unverified_data,
         )
     )
 
