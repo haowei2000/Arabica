@@ -99,6 +99,8 @@ def _make_agent(
         return LLMBenchmarkAgent(context_mode="fulltext", **common)
     if method == "NaiveRAG":
         return LLMBenchmarkAgent(context_mode="naiverag", **common)
+    if method == "ClosedBook":
+        return LLMBenchmarkAgent(context_mode="closedbook", **common)
     if method == "StructureMemory":
         return StructureMemoryBenchmarkAgent(
             data_root=output_dir / "structure-context",
@@ -493,7 +495,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=("FullText", "NaiveRAG", "StructureMemory", "StructurePathMemory"),
+        choices=(
+            "FullText",
+            "NaiveRAG",
+            "ClosedBook",
+            "StructureMemory",
+            "StructurePathMemory",
+        ),
         default=["FullText", "NaiveRAG", "StructureMemory"],
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)

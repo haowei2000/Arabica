@@ -8,8 +8,9 @@ import sys
 from types import SimpleNamespace
 
 from benchmarks.baselines import LLMBenchmarkAgent
-from benchmarks.core import BenchmarkRunner
+from benchmarks.core import BenchmarkCase, BenchmarkRunner
 from benchmarks.longmemeval import load_longmemeval, longmemeval_scorer
+from benchmarks.scripts.run_full_memory_benchmark import _make_agent, build_parser
 import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -118,3 +119,87 @@ def test_llm_runner_json_renderer_is_machine_readable():
     payload = json.loads(render_json(report))
     assert payload["benchmark"] == "longmemeval:llm-fake"
     assert payload["per_case"][0]["tokens_total"] == 127
+
+
+class _RecordingCompletions:
+    def __init__(self) -> None:
+        self.messages = None
+
+    async def create(self, **kwargs):
+        self.messages = kwargs["messages"]
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Paris"))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=2),
+        )
+
+
+class _RecordingClient:
+    def __init__(self):
+        self.completions = _RecordingCompletions()
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+@pytest.mark.unit
+def test_closedbook_prompt_contains_question_but_no_context():
+    cases = load_longmemeval(FIXTURE)[:1]
+    client = _RecordingClient()
+    agent = LLMBenchmarkAgent(
+        model="fake-model",
+        api_key="unused",
+        context_mode="closedbook",
+        client=client,
+    )
+    result = asyncio.run(agent.run(cases[0]))
+
+    system, user = client.completions.messages
+    assert "context" not in system["content"].lower()
+    assert "Context:" not in user["content"]
+    assert str(cases[0].inputs["question"]) in user["content"]
+    assert result.metadata["context_mode"] == "closedbook"
+    assert result.metadata["selected_chunks"] == 0
+    assert result.metadata["available_chunks"] > 0
+
+
+@pytest.mark.unit
+def test_closedbook_keeps_json_shape_for_evidence_benchmarks():
+    case = BenchmarkCase(
+        task_id="v2-style",
+        inputs={"question": "Where does Ana live?", "sessions": [["Ana: hi"]]},
+        reference={"answer": "Lisbon", "evidence_ids": ["e1"]},
+    )
+    client = _RecordingClient()
+    agent = LLMBenchmarkAgent(
+        model="fake-model",
+        api_key="unused",
+        context_mode="closedbook",
+        client=client,
+    )
+    asyncio.run(agent.run(case))
+
+    system, _user = client.completions.messages
+    assert "evidence_ids" in system["content"]
+    assert "leave" in system["content"].lower()
+    assert "bracketed" not in system["content"]
+
+
+@pytest.mark.unit
+def test_runner_exposes_closedbook_method():
+    args = build_parser().parse_args(
+        ["--benchmark", "locomo", "--methods", "ClosedBook"]
+    )
+    assert args.methods == ["ClosedBook"]
+
+    agent = _make_agent(
+        method="ClosedBook",
+        api_key="test-key",
+        base_url="http://example.test/v1",
+        model="fake-model",
+        top_k=6,
+        temperature=0.0,
+        max_context_chars=120_000,
+        input_cost_per_mtok=0.0,
+        output_cost_per_mtok=0.0,
+        output_dir=Path("/tmp/unused"),
+    )
+    assert isinstance(agent, LLMBenchmarkAgent)
+    assert agent.context_mode == "closedbook"

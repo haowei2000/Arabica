@@ -84,6 +84,11 @@ class LLMBenchmarkAgent:
         if self.context_mode == "naiverag":
             question = str(case.inputs.get("question") or "")
             return select_lexical_chunks(question, chunks, top_k=self.top_k), chunks
+        if self.context_mode == "closedbook":
+            # C0 contamination control (PROTOCOL.md section 2): the reader
+            # answers from parametric knowledge alone. Chunks are still
+            # reported as available for the diagnostics profile.
+            return [], chunks
         raise ValueError(f"unsupported context_mode: {self.context_mode}")
 
     def _messages(
@@ -99,6 +104,27 @@ class LLMBenchmarkAgent:
         wants_evidence = bool(
             isinstance(case.reference, dict) and "evidence_ids" in case.reference
         )
+        if self.context_mode == "closedbook":
+            # No context block and no mention of one: the arm measures what
+            # the reader already knows. The JSON shape stays identical so the
+            # evidence-aware scorers parse all arms the same way.
+            answer_instruction = (
+                "Return JSON with keys answer and evidence_ids; leave "
+                "evidence_ids empty."
+                if wants_evidence
+                else "Return a concise answer, not an explanation."
+            )
+            return [
+                {
+                    "role": "system",
+                    "content": (
+                        "Answer the user's question from your own knowledge. "
+                        "If you do not know, say you do not know. "
+                        + answer_instruction
+                    ),
+                },
+                {"role": "user", "content": f"Question:\n{question}\n\nAnswer:"},
+            ]
         answer_instruction = (
             "Return JSON with keys answer and evidence_ids. Use evidence_ids from "
             "the bracketed context ids or evidence_id labels when possible."
