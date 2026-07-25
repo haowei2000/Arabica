@@ -568,7 +568,9 @@ def _events_to_messages(
                     seen_tool_results[dup_key] = _dedup_turn_counter
             if not deduped:
                 messages.append(
-                    ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id)
+                    ChatMessage(
+                        role="tool", content=result_str, tool_call_id=resolved_id
+                    )
                 )
             _dedup_turn_counter += 1
 
