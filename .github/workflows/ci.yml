@@ -19,6 +19,26 @@ env:
   UV_HTTP_TIMEOUT: "300"
 
 jobs:
+  protocol:
+    name: Rust Protocol
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run protocol workspace tests
+        run: cargo test --workspace
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

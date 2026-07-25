@@ -43,6 +43,15 @@ Structure is a production-ready backend for running intelligent AI agents at sca
 
 ## Architecture Overview
 
+> **Rust protocol-framework migration:** CLI and web implementations have been
+> intentionally removed while the contract is stabilized. The active Rust
+> workspace contains `structure-model`, `structure-protocol`,
+> `structure-provider`, `structure-runner`, `structure-runtime`,
+> `structure-session`, and the HTTP/SSE protocol host.
+> The existing Python service remains the behavioral reference. See
+> [Protocol](docs/protocol.md) and
+> [Runtime Core Architecture](docs/runtime_core_architecture.md).
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                      External Clients                         │
@@ -603,7 +612,6 @@ src/structure/
 ├── config/                   # Settings with LRU-cached singleton
 └── migrations/               # Alembic migration versions
 
-frontend/src/                 # React + TypeScript frontend
 tests/                        # pytest test suite
 docs/                         # Additional documentation
 ```

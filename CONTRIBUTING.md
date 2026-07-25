@@ -25,12 +25,11 @@ make docker-up-infra
 make db-upgrade
 ```
 
-5. Run the API, workers, and frontend as needed:
+5. Run the API and workers as needed:
 
 ```bash
 make start-api
 make start-worker
-make start-frontend
 ```
 
 ## Quality Checks
