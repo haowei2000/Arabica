@@ -116,3 +116,12 @@ and environment metadata. It never serializes the API key. Fixture reports are
 marked `evidence_level: fixture`; only reports marked `live_api` are real model
 evidence. The current provider path is non-streaming, so it reports total
 provider latency but not time to first token.
+
+The default evidence value intentionally has no trailing whitespace. A live
+LongCat smoke run preserved the semantic value but normalized away a trailing
+newline, which the exact oracle correctly rejected. Whitespace-sensitive tasks
+should declare that requirement explicitly instead of relying on an incidental
+line ending.
+
+Committed live artifacts and their evidence limitations are indexed under
+[`results/`](results/README.md).

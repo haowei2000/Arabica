@@ -29,7 +29,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut api_type = ApiType::OpenAiChatCompletions;
     let mut runner_root = None;
     let mut output = None;
-    let mut content = "STRUCTURE_TIER_B_OK\n".to_owned();
+    let mut content = "STRUCTURE_TIER_B_OK".to_owned();
     let mut max_key_batches = None;
     let mut max_key_content_bytes = None;
     let mut pretty = false;

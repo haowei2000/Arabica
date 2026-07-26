@@ -249,6 +249,28 @@ deterministic fixture runs separately from live API runs. Because the current
 provider interface is non-streaming, cached input tokens are recorded when the
 wire response provides them, but time to first token remains unavailable.
 
+### First live provider smoke: LongCat-2.0
+
+A clean-revision Tier-B smoke run used the generic OpenAI Chat Completions
+adapter against `https://api.longcat.chat/openai/v1` with model `LongCat-2.0`.
+The passing task completed the two-turn keyed recall flow, emitted one typed
+`write_file` call, and produced an exact on-disk content match. The provider
+reported 1,085 input tokens, 288 output tokens, and 256 cached input tokens
+across three calls; total provider latency was 48,584 ms. There were no tool
+errors or redundant calls.
+
+An immediately preceding diagnostic run expected the same semantic value plus
+a trailing newline. The model wrote the value without that newline, so four of
+five task checks passed while the exact file oracle failed. This is recorded as
+an information-fidelity failure, not relabeled as success. The passing default
+fixture therefore avoids incidental trailing whitespace; future
+whitespace-sensitive workloads must declare it as part of the task semantics.
+
+This is a one-task smoke result, not a policy comparison or paper-level quality
+claim. It establishes real provider compatibility, provider-reported cache
+accounting, short-memory recall, typed tool calling, and LocalRunner execution.
+Repeated runs over multiple tasks and policies remain required.
+
 ### Implemented command surface
 
 The Tier-A harness is the workspace package
