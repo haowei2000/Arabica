@@ -210,6 +210,8 @@ pub enum FinishReason {
 pub struct RuntimeUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default)]
+    pub cached_input_tokens: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

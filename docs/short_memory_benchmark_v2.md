@@ -80,6 +80,10 @@ An optimization result is invalid if any required gate fails:
    visible.
 7. **Fork replay equivalence:** replaying inherited plus local history produces
    the same materialisation as the canonical session assembly path.
+8. **Semantic evidence recall:** full items retain their source evidence
+   directly; compact keys count only when they contain all semantic fragments
+   declared independently by the trace oracle. Provenance ids alone do not
+   satisfy this gate. Reports include full/key counts and missing event ids.
 
 ## Compared Configurations
 
@@ -128,7 +132,10 @@ must record seed and generation parameters.
 ### Fidelity and behavior
 
 - `anchor_recall`: retained required anchors divided by required anchors.
-- `evidence_recall`: retained gold evidence ids divided by gold evidence ids.
+- `evidence_recall`: semantically retained gold evidence units divided by gold
+  evidence units, split into full-item and compact-key retention;
+- `missing_evidence_event_ids`: exact oracle evidence absent from both a full
+  item and a semantically valid key;
 - `relation_integrity_failures`: structurally invalid relation count.
 - `redundant_tool_call_rate`: repeated equivalent actions divided by tool
   calls.
@@ -209,17 +216,38 @@ runs validate harness wiring but are not task-performance evidence.
 3. **Implemented:** add correctness gates and B0/B1 reference materialisers.
 4. **Implemented:** add B2 TTL-only, B3 Batch-only, full Structure policy,
    and release-mode scaling measurements.
-5. Add an evidence-recall gate and a configurable key admission/budget policy.
-   Keep the first policy deterministic and trace-driven; do not tune an
-   adaptive policy against synthetic traces alone.
-6. Add captured v2 event traces and fork/replay cases.
-7. Connect Tier B to the real Session -> Runtime -> Provider -> Runner loop and
-   use task quality plus provider token accounting to calibrate the budget.
+5. **Implemented:** add an oracle-backed evidence-recall gate and configurable
+   key admission/budget policy. The policy is deterministic and trace-driven;
+   adaptive tuning remains deferred until captured and Tier-B evidence exists.
+6. Add captured v3 event traces and fork/replay cases.
+7. **Implemented harness:** connect Tier B to the real Session -> Runtime ->
+   Provider -> Runner loop, including keyed evidence recall, exact file
+   oracles, provider token accounting, and fixture/live evidence labels. Live
+   repeated model artifacts are still required before calibrating the budget.
 8. Generate paper tables only after artifacts are committed and reproducible.
 
 The existing Python `benchmarks/short_memory/` package is retained as a legacy
 v1 regression suite. It measures the removed Python message-replay path and
 must not be presented as evidence for the Rust `ShortMemoryProjector`.
+
+### Tier-B task contract
+
+Each task runs in an isolated session and runner namespace:
+
+1. a setup turn injects a keyed evidence value;
+2. the evaluated turn supplies only that key and a relative output path;
+3. Runtime projects the immutable setup events into short memory;
+4. the provider must recall the value and emit a typed `write_file` call;
+5. `LocalRunner` executes the call;
+6. the oracle reads the actual file and requires an exact content match.
+
+The harness records all provider calls across setup and evaluation, while task
+success and tool-call limits are scoped to the evaluated run. It rejects an
+output path that already exists, preventing stale files from contaminating the
+oracle. The JSON artifact contains no provider secret and explicitly labels
+deterministic fixture runs separately from live API runs. Because the current
+provider interface is non-streaming, cached input tokens are recorded when the
+wire response provides them, but time to first token remains unavailable.
 
 ### Implemented command surface
 
@@ -252,6 +280,27 @@ Synthetic gold evidence is bounded to a configurable recent-turn horizon. All
 historical tool results remain in the immutable trace and relation oracle, but
 they are not all declared necessary evidence for the next model decision.
 
+### Key admission and evidence contract
+
+`ShortMemoryPolicy.key_admission` optionally limits admitted historical keys by
+batch count and total UTF-8 `key_content` bytes. Both limits are hard; `None`
+means unbounded and preserves the pre-budget default. Candidate ordering is:
+
+1. Runtime memory-class evidence value (`Anchor`, `Recovery`, `Working`,
+   `Control`, `Transient`);
+2. batch kind (`Turn`, `Context`, `Tool`, `Task`, `Artifact`, then noise);
+3. recency in the supplied Session lineage order.
+
+Each candidate records its rank, pre-admission key size, and one of `admitted`,
+`rejected_batch_limit`, or `rejected_byte_limit`. Rejected batches become
+`NO_LOAD`; the immutable source trace is unchanged.
+
+The trace oracle separately stores required key fragments for every gold
+evidence event. Synthetic tool-result evidence currently requires call id,
+status, and a stable result fingerprint. A `BatchKey` that merely lists the
+event in `source_event_ids` fails evidence recall if those fragments are absent.
+This black-box check prevents provenance inflation from masking evidence loss.
+
 ### Release-mode scaling
 
 ```bash
@@ -280,3 +329,15 @@ surface for scaling runs.
 > from an uncommitted, dirty worktree with three measured iterations, not a
 > paper performance result. The next measured artifact run needs a clean
 > revision, more repetitions, allocation/RSS metrics, and captured traces.
+
+> Key-budget gate smoke note (2026-07-26): trace schema v3, benchmark-run v2,
+> and scaling v2 add independent semantic evidence units, full/key retention,
+> missing evidence ids, and key-admission metrics. On the same approximately
+> 100k-event dirty-worktree trace, unbounded Structure had 14,298 key candidates
+> and 8,256,463 materialised bytes. A 14,285-key budget rejected 13 lower-ranked
+> keys, passed every gate, and materialised 8,248,754 bytes. Reducing the budget
+> by one rejected 14 keys and failed semantic evidence recall at 50% while all
+> 28,572 pinned anchors remained represented; the report identified the exact
+> missing evidence event. Timing used only three repetitions and is not used to
+> claim a performance change. This boundary run validates gate behavior, not an
+> optimal production budget.

@@ -7,13 +7,18 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+default-run = "structure-short-memory-benchmark"
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 structure-model = { path = "../../crates/structure-model" }
+structure-provider = { path = "../../crates/structure-provider" }
 structure-protocol = { path = "../../crates/structure-protocol" }
+structure-runner = { path = "../../crates/structure-runner" }
 structure-runtime = { path = "../../crates/structure-runtime" }
+structure-session = { path = "../../crates/structure-session" }
+tokio.workspace = true
 
 [lints]
 workspace = true

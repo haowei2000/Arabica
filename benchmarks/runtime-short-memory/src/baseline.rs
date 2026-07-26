@@ -5,8 +5,8 @@ use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 use structure_model::{MemoryBatchKind, MemoryLoadState, ShortMemoryEntry, ShortMemoryItem};
 use structure_runtime::{
-    EventVisibilityDecision, MemoryClass, ShortMemoryMaterialization, ShortMemoryPolicy,
-    ShortMemoryProjector,
+    EventVisibilityDecision, KeyAdmissionDecision, KeyAdmissionPolicy, MemoryClass,
+    ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
 };
 
 use crate::ShortMemoryTrace;
@@ -24,7 +24,10 @@ pub enum Baseline {
     TtlOnly { policy: ShortMemoryPolicy },
     /// B3: apply batch disclosure while keeping every event visible to the
     /// batch layer.
-    BatchOnly { recent_turns_load_all: usize },
+    BatchOnly {
+        recent_turns_load_all: usize,
+        key_admission: KeyAdmissionPolicy,
+    },
     /// S: production TTL, relation decay, and batch disclosure together.
     Structure { policy: ShortMemoryPolicy },
 }
@@ -56,11 +59,24 @@ impl Baseline {
             },
             Self::BatchOnly {
                 recent_turns_load_all: 2,
+                key_admission: KeyAdmissionPolicy::default(),
             },
             Self::Structure {
                 policy: ShortMemoryPolicy::default(),
             },
         ])
+    }
+
+    pub fn with_key_admission(mut self, key_admission: KeyAdmissionPolicy) -> Self {
+        match &mut self {
+            Self::BatchOnly {
+                key_admission: configured,
+                ..
+            } => *configured = key_admission,
+            Self::Structure { policy } => policy.key_admission = key_admission,
+            Self::FullReplay | Self::TailK { .. } | Self::TtlOnly { .. } => {}
+        }
+        self
     }
 
     pub fn project(&self, trace: &ShortMemoryTrace) -> Result<BenchmarkProjection, BaselineError> {
@@ -118,8 +134,10 @@ impl Baseline {
             }
             Self::BatchOnly {
                 recent_turns_load_all,
+                key_admission,
             } => {
-                let policy = ShortMemoryPolicy::batch_only(*recent_turns_load_all);
+                let mut policy = ShortMemoryPolicy::batch_only(*recent_turns_load_all);
+                policy.key_admission = *key_admission;
                 projection_parts(ShortMemoryProjector::materialize(
                     &trace.events,
                     trace.current_run_id.as_ref(),
@@ -178,6 +196,9 @@ pub struct ProjectionBatch {
     pub context_kind: MemoryBatchKind,
     pub source_event_ids: Vec<String>,
     pub estimated_tokens: u64,
+    pub key_content_bytes: usize,
+    pub key_admission_rank: Option<usize>,
+    pub key_admission: KeyAdmissionDecision,
     pub load_state: MemoryLoadState,
 }
 
@@ -205,6 +226,9 @@ fn projection_parts(
                 .map(|event| event.event_id.to_string())
                 .collect(),
             estimated_tokens: batch.estimated_tokens,
+            key_content_bytes: batch.key_content_bytes,
+            key_admission_rank: batch.key_admission_rank,
+            key_admission: batch.key_admission,
             load_state: batch.load_state,
         })
         .collect();
@@ -349,6 +373,7 @@ mod tests {
     fn b3_keeps_ttl_visible_and_applies_batch_disclosure() {
         let projection = Baseline::BatchOnly {
             recent_turns_load_all: 2,
+            key_admission: KeyAdmissionPolicy::default(),
         }
         .project(&trace(30))
         .expect("B3 projects");

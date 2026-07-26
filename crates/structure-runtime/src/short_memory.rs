@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -84,8 +85,18 @@ pub struct ShortMemoryPolicy {
     pub default_ttl_events: u64,
     pub recency_floor: usize,
     pub recent_turns_load_all: usize,
+    #[serde(default)]
+    pub key_admission: KeyAdmissionPolicy,
     pub ttl_overrides: BTreeMap<MemoryClass, EventTtl>,
     pub decay_rules: Vec<DecayRule>,
+}
+
+/// Hard limits for historical `LOAD_KEY` materialisation. `None` is unbounded.
+/// Limits apply to UTF-8 key-content bytes, excluding full `LOAD_ALL` items.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyAdmissionPolicy {
+    pub max_key_batches: Option<usize>,
+    pub max_key_content_bytes: Option<usize>,
 }
 
 impl Default for ShortMemoryPolicy {
@@ -115,6 +126,7 @@ impl Default for ShortMemoryPolicy {
             default_ttl_events: 6,
             recency_floor: 100,
             recent_turns_load_all: 2,
+            key_admission: KeyAdmissionPolicy::default(),
             ttl_overrides,
             decay_rules,
         }
@@ -136,6 +148,7 @@ impl ShortMemoryPolicy {
             default_ttl_events: u64::MAX,
             recency_floor: 0,
             recent_turns_load_all,
+            key_admission: KeyAdmissionPolicy::default(),
             ttl_overrides,
             decay_rules: Vec::new(),
         }
@@ -189,8 +202,31 @@ pub struct EventBatch {
     pub event_count: usize,
     pub estimated_tokens: u64,
     pub key_content: String,
+    pub key_content_bytes: usize,
+    pub key_admission_rank: Option<usize>,
+    pub key_admission: KeyAdmissionDecision,
     pub load_state: MemoryLoadState,
     pub events: Vec<EventEnvelope>,
+}
+
+/// Explainable outcome of applying the key budget to one batch.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyAdmissionDecision {
+    #[default]
+    NotCandidate,
+    Admitted,
+    RejectedBatchLimit,
+    RejectedByteLimit,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyAdmissionSummary {
+    pub policy: KeyAdmissionPolicy,
+    pub candidate_batches: usize,
+    pub admitted_batches: usize,
+    pub rejected_batches: usize,
+    pub admitted_key_content_bytes: usize,
 }
 
 /// Complete output of short-memory materialisation. The source event slice is
@@ -200,6 +236,7 @@ pub struct ShortMemoryMaterialization {
     pub entries: Vec<ShortMemoryEntry>,
     pub batches: Vec<EventBatch>,
     pub visibility: Vec<EventVisibilityDecision>,
+    pub key_admission: KeyAdmissionSummary,
 }
 
 /// Pure projection of a Session's immutable event history for the next model
@@ -253,13 +290,14 @@ impl ShortMemoryProjector {
             current_run_id,
             policy.recent_turns_load_all,
         );
-        populate_key_content(&mut batches);
+        let key_admission = populate_key_content(&mut batches, policy);
         let entries = materialize_entries(events, &batches);
 
         ShortMemoryMaterialization {
             entries,
             batches,
             visibility,
+            key_admission,
         }
     }
 }
@@ -357,6 +395,9 @@ fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
                 event_count: 0,
                 estimated_tokens: 0,
                 key_content: String::new(),
+                key_content_bytes: 0,
+                key_admission_rank: None,
+                key_admission: KeyAdmissionDecision::NotCandidate,
                 load_state: MemoryLoadState::NoLoad,
                 events: Vec::new(),
             });
@@ -375,12 +416,111 @@ fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
     batches
 }
 
-fn populate_key_content(batches: &mut [EventBatch]) {
-    for batch in batches {
-        if batch.load_state == MemoryLoadState::LoadKey {
-            let key_content = build_key_content(batch);
-            batch.key_content = key_content;
+fn populate_key_content(
+    batches: &mut [EventBatch],
+    policy: &ShortMemoryPolicy,
+) -> KeyAdmissionSummary {
+    let mut candidates = Vec::new();
+    for (index, batch) in batches.iter_mut().enumerate() {
+        if batch.load_state != MemoryLoadState::LoadKey {
+            continue;
         }
+        batch.key_content = build_key_content(batch);
+        batch.key_content_bytes = batch.key_content.len();
+        candidates.push(index);
+    }
+    if policy.key_admission == KeyAdmissionPolicy::default() {
+        let admitted_key_content_bytes = candidates
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(rank, index)| {
+                let batch = &mut batches[index];
+                batch.key_admission_rank = Some(rank + 1);
+                batch.key_admission = KeyAdmissionDecision::Admitted;
+                batch.key_content_bytes
+            })
+            .sum();
+        return KeyAdmissionSummary {
+            policy: policy.key_admission,
+            candidate_batches: candidates.len(),
+            admitted_batches: candidates.len(),
+            rejected_batches: 0,
+            admitted_key_content_bytes,
+        };
+    }
+    candidates.sort_by_key(|index| {
+        let batch = &batches[*index];
+        (
+            batch_evidence_priority(batch),
+            batch_kind_priority(batch.context_kind),
+            Reverse(*index),
+        )
+    });
+
+    let mut admitted_batches = 0_usize;
+    let mut admitted_key_content_bytes = 0_usize;
+    for (rank, index) in candidates.iter().copied().enumerate() {
+        let batch = &mut batches[index];
+        batch.key_admission_rank = Some(rank + 1);
+        let exceeds_batch_limit = policy
+            .key_admission
+            .max_key_batches
+            .is_some_and(|limit| admitted_batches >= limit);
+        let exceeds_byte_limit = policy
+            .key_admission
+            .max_key_content_bytes
+            .is_some_and(|limit| {
+                admitted_key_content_bytes.saturating_add(batch.key_content_bytes) > limit
+            });
+        batch.key_admission = if exceeds_batch_limit {
+            KeyAdmissionDecision::RejectedBatchLimit
+        } else if exceeds_byte_limit {
+            KeyAdmissionDecision::RejectedByteLimit
+        } else {
+            admitted_batches += 1;
+            admitted_key_content_bytes += batch.key_content_bytes;
+            KeyAdmissionDecision::Admitted
+        };
+        if batch.key_admission != KeyAdmissionDecision::Admitted {
+            batch.load_state = MemoryLoadState::NoLoad;
+            batch.key_content.clear();
+        }
+    }
+
+    KeyAdmissionSummary {
+        policy: policy.key_admission,
+        candidate_batches: candidates.len(),
+        admitted_batches,
+        rejected_batches: candidates.len().saturating_sub(admitted_batches),
+        admitted_key_content_bytes,
+    }
+}
+
+fn batch_evidence_priority(batch: &EventBatch) -> u8 {
+    batch
+        .events
+        .iter()
+        .map(|event| match event_memory_traits(&event.event).class {
+            MemoryClass::Anchor => 0,
+            MemoryClass::Recovery => 1,
+            MemoryClass::Working => 2,
+            MemoryClass::Control => 3,
+            MemoryClass::Transient => 4,
+        })
+        .min()
+        .unwrap_or(5)
+}
+
+fn batch_kind_priority(kind: MemoryBatchKind) -> u8 {
+    match kind {
+        MemoryBatchKind::Turn => 0,
+        MemoryBatchKind::Context => 1,
+        MemoryBatchKind::Tool => 2,
+        MemoryBatchKind::Task => 3,
+        MemoryBatchKind::Artifact => 4,
+        MemoryBatchKind::Transient => 5,
+        MemoryBatchKind::Misc => 6,
     }
 }
 
@@ -1242,6 +1382,98 @@ mod tests {
                 .iter()
                 .all(|entry| !matches!(entry.item, ShortMemoryItem::BatchKey(_)))
         );
+    }
+
+    #[test]
+    fn key_admission_prefers_recent_batches_with_equal_evidence_value() {
+        let events = vec![
+            envelope_for_run(
+                1,
+                "old",
+                Event::MessageAccepted {
+                    content: "old question".to_owned(),
+                },
+            ),
+            envelope_for_run(
+                2,
+                "old",
+                Event::RunCompleted {
+                    output: Some("old answer".to_owned()),
+                },
+            ),
+            envelope_for_run(
+                3,
+                "new",
+                Event::MessageAccepted {
+                    content: "new question".to_owned(),
+                },
+            ),
+            envelope_for_run(
+                4,
+                "new",
+                Event::RunCompleted {
+                    output: Some("new answer".to_owned()),
+                },
+            ),
+        ];
+        let policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            recent_turns_load_all: 0,
+            key_admission: KeyAdmissionPolicy {
+                max_key_batches: Some(1),
+                max_key_content_bytes: None,
+            },
+            ..ShortMemoryPolicy::default()
+        };
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert_eq!(result.key_admission.candidate_batches, 2);
+        assert_eq!(result.key_admission.admitted_batches, 1);
+        assert_eq!(result.key_admission.rejected_batches, 1);
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::NoLoad);
+        assert_eq!(
+            result.batches[0].key_admission,
+            KeyAdmissionDecision::RejectedBatchLimit
+        );
+        assert_eq!(result.batches[1].load_state, MemoryLoadState::LoadKey);
+        assert_eq!(
+            result.batches[1].key_admission,
+            KeyAdmissionDecision::Admitted
+        );
+        assert_eq!(result.batches[1].key_admission_rank, Some(1));
+    }
+
+    #[test]
+    fn zero_byte_budget_rejects_keys_with_an_explainable_decision() {
+        let events = vec![envelope(
+            1,
+            Event::MessageAccepted {
+                content: "required anchor".to_owned(),
+            },
+        )];
+        let policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            recent_turns_load_all: 0,
+            key_admission: KeyAdmissionPolicy {
+                max_key_batches: None,
+                max_key_content_bytes: Some(0),
+            },
+            ..ShortMemoryPolicy::default()
+        };
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert!(result.entries.is_empty());
+        assert_eq!(result.key_admission.candidate_batches, 1);
+        assert_eq!(result.key_admission.admitted_key_content_bytes, 0);
+        assert_eq!(
+            result.batches[0].key_admission,
+            KeyAdmissionDecision::RejectedByteLimit
+        );
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::NoLoad);
+        assert!(result.batches[0].key_content.is_empty());
+        assert!(result.batches[0].key_content_bytes > 0);
     }
 
     #[test]

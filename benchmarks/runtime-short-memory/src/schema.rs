@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 use structure_protocol::{Event, EventEnvelope, EventId, RunId, SessionId};
 
-pub const SHORT_MEMORY_TRACE_SCHEMA_VERSION: &str = "structure.short-memory.trace/v2";
+pub const SHORT_MEMORY_TRACE_SCHEMA_VERSION: &str = "structure.short-memory.trace/v3";
 
 /// Versioned, provider-independent input to the Tier-A benchmark.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -79,6 +79,7 @@ impl ShortMemoryTrace {
             .required_anchor_event_ids
             .iter()
             .chain(&self.oracle.gold_evidence_event_ids)
+            .chain(self.oracle.evidence_units.iter().map(|unit| &unit.event_id))
             .chain(
                 self.oracle
                     .tool_relations
@@ -97,6 +98,33 @@ impl ShortMemoryTrace {
                     "oracle references missing event id {event_id}"
                 )));
             }
+        }
+        let gold_evidence_ids: std::collections::HashSet<_> =
+            self.oracle.gold_evidence_event_ids.iter().collect();
+        let evidence_unit_ids: std::collections::HashSet<_> = self
+            .oracle
+            .evidence_units
+            .iter()
+            .map(|unit| &unit.event_id)
+            .collect();
+        if gold_evidence_ids.len() != self.oracle.gold_evidence_event_ids.len()
+            || evidence_unit_ids.len() != self.oracle.evidence_units.len()
+            || gold_evidence_ids != evidence_unit_ids
+        {
+            return Err(TraceValidationError::new(
+                "evidence_units must contain exactly one oracle for each gold evidence event",
+            ));
+        }
+        if self.oracle.evidence_units.iter().any(|unit| {
+            unit.required_key_fragments.is_empty()
+                || unit
+                    .required_key_fragments
+                    .iter()
+                    .any(|fragment| fragment.is_empty())
+        }) {
+            return Err(TraceValidationError::new(
+                "each evidence unit must declare non-empty required_key_fragments",
+            ));
         }
         for relation in &self.oracle.tool_relations {
             let (call_position, call) = source_events
@@ -159,12 +187,21 @@ pub struct TraceOracle {
     pub required_anchor_event_ids: Vec<EventId>,
     /// Evidence events used to compute representation recall.
     pub gold_evidence_event_ids: Vec<EventId>,
+    /// Oracle-authored semantic fragments required when evidence is represented
+    /// by a compact key instead of its full Runtime item.
+    pub evidence_units: Vec<EvidenceUnitOracle>,
     /// Minimum evidence recall in basis points, where 10_000 means 100%.
     pub minimum_evidence_recall_bps: u16,
     /// Known call/result relations used by structural checks and diagnostics.
     pub tool_relations: Vec<ToolRelationOracle>,
     /// Expected inherited/local ordering for a forked Session history.
     pub lineage: Option<TraceLineageOracle>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EvidenceUnitOracle {
+    pub event_id: EventId,
+    pub required_key_fragments: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -222,5 +259,18 @@ mod tests {
             trace.source_fingerprint().expect("fingerprint computes")
         );
         trace.validate().expect("trace validates");
+    }
+
+    #[test]
+    fn every_gold_evidence_event_requires_an_independent_key_oracle() {
+        let mut trace = SyntheticTraceGenerator::generate(&SyntheticTraceConfig::default())
+            .expect("trace generates");
+        trace.oracle.evidence_units.pop();
+
+        let error = trace
+            .validate()
+            .expect_err("missing evidence oracle is invalid");
+
+        assert!(error.to_string().contains("evidence_units"));
     }
 }

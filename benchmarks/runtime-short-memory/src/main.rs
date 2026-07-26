@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt::Display;
 use std::io::{self, Write};
 
-use structure_runtime::ShortMemoryPolicy;
+use structure_runtime::{KeyAdmissionPolicy, ShortMemoryPolicy};
 use structure_short_memory_benchmark::{
     Baseline, BenchmarkRun, ScalingConfig, ScalingRunner, SyntheticTraceConfig,
     SyntheticTraceGenerator,
@@ -26,6 +26,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut scale_event_counts = None;
     let mut warmup_iterations = 5_usize;
     let mut measured_iterations = 20_usize;
+    let mut max_key_batches = None;
+    let mut max_key_content_bytes = None;
     let arguments: Vec<String> = env::args().skip(1).collect();
     let mut index = 0_usize;
 
@@ -82,6 +84,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             "--iterations" => {
                 measured_iterations = parse(value(&arguments, &mut index, argument)?, argument)?;
             }
+            "--max-key-batches" => {
+                max_key_batches = Some(parse(value(&arguments, &mut index, argument)?, argument)?);
+            }
+            "--max-key-bytes" => {
+                max_key_content_bytes =
+                    Some(parse(value(&arguments, &mut index, argument)?, argument)?);
+            }
             "--pretty" => pretty = true,
             "--fail-on-gate" => fail_on_gate = true,
             "--help" | "-h" => {
@@ -100,10 +109,17 @@ fn run() -> Result<(), Box<dyn Error>> {
                     .into(),
             );
         }
+        let key_admission = KeyAdmissionPolicy {
+            max_key_batches,
+            max_key_content_bytes,
+        };
         let baselines = if baseline_was_set && baseline_name != "all" {
-            vec![baseline_from_name(&baseline_name, tail_k)?]
+            vec![baseline_from_name(&baseline_name, tail_k, key_admission)?]
         } else {
             Baseline::default_suite(tail_k)?
+                .into_iter()
+                .map(|baseline| baseline.with_key_admission(key_admission))
+                .collect()
         };
         let report = ScalingRunner::run(&ScalingConfig {
             target_event_counts,
@@ -122,7 +138,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     if baseline_name == "all" {
         return Err("--baseline all requires --scale-events".into());
     }
-    let baseline = baseline_from_name(&baseline_name, tail_k)?;
+    let baseline = baseline_from_name(
+        &baseline_name,
+        tail_k,
+        KeyAdmissionPolicy {
+            max_key_batches,
+            max_key_content_bytes,
+        },
+    )?;
     let trace = SyntheticTraceGenerator::generate(&config)?;
     let report = BenchmarkRun::execute(&trace, baseline)?;
     print_json(&report, pretty)?;
@@ -133,7 +156,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn baseline_from_name(name: &str, tail_k: usize) -> Result<Baseline, Box<dyn Error>> {
+fn baseline_from_name(
+    name: &str,
+    tail_k: usize,
+    key_admission: KeyAdmissionPolicy,
+) -> Result<Baseline, Box<dyn Error>> {
     match name {
         "b0" | "full-replay" => Ok(Baseline::FullReplay),
         "b1" | "tail-k" => Ok(Baseline::TailK {
@@ -144,10 +171,15 @@ fn baseline_from_name(name: &str, tail_k: usize) -> Result<Baseline, Box<dyn Err
         }),
         "b3" | "batch-only" => Ok(Baseline::BatchOnly {
             recent_turns_load_all: 2,
+            key_admission,
         }),
-        "s" | "structure" => Ok(Baseline::Structure {
-            policy: ShortMemoryPolicy::default(),
-        }),
+        "s" | "structure" => {
+            let policy = ShortMemoryPolicy {
+                key_admission,
+                ..ShortMemoryPolicy::default()
+            };
+            Ok(Baseline::Structure { policy })
+        }
         _ => Err(format!("unknown baseline {name}; expected b0, b1, b2, b3, s, or all").into()),
     }
 }
@@ -216,6 +248,8 @@ fn print_help() {
            --scale-events <CSV>     Release-mode target event counts\n\
            --warmup <N>             Scaling warm-up iterations\n\
            --iterations <N>         Scaling measured iterations\n\
+           --max-key-batches <N>    Maximum admitted historical key batches\n\
+           --max-key-bytes <N>      Maximum total admitted key-content bytes\n\
            --pretty                 Pretty-print the JSON report\n\
            --fail-on-gate           Exit non-zero if a correctness gate fails\n\
            --help                    Show this help"

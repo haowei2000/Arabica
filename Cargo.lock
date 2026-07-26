@@ -1031,7 +1031,11 @@ dependencies = [
  "serde_json",
  "structure-model",
  "structure-protocol",
+ "structure-provider",
+ "structure-runner",
  "structure-runtime",
+ "structure-session",
+ "tokio",
 ]
 
 [[package]]

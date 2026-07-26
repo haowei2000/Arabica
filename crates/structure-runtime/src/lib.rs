@@ -16,7 +16,8 @@ use std::fmt::{Display, Formatter};
 pub use long_memory::{LongMemoryError, LongMemoryErrorKind, LongMemoryManager};
 pub use short_memory::{
     DecayMatch, DecayRule, EventBatch, EventMemoryTraits, EventTtl, EventVisibilityDecision,
-    MemoryClass, ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
+    KeyAdmissionDecision, KeyAdmissionPolicy, KeyAdmissionSummary, MemoryClass,
+    ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
 };
 use structure_model::{ContentBlock, RuntimeItem, ToolChoice, ToolDefinition, ToolResultItem};
 use structure_protocol::{

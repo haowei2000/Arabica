@@ -8,8 +8,8 @@ use structure_protocol::{
 };
 
 use crate::schema::{
-    SHORT_MEMORY_TRACE_SCHEMA_VERSION, ShortMemoryTrace, ToolRelationOracle, TraceLineageOracle,
-    TraceOracle,
+    EvidenceUnitOracle, SHORT_MEMORY_TRACE_SCHEMA_VERSION, ShortMemoryTrace, ToolRelationOracle,
+    TraceLineageOracle, TraceOracle,
 };
 
 /// Parameters that fully determine one synthetic trace.
@@ -141,6 +141,11 @@ impl SyntheticTraceGenerator {
                     },
                     config.payload_chars,
                 );
+                let required_key_fragments = vec![
+                    format!("call_id={call_id}"),
+                    format!("status={}", if is_error { "error" } else { "ok" }),
+                    format!("result_hash={}", stable_fingerprint(&result_text)),
+                ];
                 let result = factory.next(
                     command_id.clone(),
                     Some(&run_id),
@@ -152,7 +157,13 @@ impl SyntheticTraceGenerator {
                     },
                 );
                 let result_event_id = result.event_id.clone();
-                evidence_candidates.push((turn_number, result_event_id.clone()));
+                evidence_candidates.push((
+                    turn_number,
+                    EvidenceUnitOracle {
+                        event_id: result_event_id.clone(),
+                        required_key_fragments,
+                    },
+                ));
                 tool_relations.push(ToolRelationOracle {
                     call_id,
                     call_event_id,
@@ -205,11 +216,15 @@ impl SyntheticTraceGenerator {
             .turn_count
             .saturating_sub(config.evidence_horizon_turns)
             + 1;
-        let gold_evidence_event_ids = evidence_candidates
+        let evidence_units: Vec<_> = evidence_candidates
             .into_iter()
-            .filter_map(|(turn_number, event_id)| {
-                (turn_number >= evidence_start).then_some(event_id)
+            .filter_map(|(turn_number, evidence)| {
+                (turn_number >= evidence_start).then_some(evidence)
             })
+            .collect();
+        let gold_evidence_event_ids = evidence_units
+            .iter()
+            .map(|evidence| evidence.event_id.clone())
             .collect();
 
         let trace = ShortMemoryTrace {
@@ -231,6 +246,7 @@ impl SyntheticTraceGenerator {
             oracle: TraceOracle {
                 required_anchor_event_ids,
                 gold_evidence_event_ids,
+                evidence_units,
                 minimum_evidence_recall_bps: 10_000,
                 tool_relations,
                 lineage,
@@ -241,6 +257,16 @@ impl SyntheticTraceGenerator {
             .map_err(|error| GeneratorError::new(error.to_string()))?;
         Ok(trace)
     }
+}
+
+fn stable_fingerprint(value: &str) -> String {
+    let hash = value
+        .as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    format!("fnv1a64:{hash:016x}")
 }
 
 fn validate_config(config: &SyntheticTraceConfig) -> Result<(), GeneratorError> {

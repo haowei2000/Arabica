@@ -8,14 +8,14 @@
 > per-Session event history and captures inherited history at a fork boundary.
 > `structure-runtime::ShortMemoryProjector` now applies deterministic
 > event-count TTL, five-class retention, relation-aware decay, pinning, a
-> recency floor, stable semantic
-> batching, and `LOAD_ALL` / `LOAD_KEY` / `NO_LOAD` materialisation. Workspace
+> recency floor, stable semantic batching, deterministic key-budget admission,
+> and `LOAD_ALL` / `LOAD_KEY` / `NO_LOAD` materialisation. Workspace
 > Long Memory remains separate and reaches the model through a distinct
 > `long_memory` field. Short Memory is not writable through `context.*`.
 
 ### Rust v2 materialisation contract
 
-The Rust implementation returns three replayable products from the same
+The Rust implementation returns four replayable products from the same
 immutable event slice:
 
 1. Per-event visibility decisions containing memory class, relation key,
@@ -24,12 +24,20 @@ immutable event slice:
    estimated token count, bounded `key_content`, and load state.
 3. The ordered provider-neutral short-memory entries used for the next model
    request.
+4. A key-admission summary containing the serialized policy, candidate/admitted
+   counts, rejection count, and admitted key-content bytes.
 
 `LOAD_ALL` preserves typed user/assistant messages and typed
 `ToolCall`/`ToolResult` pairs. `LOAD_KEY` emits a deterministic batch index
 without an LLM summarisation call. `NO_LOAD` omits the batch from the prompt
 without deleting or rewriting its source events. Promotion or archival into
 Long Memory remains an explicit operation outside the collector.
+
+An optional hard budget limits historical keys by count and total UTF-8 key
+content bytes. Admission is deterministic: memory-class evidence value, batch
+kind, then recency in the Session-supplied lineage order. Every candidate keeps
+an explainable rank, candidate size, and admission/rejection reason. The
+default is unbounded so enabling the mechanism requires an explicit policy.
 
 Detailed Protocol events are projected into five Runtime-only retention
 classes: `Anchor`, `Working`, `Recovery`, `Transient`, and `Control`. This

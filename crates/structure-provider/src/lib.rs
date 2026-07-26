@@ -463,6 +463,14 @@ struct OpenAiChoice {
 struct OpenAiUsage {
     prompt_tokens: u64,
     completion_tokens: u64,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -602,6 +610,9 @@ impl ApiCodec for OpenAiChatCodec {
             usage: RuntimeUsage {
                 input_tokens: usage.prompt_tokens,
                 output_tokens: usage.completion_tokens,
+                cached_input_tokens: usage
+                    .prompt_tokens_details
+                    .map_or(0, |details| details.cached_tokens),
             },
         })
     }
@@ -927,7 +938,11 @@ mod tests {
                 },
                 "finish_reason": "tool_calls"
             }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 4}
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 4,
+                "prompt_tokens_details": {"cached_tokens": 3}
+            }
         }))
         .expect("provider response parses");
         let decoded = OpenAiChatCodec
@@ -935,6 +950,7 @@ mod tests {
             .expect("provider response decodes");
         assert_eq!(decoded.finish_reason, Some(FinishReason::ToolCalls));
         assert_eq!(decoded.usage.input_tokens, 10);
+        assert_eq!(decoded.usage.cached_input_tokens, 3);
         assert!(matches!(
             &decoded.items[0],
             RuntimeItem::ToolCall(ToolCallItem { call_id, name, .. })

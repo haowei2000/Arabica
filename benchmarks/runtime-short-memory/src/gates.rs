@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 use structure_model::{MemoryLoadState, ShortMemoryItem};
 use structure_protocol::RunId;
+use structure_runtime::KeyAdmissionDecision;
 
 use crate::{Baseline, BenchmarkProjection, ShortMemoryTrace};
 
@@ -46,7 +47,7 @@ impl BenchmarkRun {
             .map_err(|error| BenchmarkRunError::new(error.to_string()))?;
 
         Ok(Self {
-            benchmark_schema_version: "structure.short-memory.benchmark-run/v1".to_owned(),
+            benchmark_schema_version: "structure.short-memory.benchmark-run/v2".to_owned(),
             trace_schema_version: trace.schema_version.clone(),
             trace_id: trace.trace_id.clone(),
             trace_seed: trace.seed,
@@ -71,7 +72,7 @@ pub struct CorrectnessGates {
     pub fork_replay_equivalence: GateCheck,
     pub relation_integrity: GateCheck,
     pub pinned_anchor_retention: GateCheck,
-    pub evidence_recall: GateCheck,
+    pub evidence_recall: EvidenceRecallGate,
 }
 
 impl CorrectnessGates {
@@ -86,11 +87,27 @@ impl CorrectnessGates {
             .iter()
             .map(|event| event.event_id.to_string())
             .collect();
-        let represented_ids: HashSet<String> = first
-            .entries
-            .iter()
-            .flat_map(|entry| entry.source_event_ids.iter().cloned())
-            .collect();
+        let mut evidence_representation = HashMap::<String, EvidenceRepresentation<'_>>::new();
+        for entry in &first.entries {
+            let representation = match &entry.item {
+                ShortMemoryItem::BatchKey(key) => EvidenceRepresentation::Key(&key.key_content),
+                _ => EvidenceRepresentation::Full,
+            };
+            for event_id in &entry.source_event_ids {
+                match representation {
+                    EvidenceRepresentation::Full => {
+                        evidence_representation
+                            .insert(event_id.clone(), EvidenceRepresentation::Full);
+                    }
+                    EvidenceRepresentation::Key(content) => {
+                        evidence_representation
+                            .entry(event_id.clone())
+                            .or_insert(EvidenceRepresentation::Key(content));
+                    }
+                }
+            }
+        }
+        let represented_ids: HashSet<String> = evidence_representation.keys().cloned().collect();
 
         let provenance_failures = first
             .entries
@@ -189,12 +206,34 @@ impl CorrectnessGates {
             .iter()
             .filter(|event_id| represented_ids.contains(&event_id.to_string()))
             .count();
-        let retained_evidence = trace
+        let evidence_units: HashMap<_, _> = trace
             .oracle
-            .gold_evidence_event_ids
+            .evidence_units
             .iter()
-            .filter(|event_id| represented_ids.contains(&event_id.to_string()))
-            .count();
+            .map(|unit| (unit.event_id.to_string(), unit))
+            .collect();
+        let mut retained_full_evidence = 0_usize;
+        let mut retained_key_evidence = 0_usize;
+        let mut missing_evidence_event_ids = Vec::new();
+        for event_id in &trace.oracle.gold_evidence_event_ids {
+            let event_id = event_id.to_string();
+            match evidence_representation.get(&event_id) {
+                Some(EvidenceRepresentation::Full) => retained_full_evidence += 1,
+                Some(EvidenceRepresentation::Key(content))
+                    if evidence_units.get(&event_id).is_some_and(|unit| {
+                        unit.required_key_fragments
+                            .iter()
+                            .all(|fragment| content.contains(fragment))
+                    }) =>
+                {
+                    retained_key_evidence += 1;
+                }
+                Some(EvidenceRepresentation::Key(_)) | None => {
+                    missing_evidence_event_ids.push(event_id);
+                }
+            }
+        }
+        let retained_evidence = retained_full_evidence + retained_key_evidence;
         let evidence_recall_bps = recall_bps(
             retained_evidence,
             trace.oracle.gold_evidence_event_ids.len(),
@@ -231,10 +270,14 @@ impl CorrectnessGates {
                 required: trace.oracle.required_anchor_event_ids.len() as u64,
                 detail: "required anchor event ids represented by materialised entries".to_owned(),
             },
-            evidence_recall: GateCheck {
+            evidence_recall: EvidenceRecallGate {
                 passed: evidence_recall_bps >= u64::from(trace.oracle.minimum_evidence_recall_bps),
                 observed: evidence_recall_bps,
                 required: u64::from(trace.oracle.minimum_evidence_recall_bps),
+                retained_full: retained_full_evidence,
+                retained_key: retained_key_evidence,
+                total: trace.oracle.gold_evidence_event_ids.len(),
+                missing_event_ids: missing_evidence_event_ids,
                 detail: "gold evidence representation recall in basis points".to_owned(),
             },
         }
@@ -250,6 +293,24 @@ impl CorrectnessGates {
             && self.pinned_anchor_retention.passed
             && self.evidence_recall.passed
     }
+}
+
+#[derive(Clone, Copy)]
+enum EvidenceRepresentation<'a> {
+    Full,
+    Key(&'a str),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EvidenceRecallGate {
+    pub passed: bool,
+    pub observed: u64,
+    pub required: u64,
+    pub retained_full: usize,
+    pub retained_key: usize,
+    pub total: usize,
+    pub missing_event_ids: Vec<String>,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -293,6 +354,9 @@ pub struct ProjectionMetrics {
     pub load_all_batch_count: usize,
     pub load_key_batch_count: usize,
     pub no_load_batch_count: usize,
+    pub key_candidate_batch_count: usize,
+    pub key_budget_rejected_batch_count: usize,
+    pub admitted_key_content_bytes: usize,
     pub load_all_estimated_tokens: u64,
     pub load_key_source_estimated_tokens: u64,
     pub no_load_source_estimated_tokens: u64,
@@ -337,6 +401,28 @@ impl ProjectionMetrics {
             .iter()
             .filter(|batch| batch.load_state == MemoryLoadState::NoLoad)
             .count();
+        let key_candidate_batch_count = projection
+            .batches
+            .iter()
+            .filter(|batch| batch.key_admission != KeyAdmissionDecision::NotCandidate)
+            .count();
+        let key_budget_rejected_batch_count = projection
+            .batches
+            .iter()
+            .filter(|batch| {
+                matches!(
+                    batch.key_admission,
+                    KeyAdmissionDecision::RejectedBatchLimit
+                        | KeyAdmissionDecision::RejectedByteLimit
+                )
+            })
+            .count();
+        let admitted_key_content_bytes = projection
+            .batches
+            .iter()
+            .filter(|batch| batch.key_admission == KeyAdmissionDecision::Admitted)
+            .map(|batch| batch.key_content_bytes)
+            .sum();
         let batch_tokens = |state| {
             projection
                 .batches
@@ -357,6 +443,9 @@ impl ProjectionMetrics {
             load_all_batch_count,
             load_key_batch_count,
             no_load_batch_count,
+            key_candidate_batch_count,
+            key_budget_rejected_batch_count,
+            admitted_key_content_bytes,
             load_all_estimated_tokens: batch_tokens(MemoryLoadState::LoadAll),
             load_key_source_estimated_tokens: batch_tokens(MemoryLoadState::LoadKey),
             no_load_source_estimated_tokens: batch_tokens(MemoryLoadState::NoLoad),
@@ -396,6 +485,7 @@ impl Error for BenchmarkRunError {}
 #[cfg(test)]
 mod tests {
     use structure_model::ShortMemoryItem;
+    use structure_runtime::KeyAdmissionPolicy;
 
     use super::*;
     use crate::{SyntheticTraceConfig, SyntheticTraceGenerator};
@@ -500,5 +590,116 @@ mod tests {
 
         assert!(!run.correctness.fork_replay_equivalence.passed);
         assert!(!run.correctness.passed());
+    }
+
+    #[test]
+    fn key_evidence_requires_oracle_fragments_not_only_provenance_ids() {
+        let trace = SyntheticTraceGenerator::generate(&SyntheticTraceConfig {
+            turn_count: 4,
+            tool_calls_per_turn: 1,
+            evidence_horizon_turns: 4,
+            ..SyntheticTraceConfig::default()
+        })
+        .expect("trace generates");
+        let canonical = Baseline::BatchOnly {
+            recent_turns_load_all: 0,
+            key_admission: KeyAdmissionPolicy::default(),
+        }
+        .project(&trace)
+        .expect("B3 projects");
+        let canonical_gates = CorrectnessGates::evaluate(&trace, &canonical, &canonical, true);
+
+        assert!(canonical_gates.evidence_recall.passed);
+        assert!(canonical_gates.evidence_recall.retained_key > 0);
+
+        let mut broken = canonical;
+        for entry in &mut broken.entries {
+            if let ShortMemoryItem::BatchKey(key) = &mut entry.item {
+                key.key_content = "provenance without semantic evidence".to_owned();
+            }
+        }
+        let gates = CorrectnessGates::evaluate(&trace, &broken, &broken, true);
+
+        assert!(gates.provenance.passed);
+        assert!(!gates.evidence_recall.passed);
+        assert!(!gates.evidence_recall.missing_event_ids.is_empty());
+    }
+
+    #[test]
+    fn undersized_key_budget_fails_with_missing_evidence_ids() {
+        let trace = SyntheticTraceGenerator::generate(&SyntheticTraceConfig {
+            turn_count: 4,
+            tool_calls_per_turn: 1,
+            evidence_horizon_turns: 4,
+            ..SyntheticTraceConfig::default()
+        })
+        .expect("trace generates");
+        let run = BenchmarkRun::execute(
+            &trace,
+            Baseline::BatchOnly {
+                recent_turns_load_all: 0,
+                key_admission: KeyAdmissionPolicy {
+                    max_key_batches: Some(0),
+                    max_key_content_bytes: None,
+                },
+            },
+        )
+        .expect("budgeted B3 runs");
+
+        assert!(!run.correctness.evidence_recall.passed);
+        assert_eq!(run.correctness.evidence_recall.retained_full, 1);
+        assert_eq!(run.correctness.evidence_recall.retained_key, 0);
+        assert_eq!(run.correctness.evidence_recall.missing_event_ids.len(), 3);
+        assert!(run.metrics.key_budget_rejected_batch_count > 0);
+        assert!(!run.correctness.passed());
+    }
+
+    #[test]
+    fn exact_key_byte_budget_passes_and_one_byte_less_fails() {
+        let trace = SyntheticTraceGenerator::generate(&SyntheticTraceConfig {
+            turn_count: 4,
+            tool_calls_per_turn: 1,
+            evidence_horizon_turns: 4,
+            ..SyntheticTraceConfig::default()
+        })
+        .expect("trace generates");
+        let unbounded = BenchmarkRun::execute(
+            &trace,
+            Baseline::BatchOnly {
+                recent_turns_load_all: 0,
+                key_admission: KeyAdmissionPolicy::default(),
+            },
+        )
+        .expect("unbounded B3 runs");
+        let exact_bytes = unbounded.metrics.admitted_key_content_bytes;
+        assert!(exact_bytes > 0);
+
+        let exact = BenchmarkRun::execute(
+            &trace,
+            Baseline::BatchOnly {
+                recent_turns_load_all: 0,
+                key_admission: KeyAdmissionPolicy {
+                    max_key_batches: None,
+                    max_key_content_bytes: Some(exact_bytes),
+                },
+            },
+        )
+        .expect("exact-budget B3 runs");
+        let below = BenchmarkRun::execute(
+            &trace,
+            Baseline::BatchOnly {
+                recent_turns_load_all: 0,
+                key_admission: KeyAdmissionPolicy {
+                    max_key_batches: None,
+                    max_key_content_bytes: Some(exact_bytes - 1),
+                },
+            },
+        )
+        .expect("undersized B3 runs");
+
+        assert!(exact.correctness.passed());
+        assert_eq!(exact.metrics.key_budget_rejected_batch_count, 0);
+        assert!(!below.correctness.passed());
+        assert_eq!(below.metrics.key_budget_rejected_batch_count, 1);
     }
 }

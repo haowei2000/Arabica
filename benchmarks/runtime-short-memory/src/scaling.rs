@@ -136,7 +136,7 @@ impl ScalingRunner {
         }
 
         Ok(ScalingReport {
-            schema_version: "structure.short-memory.scaling/v1".to_owned(),
+            schema_version: "structure.short-memory.scaling/v2".to_owned(),
             environment: ScalingEnvironment {
                 release_mode: !cfg!(debug_assertions),
                 target_arch: std::env::consts::ARCH.to_owned(),
