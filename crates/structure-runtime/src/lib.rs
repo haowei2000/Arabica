@@ -14,7 +14,10 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 pub use long_memory::{LongMemoryError, LongMemoryErrorKind, LongMemoryManager};
-pub use short_memory::ShortMemoryProjector;
+pub use short_memory::{
+    DecayMatch, DecayRule, EventBatch, EventMemoryTraits, EventTtl, EventVisibilityDecision,
+    MemoryClass, ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
+};
 use structure_model::{ContentBlock, RuntimeItem, ToolChoice, ToolDefinition, ToolResultItem};
 use structure_protocol::{
     Command, ContextEntry, DisclosureLevel, Event, EventEnvelope, OutputStream, RunId, SessionId,
@@ -97,6 +100,7 @@ pub struct RuntimeSession {
 pub struct CoreRuntime<M, R> {
     sessions: HashMap<SessionId, RuntimeSession>,
     long_memory: HashMap<WorkspaceId, LongMemoryManager>,
+    short_memory_policy: ShortMemoryPolicy,
     model: M,
     runner: R,
 }
@@ -106,9 +110,32 @@ impl<M, R> CoreRuntime<M, R> {
         Self {
             sessions: HashMap::new(),
             long_memory: HashMap::new(),
+            short_memory_policy: ShortMemoryPolicy::default(),
             model,
             runner,
         }
+    }
+
+    pub fn with_short_memory_policy(
+        model: M,
+        runner: R,
+        short_memory_policy: ShortMemoryPolicy,
+    ) -> Self {
+        Self {
+            sessions: HashMap::new(),
+            long_memory: HashMap::new(),
+            short_memory_policy,
+            model,
+            runner,
+        }
+    }
+
+    pub fn short_memory_policy(&self) -> &ShortMemoryPolicy {
+        &self.short_memory_policy
+    }
+
+    pub fn set_short_memory_policy(&mut self, policy: ShortMemoryPolicy) {
+        self.short_memory_policy = policy;
     }
 
     pub fn session(&self, session_id: &SessionId) -> Option<&RuntimeSession> {
@@ -258,7 +285,12 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 }
                 let (long_memory, disclosure) = self.session_memory(session_id)?;
                 let long_memory = long_memory.entries(disclosure);
-                let short_memory = ShortMemoryProjector::project(history);
+                let short_memory = ShortMemoryProjector::materialize(
+                    history,
+                    Some(run_id),
+                    &self.short_memory_policy,
+                )
+                .entries;
                 let mut events = vec![
                     Event::RunStarted,
                     Event::MessageAccepted {
@@ -500,10 +532,10 @@ fn tool_result_text(result: &ToolResultItem) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use structure_model::{ShortMemoryEntry, ShortMemoryItem};
     use structure_protocol::{CommandId, DisclosureLevel, EventId, EventMetadata};
     use structure_provider::{
-        EchoModel, ModelProvider, ModelRunRequest, ModelRunResult, ProviderError, ShortMemoryEntry,
-        ShortMemoryItem,
+        EchoModel, ModelProvider, ModelRunRequest, ModelRunResult, ProviderError,
     };
     use structure_runner::{
         NoopRunner, RunnerEnvironment, RunnerError, RunnerOutput, ToolExecutionRequest,
@@ -711,9 +743,8 @@ mod tests {
         assert_eq!(
             request.short_memory,
             vec![ShortMemoryEntry {
-                session_id: SessionId::new("session-1"),
+                source_event_ids: vec!["event-1".to_owned()],
                 sequence: 1,
-                run_id: Some(RunId::new("prior-run")),
                 item: ShortMemoryItem::UserMessage {
                     content: "earlier".to_owned(),
                 },

@@ -492,9 +492,10 @@ fn terminal_run_status(events: &[Event]) -> Option<RunStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use structure_model::ShortMemoryItem;
     use structure_protocol::ContextEntry;
     use structure_provider::{
-        EchoModel, ModelProvider, ModelRunRequest, ModelRunResult, ProviderError, ShortMemoryItem,
+        EchoModel, ModelProvider, ModelRunRequest, ModelRunResult, ProviderError,
     };
     use structure_runner::NoopRunner;
     use structure_runtime::CoreRuntime;

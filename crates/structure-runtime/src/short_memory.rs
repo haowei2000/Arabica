@@ -1,65 +1,880 @@
-use structure_protocol::{Event, EventEnvelope};
-use structure_provider::{ShortMemoryEntry, ShortMemoryItem};
+use std::collections::{BTreeMap, HashMap};
 
-/// Pure projection of a Session's immutable event history for the next run.
-///
-/// Short memory owns no storage and never mutates the event log. Deduplication,
-/// compaction, and GC can evolve here while the Session event stream remains
-/// the source of truth.
+use serde::{Deserialize, Serialize};
+use structure_model::{
+    ContentBlock, MemoryBatchKey, MemoryBatchKind, MemoryLoadState, ShortMemoryEntry,
+    ShortMemoryItem, ToolCallItem, ToolResultItem,
+};
+use structure_protocol::{Event, EventEnvelope, EventId, RunId};
+
+const BATCH_FIELD_EXCERPT_LIMIT: usize = 64;
+const BATCH_KEY_CONTENT_LIMIT: usize = 384;
+const MISC_BUCKET_SIZE: u64 = 50;
+
+/// Small retention taxonomy used by Runtime. Protocol events remain detailed
+/// audit facts and are projected into one of these policy classes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryClass {
+    Anchor,
+    Working,
+    Recovery,
+    Transient,
+    Control,
+}
+
+/// Relationship metadata used for precise decay. A completion affects only an
+/// older event with the same relation key, such as one matching tool call.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EventMemoryTraits {
+    pub class: MemoryClass,
+    pub relation_key: Option<String>,
+    pub completes_relation: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EventTtl {
+    /// Maximum accumulated event-count decay. None means unbounded.
+    pub ttl_events: Option<u64>,
+    /// Pinned events remain visible regardless of accumulated decay.
+    pub pin: bool,
+}
+
+impl EventTtl {
+    pub const fn ttl(ttl_events: u64) -> Self {
+        Self {
+            ttl_events: Some(ttl_events),
+            pin: false,
+        }
+    }
+
+    pub const fn pinned() -> Self {
+        Self {
+            ttl_events: None,
+            pin: true,
+        }
+    }
+
+    pub const fn unbounded() -> Self {
+        Self {
+            ttl_events: None,
+            pin: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecayMatch {
+    Any,
+    CompletesRelation,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DecayRule {
+    pub older: MemoryClass,
+    pub newer: MemoryClass,
+    pub match_kind: DecayMatch,
+    pub cost: u64,
+}
+
+/// Declarative, replayable policy for event visibility and batch loading.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ShortMemoryPolicy {
+    pub default_ttl_events: u64,
+    pub recency_floor: usize,
+    pub recent_turns_load_all: usize,
+    pub ttl_overrides: BTreeMap<MemoryClass, EventTtl>,
+    pub decay_rules: Vec<DecayRule>,
+}
+
+impl Default for ShortMemoryPolicy {
+    fn default() -> Self {
+        let ttl_overrides = BTreeMap::from([
+            (MemoryClass::Anchor, EventTtl::pinned()),
+            (MemoryClass::Working, EventTtl::ttl(3)),
+            (MemoryClass::Recovery, EventTtl::ttl(12)),
+            (MemoryClass::Transient, EventTtl::ttl(0)),
+            (MemoryClass::Control, EventTtl::ttl(0)),
+        ]);
+        let decay_rules = vec![
+            DecayRule {
+                older: MemoryClass::Working,
+                newer: MemoryClass::Working,
+                match_kind: DecayMatch::CompletesRelation,
+                cost: 3,
+            },
+            DecayRule {
+                older: MemoryClass::Working,
+                newer: MemoryClass::Recovery,
+                match_kind: DecayMatch::CompletesRelation,
+                cost: 3,
+            },
+        ];
+        Self {
+            default_ttl_events: 6,
+            recency_floor: 100,
+            recent_turns_load_all: 2,
+            ttl_overrides,
+            decay_rules,
+        }
+    }
+}
+
+impl ShortMemoryPolicy {
+    /// Disable event TTL while retaining batch disclosure. This is the B3
+    /// ablation policy and is also useful for diagnostics.
+    pub fn batch_only(recent_turns_load_all: usize) -> Self {
+        let ttl_overrides = BTreeMap::from([
+            (MemoryClass::Anchor, EventTtl::unbounded()),
+            (MemoryClass::Working, EventTtl::unbounded()),
+            (MemoryClass::Recovery, EventTtl::unbounded()),
+            (MemoryClass::Transient, EventTtl::unbounded()),
+            (MemoryClass::Control, EventTtl::unbounded()),
+        ]);
+        Self {
+            default_ttl_events: u64::MAX,
+            recency_floor: 0,
+            recent_turns_load_all,
+            ttl_overrides,
+            decay_rules: Vec::new(),
+        }
+    }
+
+    fn ttl_for(&self, class: MemoryClass) -> EventTtl {
+        self.ttl_overrides
+            .get(&class)
+            .copied()
+            .unwrap_or_else(|| EventTtl::ttl(self.default_ttl_events))
+    }
+
+    fn decay_cost(
+        &self,
+        older: MemoryClass,
+        newer: MemoryClass,
+        match_kind: DecayMatch,
+    ) -> Option<u64> {
+        self.decay_rules
+            .iter()
+            .rev()
+            .find(|rule| {
+                rule.older == older && rule.newer == newer && rule.match_kind == match_kind
+            })
+            .map(|rule| rule.cost)
+    }
+}
+
+/// Explainable decision for one immutable source event.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EventVisibilityDecision {
+    pub event_id: EventId,
+    pub sequence: u64,
+    pub memory_class: MemoryClass,
+    pub relation_key: Option<String>,
+    pub accumulated_decay: u64,
+    pub ttl_events: Option<u64>,
+    pub pinned: bool,
+    pub protected_by_recency_floor: bool,
+    pub visible: bool,
+}
+
+/// A stable runtime grouping over immutable events.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct EventBatch {
+    pub context_key: String,
+    pub context_kind: MemoryBatchKind,
+    pub run_id: Option<RunId>,
+    pub sequence_start: u64,
+    pub sequence_end: u64,
+    pub event_count: usize,
+    pub estimated_tokens: u64,
+    pub key_content: String,
+    pub load_state: MemoryLoadState,
+    pub events: Vec<EventEnvelope>,
+}
+
+/// Complete output of short-memory materialisation. The source event slice is
+/// never modified; decisions and batches are returned for replay diagnostics.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ShortMemoryMaterialization {
+    pub entries: Vec<ShortMemoryEntry>,
+    pub batches: Vec<EventBatch>,
+    pub visibility: Vec<EventVisibilityDecision>,
+}
+
+/// Pure projection of a Session's immutable event history for the next model
+/// turn. TTL and batch policies alter prompt visibility, never the audit log.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ShortMemoryProjector;
 
 impl ShortMemoryProjector {
-    pub fn project(events: &[EventEnvelope]) -> Vec<ShortMemoryEntry> {
-        events
-            .iter()
-            .filter_map(|envelope| {
-                let item = match &envelope.event {
-                    Event::MessageAccepted { content } => ShortMemoryItem::UserMessage {
-                        content: content.clone(),
-                    },
-                    Event::CommandOutput { stream, chunk } => ShortMemoryItem::CommandOutput {
-                        stream: *stream,
-                        chunk: chunk.clone(),
-                    },
-                    Event::RunCompleted {
-                        output: Some(content),
-                    } => ShortMemoryItem::AssistantMessage {
-                        content: content.clone(),
-                    },
-                    Event::RunFailed { message } => ShortMemoryItem::RunFailure {
-                        message: message.clone(),
-                    },
-                    Event::RunCancelled => ShortMemoryItem::RunCancelled,
-                    _ => return None,
-                };
-                Some(ShortMemoryEntry {
-                    session_id: envelope.session_id.clone(),
-                    sequence: envelope.sequence,
-                    run_id: envelope.run_id.clone(),
-                    item,
-                })
-            })
-            .collect()
+    pub fn classify_event(event: &Event) -> EventMemoryTraits {
+        event_memory_traits(event)
     }
+
+    /// Project every provider-relevant event without TTL or batch compaction.
+    ///
+    /// This is the canonical event-to-item mapping used by full-replay
+    /// diagnostics and benchmark baselines. Lifecycle-only events remain in
+    /// the audit log but do not become model input items.
+    pub fn project_full(events: &[EventEnvelope]) -> Vec<ShortMemoryEntry> {
+        events.iter().filter_map(event_to_short_memory).collect()
+    }
+
+    /// Return event-level TTL decisions without applying batch disclosure.
+    pub fn visibility(
+        events: &[EventEnvelope],
+        policy: &ShortMemoryPolicy,
+    ) -> Vec<EventVisibilityDecision> {
+        visibility_decisions(events, policy)
+    }
+
+    pub fn project(events: &[EventEnvelope]) -> Vec<ShortMemoryEntry> {
+        Self::materialize(events, None, &ShortMemoryPolicy::default()).entries
+    }
+
+    pub fn materialize(
+        events: &[EventEnvelope],
+        current_run_id: Option<&RunId>,
+        policy: &ShortMemoryPolicy,
+    ) -> ShortMemoryMaterialization {
+        // Session Management supplies inherited history before local history.
+        // Sequence values are only monotonic within one Session, so sorting a
+        // forked history by sequence would interleave unrelated timelines.
+        let visibility = Self::visibility(events, policy);
+        let visible_by_event_id: HashMap<EventId, bool> = visibility
+            .iter()
+            .map(|decision| (decision.event_id.clone(), decision.visible))
+            .collect();
+        let mut batches = build_batches(events);
+        assign_load_states(
+            &mut batches,
+            &visible_by_event_id,
+            current_run_id,
+            policy.recent_turns_load_all,
+        );
+        populate_key_content(&mut batches);
+        let entries = materialize_entries(events, &batches);
+
+        ShortMemoryMaterialization {
+            entries,
+            batches,
+            visibility,
+        }
+    }
+}
+
+fn visibility_decisions(
+    events: &[EventEnvelope],
+    policy: &ShortMemoryPolicy,
+) -> Vec<EventVisibilityDecision> {
+    let floor_start = events.len().saturating_sub(policy.recency_floor);
+    let mut newer_class_counts = BTreeMap::<MemoryClass, u64>::new();
+    let mut newer_completion_counts = BTreeMap::<(String, MemoryClass), u64>::new();
+    let mut decisions = Vec::with_capacity(events.len());
+
+    for (index, event) in events.iter().enumerate().rev() {
+        let traits = event_memory_traits(&event.event);
+        let ttl = policy.ttl_for(traits.class);
+        let mut accumulated_decay: i128 = newer_class_counts
+            .iter()
+            .map(|(newer, count)| {
+                i128::from(*count)
+                    * i128::from(
+                        policy
+                            .decay_cost(traits.class, *newer, DecayMatch::Any)
+                            .unwrap_or(1),
+                    )
+            })
+            .sum();
+        if let Some(relation_key) = &traits.relation_key {
+            for newer_class in newer_class_counts.keys() {
+                let completion_count = newer_completion_counts
+                    .get(&(relation_key.clone(), *newer_class))
+                    .copied()
+                    .unwrap_or_default();
+                if completion_count == 0 {
+                    continue;
+                }
+                let general_cost = policy
+                    .decay_cost(traits.class, *newer_class, DecayMatch::Any)
+                    .unwrap_or(1);
+                let completion_cost = policy
+                    .decay_cost(traits.class, *newer_class, DecayMatch::CompletesRelation)
+                    .unwrap_or(general_cost);
+                accumulated_decay += i128::from(completion_count)
+                    * (i128::from(completion_cost) - i128::from(general_cost));
+            }
+        }
+        let accumulated_decay = accumulated_decay.max(0) as u64;
+        let protected_by_recency_floor = index >= floor_start;
+        let within_ttl = ttl
+            .ttl_events
+            .is_none_or(|limit| accumulated_decay <= limit);
+        decisions.push(EventVisibilityDecision {
+            event_id: event.event_id.clone(),
+            sequence: event.sequence,
+            memory_class: traits.class,
+            relation_key: traits.relation_key.clone(),
+            accumulated_decay,
+            ttl_events: ttl.ttl_events,
+            pinned: ttl.pin,
+            protected_by_recency_floor,
+            visible: ttl.pin || protected_by_recency_floor || within_ttl,
+        });
+        *newer_class_counts.entry(traits.class).or_default() += 1;
+        if traits.completes_relation {
+            if let Some(relation_key) = traits.relation_key {
+                *newer_completion_counts
+                    .entry((relation_key, traits.class))
+                    .or_default() += 1;
+            }
+        }
+    }
+
+    decisions.reverse();
+    decisions
+}
+
+fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
+    let mut batches = Vec::<EventBatch>::new();
+    let mut batch_indexes = HashMap::<String, usize>::new();
+    let mut active_tool_by_run = HashMap::<String, String>::new();
+
+    for event in events {
+        let (context_key, context_kind) = batch_identity(event, &mut active_tool_by_run);
+        let index = if let Some(index) = batch_indexes.get(&context_key) {
+            *index
+        } else {
+            let index = batches.len();
+            batch_indexes.insert(context_key.clone(), index);
+            batches.push(EventBatch {
+                context_key,
+                context_kind,
+                run_id: event.run_id.clone(),
+                sequence_start: event.sequence,
+                sequence_end: event.sequence,
+                event_count: 0,
+                estimated_tokens: 0,
+                key_content: String::new(),
+                load_state: MemoryLoadState::NoLoad,
+                events: Vec::new(),
+            });
+            index
+        };
+        let batch = &mut batches[index];
+        batch.sequence_start = batch.sequence_start.min(event.sequence);
+        batch.sequence_end = batch.sequence_end.max(event.sequence);
+        batch.events.push(event.clone());
+    }
+
+    for batch in &mut batches {
+        batch.event_count = batch.events.len();
+        batch.estimated_tokens = estimate_tokens(&batch.events);
+    }
+    batches
+}
+
+fn populate_key_content(batches: &mut [EventBatch]) {
+    for batch in batches {
+        if batch.load_state == MemoryLoadState::LoadKey {
+            let key_content = build_key_content(batch);
+            batch.key_content = key_content;
+        }
+    }
+}
+
+fn batch_identity(
+    envelope: &EventEnvelope,
+    active_tool_by_run: &mut HashMap<String, String>,
+) -> (String, MemoryBatchKind) {
+    let run = envelope
+        .run_id
+        .as_ref()
+        .map_or_else(|| "none".to_owned(), ToString::to_string);
+    match &envelope.event {
+        Event::MessageAccepted { .. }
+        | Event::RunScheduled
+        | Event::RunStarted
+        | Event::RunCompleted { .. }
+        | Event::RunFailed { .. }
+        | Event::RunCancelled => (format!("run:{run}:turn:1"), MemoryBatchKind::Turn),
+        Event::ToolCallRequested { call_id, .. } => {
+            active_tool_by_run.insert(run.clone(), call_id.clone());
+            (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
+        }
+        Event::ToolCallCompleted { call_id, .. } => {
+            if active_tool_by_run.get(&run) == Some(call_id) {
+                active_tool_by_run.remove(&run);
+            }
+            (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
+        }
+        Event::CommandOutput { .. } => active_tool_by_run.get(&run).map_or_else(
+            || {
+                (
+                    format!(
+                        "run:{run}:transient:{}",
+                        envelope.sequence / MISC_BUCKET_SIZE
+                    ),
+                    MemoryBatchKind::Transient,
+                )
+            },
+            |call_id| (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool),
+        ),
+        Event::ContextRead { entry } | Event::ContextUpdated { entry } => (
+            format!("context:{}:{}", envelope.workspace_id, entry.path),
+            MemoryBatchKind::Context,
+        ),
+        Event::ContextDeleted { path } => (
+            format!("context:{}:{path}", envelope.workspace_id),
+            MemoryBatchKind::Context,
+        ),
+        Event::ContextSearchResult { .. } => (
+            format!(
+                "context:{}:search:{}",
+                envelope.workspace_id, envelope.sequence
+            ),
+            MemoryBatchKind::Context,
+        ),
+        Event::ContextDisclosureSet { .. } => (
+            format!("session:{}:control", envelope.session_id),
+            MemoryBatchKind::Misc,
+        ),
+        Event::SessionCreated { .. }
+        | Event::SessionForked { .. }
+        | Event::SessionResumed
+        | Event::SessionSuspended
+        | Event::SessionClosed => (
+            format!("session:{}:lifecycle", envelope.session_id),
+            MemoryBatchKind::Misc,
+        ),
+        Event::Error { .. } if envelope.run_id.is_some() => {
+            (format!("run:{run}:turn:1"), MemoryBatchKind::Turn)
+        }
+        Event::Error { .. } => (
+            format!(
+                "session:{}:error:{}",
+                envelope.session_id, envelope.sequence
+            ),
+            MemoryBatchKind::Misc,
+        ),
+    }
+}
+
+fn assign_load_states(
+    batches: &mut [EventBatch],
+    visible_by_event_id: &HashMap<EventId, bool>,
+    current_run_id: Option<&RunId>,
+    recent_turn_count: usize,
+) {
+    let turn_indexes: Vec<_> = batches
+        .iter()
+        .enumerate()
+        .filter(|(_, batch)| batch.context_kind == MemoryBatchKind::Turn)
+        .map(|(index, _)| index)
+        .collect();
+    let recent_start = turn_indexes.len().saturating_sub(recent_turn_count);
+    let recent_turn_indexes = &turn_indexes[recent_start..];
+
+    for (index, batch) in batches.iter_mut().enumerate() {
+        let has_visible_event = batch.events.iter().any(|event| {
+            visible_by_event_id
+                .get(&event.event_id)
+                .copied()
+                .unwrap_or(false)
+        });
+        batch.load_state = if !has_visible_event
+            || matches!(
+                batch.context_kind,
+                MemoryBatchKind::Transient | MemoryBatchKind::Misc
+            ) {
+            MemoryLoadState::NoLoad
+        } else if recent_turn_indexes.contains(&index)
+            || (batch.context_kind == MemoryBatchKind::Tool
+                && current_run_id.is_some_and(|run_id| batch.run_id.as_ref() == Some(run_id)))
+        {
+            MemoryLoadState::LoadAll
+        } else {
+            MemoryLoadState::LoadKey
+        };
+    }
+}
+
+fn materialize_entries(events: &[EventEnvelope], batches: &[EventBatch]) -> Vec<ShortMemoryEntry> {
+    let mut state_by_event_id = HashMap::<EventId, (&EventBatch, bool)>::new();
+    for batch in batches {
+        for (index, event) in batch.events.iter().enumerate() {
+            state_by_event_id.insert(event.event_id.clone(), (batch, index == 0));
+        }
+    }
+
+    let mut entries = Vec::new();
+    for event in events {
+        let Some((batch, first_in_batch)) = state_by_event_id.get(&event.event_id) else {
+            continue;
+        };
+        match batch.load_state {
+            MemoryLoadState::LoadAll => {
+                if let Some(entry) = event_to_short_memory(event) {
+                    entries.push(entry);
+                }
+            }
+            MemoryLoadState::LoadKey if *first_in_batch => {
+                entries.push(ShortMemoryEntry {
+                    source_event_ids: batch
+                        .events
+                        .iter()
+                        .map(|event| event.event_id.to_string())
+                        .collect(),
+                    sequence: batch.sequence_start,
+                    item: ShortMemoryItem::BatchKey(MemoryBatchKey {
+                        context_key: batch.context_key.clone(),
+                        context_kind: batch.context_kind,
+                        sequence_start: batch.sequence_start,
+                        sequence_end: batch.sequence_end,
+                        event_count: batch.event_count,
+                        estimated_tokens: batch.estimated_tokens,
+                        key_content: batch.key_content.clone(),
+                    }),
+                });
+            }
+            MemoryLoadState::LoadKey | MemoryLoadState::NoLoad => {}
+        }
+    }
+    entries
+}
+
+fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
+    let item = match &envelope.event {
+        Event::MessageAccepted { content } => ShortMemoryItem::UserMessage {
+            content: content.clone(),
+        },
+        Event::RunCompleted {
+            output: Some(content),
+        } => ShortMemoryItem::AssistantMessage {
+            content: content.clone(),
+        },
+        Event::ToolCallRequested {
+            call_id,
+            name,
+            arguments,
+        } => ShortMemoryItem::ToolCall(ToolCallItem {
+            id: Some(envelope.event_id.to_string()),
+            call_id: call_id.clone(),
+            name: name.clone(),
+            arguments: arguments.clone(),
+            provider_state: None,
+        }),
+        Event::ToolCallCompleted {
+            call_id,
+            name,
+            result,
+            is_error,
+        } => ShortMemoryItem::ToolResult(ToolResultItem {
+            id: Some(envelope.event_id.to_string()),
+            call_id: call_id.clone(),
+            name: Some(name.clone()),
+            content: vec![ContentBlock::text(result.clone())],
+            is_error: *is_error,
+        }),
+        Event::CommandOutput { stream, chunk } => ShortMemoryItem::Observation {
+            content: format!("stream={stream:?}\n{chunk}"),
+        },
+        Event::RunFailed { message } | Event::Error { message, .. } => {
+            ShortMemoryItem::RunFailure {
+                message: message.clone(),
+            }
+        }
+        Event::RunCancelled => ShortMemoryItem::RunCancelled,
+        Event::ContextRead { entry } | Event::ContextUpdated { entry } => {
+            ShortMemoryItem::Observation {
+                content: format!("context_path={}\n{}", entry.path, entry.content),
+            }
+        }
+        Event::ContextSearchResult { entries } => ShortMemoryItem::Observation {
+            content: entries
+                .iter()
+                .map(|entry| format!("[{}]\n{}", entry.path, entry.content))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        },
+        Event::ContextDeleted { path } => ShortMemoryItem::Observation {
+            content: format!("context_deleted={path}"),
+        },
+        Event::ContextDisclosureSet { level } => ShortMemoryItem::Observation {
+            content: format!("context_disclosure={level:?}"),
+        },
+        Event::SessionCreated { .. }
+        | Event::SessionForked { .. }
+        | Event::SessionResumed
+        | Event::SessionSuspended
+        | Event::SessionClosed
+        | Event::RunScheduled
+        | Event::RunStarted
+        | Event::RunCompleted { output: None } => return None,
+    };
+    Some(ShortMemoryEntry {
+        source_event_ids: vec![envelope.event_id.to_string()],
+        sequence: envelope.sequence,
+        item,
+    })
+}
+
+fn event_memory_traits(event: &Event) -> EventMemoryTraits {
+    let (class, relation_key, completes_relation) = match event {
+        Event::SessionCreated { .. }
+        | Event::SessionForked { .. }
+        | Event::SessionResumed
+        | Event::SessionSuspended
+        | Event::SessionClosed => (MemoryClass::Control, None, false),
+        Event::RunScheduled | Event::RunStarted | Event::RunCancelled => {
+            (MemoryClass::Control, None, false)
+        }
+        Event::MessageAccepted { .. } => (MemoryClass::Anchor, None, false),
+        Event::ToolCallRequested { call_id, .. } => {
+            (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
+        }
+        Event::ToolCallCompleted {
+            call_id,
+            is_error: true,
+            ..
+        } => (MemoryClass::Recovery, Some(format!("tool:{call_id}")), true),
+        Event::ToolCallCompleted {
+            call_id,
+            is_error: false,
+            ..
+        } => (MemoryClass::Working, Some(format!("tool:{call_id}")), true),
+        Event::CommandOutput { .. } => (MemoryClass::Transient, None, false),
+        Event::RunCompleted { output: Some(_) } => (MemoryClass::Anchor, None, false),
+        Event::RunCompleted { output: None } => (MemoryClass::Control, None, false),
+        Event::RunFailed { .. } | Event::Error { .. } => (MemoryClass::Recovery, None, false),
+        Event::ContextRead { entry } => (
+            MemoryClass::Working,
+            Some(format!("context:{}", entry.path)),
+            false,
+        ),
+        Event::ContextSearchResult { .. } => (MemoryClass::Working, None, false),
+        Event::ContextUpdated { entry } => (
+            MemoryClass::Anchor,
+            Some(format!("context:{}", entry.path)),
+            false,
+        ),
+        Event::ContextDeleted { path } => {
+            (MemoryClass::Anchor, Some(format!("context:{path}")), false)
+        }
+        Event::ContextDisclosureSet { .. } => (MemoryClass::Control, None, false),
+    };
+    EventMemoryTraits {
+        class,
+        relation_key,
+        completes_relation,
+    }
+}
+
+fn event_type_name(event: &Event) -> &'static str {
+    match event {
+        Event::SessionCreated { .. } => "session.created",
+        Event::SessionForked { .. } => "session.forked",
+        Event::SessionResumed => "session.resumed",
+        Event::SessionSuspended => "session.suspended",
+        Event::SessionClosed => "session.closed",
+        Event::RunScheduled => "run.scheduled",
+        Event::RunStarted => "run.started",
+        Event::MessageAccepted { .. } => "message.accepted",
+        Event::ToolCallRequested { .. } => "tool.call.requested",
+        Event::ToolCallCompleted { is_error: true, .. } => "tool.call.error",
+        Event::ToolCallCompleted {
+            is_error: false, ..
+        } => "tool.call.completed",
+        Event::CommandOutput { .. } => "command.output",
+        Event::RunCompleted { .. } => "run.completed",
+        Event::RunFailed { .. } => "run.failed",
+        Event::RunCancelled => "run.cancelled",
+        Event::ContextRead { .. } => "context.read",
+        Event::ContextSearchResult { .. } => "context.search.result",
+        Event::ContextUpdated { .. } => "context.updated",
+        Event::ContextDeleted { .. } => "context.deleted",
+        Event::ContextDisclosureSet { .. } => "context.disclosure.set",
+        Event::Error { .. } => "error",
+    }
+}
+
+fn estimate_tokens(events: &[EventEnvelope]) -> u64 {
+    let characters: usize = events
+        .iter()
+        .map(|event| serde_json::to_string(&event.event).map_or(0, |text| text.chars().count()))
+        .sum();
+    characters.div_ceil(4) as u64
+}
+
+fn build_key_content(batch: &EventBatch) -> String {
+    let mut type_counts = BTreeMap::<&str, usize>::new();
+    for event in &batch.events {
+        *type_counts
+            .entry(event_type_name(&event.event))
+            .or_default() += 1;
+    }
+    let mut lines = vec![
+        format!(
+            "batch={} kind={:?} seq={}-{} events={} tokens={}",
+            truncate_chars(&batch.context_key, BATCH_FIELD_EXCERPT_LIMIT),
+            batch.context_kind,
+            batch.sequence_start,
+            batch.sequence_end,
+            batch.events.len(),
+            batch.estimated_tokens,
+        )
+        .to_lowercase(),
+        format!(
+            "types={}",
+            type_counts
+                .iter()
+                .map(|(event_type, count)| format!("{event_type}:{count}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    ];
+    let mut semantic_events: Vec<_> = batch.events.iter().collect();
+    if batch.context_kind == MemoryBatchKind::Tool {
+        semantic_events
+            .sort_by_key(|event| !matches!(event.event, Event::ToolCallCompleted { .. }));
+    }
+    for event in semantic_events {
+        if let Some(line) = event_semantic_key(&event.event) {
+            lines.push(line);
+        }
+    }
+    truncate_chars(&lines.join("\n"), BATCH_KEY_CONTENT_LIMIT)
+}
+
+fn event_semantic_key(event: &Event) -> Option<String> {
+    match event {
+        Event::MessageAccepted { content } => Some(compact_text("user", content)),
+        Event::RunCompleted {
+            output: Some(content),
+        } => Some(compact_text("assistant", content)),
+        Event::ToolCallRequested {
+            call_id,
+            name,
+            arguments,
+        } => {
+            let arguments = serde_json::to_string(arguments).unwrap_or_default();
+            Some(format!(
+                "tool_call name={name} call_id={call_id} {}",
+                compact_text("arguments", &arguments)
+            ))
+        }
+        Event::ToolCallCompleted {
+            call_id,
+            name,
+            result,
+            is_error,
+        } => Some(format!(
+            "tool_result name={name} call_id={call_id} status={} {}",
+            if *is_error { "error" } else { "ok" },
+            compact_text("result", result)
+        )),
+        Event::RunFailed { message } => Some(compact_text("run_failure", message)),
+        Event::RunCancelled => Some("run_status=cancelled".to_owned()),
+        Event::ContextRead { entry } => Some(format!(
+            "context_read path={} {}",
+            entry.path,
+            compact_text("content", &entry.content)
+        )),
+        Event::ContextSearchResult { entries } => Some(format!(
+            "context_search paths={}",
+            truncate_chars(
+                &entries
+                    .iter()
+                    .map(|entry| entry.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                BATCH_FIELD_EXCERPT_LIMIT,
+            )
+        )),
+        Event::ContextUpdated { entry } => Some(format!(
+            "context_updated path={} {}",
+            entry.path,
+            compact_text("content", &entry.content)
+        )),
+        Event::ContextDeleted { path } => Some(format!("context_deleted path={path}")),
+        Event::ContextDisclosureSet { level } => {
+            Some(format!("context_disclosure={level:?}").to_lowercase())
+        }
+        Event::Error { code, message } => Some(format!(
+            "error code={code:?} {}",
+            compact_text("message", message)
+        )),
+        Event::SessionCreated { .. }
+        | Event::SessionForked { .. }
+        | Event::SessionResumed
+        | Event::SessionSuspended
+        | Event::SessionClosed
+        | Event::RunScheduled
+        | Event::RunStarted
+        | Event::RunCompleted { output: None }
+        | Event::CommandOutput { .. } => None,
+    }
+}
+
+fn compact_text(label: &str, value: &str) -> String {
+    format!(
+        "{label}_hash={} {label}_chars={} {label}_excerpt={:?}",
+        stable_fingerprint(value),
+        value.chars().count(),
+        truncate_chars(value, BATCH_FIELD_EXCERPT_LIMIT)
+    )
+}
+
+fn stable_fingerprint(value: &str) -> String {
+    let hash = value
+        .as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    format!("fnv1a64:{hash:016x}")
+}
+
+fn truncate_chars(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_owned();
+    }
+    let mut truncated: String = value.chars().take(limit.saturating_sub(3)).collect();
+    truncated.push_str("...");
+    truncated
 }
 
 #[cfg(test)]
 mod tests {
+    use structure_model::{MemoryLoadState, ShortMemoryItem};
     use structure_protocol::{
-        CommandId, EventId, EventMetadata, OutputStream, RunId, SessionId, WorkspaceId,
+        CommandId, EventId, EventMetadata, OutputStream, SessionId, WorkspaceId,
     };
 
     use super::*;
 
     fn envelope(sequence: u64, event: Event) -> EventEnvelope {
+        envelope_for_run(sequence, "run-1", event)
+    }
+
+    fn envelope_for_run(sequence: u64, run_id: &str, event: Event) -> EventEnvelope {
+        envelope_for_session(sequence, "session-1", run_id, event)
+    }
+
+    fn envelope_for_session(
+        sequence: u64,
+        session_id: &str,
+        run_id: &str,
+        event: Event,
+    ) -> EventEnvelope {
         EventEnvelope::new(
             EventMetadata {
-                event_id: EventId::new(format!("event-{sequence}")),
+                event_id: EventId::new(format!("event-{session_id}-{sequence}")),
                 command_id: CommandId::new("command-1"),
                 workspace_id: WorkspaceId::new("workspace-1"),
-                session_id: SessionId::new("session-1"),
-                run_id: Some(RunId::new("run-1")),
+                session_id: SessionId::new(session_id),
+                run_id: Some(RunId::new(run_id)),
                 sequence,
                 occurred_at_ms: 0,
             },
@@ -68,60 +883,402 @@ mod tests {
     }
 
     #[test]
-    fn projection_keeps_conversation_facts_and_ignores_control_events() {
+    fn detailed_protocol_events_map_to_five_retention_classes() {
+        assert_eq!(
+            ShortMemoryProjector::classify_event(&Event::MessageAccepted {
+                content: "remember this".to_owned(),
+            })
+            .class,
+            MemoryClass::Anchor
+        );
+        let tool_error = ShortMemoryProjector::classify_event(&Event::ToolCallCompleted {
+            call_id: "call-1".to_owned(),
+            name: "read".to_owned(),
+            result: "failed".to_owned(),
+            is_error: true,
+        });
+        assert_eq!(tool_error.class, MemoryClass::Recovery);
+        assert_eq!(tool_error.relation_key.as_deref(), Some("tool:call-1"));
+        assert!(tool_error.completes_relation);
+        assert_eq!(
+            ShortMemoryProjector::classify_event(&Event::CommandOutput {
+                stream: OutputStream::Stdout,
+                chunk: "noise".to_owned(),
+            })
+            .class,
+            MemoryClass::Transient
+        );
+        assert_eq!(
+            ShortMemoryProjector::classify_event(&Event::SessionClosed).class,
+            MemoryClass::Control
+        );
+    }
+
+    #[test]
+    fn ttl_uses_newer_event_decay_and_specialized_rules() {
         let events = vec![
-            envelope(1, Event::RunScheduled),
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: serde_json::json!({}),
+                },
+            ),
             envelope(
                 2,
-                Event::MessageAccepted {
-                    content: "hello".to_owned(),
+                Event::ToolCallCompleted {
+                    call_id: "call-1".to_owned(),
+                    name: "read".to_owned(),
+                    result: "done".to_owned(),
+                    is_error: false,
                 },
             ),
             envelope(
                 3,
-                Event::CommandOutput {
-                    stream: OutputStream::Stdout,
-                    chunk: "working".to_owned(),
+                Event::RunCompleted {
+                    output: Some("answer".to_owned()),
+                },
+            ),
+        ];
+        let mut policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            recent_turns_load_all: 0,
+            ..ShortMemoryPolicy::default()
+        };
+        policy
+            .ttl_overrides
+            .insert(MemoryClass::Working, EventTtl::ttl(2));
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert_eq!(result.visibility[0].accumulated_decay, 4);
+        assert!(!result.visibility[0].visible);
+        assert!(result.visibility[2].visible);
+    }
+
+    #[test]
+    fn tool_completion_only_accelerates_its_matching_call() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: serde_json::json!({}),
                 },
             ),
             envelope(
-                4,
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-2".to_owned(),
+                    name: "search".to_owned(),
+                    result: "unrelated".to_owned(),
+                    is_error: false,
+                },
+            ),
+            envelope(
+                3,
                 Event::RunCompleted {
-                    output: Some("done".to_owned()),
+                    output: Some("answer".to_owned()),
+                },
+            ),
+        ];
+        let mut policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            recent_turns_load_all: 0,
+            ..ShortMemoryPolicy::default()
+        };
+        policy
+            .ttl_overrides
+            .insert(MemoryClass::Working, EventTtl::ttl(2));
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert_eq!(result.visibility[0].accumulated_decay, 2);
+        assert!(result.visibility[0].visible);
+    }
+
+    #[test]
+    fn recency_floor_protects_an_expired_event_without_mutating_history() {
+        let events = vec![
+            envelope(
+                1,
+                Event::CommandOutput {
+                    stream: OutputStream::Stdout,
+                    chunk: "old".to_owned(),
+                },
+            ),
+            envelope(
+                2,
+                Event::CommandOutput {
+                    stream: OutputStream::Stdout,
+                    chunk: "recent".to_owned(),
+                },
+            ),
+        ];
+        let original = events.clone();
+        let mut policy = ShortMemoryPolicy {
+            recency_floor: 1,
+            recent_turns_load_all: 0,
+            ..ShortMemoryPolicy::default()
+        };
+        policy
+            .ttl_overrides
+            .insert(MemoryClass::Transient, EventTtl::ttl(0));
+
+        let first = ShortMemoryProjector::materialize(&events, None, &policy);
+        let second = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert!(!first.visibility[0].visible);
+        assert!(first.visibility[1].visible);
+        assert!(first.visibility[1].protected_by_recency_floor);
+        assert_eq!(first, second);
+        assert_eq!(events, original);
+    }
+
+    #[test]
+    fn tool_call_output_and_result_share_one_stable_batch() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-7".to_owned(),
+                    name: "write_file".to_owned(),
+                    arguments: serde_json::json!({"path": "note.txt"}),
+                },
+            ),
+            envelope(
+                2,
+                Event::CommandOutput {
+                    stream: OutputStream::Stdout,
+                    chunk: "writing".to_owned(),
+                },
+            ),
+            envelope(
+                3,
+                Event::ToolCallCompleted {
+                    call_id: "call-7".to_owned(),
+                    name: "write_file".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
                 },
             ),
         ];
 
-        let projected = ShortMemoryProjector::project(&events);
-        assert_eq!(projected.len(), 3);
+        let result = ShortMemoryProjector::materialize(
+            &events,
+            Some(&RunId::new("run-1")),
+            &ShortMemoryPolicy::default(),
+        );
+
+        assert_eq!(result.batches.len(), 1);
+        assert_eq!(result.batches[0].context_key, "run:run-1:tool:call-7");
+        assert_eq!(result.batches[0].event_count, 3);
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadAll);
         assert!(matches!(
-            projected[0].item,
+            result.entries[0].item,
+            ShortMemoryItem::ToolCall(_)
+        ));
+        assert!(matches!(
+            result.entries[2].item,
+            ShortMemoryItem::ToolResult(_)
+        ));
+    }
+
+    #[test]
+    fn recent_turns_load_all_and_older_turns_load_only_the_key() {
+        let events = vec![
+            envelope_for_run(
+                1,
+                "old",
+                Event::MessageAccepted {
+                    content: "old question".to_owned(),
+                },
+            ),
+            envelope_for_run(
+                2,
+                "old",
+                Event::RunCompleted {
+                    output: Some("old answer".to_owned()),
+                },
+            ),
+            envelope_for_run(
+                3,
+                "recent",
+                Event::MessageAccepted {
+                    content: "recent question".to_owned(),
+                },
+            ),
+            envelope_for_run(
+                4,
+                "recent",
+                Event::RunCompleted {
+                    output: Some("recent answer".to_owned()),
+                },
+            ),
+        ];
+        let policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            recent_turns_load_all: 1,
+            ..ShortMemoryPolicy::default()
+        };
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadKey);
+        assert_eq!(result.batches[1].load_state, MemoryLoadState::LoadAll);
+        assert!(!result.batches[0].key_content.is_empty());
+        assert!(result.batches[1].key_content.is_empty());
+        assert!(matches!(
+            result.entries[0].item,
+            ShortMemoryItem::BatchKey(_)
+        ));
+        assert!(matches!(
+            result.entries[1].item,
             ShortMemoryItem::UserMessage { .. }
         ));
         assert!(matches!(
-            projected[1].item,
-            ShortMemoryItem::CommandOutput { .. }
-        ));
-        assert!(matches!(
-            projected[2].item,
+            result.entries[2].item,
             ShortMemoryItem::AssistantMessage { .. }
         ));
     }
 
     #[test]
-    fn projection_is_deterministic_and_does_not_modify_history() {
-        let events = vec![envelope(
-            1,
-            Event::MessageAccepted {
-                content: "hello".to_owned(),
-            },
-        )];
-        let original = events.clone();
+    fn expired_batches_are_not_loaded_but_remain_in_the_input_log() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ContextRead {
+                    entry: structure_protocol::ContextEntry {
+                        path: "knowledge/old".to_owned(),
+                        content: "old payload".to_owned(),
+                    },
+                },
+            ),
+            envelope(
+                2,
+                Event::RunCompleted {
+                    output: Some("answer".to_owned()),
+                },
+            ),
+        ];
+        let mut policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            recent_turns_load_all: 0,
+            ..ShortMemoryPolicy::default()
+        };
+        policy
+            .ttl_overrides
+            .insert(MemoryClass::Working, EventTtl::ttl(0));
 
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::NoLoad);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence, 1);
+    }
+
+    #[test]
+    fn forked_histories_use_event_identity_and_preserve_supplied_order() {
+        let events = vec![
+            envelope_for_session(
+                1,
+                "parent",
+                "parent-run",
+                Event::MessageAccepted {
+                    content: "parent fact".to_owned(),
+                },
+            ),
+            envelope_for_session(
+                1,
+                "child",
+                "child-run",
+                Event::MessageAccepted {
+                    content: "child fact".to_owned(),
+                },
+            ),
+        ];
+
+        let result =
+            ShortMemoryProjector::materialize(&events, None, &ShortMemoryPolicy::default());
+
+        assert_eq!(result.entries.len(), 2);
         assert_eq!(
-            ShortMemoryProjector::project(&events),
-            ShortMemoryProjector::project(&events)
+            result.entries[0].source_event_ids,
+            vec!["event-parent-1".to_owned()]
         );
-        assert_eq!(events, original);
+        assert_eq!(
+            result.entries[1].source_event_ids,
+            vec!["event-child-1".to_owned()]
+        );
+    }
+
+    #[test]
+    fn full_projection_reuses_runtime_mapping_without_gc_or_batch_keys() {
+        let events = vec![
+            envelope(1, Event::RunStarted),
+            envelope(
+                2,
+                Event::MessageAccepted {
+                    content: "question".to_owned(),
+                },
+            ),
+            envelope(
+                3,
+                Event::RunCompleted {
+                    output: Some("answer".to_owned()),
+                },
+            ),
+        ];
+
+        let entries = ShortMemoryProjector::project_full(&events);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].source_event_ids, vec!["event-session-1-2"]);
+        assert_eq!(entries[1].source_event_ids, vec!["event-session-1-3"]);
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::BatchKey(_)))
+        );
+    }
+
+    #[test]
+    fn batch_key_is_a_bounded_semantic_index_not_raw_event_replay() {
+        let large_result = "x".repeat(5_000);
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-large".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "src/large.rs"}),
+                },
+            ),
+            envelope(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-large".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: large_result.clone(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let policy = ShortMemoryPolicy {
+            recent_turns_load_all: 0,
+            ..ShortMemoryPolicy::default()
+        };
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+        let key = &result.batches[0].key_content;
+
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadKey);
+        assert!(key.chars().count() <= BATCH_KEY_CONTENT_LIMIT);
+        assert!(key.contains("types=tool.call.completed:1,tool.call.requested:1"));
+        assert!(key.contains("tool_call name=read_file"));
+        assert!(key.contains("result_hash=fnv1a64:"));
+        assert!(!key.contains(&large_result[..1_000]));
     }
 }

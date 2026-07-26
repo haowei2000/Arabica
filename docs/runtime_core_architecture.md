@@ -232,6 +232,18 @@ inside command submission. Concurrent cancellation and live chunk delivery
 require the planned `CommandReceipt` plus background dispatch/event-sink work
 in Session Management; they must not be simulated inside Runtime.
 
+Short-memory projection is a deterministic materialisation pipeline rather
+than transcript filtering. Runtime maps detailed Protocol events into five
+retention classes (`Anchor`, `Working`, `Recovery`, `Transient`, `Control`),
+then applies event-count TTL with relation-aware decay and pinning. Completion
+decay is scoped by stable relation keys such as tool call IDs. Runtime
+protects a configurable recency floor, groups related events into
+stable `turn`, `tool`, `context`, `transient`, and `misc` batches, and assigns
+`LOAD_ALL`, `LOAD_KEY`, or `NO_LOAD`. The result includes explainable
+per-event decisions and batch metadata so model input can be reconstructed
+from the immutable Session event log and the policy. The collector never
+deletes events or implicitly promotes them into Long Memory.
+
 Port map from the Python implementation — Python is the behavioral reference
 until cutover:
 
