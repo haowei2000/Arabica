@@ -109,6 +109,25 @@ cargo run -p structure-short-memory-benchmark --bin tier_b -- \
   --model <MODEL> --repetitions 3 --pretty --fail-on-task
 ```
 
+Run the end-to-end policy comparison against the real provider:
+
+```bash
+cargo run -p structure-short-memory-benchmark --bin tier_b -- \
+  --compare --model <MODEL> --repetitions 3 --pretty --fail-on-task
+```
+
+Comparison mode executes B0 Full Replay, B2 TTL-only, B3 Batch-only, and the
+production Structure policy through the same
+`SessionManager -> CoreRuntime -> Provider -> LocalRunner` path. Every strategy
+gets the same task definitions, a fresh provider, and an isolated runner root.
+By default, eight unrelated setup turns push the required evidence beyond the
+recent full-history window; override this with `--history-turns <N>`.
+The versioned comparison report groups task success, tokens, provider latency,
+and tool-call metrics by strategy. B1 Tail-K is deliberately excluded because
+Tail-K is not an executable Runtime policy; including it would not be a genuine
+end-to-end comparison. Use `--compare --fixture` to validate comparison wiring
+without network calls.
+
 The report is versioned as `structure.short-memory.tier-b/v1` and stores the
 serialized policy, exact task checks, provider calls, input/output/cached-input
 tokens, provider latency, tool counts, redundant calls, full protocol events,

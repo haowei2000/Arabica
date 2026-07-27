@@ -738,6 +738,24 @@ impl ModelProvider for FixtureFileProvider {
                 }),
             });
         }
+        if tagged_payload(&request.input, "memory_distractor_json").is_ok() {
+            let output = "HISTORY_ACKNOWLEDGED".to_owned();
+            return Ok(ModelRunResult {
+                final_output: Some(output.clone()),
+                response: Some(RuntimeResponse {
+                    items: vec![RuntimeItem::Message(MessageItem::text(
+                        RuntimeRole::Assistant,
+                        output,
+                    ))],
+                    finish_reason: Some(FinishReason::Stop),
+                    usage: RuntimeUsage {
+                        input_tokens,
+                        output_tokens: 2,
+                        cached_input_tokens: 0,
+                    },
+                }),
+            });
+        }
         let payload =
             if let Ok(instruction) = tagged_payload(&request.input, "memory_write_task_json") {
                 recall_file_payload(&request, &instruction)?
@@ -803,6 +821,9 @@ fn recall_file_payload(
         .filter_map(|entry| match &entry.item {
             ShortMemoryItem::UserMessage { content } => {
                 tagged_payload(content, "memory_evidence_json").ok()
+            }
+            ShortMemoryItem::BatchKey(key) => {
+                tagged_payload(&key.key_content, "memory_evidence_json").ok()
             }
             _ => None,
         })

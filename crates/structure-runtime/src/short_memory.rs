@@ -9,6 +9,7 @@ use structure_model::{
 use structure_protocol::{Event, EventEnvelope, EventId, RunId};
 
 const BATCH_FIELD_EXCERPT_LIMIT: usize = 64;
+const BATCH_USER_MESSAGE_EXCERPT_LIMIT: usize = 256;
 const BATCH_KEY_CONTENT_LIMIT: usize = 384;
 const MISC_BUCKET_SIZE: u64 = 50;
 
@@ -889,7 +890,7 @@ fn build_key_content(batch: &EventBatch) -> String {
 
 fn event_semantic_key(event: &Event) -> Option<String> {
     match event {
-        Event::MessageAccepted { content } => Some(compact_text("user", content)),
+        Event::MessageAccepted { content } => Some(compact_user_message(content)),
         Event::RunCompleted {
             output: Some(content),
         } => Some(compact_text("assistant", content)),
@@ -958,11 +959,24 @@ fn event_semantic_key(event: &Event) -> Option<String> {
 }
 
 fn compact_text(label: &str, value: &str) -> String {
+    compact_text_with_limit(label, value, BATCH_FIELD_EXCERPT_LIMIT)
+}
+
+fn compact_user_message(value: &str) -> String {
+    format!(
+        "user_hash={} user_chars={} user_content={}",
+        stable_fingerprint(value),
+        value.chars().count(),
+        truncate_chars(value, BATCH_USER_MESSAGE_EXCERPT_LIMIT)
+    )
+}
+
+fn compact_text_with_limit(label: &str, value: &str, excerpt_limit: usize) -> String {
     format!(
         "{label}_hash={} {label}_chars={} {label}_excerpt={:?}",
         stable_fingerprint(value),
         value.chars().count(),
-        truncate_chars(value, BATCH_FIELD_EXCERPT_LIMIT)
+        truncate_chars(value, excerpt_limit)
     )
 }
 
@@ -1512,5 +1526,27 @@ mod tests {
         assert!(key.contains("tool_call name=read_file"));
         assert!(key.contains("result_hash=fnv1a64:"));
         assert!(!key.contains(&large_result[..1_000]));
+    }
+
+    #[test]
+    fn batch_key_preserves_bounded_structured_user_evidence() {
+        let evidence = "Remember this evidence for the next task and reply with MEMORY_STORED.\n<memory_evidence_json>{\"key\":\"tier-b-evidence-0001\",\"value\":\"STRUCTURE_TIER_B_OK\"}</memory_evidence_json>";
+        let events = vec![envelope(
+            1,
+            Event::MessageAccepted {
+                content: evidence.to_owned(),
+            },
+        )];
+        let policy = ShortMemoryPolicy {
+            recent_turns_load_all: 0,
+            ..ShortMemoryPolicy::default()
+        };
+
+        let result = ShortMemoryProjector::materialize(&events, None, &policy);
+        let key = &result.batches[0].key_content;
+
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadKey);
+        assert!(key.chars().count() <= BATCH_KEY_CONTENT_LIMIT);
+        assert!(key.contains(evidence));
     }
 }
