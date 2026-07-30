@@ -146,6 +146,17 @@ pub struct MemoryBatchKey {
     pub key_content: String,
 }
 
+/// Recoverable reference to a batch whose full payload has moved out of the
+/// active model context. Unlike [`MemoryBatchKey`], this item is backed by
+/// exact archived content and can be dereferenced through Runtime.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MemoryPointer {
+    pub path: String,
+    pub context_kind: MemoryBatchKind,
+    pub event_count: usize,
+    pub retrieval_hint: String,
+}
+
 /// Provider-neutral item in Runtime's ephemeral short-memory view.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -158,6 +169,7 @@ pub enum ShortMemoryItem {
     RunFailure { message: String },
     RunCancelled,
     BatchKey(MemoryBatchKey),
+    MemoryPointer(MemoryPointer),
 }
 
 /// One ordered item selected from the immutable Session event log.

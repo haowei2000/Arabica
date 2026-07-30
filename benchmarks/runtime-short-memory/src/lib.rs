@@ -27,8 +27,8 @@ pub use schema::{
     TraceLineageOracle, TraceOracle, TraceOrigin, TraceValidationError,
 };
 pub use tier_b::{
-    ExpectedFile, FileOracleResult, FixtureFileProvider, ProviderCallObservation,
-    TIER_B_REPORT_SCHEMA_VERSION, TierBAggregate, TierBEnvironment, TierBError, TierBEvidenceLevel,
-    TierBProviderMetadata, TierBReport, TierBRun, TierBSuiteConfig, TierBTask, TierBTaskChecks,
-    run_tier_b_suite,
+    ExpectedFile, FileOracleResult, FixtureFileProvider, ProviderCallObservation, ProviderRecorder,
+    RecordingProvider, TIER_B_REPORT_SCHEMA_VERSION, TierBAggregate, TierBEnvironment, TierBError,
+    TierBEvidenceLevel, TierBProviderMetadata, TierBReport, TierBRun, TierBSuiteConfig, TierBTask,
+    TierBTaskChecks, run_tier_b_suite,
 };

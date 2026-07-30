@@ -9,8 +9,8 @@ use serde::Serialize;
 use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
 use structure_runtime::{KeyAdmissionPolicy, ShortMemoryPolicy};
 use structure_short_memory_benchmark::{
-    FixtureFileProvider, TierBEvidenceLevel, TierBProviderMetadata, TierBSuiteConfig, TierBTask,
-    run_tier_b_suite,
+    ExpectedFile, FixtureFileProvider, TierBEvidenceLevel, TierBProviderMetadata, TierBSuiteConfig,
+    TierBTask, run_tier_b_suite,
 };
 
 #[tokio::main]
@@ -24,9 +24,12 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn Error>> {
     let mut fixture = false;
     let mut compare = false;
+    let mut strategies = None;
     let mut suite_id = "tier-b-write-file".to_owned();
     let mut repetitions = 1_usize;
     let mut history_turns = 8_usize;
+    let mut history_turns_was_set = false;
+    let mut single_message_tools = None;
     let mut model = None;
     let mut base_url = None;
     let mut api_type = ApiType::OpenAiChatCompletions;
@@ -45,12 +48,20 @@ async fn run() -> Result<(), Box<dyn Error>> {
         match argument.as_str() {
             "--fixture" => fixture = true,
             "--compare" => compare = true,
+            "--strategies" => {
+                strategies = Some(parse_strategies(value(&arguments, &mut index, argument)?)?);
+            }
             "--suite-id" => suite_id = value(&arguments, &mut index, argument)?.to_owned(),
             "--repetitions" => {
                 repetitions = parse(value(&arguments, &mut index, argument)?, argument)?;
             }
             "--history-turns" => {
                 history_turns = parse(value(&arguments, &mut index, argument)?, argument)?;
+                history_turns_was_set = true;
+            }
+            "--single-message-tools" => {
+                single_message_tools =
+                    Some(parse(value(&arguments, &mut index, argument)?, argument)?);
             }
             "--model" => model = Some(value(&arguments, &mut index, argument)?.to_owned()),
             "--base-url" => {
@@ -86,6 +97,23 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if repetitions == 0 {
         return Err("--repetitions must be greater than zero".into());
     }
+    if strategies.is_some() && !compare {
+        return Err("--strategies requires --compare".into());
+    }
+    let workload = if let Some(tool_calls) = single_message_tools {
+        if tool_calls == 0 {
+            return Err("--single-message-tools must be greater than zero".into());
+        }
+        if history_turns_was_set {
+            return Err(
+                "--single-message-tools cannot be combined with --history-turns; they model different workloads"
+                    .into(),
+            );
+        }
+        TierBWorkload::SingleMessageAgent { tool_calls }
+    } else {
+        TierBWorkload::MemoryRecall { history_turns }
+    };
 
     let run_stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let runner_root = runner_root.unwrap_or_else(|| {
@@ -104,12 +132,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 &runner_root,
                 repetitions,
                 &content,
-                history_turns,
+                workload,
                 key_admission,
+                strategies.as_deref(),
             )
             .await?
         } else {
-            let api_key = secret_env(["OPENAI_API_KEY", "OPENAI__API_KEY"])?;
+            let api_key = secret_env(["LONGCAT_API_KEY", "OPENAI_API_KEY", "OPENAI__API_KEY"])?;
             let model = model
                 .or_else(|| public_env(["OPENAI_MODEL", "OPENAI__MODEL"]))
                 .ok_or("OpenAI model is required via --model, OPENAI_MODEL, or OPENAI__MODEL")?;
@@ -121,12 +150,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 &runner_root,
                 repetitions,
                 &content,
-                history_turns,
+                workload,
                 key_admission,
                 api_type,
                 &api_key,
                 &model,
                 &base_url,
+                strategies.as_deref(),
             )
             .await?
         };
@@ -141,7 +171,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let tasks = build_tasks(repetitions, &content)?;
+    let tasks = build_workload_tasks(repetitions, &content, workload)?;
     let short_memory_policy = structure_policy(key_admission);
 
     let report = if fixture {
@@ -156,13 +186,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 },
                 runner_root,
                 short_memory_policy,
+                pointer_gc_enabled: true,
+                pointer_gc_checkpoint_batches: 4,
                 tasks,
             },
             FixtureFileProvider::default(),
         )
         .await?
     } else {
-        let api_key = secret_env(["OPENAI_API_KEY", "OPENAI__API_KEY"])?;
+        let api_key = secret_env(["LONGCAT_API_KEY", "OPENAI_API_KEY", "OPENAI__API_KEY"])?;
         let model = model
             .or_else(|| public_env(["OPENAI_MODEL", "OPENAI__MODEL"]))
             .ok_or("OpenAI model is required via --model, OPENAI_MODEL, or OPENAI__MODEL")?;
@@ -186,6 +218,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 },
                 runner_root,
                 short_memory_policy,
+                pointer_gc_enabled: true,
+                pointer_gc_checkpoint_batches: 4,
                 tasks,
             },
             provider,
@@ -205,6 +239,7 @@ struct StrategyComparisonReport {
     schema_version: &'static str,
     suite_id: String,
     evidence_level: TierBEvidenceLevel,
+    workload: &'static str,
     strategies: Vec<StrategyResult>,
 }
 
@@ -215,11 +250,16 @@ struct StrategyResult {
     pass_rate_bps: u64,
     total_provider_calls: usize,
     total_input_tokens: u64,
+    total_uncached_input_tokens: u64,
     total_output_tokens: u64,
     total_cached_input_tokens: u64,
+    total_model_input_bytes: usize,
+    total_batch_key_entries: usize,
+    total_memory_pointer_entries: usize,
     total_provider_latency_ms: u64,
     total_tool_calls: usize,
     total_redundant_tool_calls: usize,
+    total_user_messages: usize,
     report: structure_short_memory_benchmark::TierBReport,
 }
 
@@ -236,11 +276,16 @@ impl StrategyResult {
             pass_rate_bps: aggregate.pass_rate_bps,
             total_provider_calls: aggregate.total_provider_calls,
             total_input_tokens: aggregate.total_input_tokens,
+            total_uncached_input_tokens: aggregate.total_uncached_input_tokens,
             total_output_tokens: aggregate.total_output_tokens,
             total_cached_input_tokens: aggregate.total_cached_input_tokens,
+            total_model_input_bytes: aggregate.total_model_input_bytes,
+            total_batch_key_entries: aggregate.total_batch_key_entries,
+            total_memory_pointer_entries: aggregate.total_memory_pointer_entries,
             total_provider_latency_ms: aggregate.total_provider_latency_ms,
             total_tool_calls: aggregate.total_tool_calls,
             total_redundant_tool_calls: aggregate.total_redundant_tool_calls,
+            total_user_messages: aggregate.total_user_messages,
             report,
         }
     }
@@ -248,36 +293,50 @@ impl StrategyResult {
 
 fn comparison_policies(
     key_admission: KeyAdmissionPolicy,
-) -> Vec<(&'static str, &'static str, ShortMemoryPolicy)> {
-    let full_replay = ShortMemoryPolicy::batch_only(usize::MAX);
-    let ttl_only = ShortMemoryPolicy {
-        recent_turns_load_all: usize::MAX,
-        ..ShortMemoryPolicy::default()
-    };
+    selected: Option<&[String]>,
+) -> Vec<(&'static str, &'static str, ShortMemoryPolicy, bool)> {
+    let full_replay = ShortMemoryPolicy::full_replay();
+    let ttl_only = ShortMemoryPolicy::ttl_only();
     let mut batch_only = ShortMemoryPolicy::batch_only(2);
     batch_only.key_admission = key_admission;
-    vec![
+    let policies = vec![
         (
             "B0",
             "full replay through Runtime with TTL and batch compaction disabled",
             full_replay,
+            false,
         ),
         (
             "B2",
             "Runtime TTL and relation decay with batch compaction disabled",
             ttl_only,
+            false,
         ),
         (
             "B3",
             "Runtime batch disclosure with TTL and relation decay disabled",
             batch_only,
+            false,
         ),
         (
             "S",
             "production Runtime short-memory policy",
             structure_policy(key_admission),
+            false,
         ),
-    ]
+        (
+            "PGC",
+            "TTL event GC with exact recoverable pointers and no BatchKey",
+            ShortMemoryPolicy::ttl_only(),
+            true,
+        ),
+    ];
+    policies
+        .into_iter()
+        .filter(|(strategy, _, _, _)| {
+            selected.is_none_or(|selected| selected.iter().any(|item| item == strategy))
+        })
+        .collect()
 }
 
 fn structure_policy(key_admission: KeyAdmissionPolicy) -> ShortMemoryPolicy {
@@ -317,16 +376,58 @@ fn build_comparison_tasks(
     Ok(tasks)
 }
 
+#[derive(Clone, Copy)]
+enum TierBWorkload {
+    MemoryRecall { history_turns: usize },
+    SingleMessageAgent { tool_calls: usize },
+}
+
+impl TierBWorkload {
+    fn id(self) -> &'static str {
+        match self {
+            Self::MemoryRecall { .. } => "memory_recall_chat_history",
+            Self::SingleMessageAgent { .. } => "single_message_agent",
+        }
+    }
+}
+
+fn build_workload_tasks(
+    repetitions: usize,
+    content: &str,
+    workload: TierBWorkload,
+) -> Result<Vec<TierBTask>, Box<dyn Error>> {
+    match workload {
+        TierBWorkload::MemoryRecall { history_turns } => {
+            build_comparison_tasks(repetitions, content, history_turns)
+        }
+        TierBWorkload::SingleMessageAgent { tool_calls } => (1..=repetitions)
+            .map(|repetition| {
+                let files = (1..=tool_calls)
+                    .map(|tool_index| ExpectedFile {
+                        path: format!("run-{repetition:04}/single-message-{tool_index:04}.txt"),
+                        exact_content: format!("{content}:{tool_index:04}"),
+                    })
+                    .collect();
+                TierBTask::write_files(format!("single-message-{repetition:04}"), files)
+                    .map_err(Into::into)
+            })
+            .collect(),
+    }
+}
+
 async fn run_fixture_comparison(
     suite_id: &str,
     runner_root: &std::path::Path,
     repetitions: usize,
     content: &str,
-    history_turns: usize,
+    workload: TierBWorkload,
     key_admission: KeyAdmissionPolicy,
+    selected: Option<&[String]>,
 ) -> Result<StrategyComparisonReport, Box<dyn Error>> {
     let mut strategies = Vec::new();
-    for (strategy, description, policy) in comparison_policies(key_admission) {
+    for (strategy, description, policy, pointer_gc_enabled) in
+        comparison_policies(key_admission, selected)
+    {
         let report = run_tier_b_suite(
             TierBSuiteConfig {
                 suite_id: format!("{suite_id}-{strategy}"),
@@ -338,7 +439,9 @@ async fn run_fixture_comparison(
                 },
                 runner_root: runner_root.join(strategy.to_ascii_lowercase()),
                 short_memory_policy: policy,
-                tasks: build_comparison_tasks(repetitions, content, history_turns)?,
+                pointer_gc_enabled,
+                pointer_gc_checkpoint_batches: 4,
+                tasks: build_workload_tasks(repetitions, content, workload)?,
             },
             FixtureFileProvider::default(),
         )
@@ -346,9 +449,10 @@ async fn run_fixture_comparison(
         strategies.push(StrategyResult::new(strategy, description, report));
     }
     Ok(StrategyComparisonReport {
-        schema_version: "structure.short-memory.tier-b-comparison/v1",
+        schema_version: "structure.short-memory.tier-b-comparison/v4",
         suite_id: suite_id.to_owned(),
         evidence_level: TierBEvidenceLevel::Fixture,
+        workload: workload.id(),
         strategies,
     })
 }
@@ -359,15 +463,18 @@ async fn run_live_comparison(
     runner_root: &std::path::Path,
     repetitions: usize,
     content: &str,
-    history_turns: usize,
+    workload: TierBWorkload,
     key_admission: KeyAdmissionPolicy,
     api_type: ApiType,
     api_key: &str,
     model: &str,
     base_url: &str,
+    selected: Option<&[String]>,
 ) -> Result<StrategyComparisonReport, Box<dyn Error>> {
     let mut strategies = Vec::new();
-    for (strategy, description, policy) in comparison_policies(key_admission) {
+    for (strategy, description, policy, pointer_gc_enabled) in
+        comparison_policies(key_admission, selected)
+    {
         let provider = ApiModelProvider::new(ApiProviderConfig::new(
             api_type,
             api_key.to_owned(),
@@ -385,7 +492,9 @@ async fn run_live_comparison(
                 },
                 runner_root: runner_root.join(strategy.to_ascii_lowercase()),
                 short_memory_policy: policy,
-                tasks: build_comparison_tasks(repetitions, content, history_turns)?,
+                pointer_gc_enabled,
+                pointer_gc_checkpoint_batches: 4,
+                tasks: build_workload_tasks(repetitions, content, workload)?,
             },
             provider,
         )
@@ -393,9 +502,10 @@ async fn run_live_comparison(
         strategies.push(StrategyResult::new(strategy, description, report));
     }
     Ok(StrategyComparisonReport {
-        schema_version: "structure.short-memory.tier-b-comparison/v1",
+        schema_version: "structure.short-memory.tier-b-comparison/v4",
         suite_id: suite_id.to_owned(),
         evidence_level: TierBEvidenceLevel::LiveApi,
+        workload: workload.id(),
         strategies,
     })
 }
@@ -423,7 +533,7 @@ fn secret_env<const N: usize>(names: [&str; N]) -> Result<String, Box<dyn Error>
         .into_iter()
         .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
         .ok_or_else(|| {
-            "OpenAI API key is required via OPENAI_API_KEY or OPENAI__API_KEY"
+            "API key is required via LONGCAT_API_KEY, OPENAI_API_KEY, or OPENAI__API_KEY"
                 .to_owned()
                 .into()
         })
@@ -456,6 +566,31 @@ where
         .map_err(|error| format!("invalid value for {option}: {error}").into())
 }
 
+fn parse_strategies(raw: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    const VALID: [&str; 5] = ["B0", "B2", "B3", "S", "PGC"];
+    let mut selected = Vec::new();
+    for item in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        let normalized = item.to_ascii_uppercase();
+        if !VALID.contains(&normalized.as_str()) {
+            return Err(format!(
+                "invalid strategy {item}; expected a comma-separated subset of B0,B2,B3,S,PGC"
+            )
+            .into());
+        }
+        if !selected.contains(&normalized) {
+            selected.push(normalized);
+        }
+    }
+    if selected.is_empty() {
+        return Err("--strategies must select at least one strategy".into());
+    }
+    Ok(selected)
+}
+
 fn print_help() {
     println!(
         "Structure short-memory Tier-B benchmark\n\
@@ -465,10 +600,12 @@ fn print_help() {
          \n\
          Options:\n\
            --fixture                 Use the deterministic provider; no API call\n\
-           --compare                 Run B0, B2, B3, and S through Runtime\n\
+           --compare                 Run B0, B2, B3, S, and PGC through Runtime\n\
+           --strategies <CSV>        With --compare, run only this subset (for example B0,PGC)\n\
            --suite-id <ID>           Stable suite identifier\n\
            --repetitions <N>         Number of isolated file tasks (default: 1)\n\
-           --history-turns <N>       Comparison distractor turns (default: 8)\n\
+           --history-turns <N>       Extra user-message turns for memory-recall (default: 8)\n\
+           --single-message-tools <N> One user message requiring N exact write_file calls\n\
            --api-type <TYPE>         Provider wire API (default: open_ai_chat_completions)\n\
            --model <MODEL>           Live model; or OPENAI_MODEL / OPENAI__MODEL\n\
            --base-url <URL>          Live endpoint; or OPENAI_BASE_URL / OPENAI__BASE_URL\n\
@@ -481,7 +618,7 @@ fn print_help() {
            --fail-on-task            Exit non-zero if any task fails\n\
            --help                    Show this help\n\
          \n\
-         Live credentials are read only from OPENAI_API_KEY or OPENAI__API_KEY."
+         Live credentials are read only from LONGCAT_API_KEY, OPENAI_API_KEY, or OPENAI__API_KEY."
     );
 }
 
@@ -491,12 +628,45 @@ mod tests {
 
     #[test]
     fn comparison_maps_only_runtime_executable_policies() {
-        let policies = comparison_policies(KeyAdmissionPolicy::default());
-        let ids: Vec<_> = policies.iter().map(|(id, _, _)| *id).collect();
-        assert_eq!(ids, ["B0", "B2", "B3", "S"]);
+        let policies = comparison_policies(KeyAdmissionPolicy::default(), None);
+        let ids: Vec<_> = policies.iter().map(|(id, _, _, _)| *id).collect();
+        assert_eq!(ids, ["B0", "B2", "B3", "S", "PGC"]);
         assert_eq!(policies[0].2.recent_turns_load_all, usize::MAX);
-        assert_eq!(policies[1].2.recent_turns_load_all, usize::MAX);
+        assert!(!policies[0].2.batch_compaction_enabled);
+        assert!(!policies[1].2.batch_compaction_enabled);
+        assert_eq!(policies[1].2.recent_turns_load_all, 2);
         assert_eq!(policies[2].2.recent_turns_load_all, 2);
+        assert!(policies[2].2.batch_compaction_enabled);
         assert_eq!(policies[3].2, ShortMemoryPolicy::default());
+        assert!(!policies[3].3);
+        assert!(!policies[4].2.batch_compaction_enabled);
+        assert!(policies[4].3);
+    }
+
+    #[test]
+    fn comparison_strategy_filter_is_validated_and_ordered_canonically() {
+        let selected = parse_strategies("pgc,b0,PGC").expect("selection is valid");
+        assert_eq!(selected, ["PGC", "B0"]);
+
+        let policies = comparison_policies(KeyAdmissionPolicy::default(), Some(&selected));
+        let ids: Vec<_> = policies.iter().map(|(id, _, _, _)| *id).collect();
+        assert_eq!(ids, ["B0", "PGC"]);
+        assert!(parse_strategies("B9").is_err());
+        assert!(parse_strategies(",").is_err());
+    }
+
+    #[test]
+    fn single_message_workload_has_one_prompt_and_no_setup_messages() {
+        let tasks = build_workload_tasks(
+            1,
+            "EXPECTED",
+            TierBWorkload::SingleMessageAgent { tool_calls: 6 },
+        )
+        .expect("workload is valid");
+
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].setup_prompts.is_empty());
+        assert_eq!(tasks[0].expected_files.len(), 6);
+        assert_eq!(tasks[0].max_tool_calls, 6);
     }
 }

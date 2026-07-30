@@ -16,10 +16,10 @@ use structure_protocol::{
 };
 use structure_provider::{ModelProvider, ModelRunRequest, ModelRunResult, ProviderError};
 use structure_runner::LocalRunner;
-use structure_runtime::{CoreRuntime, ShortMemoryPolicy};
+use structure_runtime::{CoreRuntime, RuntimeArchiveStore, ShortMemoryPolicy};
 use structure_session::SessionManager;
 
-pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v1";
+pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -90,6 +90,46 @@ impl TierBTask {
         })
     }
 
+    pub fn write_files(
+        task_id: impl Into<String>,
+        expected_files: Vec<ExpectedFile>,
+    ) -> Result<Self, TierBError> {
+        let task_id = task_id.into();
+        if task_id.trim().is_empty() {
+            return Err(TierBError::new("task_id must not be empty"));
+        }
+        if expected_files.is_empty() {
+            return Err(TierBError::new(
+                "a multi-file task requires at least one expected file",
+            ));
+        }
+        for file in &expected_files {
+            validate_relative_path(&file.path)?;
+        }
+        let payload: Vec<_> = expected_files
+            .iter()
+            .map(|file| {
+                serde_json::json!({
+                    "path": file.path,
+                    "content": file.exact_content,
+                })
+            })
+            .collect();
+        let max_tool_calls = expected_files.len();
+        Ok(Self {
+            task_id,
+            setup_prompts: Vec::new(),
+            prompt: format!(
+                "Complete every file task below with the write_file tool. This is one user request: do not ask for another message. Call write_file for exactly one file at a time, wait for that tool result, and then continue with the next file. Do not skip a file or claim success before every tool call succeeds.\n<file_tasks_json>{}</file_tasks_json>\nAfter all tools succeed, reply with TASK_COMPLETE.",
+                serde_json::to_string(&payload)
+                    .expect("file task payload contains only serializable values")
+            ),
+            expected_files,
+            final_output_contains: vec!["TASK_COMPLETE".to_owned()],
+            max_tool_calls,
+        })
+    }
+
     pub fn recall_write_file(
         task_id: impl Into<String>,
         path: impl Into<String>,
@@ -145,6 +185,8 @@ pub struct TierBSuiteConfig {
     pub provider: TierBProviderMetadata,
     pub runner_root: PathBuf,
     pub short_memory_policy: ShortMemoryPolicy,
+    pub pointer_gc_enabled: bool,
+    pub pointer_gc_checkpoint_batches: usize,
     pub tasks: Vec<TierBTask>,
 }
 
@@ -154,8 +196,17 @@ pub struct ProviderCallObservation {
     pub run_id: RunId,
     pub short_memory_entries: usize,
     pub short_memory_item_bytes: usize,
+    pub run_memory_entries: usize,
+    pub run_memory_item_bytes: usize,
+    pub projected_memory_item_bytes: usize,
+    pub batch_key_entries: usize,
+    pub memory_pointer_entries: usize,
     pub long_memory_entries: usize,
     pub continuation_items: usize,
+    pub continuation_item_bytes: usize,
+    /// Provider-neutral JSON size of every request field that contributes to
+    /// model context. Provider-reported token usage remains authoritative.
+    pub model_input_bytes: usize,
     pub tool_definitions: usize,
     pub response_items: usize,
     pub finish_reason: Option<FinishReason>,
@@ -184,6 +235,7 @@ pub struct TierBTaskChecks {
     pub final_output_markers_match: bool,
     pub no_tool_errors: bool,
     pub within_tool_call_limit: bool,
+    pub user_message_count_matches: bool,
 }
 
 impl TierBTaskChecks {
@@ -193,6 +245,7 @@ impl TierBTaskChecks {
             && self.final_output_markers_match
             && self.no_tool_errors
             && self.within_tool_call_limit
+            && self.user_message_count_matches
     }
 
     fn score_bps(&self) -> u64 {
@@ -202,11 +255,12 @@ impl TierBTaskChecks {
             self.final_output_markers_match,
             self.no_tool_errors,
             self.within_tool_call_limit,
+            self.user_message_count_matches,
         ]
         .into_iter()
         .filter(|passed| *passed)
         .count();
-        passed as u64 * 10_000 / 5
+        passed as u64 * 10_000 / 6
     }
 }
 
@@ -229,6 +283,7 @@ pub struct TierBRun {
     pub tool_call_count: usize,
     pub tool_error_count: usize,
     pub redundant_tool_call_count: usize,
+    pub user_message_count: usize,
     pub events: Vec<EventEnvelope>,
 }
 
@@ -239,11 +294,16 @@ pub struct TierBAggregate {
     pub pass_rate_bps: u64,
     pub total_provider_calls: usize,
     pub total_input_tokens: u64,
+    pub total_uncached_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_cached_input_tokens: u64,
+    pub total_model_input_bytes: usize,
+    pub total_batch_key_entries: usize,
+    pub total_memory_pointer_entries: usize,
     pub total_provider_latency_ms: u64,
     pub total_tool_calls: usize,
     pub total_redundant_tool_calls: usize,
+    pub total_user_messages: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -254,6 +314,8 @@ pub struct TierBReport {
     pub provider: TierBProviderMetadata,
     pub runner_root: PathBuf,
     pub short_memory_policy: ShortMemoryPolicy,
+    pub pointer_gc_enabled: bool,
+    pub pointer_gc_checkpoint_batches: usize,
     pub environment: TierBEnvironment,
     pub runs: Vec<TierBRun>,
     pub aggregate: TierBAggregate,
@@ -269,25 +331,38 @@ pub struct TierBEnvironment {
 }
 
 #[derive(Clone)]
-struct ProviderRecorder {
+pub struct ProviderRecorder {
     observations: Arc<Mutex<Vec<ProviderCallObservation>>>,
+    snapshot_path: Option<Arc<PathBuf>>,
 }
 
 impl ProviderRecorder {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             observations: Arc::new(Mutex::new(Vec::new())),
+            snapshot_path: None,
         }
     }
 
-    fn len(&self) -> usize {
+    pub fn with_snapshot_path(path: impl Into<PathBuf>) -> Self {
+        Self {
+            observations: Arc::new(Mutex::new(Vec::new())),
+            snapshot_path: Some(Arc::new(path.into())),
+        }
+    }
+
+    pub fn len(&self) -> usize {
         self.observations
             .lock()
             .expect("provider recorder lock is not poisoned")
             .len()
     }
 
-    fn from(&self, start: usize) -> Vec<ProviderCallObservation> {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn from(&self, start: usize) -> Vec<ProviderCallObservation> {
         self.observations
             .lock()
             .expect("provider recorder lock is not poisoned")[start..]
@@ -295,13 +370,19 @@ impl ProviderRecorder {
     }
 }
 
-struct RecordingProvider<P> {
+impl Default for ProviderRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct RecordingProvider<P> {
     inner: P,
     recorder: ProviderRecorder,
 }
 
 impl<P> RecordingProvider<P> {
-    fn new(inner: P, recorder: ProviderRecorder) -> Self {
+    pub fn new(inner: P, recorder: ProviderRecorder) -> Self {
         Self { inner, recorder }
     }
 }
@@ -318,6 +399,38 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             .collect();
         let short_memory_item_bytes =
             serde_json::to_vec(&short_memory_items).map_or(0, |encoded| encoded.len());
+        let run_memory_items: Vec<_> = request.run_memory.iter().map(|entry| &entry.item).collect();
+        let run_memory_item_bytes =
+            serde_json::to_vec(&run_memory_items).map_or(0, |encoded| encoded.len());
+        let projected_memory_items: Vec<_> = request
+            .short_memory
+            .iter()
+            .chain(&request.run_memory)
+            .map(|entry| &entry.item)
+            .collect();
+        let projected_memory_item_bytes =
+            serde_json::to_vec(&projected_memory_items).map_or(0, |encoded| encoded.len());
+        let batch_key_entries = projected_memory_items
+            .iter()
+            .filter(|item| matches!(item, ShortMemoryItem::BatchKey(_)))
+            .count();
+        let memory_pointer_entries = projected_memory_items
+            .iter()
+            .filter(|item| matches!(item, ShortMemoryItem::MemoryPointer(_)))
+            .count();
+        let continuation_item_bytes =
+            serde_json::to_vec(&request.continuation).map_or(0, |encoded| encoded.len());
+        let model_input_bytes = serde_json::to_vec(&serde_json::json!({
+            "input": &request.input,
+            "short_memory": &request.short_memory,
+            "run_memory": &request.run_memory,
+            "long_memory": &request.long_memory,
+            "tools": &request.tools,
+            "tool_choice": &request.tool_choice,
+            "continuation": &request.continuation,
+            "disclosure": &request.disclosure,
+        }))
+        .map_or(0, |encoded| encoded.len());
         let started = Instant::now();
         let result = self.inner.complete(request.clone()).await;
         let latency_ms = saturating_u64(started.elapsed().as_millis());
@@ -344,8 +457,15 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             run_id: request.run_id,
             short_memory_entries: request.short_memory.len(),
             short_memory_item_bytes,
+            run_memory_entries: request.run_memory.len(),
+            run_memory_item_bytes,
+            projected_memory_item_bytes,
+            batch_key_entries,
+            memory_pointer_entries,
             long_memory_entries: request.long_memory.len(),
             continuation_items: request.continuation.len(),
+            continuation_item_bytes,
+            model_input_bytes,
             tool_definitions: request.tools.len(),
             response_items,
             finish_reason,
@@ -356,6 +476,11 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             succeeded: error.is_none(),
             error,
         });
+        if let Some(path) = &self.recorder.snapshot_path
+            && let Ok(encoded) = serde_json::to_vec_pretty(&*observations)
+        {
+            let _ = std::fs::write(path.as_ref(), encoded);
+        }
         result
     }
 
@@ -380,11 +505,16 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
     }
 
     let recorder = ProviderRecorder::new();
-    let runtime = CoreRuntime::with_short_memory_policy(
+    let mut runtime = CoreRuntime::with_memory_configuration(
         RecordingProvider::new(provider, recorder.clone()),
         LocalRunner::new(&runner_root),
         config.short_memory_policy.clone(),
+        config.pointer_gc_enabled,
+        RuntimeArchiveStore::File {
+            root: runner_root.join("runtime-memory"),
+        },
     );
+    runtime.set_pointer_gc_checkpoint_batches(config.pointer_gc_checkpoint_batches);
     let mut manager = SessionManager::new(runtime);
     let mut runs = Vec::with_capacity(config.tasks.len());
 
@@ -453,6 +583,8 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
         provider: config.provider,
         runner_root,
         short_memory_policy: config.short_memory_policy,
+        pointer_gc_enabled: config.pointer_gc_enabled,
+        pointer_gc_checkpoint_batches: config.pointer_gc_checkpoint_batches,
         environment: TierBEnvironment {
             target_arch: std::env::consts::ARCH.to_owned(),
             target_os: std::env::consts::OS.to_owned(),
@@ -524,12 +656,17 @@ async fn score_run(
             .as_ref()
             .is_some_and(|output| output.contains(marker))
     });
+    let user_message_count = events
+        .iter()
+        .filter(|event| matches!(event.event, Event::MessageAccepted { .. }))
+        .count();
     let checks = TierBTaskChecks {
         terminal_success,
         expected_files_match,
         final_output_markers_match,
         no_tool_errors: tool_error_count == 0,
         within_tool_call_limit: tool_calls.len() <= task.max_tool_calls,
+        user_message_count_matches: user_message_count == task.setup_prompts.len() + 1,
     };
     let input_tokens = provider_calls.iter().map(|call| call.input_tokens).sum();
     let output_tokens = provider_calls.iter().map(|call| call.output_tokens).sum();
@@ -557,6 +694,7 @@ async fn score_run(
         tool_call_count: tool_calls.len(),
         tool_error_count,
         redundant_tool_call_count,
+        user_message_count,
         events,
     }
 }
@@ -599,11 +737,31 @@ fn aggregate(runs: &[TierBRun]) -> TierBAggregate {
         },
         total_provider_calls: runs.iter().map(|run| run.provider_calls.len()).sum(),
         total_input_tokens: runs.iter().map(|run| run.input_tokens).sum(),
+        total_uncached_input_tokens: runs
+            .iter()
+            .map(|run| run.input_tokens.saturating_sub(run.cached_input_tokens))
+            .sum(),
         total_output_tokens: runs.iter().map(|run| run.output_tokens).sum(),
         total_cached_input_tokens: runs.iter().map(|run| run.cached_input_tokens).sum(),
+        total_model_input_bytes: runs
+            .iter()
+            .flat_map(|run| &run.provider_calls)
+            .map(|call| call.model_input_bytes)
+            .sum(),
+        total_batch_key_entries: runs
+            .iter()
+            .flat_map(|run| &run.provider_calls)
+            .map(|call| call.batch_key_entries)
+            .sum(),
+        total_memory_pointer_entries: runs
+            .iter()
+            .flat_map(|run| &run.provider_calls)
+            .map(|call| call.memory_pointer_entries)
+            .sum(),
         total_provider_latency_ms: runs.iter().map(|run| run.provider_latency_ms).sum(),
         total_tool_calls: runs.iter().map(|run| run.tool_call_count).sum(),
         total_redundant_tool_calls: runs.iter().map(|run| run.redundant_tool_call_count).sum(),
+        total_user_messages: runs.iter().map(|run| run.user_message_count).sum(),
     }
 }
 
@@ -613,6 +771,11 @@ fn validate_suite(config: &TierBSuiteConfig) -> Result<(), TierBError> {
     }
     if config.tasks.is_empty() {
         return Err(TierBError::new("Tier-B suite requires at least one task"));
+    }
+    if config.pointer_gc_checkpoint_batches == 0 {
+        return Err(TierBError::new(
+            "pointer_gc_checkpoint_batches must be greater than zero",
+        ));
     }
     for task in &config.tasks {
         if task.max_tool_calls == 0 {
@@ -690,6 +853,8 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 #[derive(Debug, Default)]
 pub struct FixtureFileProvider {
     next_call_id: usize,
+    multi_file_run: Option<RunId>,
+    next_multi_file: usize,
 }
 
 impl ModelProvider for FixtureFileProvider {
@@ -698,6 +863,32 @@ impl ModelProvider for FixtureFileProvider {
         request: ModelRunRequest,
     ) -> Result<ModelRunResult, ProviderError> {
         let input_tokens = request.input.chars().count().div_ceil(4) as u64;
+        if request.input.contains("<file_tasks_json>") {
+            let payloads = tagged_payload(&request.input, "file_tasks_json")?
+                .as_array()
+                .cloned()
+                .ok_or_else(|| ProviderError::new("file_tasks_json must be an array"))?;
+            if self.multi_file_run.as_ref() != Some(&request.run_id) {
+                self.multi_file_run = Some(request.run_id.clone());
+                self.next_multi_file = 0;
+            }
+            if self.next_multi_file >= payloads.len() {
+                return Ok(fixture_text_response("TASK_COMPLETE", input_tokens));
+            }
+            let payload = payloads[self.next_multi_file].clone();
+            self.next_multi_file += 1;
+            self.next_call_id += 1;
+            return Ok(fixture_tool_response(
+                ToolCallItem {
+                    id: None,
+                    call_id: format!("fixture-call-{}", self.next_call_id),
+                    name: "write_file".to_owned(),
+                    arguments: payload,
+                    provider_state: None,
+                },
+                input_tokens,
+            ));
+        }
         if request
             .continuation
             .iter()
@@ -763,29 +954,53 @@ impl ModelProvider for FixtureFileProvider {
                 tagged_payload(&request.input, "file_task_json")?
             };
         self.next_call_id += 1;
-        let call = ToolCallItem {
-            id: None,
-            call_id: format!("fixture-call-{}", self.next_call_id),
-            name: "write_file".to_owned(),
-            arguments: payload,
-            provider_state: None,
-        };
-        Ok(ModelRunResult {
-            final_output: None,
-            response: Some(RuntimeResponse {
-                items: vec![RuntimeItem::ToolCall(call)],
-                finish_reason: Some(FinishReason::ToolCalls),
-                usage: RuntimeUsage {
-                    input_tokens,
-                    output_tokens: 8,
-                    cached_input_tokens: 0,
-                },
-            }),
-        })
+        Ok(fixture_tool_response(
+            ToolCallItem {
+                id: None,
+                call_id: format!("fixture-call-{}", self.next_call_id),
+                name: "write_file".to_owned(),
+                arguments: payload,
+                provider_state: None,
+            },
+            input_tokens,
+        ))
     }
 
     async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
         Ok(false)
+    }
+}
+
+fn fixture_text_response(output: &str, input_tokens: u64) -> ModelRunResult {
+    ModelRunResult {
+        final_output: Some(output.to_owned()),
+        response: Some(RuntimeResponse {
+            items: vec![RuntimeItem::Message(MessageItem::text(
+                RuntimeRole::Assistant,
+                output,
+            ))],
+            finish_reason: Some(FinishReason::Stop),
+            usage: RuntimeUsage {
+                input_tokens,
+                output_tokens: 2,
+                cached_input_tokens: 0,
+            },
+        }),
+    }
+}
+
+fn fixture_tool_response(call: ToolCallItem, input_tokens: u64) -> ModelRunResult {
+    ModelRunResult {
+        final_output: None,
+        response: Some(RuntimeResponse {
+            items: vec![RuntimeItem::ToolCall(call)],
+            finish_reason: Some(FinishReason::ToolCalls),
+            usage: RuntimeUsage {
+                input_tokens,
+                output_tokens: 8,
+                cached_input_tokens: 0,
+            },
+        }),
     }
 }
 
@@ -889,6 +1104,8 @@ mod tests {
                 },
                 runner_root: root.clone(),
                 short_memory_policy: ShortMemoryPolicy::default(),
+                pointer_gc_enabled: true,
+                pointer_gc_checkpoint_batches: 4,
                 tasks: vec![task],
             },
             FixtureFileProvider::default(),
@@ -916,6 +1133,61 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event.event, Event::ToolCallCompleted { .. }))
         );
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("fixture root is removed");
+    }
+
+    #[tokio::test]
+    async fn single_message_agent_executes_multiple_tools_in_one_run() {
+        let root = unique_root("single-message");
+        let expected_files: Vec<_> = (1..=12)
+            .map(|index| ExpectedFile {
+                path: format!("run-0001/step-{index:04}.txt"),
+                exact_content: format!("value-{index:04}"),
+            })
+            .collect();
+        let task =
+            TierBTask::write_files("single-message-1", expected_files).expect("task is valid");
+        let report = run_tier_b_suite(
+            TierBSuiteConfig {
+                suite_id: "single-message-suite".to_owned(),
+                evidence_level: TierBEvidenceLevel::Fixture,
+                provider: TierBProviderMetadata {
+                    api_type: "fixture".to_owned(),
+                    model: "fixture-file-provider".to_owned(),
+                    base_url: "fixture://local".to_owned(),
+                },
+                runner_root: root.clone(),
+                short_memory_policy: ShortMemoryPolicy::default(),
+                pointer_gc_enabled: true,
+                pointer_gc_checkpoint_batches: 4,
+                tasks: vec![task],
+            },
+            FixtureFileProvider::default(),
+        )
+        .await
+        .expect("fixture suite runs");
+
+        let run = &report.runs[0];
+        assert!(run.passed);
+        assert_eq!(run.user_message_count, 1);
+        assert!(run.checks.user_message_count_matches);
+        assert_eq!(run.tool_call_count, 12);
+        assert_eq!(run.provider_calls.len(), 13);
+        assert_eq!(run.provider_calls[0].continuation_items, 0);
+        assert!(
+            run.provider_calls[1..]
+                .iter()
+                .all(|call| call.continuation_items == 2)
+        );
+        assert!(
+            run.provider_calls[2..]
+                .iter()
+                .any(|call| call.run_memory_entries > 0)
+        );
+        assert!(run.file_oracles.iter().all(|file| file.content_matches));
+        assert_eq!(report.aggregate.total_user_messages, 1);
         tokio::fs::remove_dir_all(root)
             .await
             .expect("fixture root is removed");
@@ -961,6 +1233,8 @@ mod tests {
                 },
                 runner_root: root.clone(),
                 short_memory_policy: ShortMemoryPolicy::default(),
+                pointer_gc_enabled: true,
+                pointer_gc_checkpoint_batches: 4,
                 tasks: vec![
                     TierBTask::write_file("write-file-claim", "run-0001/missing.txt", "must exist")
                         .expect("task is valid"),

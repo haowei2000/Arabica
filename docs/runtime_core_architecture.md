@@ -183,8 +183,9 @@ ordered event envelopes, and real OpenAI-compatible Chat Completions execution.
 The current OpenAI adapter maps Structure's provider-neutral `ModelRunRequest`
 into provider messages: long memory becomes a delimited data-only context,
 short-memory conversation facts retain their original user/assistant roles,
-and the current input remains the final user message. The typed multi-step
-tool loop is implemented; durable adapters, streaming model output, and MCP
+the current input precedes active-run memory, and the newest provider/tool step
+remains a lossless continuation tail. The typed multi-step tool loop is
+implemented; durable adapters, streaming model output, and MCP
 routing remain migration work and require their protocol event families to be
 frozen first.
 
@@ -226,11 +227,16 @@ Gemini thought signatures, or OpenAI encrypted reasoning is retained in typed
 silent loss is prohibited.
 
 The Runtime kernel is complete for the currently frozen
-session/message/context slice. This does not make the local profile complete:
-`SessionManager` and the development HTTP host still await Runner completion
-inside command submission. Concurrent cancellation and live chunk delivery
-require the planned `CommandReceipt` plus background dispatch/event-sink work
-in Session Management; they must not be simulated inside Runtime.
+session/message/context slice. Runtime emits through a Session-owned event-log
+sink: every user, tool, output, and terminal event receives its canonical
+identity and sequence immediately, and the active run can reproject that same
+history before its next model step. The provider/tool loop is bounded at 32
+model steps per run, which permits long single-message tasks without allowing
+an unbounded agent loop. This does not make the local profile
+complete: `SessionManager` and the development HTTP host still await Runner
+completion inside command submission. Concurrent cancellation and live chunk
+delivery require the planned `CommandReceipt` plus background dispatch work in
+Session Management; they must not be simulated inside Runtime.
 
 Short-memory projection is a deterministic materialisation pipeline rather
 than transcript filtering. Runtime maps detailed Protocol events into five
@@ -241,11 +247,50 @@ protects a configurable recency floor, groups related events into
 stable `turn`, `tool`, `context`, `transient`, and `misc` batches, and assigns
 `LOAD_ALL`, `LOAD_KEY`, or `NO_LOAD`. The result includes explainable
 per-event decisions and batch metadata so model input can be reconstructed
-from the immutable Session event log and the policy. The collector never
-deletes events or implicitly promotes them into Long Memory.
+from the immutable Session event log and the policy. These load states remain
+the pure-policy and benchmark vocabulary. In the production model-step path,
+closed non-`LOAD_ALL` batches are serialized exactly into the runtime archive
+before they leave the prompt. Archival is checkpointed: only complete epochs
+are replaced by typed `MemoryPointer` values, while the current epoch remains
+append-only and lossless. Failed archive writes fail the projection instead of
+losing evidence. The production default is eight eligible batches per
+checkpoint; benchmarks may use a smaller interval to exercise the transition
+in a bounded run. Checkpoint completion is necessary but not sufficient for
+collection. Runtime converts removable provider-visible bytes to estimated
+tokens using the preceding real request's observed token density. When real
+Provider usage is available, the cache-reset cost is the preceding response's
+`cached_input_tokens`; if usage is unavailable, Runtime falls back to the
+projected stable-prefix token count. It then weights the remaining model step
+budget with a geometric survival curve rather than treating checkpoint batch
+count as the future reuse horizon. Collection occurs only when
+`estimated_saved_tokens_per_call * probability_weighted_remaining_steps >=
+estimated_cache_reset_tokens * PGC_EFFORT`. The default continuation
+probability is 7,500 basis points and the default effort is 1; higher effort
+requires proportionally more expected return. Once an epoch has been archived,
+its pointers remain committed even if later observations would reject a new
+rewrite, preventing full/pointer oscillation. The server reads `PGC_EFFORT` and
+`PGC_CONTINUATION_PROBABILITY_BPS`; embedders configure the same policy through
+`CoreRuntime` setters. Each eligible decision is exposed as a
+`PointerGcAdmissionObservation` for attribution.
 
-Port map from the Python implementation — Python is the behavioral reference
-until cutover:
+During an active run, the newest tool step is explicitly protected and sent
+through the provider's lossless continuation channel. Before every later model
+step, older closed tool batches from that same run pass through the normal TTL
+and `LOAD_ALL` / `LOAD_KEY` / `NO_LOAD` pipeline. Projected active-run entries
+are encoded after the current user input and before the protected continuation,
+preserving tool-call/result pairing while bounding older same-run context.
+Pointers expose only stable metadata and a relative content-addressed path such
+as `m/tool/write_file/<sha256>.json` inside Runtime. They are omitted from the
+provider prompt. The fixed `memory_search` tool discovers matching logical
+paths without eagerly loading content, and `memory_read` verifies the archived
+SHA-256 digest and hydrates the exact event envelopes through a normal paired
+tool call/result continuation. Both tool definitions are stable from the first
+model request. The meaningful directory portion is derived from typed event
+kind and tool name, while the hash filename prevents collisions without placing
+user payloads in paths.
+
+Historical port map from the retired Python implementation. It is provenance
+only; new production behavior is defined and tested in the Rust crates above:
 
 | Component | New owner | Python reference | Old Rust salvage (`5e33a69`) |
 |---|---|---|---|
@@ -270,9 +315,12 @@ trait RunnerEnvironment // run, stream output, cancel
 ### Memory boundary
 
 ```text
-Session Event Log ── pure ShortMemoryProjector ──> ModelRunRequest.short_memory
+Session Event Log ── pure ShortMemoryProjector ──> load-state diagnostics
+        │
+        └── checkpoint archival ──> internal MemoryPointer ──> provider-silent
 
 Workspace LongMemoryStore ── disclosure/query ──> ModelRunRequest.long_memory
+Runtime evidence archive ── memory_search/read + SHA-256 verify ──> continuation
 ```
 
 - Short Memory is an ephemeral prompt view. It has no independent store and
@@ -280,6 +328,17 @@ Workspace LongMemoryStore ── disclosure/query ──> ModelRunRequest.long_m
 - Long Memory is Workspace-scoped, path-addressable durable context. Sessions
   in the same Workspace share it; closing or forking a Session does not delete
   or copy it.
+- Archived runtime evidence is stored in a separate namespace and is not
+  enumerated as ordinary long-context input. Only explicit `memory_search` and
+  `memory_read` calls disclose it to the model.
+- `LongMemoryStore` has three archive implementations: process-local memory,
+  atomic content-addressed files, and SQLite with an idempotent primary-key
+  contract. Runtime selects the adapter at construction; Tier-B uses the file
+  adapter so pointer evidence survives Runtime recreation.
+- The current server and Harbor entry points select the file adapter. The
+  server uses `STRUCTURE__ARCHIVE_ROOT`, defaulting to
+  `target/structure-runtime-memory`; SQLite remains opt-in for later scale and
+  indexing experiments.
 - Session Management owns the append-only history and fork boundary. Runtime
   owns the pure projection policy and long-memory disclosure policy.
 

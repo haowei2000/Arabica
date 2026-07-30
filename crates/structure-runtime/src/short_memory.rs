@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use structure_model::{
@@ -10,8 +10,21 @@ use structure_protocol::{Event, EventEnvelope, EventId, RunId};
 
 const BATCH_FIELD_EXCERPT_LIMIT: usize = 64;
 const BATCH_USER_MESSAGE_EXCERPT_LIMIT: usize = 256;
-const BATCH_KEY_CONTENT_LIMIT: usize = 384;
+const DEFAULT_BATCH_KEY_CONTENT_LIMIT_BYTES: usize = 384;
+const DEFAULT_BATCH_TARGET_COMPRESSION_BPS: u16 = 6_000;
 const MISC_BUCKET_SIZE: u64 = 50;
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_batch_key_content_limit_bytes() -> usize {
+    DEFAULT_BATCH_KEY_CONTENT_LIMIT_BYTES
+}
+
+const fn default_batch_target_compression_bps() -> u16 {
+    DEFAULT_BATCH_TARGET_COMPRESSION_BPS
+}
 
 /// Small retention taxonomy used by Runtime. Protocol events remain detailed
 /// audit facts and are projected into one of these policy classes.
@@ -86,8 +99,14 @@ pub struct ShortMemoryPolicy {
     pub default_ttl_events: u64,
     pub recency_floor: usize,
     pub recent_turns_load_all: usize,
+    #[serde(default = "default_true")]
+    pub batch_compaction_enabled: bool,
     #[serde(default)]
     pub key_admission: KeyAdmissionPolicy,
+    #[serde(default = "default_batch_key_content_limit_bytes")]
+    pub batch_key_content_limit_bytes: usize,
+    #[serde(default = "default_batch_target_compression_bps")]
+    pub batch_target_compression_bps: u16,
     pub ttl_overrides: BTreeMap<MemoryClass, EventTtl>,
     pub decay_rules: Vec<DecayRule>,
 }
@@ -125,9 +144,12 @@ impl Default for ShortMemoryPolicy {
         ];
         Self {
             default_ttl_events: 6,
-            recency_floor: 100,
+            recency_floor: 20,
             recent_turns_load_all: 2,
+            batch_compaction_enabled: true,
             key_admission: KeyAdmissionPolicy::default(),
+            batch_key_content_limit_bytes: DEFAULT_BATCH_KEY_CONTENT_LIMIT_BYTES,
+            batch_target_compression_bps: DEFAULT_BATCH_TARGET_COMPRESSION_BPS,
             ttl_overrides,
             decay_rules,
         }
@@ -135,6 +157,24 @@ impl Default for ShortMemoryPolicy {
 }
 
 impl ShortMemoryPolicy {
+    /// Keep every visible event as a full typed item. This is the B0
+    /// counterfactual used to measure TTL and BatchKey savings.
+    pub fn full_replay() -> Self {
+        Self {
+            batch_compaction_enabled: false,
+            ..Self::batch_only(usize::MAX)
+        }
+    }
+
+    /// Apply production TTL and relation decay without BatchKey compaction.
+    /// This is the B2 ablation policy.
+    pub fn ttl_only() -> Self {
+        Self {
+            batch_compaction_enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Disable event TTL while retaining batch disclosure. This is the B3
     /// ablation policy and is also useful for diagnostics.
     pub fn batch_only(recent_turns_load_all: usize) -> Self {
@@ -149,7 +189,10 @@ impl ShortMemoryPolicy {
             default_ttl_events: u64::MAX,
             recency_floor: 0,
             recent_turns_load_all,
+            batch_compaction_enabled: true,
             key_admission: KeyAdmissionPolicy::default(),
+            batch_key_content_limit_bytes: DEFAULT_BATCH_KEY_CONTENT_LIMIT_BYTES,
+            batch_target_compression_bps: DEFAULT_BATCH_TARGET_COMPRESSION_BPS,
             ttl_overrides,
             decay_rules: Vec::new(),
         }
@@ -202,8 +245,11 @@ pub struct EventBatch {
     pub sequence_end: u64,
     pub event_count: usize,
     pub estimated_tokens: u64,
+    pub raw_item_bytes: usize,
+    pub key_content_budget_bytes: usize,
     pub key_content: String,
     pub key_content_bytes: usize,
+    pub materialized_key_bytes: usize,
     pub key_admission_rank: Option<usize>,
     pub key_admission: KeyAdmissionDecision,
     pub load_state: MemoryLoadState,
@@ -217,6 +263,7 @@ pub enum KeyAdmissionDecision {
     #[default]
     NotCandidate,
     Admitted,
+    KeptFullNoBenefit,
     RejectedBatchLimit,
     RejectedByteLimit,
 }
@@ -227,6 +274,7 @@ pub struct KeyAdmissionSummary {
     pub candidate_batches: usize,
     pub admitted_batches: usize,
     pub rejected_batches: usize,
+    pub kept_full_no_benefit_batches: usize,
     pub admitted_key_content_bytes: usize,
 }
 
@@ -276,6 +324,38 @@ impl ShortMemoryProjector {
         current_run_id: Option<&RunId>,
         policy: &ShortMemoryPolicy,
     ) -> ShortMemoryMaterialization {
+        Self::materialize_with_protection(events, current_run_id, policy, true, &HashSet::new())
+    }
+
+    /// Project context before a model step inside an active run.
+    ///
+    /// Only the explicitly protected event tail is forced to `LOAD_ALL`.
+    /// Older completed batches in the same run remain eligible for TTL and
+    /// BatchKey disclosure. The caller sends the protected tail through the
+    /// provider's lossless continuation channel instead of duplicating it in
+    /// the returned entries.
+    pub fn materialize_for_model_step(
+        events: &[EventEnvelope],
+        current_run_id: &RunId,
+        protected_event_ids: &HashSet<EventId>,
+        policy: &ShortMemoryPolicy,
+    ) -> ShortMemoryMaterialization {
+        Self::materialize_with_protection(
+            events,
+            Some(current_run_id),
+            policy,
+            false,
+            protected_event_ids,
+        )
+    }
+
+    fn materialize_with_protection(
+        events: &[EventEnvelope],
+        current_run_id: Option<&RunId>,
+        policy: &ShortMemoryPolicy,
+        protect_all_current_run_tools: bool,
+        protected_event_ids: &HashSet<EventId>,
+    ) -> ShortMemoryMaterialization {
         // Session Management supplies inherited history before local history.
         // Sequence values are only monotonic within one Session, so sorting a
         // forked history by sequence would interleave unrelated timelines.
@@ -290,7 +370,19 @@ impl ShortMemoryProjector {
             &visible_by_event_id,
             current_run_id,
             policy.recent_turns_load_all,
+            policy.batch_compaction_enabled,
+            protect_all_current_run_tools,
+            protected_event_ids,
         );
+        if !protect_all_current_run_tools {
+            if let Some(current_run_id) = current_run_id {
+                for batch in &mut batches {
+                    if batch.run_id.as_ref() == Some(current_run_id) {
+                        batch.raw_item_bytes = model_step_full_batch_item_bytes(&batch.events);
+                    }
+                }
+            }
+        }
         let key_admission = populate_key_content(&mut batches, policy);
         let entries = materialize_entries(events, &batches);
 
@@ -395,8 +487,11 @@ fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
                 sequence_end: event.sequence,
                 event_count: 0,
                 estimated_tokens: 0,
+                raw_item_bytes: 0,
+                key_content_budget_bytes: 0,
                 key_content: String::new(),
                 key_content_bytes: 0,
+                materialized_key_bytes: 0,
                 key_admission_rank: None,
                 key_admission: KeyAdmissionDecision::NotCandidate,
                 load_state: MemoryLoadState::NoLoad,
@@ -413,6 +508,7 @@ fn build_batches(events: &[EventEnvelope]) -> Vec<EventBatch> {
     for batch in &mut batches {
         batch.event_count = batch.events.len();
         batch.estimated_tokens = estimate_tokens(&batch.events);
+        batch.raw_item_bytes = full_batch_item_bytes(&batch.events);
     }
     batches
 }
@@ -422,12 +518,27 @@ fn populate_key_content(
     policy: &ShortMemoryPolicy,
 ) -> KeyAdmissionSummary {
     let mut candidates = Vec::new();
+    let mut kept_full_no_benefit_batches = 0_usize;
     for (index, batch) in batches.iter_mut().enumerate() {
         if batch.load_state != MemoryLoadState::LoadKey {
             continue;
         }
-        batch.key_content = build_key_content(batch);
+        batch.key_content_budget_bytes = policy.batch_key_content_limit_bytes.min(
+            batch
+                .raw_item_bytes
+                .saturating_mul(usize::from(policy.batch_target_compression_bps.min(10_000)))
+                / 10_000,
+        );
+        batch.key_content = build_key_content(batch, batch.key_content_budget_bytes);
         batch.key_content_bytes = batch.key_content.len();
+        batch.materialized_key_bytes = materialized_batch_key_bytes(batch);
+        if batch.materialized_key_bytes >= batch.raw_item_bytes {
+            batch.key_admission = KeyAdmissionDecision::KeptFullNoBenefit;
+            batch.load_state = MemoryLoadState::LoadAll;
+            batch.key_content.clear();
+            kept_full_no_benefit_batches += 1;
+            continue;
+        }
         candidates.push(index);
     }
     if policy.key_admission == KeyAdmissionPolicy::default() {
@@ -447,6 +558,7 @@ fn populate_key_content(
             candidate_batches: candidates.len(),
             admitted_batches: candidates.len(),
             rejected_batches: 0,
+            kept_full_no_benefit_batches,
             admitted_key_content_bytes,
         };
     }
@@ -494,6 +606,7 @@ fn populate_key_content(
         candidate_batches: candidates.len(),
         admitted_batches,
         rejected_batches: candidates.len().saturating_sub(admitted_batches),
+        kept_full_no_benefit_batches,
         admitted_key_content_bytes,
     }
 }
@@ -607,6 +720,9 @@ fn assign_load_states(
     visible_by_event_id: &HashMap<EventId, bool>,
     current_run_id: Option<&RunId>,
     recent_turn_count: usize,
+    batch_compaction_enabled: bool,
+    protect_all_current_run_tools: bool,
+    protected_event_ids: &HashSet<EventId>,
 ) {
     let turn_indexes: Vec<_> = batches
         .iter()
@@ -624,14 +740,24 @@ fn assign_load_states(
                 .copied()
                 .unwrap_or(false)
         });
-        batch.load_state = if !has_visible_event
-            || matches!(
-                batch.context_kind,
-                MemoryBatchKind::Transient | MemoryBatchKind::Misc
-            ) {
+        let explicitly_protected = batch
+            .events
+            .iter()
+            .any(|event| protected_event_ids.contains(&event.event_id));
+        batch.load_state = if explicitly_protected {
+            MemoryLoadState::LoadAll
+        } else if !has_visible_event {
+            MemoryLoadState::NoLoad
+        } else if !batch_compaction_enabled {
+            MemoryLoadState::LoadAll
+        } else if matches!(
+            batch.context_kind,
+            MemoryBatchKind::Transient | MemoryBatchKind::Misc
+        ) {
             MemoryLoadState::NoLoad
         } else if recent_turn_indexes.contains(&index)
-            || (batch.context_kind == MemoryBatchKind::Tool
+            || (protect_all_current_run_tools
+                && batch.context_kind == MemoryBatchKind::Tool
                 && current_run_id.is_some_and(|run_id| batch.run_id.as_ref() == Some(run_id)))
         {
             MemoryLoadState::LoadAll
@@ -668,15 +794,7 @@ fn materialize_entries(events: &[EventEnvelope], batches: &[EventBatch]) -> Vec<
                         .map(|event| event.event_id.to_string())
                         .collect(),
                     sequence: batch.sequence_start,
-                    item: ShortMemoryItem::BatchKey(MemoryBatchKey {
-                        context_key: batch.context_key.clone(),
-                        context_kind: batch.context_kind,
-                        sequence_start: batch.sequence_start,
-                        sequence_end: batch.sequence_end,
-                        event_count: batch.event_count,
-                        estimated_tokens: batch.estimated_tokens,
-                        key_content: batch.key_content.clone(),
-                    }),
+                    item: batch_key_item(batch),
                 });
             }
             MemoryLoadState::LoadKey | MemoryLoadState::NoLoad => {}
@@ -848,7 +966,47 @@ fn estimate_tokens(events: &[EventEnvelope]) -> u64 {
     characters.div_ceil(4) as u64
 }
 
-fn build_key_content(batch: &EventBatch) -> String {
+fn full_batch_item_bytes(events: &[EventEnvelope]) -> usize {
+    let items: Vec<_> = events
+        .iter()
+        .filter_map(event_to_short_memory)
+        .map(|entry| entry.item)
+        .collect();
+    serde_json::to_vec(&items).map_or(usize::MAX, |encoded| encoded.len())
+}
+
+fn model_step_full_batch_item_bytes(events: &[EventEnvelope]) -> usize {
+    let items: Vec<_> = events
+        .iter()
+        .filter_map(event_to_short_memory)
+        .map(|entry| entry.item)
+        .filter(|item| {
+            !matches!(
+                item,
+                ShortMemoryItem::UserMessage { .. } | ShortMemoryItem::Observation { .. }
+            )
+        })
+        .collect();
+    serde_json::to_vec(&items).map_or(usize::MAX, |encoded| encoded.len())
+}
+
+fn materialized_batch_key_bytes(batch: &EventBatch) -> usize {
+    serde_json::to_vec(&batch_key_item(batch)).map_or(usize::MAX, |encoded| encoded.len())
+}
+
+fn batch_key_item(batch: &EventBatch) -> ShortMemoryItem {
+    ShortMemoryItem::BatchKey(MemoryBatchKey {
+        context_key: batch.context_key.clone(),
+        context_kind: batch.context_kind,
+        sequence_start: batch.sequence_start,
+        sequence_end: batch.sequence_end,
+        event_count: batch.event_count,
+        estimated_tokens: batch.estimated_tokens,
+        key_content: batch.key_content.clone(),
+    })
+}
+
+fn build_key_content(batch: &EventBatch, content_budget_bytes: usize) -> String {
     let mut type_counts = BTreeMap::<&str, usize>::new();
     for event in &batch.events {
         *type_counts
@@ -885,7 +1043,7 @@ fn build_key_content(batch: &EventBatch) -> String {
             lines.push(line);
         }
     }
-    truncate_chars(&lines.join("\n"), BATCH_KEY_CONTENT_LIMIT)
+    truncate_utf8_bytes(&lines.join("\n"), content_budget_bytes)
 }
 
 fn event_semantic_key(event: &Event) -> Option<String> {
@@ -997,6 +1155,17 @@ fn truncate_chars(value: &str, limit: usize) -> String {
     let mut truncated: String = value.chars().take(limit.saturating_sub(3)).collect();
     truncated.push_str("...");
     truncated
+}
+
+fn truncate_utf8_bytes(value: &str, limit: usize) -> String {
+    if value.len() <= limit {
+        return value.to_owned();
+    }
+    let mut end = limit.min(value.len());
+    while !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    value[..end].to_owned()
 }
 
 #[cfg(test)]
@@ -1241,20 +1410,274 @@ mod tests {
     }
 
     #[test]
+    fn model_step_compacts_older_closed_tools_but_protects_the_active_tail() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-old".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "old.txt"}),
+                },
+            ),
+            envelope(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-old".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "old result ".repeat(500),
+                    is_error: false,
+                },
+            ),
+            envelope(
+                3,
+                Event::ToolCallRequested {
+                    call_id: "call-active".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "active.txt"}),
+                },
+            ),
+            envelope(
+                4,
+                Event::ToolCallCompleted {
+                    call_id: "call-active".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "active result ".repeat(500),
+                    is_error: false,
+                },
+            ),
+        ];
+        let protected = HashSet::from([
+            EventId::new("event-session-1-3"),
+            EventId::new("event-session-1-4"),
+        ]);
+
+        let result = ShortMemoryProjector::materialize_for_model_step(
+            &events,
+            &RunId::new("run-1"),
+            &protected,
+            &ShortMemoryPolicy::batch_only(0),
+        );
+
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadKey);
+        assert_eq!(result.batches[1].load_state, MemoryLoadState::LoadAll);
+        assert!(matches!(
+            result.entries[0].item,
+            ShortMemoryItem::BatchKey(_)
+        ));
+        assert!(result.entries.iter().any(|entry| {
+            matches!(
+                &entry.item,
+                ShortMemoryItem::ToolCall(call) if call.call_id == "call-active"
+            )
+        }));
+        assert!(result.entries.iter().any(|entry| {
+            matches!(
+                &entry.item,
+                ShortMemoryItem::ToolResult(result) if result.call_id == "call-active"
+            )
+        }));
+    }
+
+    #[test]
+    fn explicit_model_step_protection_overrides_expired_ttl() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-error".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({"command": "pytest"}),
+                },
+            ),
+            envelope(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-error".to_owned(),
+                    name: "shell".to_owned(),
+                    result: "one test failed".to_owned(),
+                    is_error: true,
+                },
+            ),
+            envelope(
+                3,
+                Event::ToolCallRequested {
+                    call_id: "call-new".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({"command": "pwd"}),
+                },
+            ),
+            envelope(
+                4,
+                Event::ToolCallCompleted {
+                    call_id: "call-new".to_owned(),
+                    name: "shell".to_owned(),
+                    result: "/workspace".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let protected = HashSet::from([
+            EventId::new("event-session-1-1"),
+            EventId::new("event-session-1-2"),
+        ]);
+        let policy = ShortMemoryPolicy {
+            recency_floor: 0,
+            ttl_overrides: BTreeMap::from([
+                (MemoryClass::Anchor, EventTtl::ttl(0)),
+                (MemoryClass::Working, EventTtl::ttl(0)),
+                (MemoryClass::Recovery, EventTtl::ttl(0)),
+                (MemoryClass::Transient, EventTtl::ttl(0)),
+                (MemoryClass::Control, EventTtl::ttl(0)),
+            ]),
+            ..ShortMemoryPolicy::default()
+        };
+
+        let result = ShortMemoryProjector::materialize_for_model_step(
+            &events,
+            &RunId::new("run-1"),
+            &protected,
+            &policy,
+        );
+
+        let error_batch = result
+            .batches
+            .iter()
+            .find(|batch| batch.context_key.ends_with("call-error"))
+            .expect("error batch exists");
+        assert_eq!(error_batch.load_state, MemoryLoadState::LoadAll);
+        assert!(result.entries.iter().any(|entry| {
+            matches!(
+                &entry.item,
+                ShortMemoryItem::ToolResult(result)
+                    if result.call_id == "call-error" && result.is_error
+            )
+        }));
+    }
+
+    #[test]
+    fn model_step_gate_uses_only_items_that_reach_the_provider() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-old".to_owned(),
+                    name: "write_file".to_owned(),
+                    arguments: serde_json::json!({"path": "old.txt", "content": "ok"}),
+                },
+            ),
+            envelope(
+                2,
+                Event::CommandOutput {
+                    stream: OutputStream::Stdout,
+                    chunk: "duplicate runner output ".repeat(500),
+                },
+            ),
+            envelope(
+                3,
+                Event::ToolCallCompleted {
+                    call_id: "call-old".to_owned(),
+                    name: "write_file".to_owned(),
+                    result: "ok".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+
+        let result = ShortMemoryProjector::materialize_for_model_step(
+            &events,
+            &RunId::new("run-1"),
+            &HashSet::new(),
+            &ShortMemoryPolicy::batch_only(0),
+        );
+
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadAll);
+        assert_eq!(
+            result.batches[0].key_admission,
+            KeyAdmissionDecision::KeptFullNoBenefit
+        );
+        assert!(result.batches[0].materialized_key_bytes >= result.batches[0].raw_item_bytes);
+    }
+
+    #[test]
+    fn full_replay_keeps_older_active_run_tool_batches_uncompressed() {
+        let events = vec![
+            envelope(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-old".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "old.txt"}),
+                },
+            ),
+            envelope(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-old".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "old result ".repeat(500),
+                    is_error: false,
+                },
+            ),
+            envelope(
+                3,
+                Event::ToolCallRequested {
+                    call_id: "call-active".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "active.txt"}),
+                },
+            ),
+            envelope(
+                4,
+                Event::ToolCallCompleted {
+                    call_id: "call-active".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "active result ".repeat(500),
+                    is_error: false,
+                },
+            ),
+        ];
+        let protected = HashSet::from([
+            EventId::new("event-session-1-3"),
+            EventId::new("event-session-1-4"),
+        ]);
+
+        let result = ShortMemoryProjector::materialize_for_model_step(
+            &events,
+            &RunId::new("run-1"),
+            &protected,
+            &ShortMemoryPolicy::full_replay(),
+        );
+
+        assert!(
+            result
+                .batches
+                .iter()
+                .all(|batch| batch.load_state == MemoryLoadState::LoadAll)
+        );
+        assert!(
+            result
+                .entries
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::BatchKey(_)))
+        );
+    }
+
+    #[test]
     fn recent_turns_load_all_and_older_turns_load_only_the_key() {
         let events = vec![
             envelope_for_run(
                 1,
                 "old",
                 Event::MessageAccepted {
-                    content: "old question".to_owned(),
+                    content: "old question ".repeat(200),
                 },
             ),
             envelope_for_run(
                 2,
                 "old",
                 Event::RunCompleted {
-                    output: Some("old answer".to_owned()),
+                    output: Some("old answer ".repeat(200)),
                 },
             ),
             envelope_for_run(
@@ -1405,28 +1828,28 @@ mod tests {
                 1,
                 "old",
                 Event::MessageAccepted {
-                    content: "old question".to_owned(),
+                    content: "old question ".repeat(200),
                 },
             ),
             envelope_for_run(
                 2,
                 "old",
                 Event::RunCompleted {
-                    output: Some("old answer".to_owned()),
+                    output: Some("old answer ".repeat(200)),
                 },
             ),
             envelope_for_run(
                 3,
                 "new",
                 Event::MessageAccepted {
-                    content: "new question".to_owned(),
+                    content: "new question ".repeat(200),
                 },
             ),
             envelope_for_run(
                 4,
                 "new",
                 Event::RunCompleted {
-                    output: Some("new answer".to_owned()),
+                    output: Some("new answer ".repeat(200)),
                 },
             ),
         ];
@@ -1463,7 +1886,7 @@ mod tests {
         let events = vec![envelope(
             1,
             Event::MessageAccepted {
-                content: "required anchor".to_owned(),
+                content: "required anchor ".repeat(200),
             },
         )];
         let policy = ShortMemoryPolicy {
@@ -1521,7 +1944,16 @@ mod tests {
         let key = &result.batches[0].key_content;
 
         assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadKey);
-        assert!(key.chars().count() <= BATCH_KEY_CONTENT_LIMIT);
+        assert!(key.len() <= DEFAULT_BATCH_KEY_CONTENT_LIMIT_BYTES);
+        assert_eq!(
+            result.batches[0].key_content_budget_bytes,
+            DEFAULT_BATCH_KEY_CONTENT_LIMIT_BYTES.min(
+                result.batches[0].raw_item_bytes
+                    * usize::from(DEFAULT_BATCH_TARGET_COMPRESSION_BPS)
+                    / 10_000
+            )
+        );
+        assert!(result.batches[0].materialized_key_bytes < result.batches[0].raw_item_bytes);
         assert!(key.contains("types=tool.call.completed:1,tool.call.requested:1"));
         assert!(key.contains("tool_call name=read_file"));
         assert!(key.contains("result_hash=fnv1a64:"));
@@ -1529,7 +1961,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_key_preserves_bounded_structured_user_evidence() {
+    fn short_structured_user_evidence_stays_full_when_key_would_expand_input() {
         let evidence = "Remember this evidence for the next task and reply with MEMORY_STORED.\n<memory_evidence_json>{\"key\":\"tier-b-evidence-0001\",\"value\":\"STRUCTURE_TIER_B_OK\"}</memory_evidence_json>";
         let events = vec![envelope(
             1,
@@ -1543,10 +1975,16 @@ mod tests {
         };
 
         let result = ShortMemoryProjector::materialize(&events, None, &policy);
-        let key = &result.batches[0].key_content;
-
-        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadKey);
-        assert!(key.chars().count() <= BATCH_KEY_CONTENT_LIMIT);
-        assert!(key.contains(evidence));
+        assert_eq!(result.batches[0].load_state, MemoryLoadState::LoadAll);
+        assert_eq!(
+            result.batches[0].key_admission,
+            KeyAdmissionDecision::KeptFullNoBenefit
+        );
+        assert_eq!(result.key_admission.kept_full_no_benefit_batches, 1);
+        assert!(result.batches[0].materialized_key_bytes >= result.batches[0].raw_item_bytes);
+        assert!(matches!(
+            result.entries[0].item,
+            ShortMemoryItem::UserMessage { .. }
+        ));
     }
 }

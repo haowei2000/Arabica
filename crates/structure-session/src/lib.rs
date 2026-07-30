@@ -13,7 +13,7 @@ use structure_protocol::{
     Command, CommandEnvelope, CommandId, ErrorCode, Event, EventEnvelope, EventId, EventMetadata,
     PROTOCOL_VERSION, RunId, RunStatus, SessionId, SessionStatus, WorkspaceId,
 };
-use structure_runtime::RuntimeEngine;
+use structure_runtime::{RuntimeEngine, RuntimeEventLog};
 
 #[derive(Clone, Debug)]
 pub struct SessionRecord {
@@ -38,6 +38,66 @@ impl SessionRecord {
             .chain(&self.events)
             .cloned()
             .collect()
+    }
+
+    fn append_event(
+        &mut self,
+        command_id: &CommandId,
+        run_id: Option<&RunId>,
+        event: Event,
+    ) -> EventEnvelope {
+        self.next_sequence += 1;
+        let sequence = self.next_sequence;
+        let envelope = EventEnvelope::new(
+            EventMetadata {
+                event_id: EventId::new(format!("event-{}-{sequence}", self.id)),
+                command_id: command_id.clone(),
+                workspace_id: self.workspace_id.clone(),
+                session_id: self.id.clone(),
+                run_id: run_id.cloned(),
+                sequence,
+                occurred_at_ms: unix_time_ms(),
+            },
+            event,
+        );
+        self.events.push(envelope.clone());
+        envelope
+    }
+}
+
+struct SessionRuntimeEventLog<'a> {
+    session: &'a mut SessionRecord,
+    command_id: CommandId,
+    run_id: Option<RunId>,
+    emitted: Vec<EventEnvelope>,
+}
+
+impl<'a> SessionRuntimeEventLog<'a> {
+    fn new(session: &'a mut SessionRecord, command_id: CommandId, run_id: Option<RunId>) -> Self {
+        Self {
+            session,
+            command_id,
+            run_id,
+            emitted: Vec::new(),
+        }
+    }
+
+    fn into_emitted(self) -> Vec<EventEnvelope> {
+        self.emitted
+    }
+}
+
+impl RuntimeEventLog for SessionRuntimeEventLog<'_> {
+    fn snapshot(&self) -> Vec<EventEnvelope> {
+        self.session.runtime_history()
+    }
+
+    fn append(&mut self, event: Event) -> EventEnvelope {
+        let envelope = self
+            .session
+            .append_event(&self.command_id, self.run_id.as_ref(), event);
+        self.emitted.push(envelope.clone());
+        envelope
     }
 }
 
@@ -150,27 +210,10 @@ impl<R> SessionManager<R> {
             .sessions
             .get_mut(session_id)
             .expect("session must exist before events are appended");
-        let envelopes: Vec<_> = events
+        events
             .into_iter()
-            .map(|event| {
-                session.next_sequence += 1;
-                let sequence = session.next_sequence;
-                EventEnvelope::new(
-                    EventMetadata {
-                        event_id: EventId::new(format!("event-{session_id}-{sequence}")),
-                        command_id: command_id.clone(),
-                        workspace_id: session.workspace_id.clone(),
-                        session_id: session_id.clone(),
-                        run_id: run_id.cloned(),
-                        sequence,
-                        occurred_at_ms: unix_time_ms(),
-                    },
-                    event,
-                )
-            })
-            .collect();
-        session.events.extend(envelopes.iter().cloned());
-        envelopes
+            .map(|event| session.append_event(command_id, run_id, event))
+            .collect()
     }
 }
 
@@ -354,46 +397,24 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .insert(run_id.clone(), RunStatus::Running);
 
                 let runtime_command = Command::MessageSend { content };
-                let history = self
+                let runtime = &mut self.runtime;
+                let session = self
                     .sessions
-                    .get(&session_id)
-                    .expect("validated session exists")
-                    .runtime_history();
-                match self
-                    .runtime
-                    .handle(&session_id, Some(&run_id), &history, &runtime_command)
+                    .get_mut(&session_id)
+                    .expect("validated session exists");
+                let mut event_log =
+                    SessionRuntimeEventLog::new(session, command_id.clone(), Some(run_id.clone()));
+                if let Err(error) = runtime
+                    .handle(&session_id, Some(&run_id), &mut event_log, &runtime_command)
                     .await
                 {
-                    Ok(events) => {
-                        let status = terminal_run_status(&events).unwrap_or(RunStatus::Running);
-                        self.sessions
-                            .get_mut(&session_id)
-                            .expect("validated session exists")
-                            .runs
-                            .insert(run_id.clone(), status);
-                        envelopes.extend(self.append_events(
-                            &command_id,
-                            &session_id,
-                            Some(&run_id),
-                            events,
-                        ));
-                    }
-                    Err(error) => {
-                        self.sessions
-                            .get_mut(&session_id)
-                            .expect("validated session exists")
-                            .runs
-                            .insert(run_id.clone(), RunStatus::Failed);
-                        envelopes.extend(self.append_events(
-                            &command_id,
-                            &session_id,
-                            Some(&run_id),
-                            [Event::RunFailed {
-                                message: error.to_string(),
-                            }],
-                        ));
-                    }
+                    event_log.append(Event::RunFailed {
+                        message: error.to_string(),
+                    });
                 }
+                let status = terminal_run_status(&event_log.emitted).unwrap_or(RunStatus::Running);
+                event_log.session.runs.insert(run_id.clone(), status);
+                envelopes.extend(event_log.into_emitted());
                 Ok(envelopes)
             }
             Command::RunCancel { run_id } => {
@@ -423,24 +444,24 @@ impl<R: RuntimeEngine> SessionManager<R> {
                 let command = Command::RunCancel {
                     run_id: run_id.clone(),
                 };
-                let history = self
+                let runtime = &mut self.runtime;
+                let session = self
                     .sessions
-                    .get(&session_id)
-                    .expect("validated session exists")
-                    .runtime_history();
-                let events = self
-                    .runtime
-                    .handle(&session_id, Some(&run_id), &history, &command)
+                    .get_mut(&session_id)
+                    .expect("validated session exists");
+                let mut event_log =
+                    SessionRuntimeEventLog::new(session, command_id, Some(run_id.clone()));
+                runtime
+                    .handle(&session_id, Some(&run_id), &mut event_log, &command)
                     .await
                     .map_err(|error| {
                         SessionError::new(ErrorCode::RuntimeFailure, error.to_string())
                     })?;
-                self.sessions
-                    .get_mut(&session_id)
-                    .expect("validated session exists")
+                event_log
+                    .session
                     .runs
                     .insert(run_id.clone(), RunStatus::Cancelled);
-                Ok(self.append_events(&command_id, &session_id, Some(&run_id), events))
+                Ok(event_log.into_emitted())
             }
             command @ (Command::ContextRead { .. }
             | Command::ContextSearch { .. }
@@ -449,23 +470,22 @@ impl<R: RuntimeEngine> SessionManager<R> {
             | Command::ContextSetDisclosure { .. }) => {
                 let session_id = self.require_session_id(envelope.session_id.as_ref())?;
                 self.require_active(&session_id)?;
-                let history = self
+                let runtime = &mut self.runtime;
+                let session = self
                     .sessions
-                    .get(&session_id)
-                    .expect("validated session exists")
-                    .runtime_history();
-                let events = match self
-                    .runtime
-                    .handle(&session_id, None, &history, &command)
+                    .get_mut(&session_id)
+                    .expect("validated session exists");
+                let mut event_log = SessionRuntimeEventLog::new(session, command_id, None);
+                if let Err(error) = runtime
+                    .handle(&session_id, None, &mut event_log, &command)
                     .await
                 {
-                    Ok(events) => events,
-                    Err(error) => vec![Event::Error {
+                    event_log.append(Event::Error {
                         code: ErrorCode::RuntimeFailure,
                         message: error.to_string(),
-                    }],
-                };
-                Ok(self.append_events(&command_id, &session_id, None, events))
+                    });
+                }
+                Ok(event_log.into_emitted())
             }
         }
     }
@@ -480,11 +500,20 @@ fn unix_time_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn terminal_run_status(events: &[Event]) -> Option<RunStatus> {
+fn terminal_run_status(events: &[EventEnvelope]) -> Option<RunStatus> {
     events.iter().rev().find_map(|event| match event {
-        Event::RunCompleted { .. } => Some(RunStatus::Finished),
-        Event::RunFailed { .. } => Some(RunStatus::Failed),
-        Event::RunCancelled => Some(RunStatus::Cancelled),
+        EventEnvelope {
+            event: Event::RunCompleted { .. },
+            ..
+        } => Some(RunStatus::Finished),
+        EventEnvelope {
+            event: Event::RunFailed { .. },
+            ..
+        } => Some(RunStatus::Failed),
+        EventEnvelope {
+            event: Event::RunCancelled,
+            ..
+        } => Some(RunStatus::Cancelled),
         _ => None,
     })
 }
@@ -492,7 +521,7 @@ fn terminal_run_status(events: &[Event]) -> Option<RunStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use structure_model::ShortMemoryItem;
+    use structure_model::{FinishReason, RuntimeResponse, RuntimeUsage, ShortMemoryItem};
     use structure_protocol::ContextEntry;
     use structure_provider::{
         EchoModel, ModelProvider, ModelRunRequest, ModelRunResult, ProviderError,
@@ -515,6 +544,33 @@ mod tests {
             Ok(ModelRunResult {
                 final_output: Some(output),
                 response: None,
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            Ok(false)
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TruncatedModel;
+
+    impl ModelProvider for TruncatedModel {
+        async fn complete(
+            &mut self,
+            _request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            Ok(ModelRunResult {
+                final_output: None,
+                response: Some(RuntimeResponse {
+                    items: Vec::new(),
+                    finish_reason: Some(FinishReason::Length),
+                    usage: RuntimeUsage {
+                        input_tokens: 100,
+                        output_tokens: 8_192,
+                        cached_input_tokens: 80,
+                    },
+                }),
             })
         }
 
@@ -569,6 +625,48 @@ mod tests {
                 .runs
                 .get(run_id),
             Some(&RunStatus::Finished)
+        );
+    }
+
+    #[tokio::test]
+    async fn session_manager_marks_length_truncation_as_failed() {
+        let runtime = CoreRuntime::new(TruncatedModel, NoopRunner);
+        let mut manager = SessionManager::new(runtime);
+        let created = manager
+            .handle(command(
+                "command-1",
+                None,
+                Command::SessionCreate {
+                    workspace_id: WorkspaceId::new("workspace-1"),
+                },
+            ))
+            .await
+            .expect("session is created");
+        let session_id = created[0].session_id.clone();
+
+        let events = manager
+            .handle(command(
+                "command-2",
+                Some(session_id.clone()),
+                Command::MessageSend {
+                    content: "hello".to_owned(),
+                },
+            ))
+            .await
+            .expect("truncation is represented as a terminal event");
+
+        assert!(matches!(
+            &events.last().expect("terminal event").event,
+            Event::RunFailed { message } if message.starts_with("model_output_truncated:")
+        ));
+        let run_id = events[0].run_id.as_ref().expect("run id");
+        assert_eq!(
+            manager
+                .session(&session_id)
+                .expect("session exists")
+                .runs
+                .get(run_id),
+            Some(&RunStatus::Failed)
         );
     }
 

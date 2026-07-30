@@ -1,6 +1,7 @@
 //! HTTP + SSE binding for the canonical Structure protocol.
 
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -15,7 +16,7 @@ use structure_provider::{
     ModelRunResult, ProviderError,
 };
 use structure_runner::LocalRunner;
-use structure_runtime::CoreRuntime;
+use structure_runtime::{CoreRuntime, RuntimeArchiveStore, ShortMemoryPolicy};
 use structure_session::SessionManager;
 use tokio::sync::{Mutex, broadcast};
 use tokio_stream::wrappers::BroadcastStream;
@@ -47,6 +48,15 @@ impl ModelProvider for ServerModel {
 
 type LocalSessionManager = SessionManager<CoreRuntime<ServerModel, LocalRunner>>;
 
+const DEFAULT_ARCHIVE_ROOT: &str = "target/structure-runtime-memory";
+
+fn local_file_archive_store() -> RuntimeArchiveStore {
+    let root = std::env::var("STRUCTURE__ARCHIVE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_ARCHIVE_ROOT));
+    RuntimeArchiveStore::File { root }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     sessions: Arc<Mutex<LocalSessionManager>>,
@@ -56,11 +66,15 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         let (events, _) = broadcast::channel(512);
+        let runtime = CoreRuntime::with_memory_configuration(
+            ServerModel::Echo(EchoModel::default()),
+            LocalRunner::new("."),
+            ShortMemoryPolicy::default(),
+            true,
+            local_file_archive_store(),
+        );
         Self {
-            sessions: Arc::new(Mutex::new(SessionManager::new(CoreRuntime::new(
-                ServerModel::Echo(EchoModel::default()),
-                LocalRunner::new("."),
-            )))),
+            sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
             events,
         }
     }
@@ -80,12 +94,36 @@ impl AppState {
         let tool_root = std::env::var("STRUCTURE__TOOL_ROOT").unwrap_or_else(|_| ".".to_owned());
         let provider =
             ApiModelProvider::new(ApiProviderConfig::new(api_type, api_key, base_url, model))?;
+        let pgc_effort = std::env::var("PGC_EFFORT")
+            .unwrap_or_else(|_| "1".to_owned())
+            .parse::<usize>()
+            .map_err(|error| ProviderError::new(format!("invalid PGC_EFFORT: {error}")))?;
+        if pgc_effort == 0 {
+            return Err(ProviderError::new("PGC_EFFORT must be positive"));
+        }
+        let pgc_continuation_probability_bps = std::env::var("PGC_CONTINUATION_PROBABILITY_BPS")
+            .unwrap_or_else(|_| "7500".to_owned())
+            .parse::<u32>()
+            .map_err(|error| {
+                ProviderError::new(format!("invalid PGC_CONTINUATION_PROBABILITY_BPS: {error}"))
+            })?;
+        if pgc_continuation_probability_bps > 10_000 {
+            return Err(ProviderError::new(
+                "PGC_CONTINUATION_PROBABILITY_BPS must be between 0 and 10000",
+            ));
+        }
+        let mut runtime = CoreRuntime::with_memory_configuration(
+            ServerModel::Api(provider),
+            LocalRunner::new(tool_root),
+            ShortMemoryPolicy::default(),
+            true,
+            local_file_archive_store(),
+        );
+        runtime.set_pointer_gc_effort(pgc_effort);
+        runtime.set_pointer_gc_continuation_probability_bps(pgc_continuation_probability_bps);
         let (events, _) = broadcast::channel(512);
         Ok(Self {
-            sessions: Arc::new(Mutex::new(SessionManager::new(CoreRuntime::new(
-                ServerModel::Api(provider),
-                LocalRunner::new(tool_root),
-            )))),
+            sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
             events,
         })
     }
@@ -153,6 +191,16 @@ mod tests {
     use axum::http::Request;
     use structure_protocol::{Command, CommandId, Event, WorkspaceId};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn server_uses_the_local_file_archive_adapter() {
+        let state = AppState::default();
+        let sessions = state.sessions.lock().await;
+        assert!(matches!(
+            sessions.runtime().archive_store(),
+            RuntimeArchiveStore::File { .. }
+        ));
+    }
 
     #[tokio::test]
     async fn command_endpoint_returns_canonical_events() {

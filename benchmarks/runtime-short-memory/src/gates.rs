@@ -47,7 +47,7 @@ impl BenchmarkRun {
             .map_err(|error| BenchmarkRunError::new(error.to_string()))?;
 
         Ok(Self {
-            benchmark_schema_version: "structure.short-memory.benchmark-run/v2".to_owned(),
+            benchmark_schema_version: "structure.short-memory.benchmark-run/v3".to_owned(),
             trace_schema_version: trace.schema_version.clone(),
             trace_id: trace.trace_id.clone(),
             trace_seed: trace.seed,
@@ -73,6 +73,7 @@ pub struct CorrectnessGates {
     pub relation_integrity: GateCheck,
     pub pinned_anchor_retention: GateCheck,
     pub evidence_recall: EvidenceRecallGate,
+    pub model_input_non_expansion: GateCheck,
 }
 
 impl CorrectnessGates {
@@ -238,6 +239,16 @@ impl CorrectnessGates {
             retained_evidence,
             trace.oracle.gold_evidence_event_ids.len(),
         );
+        let full_replay_items: Vec<_> =
+            structure_runtime::ShortMemoryProjector::project_full(&trace.events)
+                .into_iter()
+                .map(|entry| entry.item)
+                .collect();
+        let materialized_items: Vec<_> = first.entries.iter().map(|entry| &entry.item).collect();
+        let full_replay_bytes =
+            serde_json::to_vec(&full_replay_items).map_or(usize::MAX, |encoded| encoded.len());
+        let materialized_bytes =
+            serde_json::to_vec(&materialized_items).map_or(usize::MAX, |encoded| encoded.len());
 
         Self {
             source_immutability: GateCheck::boolean(
@@ -280,6 +291,12 @@ impl CorrectnessGates {
                 missing_event_ids: missing_evidence_event_ids,
                 detail: "gold evidence representation recall in basis points".to_owned(),
             },
+            model_input_non_expansion: GateCheck {
+                passed: materialized_bytes <= full_replay_bytes,
+                observed: materialized_bytes as u64,
+                required: full_replay_bytes as u64,
+                detail: "serialized model-input bytes do not exceed full replay".to_owned(),
+            },
         }
     }
 
@@ -292,6 +309,7 @@ impl CorrectnessGates {
             && self.relation_integrity.passed
             && self.pinned_anchor_retention.passed
             && self.evidence_recall.passed
+            && self.model_input_non_expansion.passed
     }
 }
 
@@ -348,6 +366,10 @@ pub struct ProjectionMetrics {
     pub materialised_entry_count: usize,
     pub materialised_bytes: usize,
     pub estimated_materialised_tokens: usize,
+    pub full_replay_materialised_bytes: usize,
+    pub estimated_full_replay_tokens: usize,
+    pub model_input_bytes_saved: i64,
+    pub model_input_size_bps: u64,
     pub represented_source_event_count: usize,
     pub policy_visible_event_count: Option<usize>,
     pub batch_count: usize,
@@ -356,6 +378,7 @@ pub struct ProjectionMetrics {
     pub no_load_batch_count: usize,
     pub key_candidate_batch_count: usize,
     pub key_budget_rejected_batch_count: usize,
+    pub key_no_benefit_batch_count: usize,
     pub admitted_key_content_bytes: usize,
     pub load_all_estimated_tokens: u64,
     pub load_key_source_estimated_tokens: u64,
@@ -373,6 +396,12 @@ impl ProjectionMetrics {
         let materialised_items: Vec<_> =
             projection.entries.iter().map(|entry| &entry.item).collect();
         let materialised_bytes = serde_json::to_vec(&materialised_items)?.len();
+        let full_replay_items: Vec<_> =
+            structure_runtime::ShortMemoryProjector::project_full(&trace.events)
+                .into_iter()
+                .map(|entry| entry.item)
+                .collect();
+        let full_replay_materialised_bytes = serde_json::to_vec(&full_replay_items)?.len();
         let represented_source_event_count = projection
             .entries
             .iter()
@@ -404,7 +433,14 @@ impl ProjectionMetrics {
         let key_candidate_batch_count = projection
             .batches
             .iter()
-            .filter(|batch| batch.key_admission != KeyAdmissionDecision::NotCandidate)
+            .filter(|batch| {
+                matches!(
+                    batch.key_admission,
+                    KeyAdmissionDecision::Admitted
+                        | KeyAdmissionDecision::RejectedBatchLimit
+                        | KeyAdmissionDecision::RejectedByteLimit
+                )
+            })
             .count();
         let key_budget_rejected_batch_count = projection
             .batches
@@ -416,6 +452,11 @@ impl ProjectionMetrics {
                         | KeyAdmissionDecision::RejectedByteLimit
                 )
             })
+            .count();
+        let key_no_benefit_batch_count = projection
+            .batches
+            .iter()
+            .filter(|batch| batch.key_admission == KeyAdmissionDecision::KeptFullNoBenefit)
             .count();
         let admitted_key_content_bytes = projection
             .batches
@@ -437,6 +478,15 @@ impl ProjectionMetrics {
             materialised_entry_count: projection.entries.len(),
             materialised_bytes,
             estimated_materialised_tokens: materialised_bytes.div_ceil(4),
+            full_replay_materialised_bytes,
+            estimated_full_replay_tokens: full_replay_materialised_bytes.div_ceil(4),
+            model_input_bytes_saved: full_replay_materialised_bytes as i64
+                - materialised_bytes as i64,
+            model_input_size_bps: if full_replay_materialised_bytes == 0 {
+                0
+            } else {
+                materialised_bytes as u64 * 10_000 / full_replay_materialised_bytes as u64
+            },
             represented_source_event_count,
             policy_visible_event_count,
             batch_count: projection.batches.len(),
@@ -445,6 +495,7 @@ impl ProjectionMetrics {
             no_load_batch_count,
             key_candidate_batch_count,
             key_budget_rejected_batch_count,
+            key_no_benefit_batch_count,
             admitted_key_content_bytes,
             load_all_estimated_tokens: batch_tokens(MemoryLoadState::LoadAll),
             load_key_source_estimated_tokens: batch_tokens(MemoryLoadState::LoadKey),

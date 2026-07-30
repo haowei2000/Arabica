@@ -74,6 +74,12 @@ Optional configuration:
 - `STRUCTURE__PORT`: listening port, default `4096`
 - `STRUCTURE__API_TYPE`: provider API type, default OpenAI Chat Completions
 - `STRUCTURE__TOOL_ROOT`: root directory available to the local runner
+- `STRUCTURE__ARCHIVE_ROOT`: local PointerGC archive directory, default
+  `target/structure-runtime-memory`
+
+The current server and Harbor benchmark entry points use the atomic local-file
+archive adapter. SQLite remains available as an explicit Runtime adapter but is
+not selected by either executable.
 
 ## Benchmarks
 
