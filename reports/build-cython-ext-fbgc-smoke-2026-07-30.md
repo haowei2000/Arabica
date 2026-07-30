@@ -142,3 +142,74 @@ compaction, tool, and raw-capture measurements remain usable.
 - `target/harbor-terminal-bench/structure-cython-fbgc-v1-01`
 
 Credentials and raw task data are intentionally excluded from this report.
+
+## Post-run archive audit and v2 optimization
+
+The two admitted epochs were audited batch by batch before changing the
+policy. Exact persistence was correct, but chronological selection and opaque
+pointer metadata mixed low-risk bulk inspection with important working state.
+
+### Epoch 1 — model step 13
+
+| Sequence | Archived interaction | Archive bytes | Assessment |
+|---:|---|---:|---|
+| 5–7 | clone pyknotid 0.5.3 | 2,356 | safe after retaining a compact cloned-revision fact |
+| 8–10 | inspect Python 3.13.7, NumPy 2.3.0, package absent | 2,381 | key environment state; poor opaque-pointer candidate |
+| 11–13 | read `setup.py` | 12,314 | excellent bulk-read candidate |
+| 14–16 | read `chelpers.pyx` | 15,055 | excellent bulk-read candidate |
+
+The epoch persisted 32,106 bytes, estimated 14,175 removable active-context
+bytes, and introduced a 2,979-byte Provider pointer suffix. The bulk source
+reads were rational choices. The environment probe was not: its small result
+contained high-value task state and the pointer exposed only a hash and call
+ID.
+
+### Epoch 2 — model step 21
+
+| Sequence | Archived interaction | Archive bytes | Assessment |
+|---:|---|---:|---|
+| 17–19 | read `ccomplexity.pyx` | 14,078 | excellent bulk-read candidate |
+| 20–22 | read `cinvariants.pyx` | 5,452 | good bulk-read candidate |
+| 23–25 | read `coctree.pyx` | 16,976 | excellent bulk-read candidate |
+| 26–28 | install Cython | 2,101 | compact state fact should survive |
+| 29–31 | build failed: setuptools missing | 1,464 | recovery fact; should rank below bulk reads |
+| 32–34 | install setuptools | 2,095 | compact state fact should survive |
+| 35–37 | build extensions succeeded | 8,267 | critical progress milestone |
+| 38–40 | editable install timed out | 1,215 | failure was later superseded, but relation was absent |
+
+This epoch persisted another 51,656 bytes and estimated 21,940 removable
+bytes. After it, all 12 pointer records occupied 8,939 Provider bytes. The
+local size reduction was real, but `missing setuptools -> installed
+setuptools -> build succeeded` became three unrelated opaque addresses. With
+no operation or subject in the path/hint, the model had no basis for selecting
+one for `memory_read`.
+
+### Implemented v2 changes
+
+1. FileBackedGC now ranks eligible new batches by information risk before the
+   checkpoint boundary: successful bulk file inspection first, generic results
+   next, state-changing build/install/edit operations after that, and errors
+   last. Existing PointerGC retains chronological behavior for comparison.
+2. Archive paths are deterministic and meaningful while retaining a hash
+   suffix, for example
+   `m/tool/shell/000005-000007-read-file-setup-py-<hash>.json`.
+3. Pointer hints now expose deterministic typed facts such as operation,
+   safe file subject, outcome, call ID, and exact result size. They do not use
+   model-generated compression; full canonical events remain in the file.
+4. The Provider emits the recovery explanation once and keeps each subsequent
+   append-only pointer record compact. It no longer repeats the full recovery
+   paragraph for every archived batch.
+5. Focused tests prove that a checkpoint with four successful read-only
+   batches and one error archives the reads and keeps the error resident, and
+   that semantic paths/hints remain deterministic.
+
+All workspace tests and Clippy with warnings denied pass. A deterministic
+12-tool, one-user-message B0/FBGC fixture also passed both arms with zero
+redundant tool calls. B0 used 88,221 cumulative model-input bytes; FBGC used
+86,917 with eight cumulative pointer appearances. This is wiring evidence,
+not a real-token or cache result.
+
+The next real test should freeze this v2 binary and first run a purpose-built
+archive-recovery task. It must require an early bulk read after GC and observe
+either `memory_read` or automatic hydration. Only after that should the full
+interleaved `B0/FBGC` Terminal-Bench comparison resume.

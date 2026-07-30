@@ -12,7 +12,7 @@ mod short_memory;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use long_memory::{
     ArchivedMemory, FileArchiveStore, LongMemoryError, LongMemoryErrorKind, LongMemoryManager,
@@ -1208,6 +1208,7 @@ struct PreparedPointerBatch {
     content_hash: String,
     memory_id: String,
     pointer_item: ShortMemoryItem,
+    archive_priority: u8,
     already_archived: bool,
 }
 
@@ -1299,6 +1300,7 @@ fn replace_archivable_batches_with_pointers(
             content_hash,
             memory_id,
             pointer_item,
+            archive_priority: batch_archive_priority(batch),
             already_archived,
         });
     }
@@ -1309,11 +1311,28 @@ fn replace_archivable_batches_with_pointers(
         .iter()
         .filter(|batch| batch.already_archived)
         .count();
-    let new_checkpoint_count = prepared_batches
+    let new_checkpoint_slots = checkpointed_count.saturating_sub(committed_count);
+    let mut ranked_new_batches = prepared_batches
         .iter()
-        .take(checkpointed_count)
         .filter(|batch| !batch.already_archived)
-        .count();
+        .collect::<Vec<_>>();
+    if policy.strategy == RuntimeCompactionStrategy::FileBackedGc {
+        ranked_new_batches.sort_by(|left, right| {
+            right
+                .archive_priority
+                .cmp(&left.archive_priority)
+                .then_with(|| right.removable_bytes.cmp(&left.removable_bytes))
+                .then_with(|| left.sequence.cmp(&right.sequence))
+        });
+    } else {
+        ranked_new_batches.sort_by_key(|batch| batch.sequence);
+    }
+    let selected_new_memory_ids = ranked_new_batches
+        .into_iter()
+        .take(new_checkpoint_slots)
+        .map(|batch| batch.memory_id.clone())
+        .collect::<HashSet<_>>();
+    let new_checkpoint_count = selected_new_memory_ids.len();
     let stable_prefix_bytes = ShortMemoryProjector::project_full(history)
         .iter()
         .fold(0_usize, |total, entry| {
@@ -1321,8 +1340,7 @@ fn replace_archivable_batches_with_pointers(
         });
     let removable_bytes = prepared_batches
         .iter()
-        .take(checkpointed_count)
-        .filter(|batch| !batch.already_archived)
+        .filter(|batch| selected_new_memory_ids.contains(&batch.memory_id))
         .map(|batch| batch.removable_bytes)
         .sum();
     let remaining_step_budget = policy.max_model_steps.saturating_sub(policy.model_step);
@@ -1387,9 +1405,10 @@ fn replace_archivable_batches_with_pointers(
 
     let mut replaced_source_ids = HashSet::new();
     let mut replacements = Vec::<ShortMemoryEntry>::new();
-    for (candidate_index, batch) in prepared_batches.into_iter().enumerate() {
+    for batch in prepared_batches {
         replaced_source_ids.extend(batch.source_event_ids.iter().cloned());
-        let newly_admitted = candidate_index < checkpointed_count && checkpoint_is_profitable;
+        let newly_admitted =
+            checkpoint_is_profitable && selected_new_memory_ids.contains(&batch.memory_id);
         if !batch.already_archived && !newly_admitted {
             // Keep the open epoch append-only. TTL eligibility is recorded in
             // the pure projection, but prompt compaction happens only when a
@@ -1560,26 +1579,50 @@ fn is_archivable_batch(batch: &EventBatch) -> bool {
     }
 }
 
+fn batch_archive_priority(batch: &EventBatch) -> u8 {
+    if batch
+        .events
+        .iter()
+        .any(|event| matches!(event.event, Event::ToolCallCompleted { is_error: true, .. }))
+    {
+        return 0;
+    }
+    let Some(operation) = tool_pointer_operation(batch) else {
+        return 2;
+    };
+    match operation.as_str() {
+        "read-file" | "search-files" | "list-files" | "inspect-files" => 3,
+        "build" | "edit" | "install" | "clone" => 1,
+        _ => 2,
+    }
+}
+
 fn pointer_retrieval_hint(batch: &EventBatch) -> String {
     match batch.context_kind {
         MemoryBatchKind::Tool => {
             let requested = batch.events.iter().find_map(|event| match &event.event {
-                Event::ToolCallRequested { call_id, name, .. } => {
-                    Some((call_id.as_str(), name.as_str()))
-                }
+                Event::ToolCallRequested { call_id, name, .. } => Some((call_id, name)),
                 _ => None,
             });
             let completed = batch.events.iter().find_map(|event| match &event.event {
                 Event::ToolCallCompleted {
                     result, is_error, ..
-                } => Some((result.len(), *is_error)),
+                } => Some((result, *is_error)),
                 _ => None,
             });
             match (requested, completed) {
-                (Some((call_id, name)), Some((result_bytes, is_error))) => format!(
-                    "tool={name} call_id={call_id} status={} result_bytes={result_bytes}; retrieve for exact arguments, output, or evidence",
-                    if is_error { "error" } else { "success" }
-                ),
+                (Some((call_id, name)), Some((result, is_error))) => {
+                    let operation =
+                        tool_pointer_operation(batch).unwrap_or_else(|| safe_path_segment(name));
+                    let subject = tool_pointer_subject(batch)
+                        .map(|subject| format!(" subject={subject}"))
+                        .unwrap_or_default();
+                    let outcome = tool_pointer_outcome(&operation, result, is_error);
+                    format!(
+                        "operation={operation}{subject} outcome={outcome} call_id={call_id} result_bytes={}; exact arguments and output are recoverable",
+                        result.len()
+                    )
+                }
                 _ => "closed tool interaction; retrieve for exact arguments, output, or evidence"
                     .to_owned(),
             }
@@ -1600,6 +1643,93 @@ fn pointer_retrieval_hint(batch: &EventBatch) -> String {
     }
 }
 
+fn tool_pointer_operation(batch: &EventBatch) -> Option<String> {
+    let (name, command) = batch.events.iter().find_map(|event| match &event.event {
+        Event::ToolCallRequested {
+            name, arguments, ..
+        } => Some((
+            name.as_str(),
+            arguments.get("command").and_then(|value| value.as_str()),
+        )),
+        _ => None,
+    })?;
+    let Some(command) = command else {
+        return Some(safe_path_segment(name));
+    };
+    let command = command.to_ascii_lowercase();
+    let operation = if command.contains("pytest") {
+        "test"
+    } else if command.contains("build_ext") || command.contains("cargo build") {
+        "build"
+    } else if command.contains("pip install") || command.contains("uv pip install") {
+        "install"
+    } else if command.contains("git clone") {
+        "clone"
+    } else if command.contains("sed -i") || command.contains("apply_patch") {
+        "edit"
+    } else if command.contains("grep ") || command.contains("rg ") {
+        "search-files"
+    } else if command.contains("find ") {
+        "inspect-files"
+    } else if command.contains("cat ") || command.contains("sed -n") {
+        "read-file"
+    } else if command.contains("ls ") {
+        "list-files"
+    } else if command.contains("git status") || command.contains("git diff") {
+        "inspect-repository"
+    } else if command.contains("python") {
+        "python"
+    } else {
+        "shell-command"
+    };
+    Some(operation.to_owned())
+}
+
+fn tool_pointer_subject(batch: &EventBatch) -> Option<String> {
+    let command = batch.events.iter().find_map(|event| match &event.event {
+        Event::ToolCallRequested { arguments, .. } => {
+            arguments.get("command").and_then(|value| value.as_str())
+        }
+        _ => None,
+    })?;
+    command
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|character: char| {
+                matches!(character, '\'' | '"' | ';' | ',' | '(' | ')')
+            })
+        })
+        .find(|token| {
+            let lowercase = token.to_ascii_lowercase();
+            [".py", ".pyx", ".rs", ".toml", ".json", ".md", ".rst"]
+                .iter()
+                .any(|extension| lowercase.ends_with(extension))
+        })
+        .and_then(|token| Path::new(token).file_name())
+        .and_then(|name| name.to_str())
+        .map(safe_path_segment)
+}
+
+fn tool_pointer_outcome(operation: &str, result: &str, is_error: bool) -> &'static str {
+    if is_error {
+        if result.to_ascii_lowercase().contains("timed out") {
+            return "timeout";
+        }
+        if result.contains("ModuleNotFoundError") {
+            return "missing-dependency";
+        }
+        return "error";
+    }
+    match operation {
+        "test" if result.contains(" passed") => "tests-passed",
+        "build" => "build-completed",
+        "install" => "install-completed",
+        "clone" => "clone-completed",
+        "edit" => "edit-applied",
+        _ => "success",
+    }
+}
+
 fn pointer_archive_path(batch: &EventBatch, content_hash: &str) -> String {
     let category = match batch.context_kind {
         MemoryBatchKind::Tool => {
@@ -1616,9 +1746,20 @@ fn pointer_archive_path(batch: &EventBatch, content_hash: &str) -> String {
         MemoryBatchKind::Transient => "transient".to_owned(),
         MemoryBatchKind::Misc => "misc".to_owned(),
     };
+    let descriptor = tool_pointer_operation(batch)
+        .or_else(|| Some(safe_path_segment(&format!("{:?}", batch.context_kind))))
+        .unwrap_or_else(|| "evidence".to_owned());
+    let subject = tool_pointer_subject(batch)
+        .map(|subject| format!("-{subject}"))
+        .unwrap_or_default();
+    let short_hash = content_hash
+        .trim_start_matches("sha256:")
+        .chars()
+        .take(12)
+        .collect::<String>();
     format!(
-        "m/{category}/{}.json",
-        content_hash.trim_start_matches("sha256:")
+        "m/{category}/{:06}-{:06}-{descriptor}{subject}-{short_hash}.json",
+        batch.sequence_start, batch.sequence_end
     )
 }
 
@@ -2924,6 +3065,167 @@ mod tests {
         .expect_err("unverified archive must stop compaction");
 
         assert_eq!(error.kind(), RuntimeErrorKind::InvalidLongMemory);
+    }
+
+    #[test]
+    fn file_backed_pointer_path_and_hint_describe_recoverable_evidence() {
+        let events = vec![
+            history_event(
+                5,
+                Event::ToolCallRequested {
+                    call_id: "call-read-setup".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({
+                        "command": "cd /app/project && cat src/setup.py"
+                    }),
+                },
+            ),
+            history_event(
+                7,
+                Event::ToolCallCompleted {
+                    call_id: "call-read-setup".to_owned(),
+                    name: "shell".to_owned(),
+                    result: "setup contents".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let batch = EventBatch {
+            context_key: "tool:call-read-setup".to_owned(),
+            context_kind: MemoryBatchKind::Tool,
+            run_id: Some(RunId::new("prior-run")),
+            sequence_start: 5,
+            sequence_end: 7,
+            event_count: events.len(),
+            estimated_tokens: 100,
+            raw_item_bytes: 2_000,
+            key_content_budget_bytes: 0,
+            key_content: String::new(),
+            key_content_bytes: 0,
+            materialized_key_bytes: 0,
+            key_admission_rank: None,
+            key_admission: KeyAdmissionDecision::NotCandidate,
+            load_state: MemoryLoadState::NoLoad,
+            events,
+        };
+        let content_hash =
+            stable_content_hash(&serde_json::to_string(&batch.events).expect("events serialize"));
+
+        let path = pointer_archive_path(&batch, &content_hash);
+        let hint = pointer_retrieval_hint(&batch);
+
+        assert!(path.contains("000005-000007-read-file-setup-py-"));
+        assert!(path.ends_with(".json"));
+        assert!(hint.contains("operation=read-file"));
+        assert!(hint.contains("subject=setup-py"));
+        assert!(hint.contains("outcome=success"));
+        assert_eq!(batch_archive_priority(&batch), 3);
+    }
+
+    #[test]
+    fn pointer_gc_prefers_read_only_evidence_over_an_error_at_checkpoint_boundary() {
+        let make_batch = |index: u64, is_error: bool| {
+            let call_id = format!("call-{index}");
+            let events = vec![
+                history_event(
+                    index * 2 - 1,
+                    Event::ToolCallRequested {
+                        call_id: call_id.clone(),
+                        name: "shell".to_owned(),
+                        arguments: serde_json::json!({
+                            "command": format!("cat src/{index}.rs")
+                        }),
+                    },
+                ),
+                history_event(
+                    index * 2,
+                    Event::ToolCallCompleted {
+                        call_id: call_id.clone(),
+                        name: "shell".to_owned(),
+                        result: if is_error {
+                            "important unresolved failure".to_owned()
+                        } else {
+                            format!("source-{index}-{}", "x".repeat(3_000))
+                        },
+                        is_error,
+                    },
+                ),
+            ];
+            EventBatch {
+                context_key: format!("tool:{call_id}"),
+                context_kind: MemoryBatchKind::Tool,
+                run_id: Some(RunId::new("prior-run")),
+                sequence_start: index * 2 - 1,
+                sequence_end: index * 2,
+                event_count: events.len(),
+                estimated_tokens: 750,
+                raw_item_bytes: 3_500,
+                key_content_budget_bytes: 0,
+                key_content: String::new(),
+                key_content_bytes: 0,
+                materialized_key_bytes: 0,
+                key_admission_rank: None,
+                key_admission: KeyAdmissionDecision::NotCandidate,
+                load_state: MemoryLoadState::NoLoad,
+                events,
+            }
+        };
+        let batches = vec![
+            make_batch(1, true),
+            make_batch(2, false),
+            make_batch(3, false),
+            make_batch(4, false),
+            make_batch(5, false),
+        ];
+        let history = batches
+            .iter()
+            .flat_map(|batch| batch.events.clone())
+            .collect::<Vec<_>>();
+        let visibility = history
+            .iter()
+            .map(|event| EventVisibilityDecision {
+                event_id: event.event_id.clone(),
+                sequence: event.sequence,
+                memory_class: MemoryClass::Working,
+                relation_key: None,
+                accumulated_decay: 1,
+                ttl_events: Some(0),
+                pinned: false,
+                protected_by_recency_floor: false,
+                visible: false,
+            })
+            .collect::<Vec<_>>();
+        let mut policy = pointer_gc_policy(4, 1);
+        policy.strategy = RuntimeCompactionStrategy::FileBackedGc;
+        let mut memory = LongMemoryManager::default();
+
+        let (entries, observation) = replace_archivable_batches_with_pointers(
+            &history,
+            ShortMemoryProjector::project_full(&history),
+            &batches,
+            &visibility,
+            &RunId::new("run-1"),
+            policy,
+            &mut memory,
+        )
+        .expect("value-aware checkpoint projection succeeds");
+
+        assert!(observation.expect("admission is observed").admitted);
+        assert_eq!(memory.archived_count().expect("archive count succeeds"), 4);
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+                .count(),
+            4
+        );
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                &entry.item,
+                ShortMemoryItem::ToolResult(result)
+                    if result.call_id == "call-1" && result.is_error
+            )
+        }));
     }
 
     #[test]
