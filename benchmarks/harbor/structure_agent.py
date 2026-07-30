@@ -26,7 +26,7 @@ class StructureAgent(BaseAgent):
         self,
         logs_dir: Path,
         model_name: str | None = None,
-        strategy: str = "PGC",
+        strategy: str = "FBGC",
         max_steps: int = 128,
         max_tokens: int = 8192,
         checkpoint_batches: int = 8,
@@ -37,8 +37,8 @@ class StructureAgent(BaseAgent):
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
         normalized = strategy.upper()
-        if normalized not in {"B0", "PGC"}:
-            raise ValueError("strategy must be B0 or PGC")
+        if normalized not in {"B0", "PGC", "FBGC"}:
+            raise ValueError("strategy must be B0, PGC, or FBGC")
         self.strategy = normalized
         self.max_steps = max_steps
         self.max_tokens = max_tokens
@@ -46,7 +46,11 @@ class StructureAgent(BaseAgent):
         self.pgc_effort = (
             pgc_effort
             if pgc_effort is not None
-            else int(os.environ.get("PGC_EFFORT", "1"))
+            else int(
+                os.environ.get(
+                    "COMPACTION_EFFORT", os.environ.get("PGC_EFFORT", "1")
+                )
+            )
         )
         if self.pgc_effort < 1:
             raise ValueError("pgc_effort must be positive")
@@ -184,6 +188,7 @@ class StructureAgent(BaseAgent):
         context.n_output_tokens = report["output_tokens"]
         context.metadata = {
             "strategy": report["strategy"],
+            "compaction_strategy": report["compaction_strategy"],
             "report_path": str(report_path),
             "terminal_success": report["terminal_success"],
             "uncached_input_tokens": report["uncached_input_tokens"],
@@ -204,6 +209,8 @@ class StructureAgent(BaseAgent):
             "memory_search_calls": report["memory_search_calls"],
             "memory_read_calls": report["memory_read_calls"],
             "memory_pointer_appearances": report["memory_pointer_appearances"],
+            "auto_hydration_count": report["auto_hydration_count"],
+            "auto_hydrated_bytes": report["auto_hydrated_bytes"],
             "provider_raw_dir": str(self.logs_dir / "provider-raw"),
             "tool_raw_dir": str(self.logs_dir / "tool-raw"),
         }
