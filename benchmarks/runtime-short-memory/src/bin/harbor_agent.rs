@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use structure_model::{ContentBlock, ToolDefinition, ToolResultItem};
+use structure_model::{ContentBlock, ToolCallItem, ToolDefinition, ToolResultItem};
 use structure_protocol::{
-    Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, WorkspaceId,
+    Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, ToolInteractionKind,
+    WorkspaceId,
 };
 use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
 use structure_runner::{
@@ -147,6 +148,17 @@ impl HarborBridgeRunner {
 }
 
 impl RunnerEnvironment for HarborBridgeRunner {
+    fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
+        let Some(command) = call
+            .arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return ToolInteractionKind::Generic;
+        };
+        classify_shell_interaction(command)
+    }
+
     async fn execute(
         &mut self,
         request: ToolExecutionRequest,
@@ -255,6 +267,63 @@ impl RunnerEnvironment for HarborBridgeRunner {
 
     async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
         Ok(false)
+    }
+}
+
+fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
+    let command = command.to_ascii_lowercase();
+    if [
+        "sed -i",
+        "perl -pi",
+        "apply_patch",
+        " tee ",
+        "touch ",
+        "mkdir ",
+        "git clone",
+    ]
+    .iter()
+    .any(|pattern| command.contains(pattern))
+    {
+        ToolInteractionKind::Mutation
+    } else if [
+        "pip install",
+        "uv pip",
+        "apt-get install",
+        "npm install",
+        "cargo add",
+    ]
+    .iter()
+    .any(|pattern| command.contains(pattern))
+    {
+        ToolInteractionKind::Dependency
+    } else if ["build_ext", "cargo build", "cmake ", "make "]
+        .iter()
+        .any(|pattern| command.contains(pattern))
+    {
+        ToolInteractionKind::Build
+    } else if ["pytest", "cargo test", "npm test", "unittest"]
+        .iter()
+        .any(|pattern| command.contains(pattern))
+    {
+        ToolInteractionKind::Validation
+    } else if [
+        "cat ",
+        "grep ",
+        "rg ",
+        "find ",
+        "ls ",
+        "head ",
+        "tail ",
+        "sed -n",
+        "git status",
+        "git diff",
+    ]
+    .iter()
+    .any(|pattern| command.contains(pattern))
+    {
+        ToolInteractionKind::Inspection
+    } else {
+        ToolInteractionKind::Generic
     }
 }
 
@@ -775,6 +844,27 @@ mod tests {
         assert!(truncated.starts_with("HEAD"));
         assert!(truncated.ends_with("TAIL"));
         assert!(truncated.contains("[truncated"));
+    }
+
+    #[test]
+    fn shell_interactions_are_classified_before_memory_policy() {
+        for (command, expected) in [
+            ("cat pyproject.toml", ToolInteractionKind::Inspection),
+            ("grep -R TODO src", ToolInteractionKind::Inspection),
+            (
+                "python setup.py build_ext --inplace",
+                ToolInteractionKind::Build,
+            ),
+            (
+                "python -m pip install cython",
+                ToolInteractionKind::Dependency,
+            ),
+            ("pytest -q", ToolInteractionKind::Validation),
+            ("sed -i 's/old/new/' file", ToolInteractionKind::Mutation),
+            ("python scripts/generate.py", ToolInteractionKind::Generic),
+        ] {
+            assert_eq!(classify_shell_interaction(command), expected, "{command}");
+        }
     }
 
     #[test]

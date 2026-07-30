@@ -10,7 +10,7 @@ use std::fmt::{Display, Formatter};
 use std::path::{Component, Path, PathBuf};
 
 use structure_model::{ContentBlock, ToolCallItem, ToolResultItem};
-use structure_protocol::RunId;
+use structure_protocol::{RunId, ToolInteractionKind};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunnerOutput {
@@ -53,6 +53,10 @@ pub struct ToolExecutionResult {
 
 #[allow(async_fn_in_trait)]
 pub trait RunnerEnvironment {
+    fn classify(&self, _call: &ToolCallItem) -> ToolInteractionKind {
+        ToolInteractionKind::Generic
+    }
+
     async fn execute(
         &mut self,
         request: ToolExecutionRequest,
@@ -136,6 +140,13 @@ impl LocalRunner {
 }
 
 impl RunnerEnvironment for LocalRunner {
+    fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
+        match call.name.as_str() {
+            "write_file" => ToolInteractionKind::Mutation,
+            _ => ToolInteractionKind::Generic,
+        }
+    }
+
     async fn execute(
         &mut self,
         request: ToolExecutionRequest,

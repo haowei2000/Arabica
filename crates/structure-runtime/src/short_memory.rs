@@ -6,7 +6,7 @@ use structure_model::{
     ContentBlock, MemoryBatchKey, MemoryBatchKind, MemoryLoadState, ShortMemoryEntry,
     ShortMemoryItem, ToolCallItem, ToolResultItem,
 };
-use structure_protocol::{Event, EventEnvelope, EventId, RunId};
+use structure_protocol::{Event, EventEnvelope, EventId, RunId, ToolInteractionKind};
 
 const BATCH_FIELD_EXCERPT_LIMIT: usize = 64;
 const BATCH_USER_MESSAGE_EXCERPT_LIMIT: usize = 256;
@@ -34,6 +34,11 @@ pub enum MemoryClass {
     Anchor,
     Working,
     Recovery,
+    ToolInspection,
+    ToolMutation,
+    ToolBuild,
+    ToolDependency,
+    ToolValidation,
     Transient,
     Control,
 }
@@ -125,6 +130,11 @@ impl Default for ShortMemoryPolicy {
             (MemoryClass::Anchor, EventTtl::pinned()),
             (MemoryClass::Working, EventTtl::ttl(3)),
             (MemoryClass::Recovery, EventTtl::ttl(12)),
+            (MemoryClass::ToolInspection, EventTtl::ttl(1)),
+            (MemoryClass::ToolMutation, EventTtl::ttl(8)),
+            (MemoryClass::ToolBuild, EventTtl::ttl(8)),
+            (MemoryClass::ToolDependency, EventTtl::ttl(8)),
+            (MemoryClass::ToolValidation, EventTtl::ttl(6)),
             (MemoryClass::Transient, EventTtl::ttl(0)),
             (MemoryClass::Control, EventTtl::ttl(0)),
         ]);
@@ -182,6 +192,11 @@ impl ShortMemoryPolicy {
             (MemoryClass::Anchor, EventTtl::unbounded()),
             (MemoryClass::Working, EventTtl::unbounded()),
             (MemoryClass::Recovery, EventTtl::unbounded()),
+            (MemoryClass::ToolInspection, EventTtl::unbounded()),
+            (MemoryClass::ToolMutation, EventTtl::unbounded()),
+            (MemoryClass::ToolBuild, EventTtl::unbounded()),
+            (MemoryClass::ToolDependency, EventTtl::unbounded()),
+            (MemoryClass::ToolValidation, EventTtl::unbounded()),
             (MemoryClass::Transient, EventTtl::unbounded()),
             (MemoryClass::Control, EventTtl::unbounded()),
         ]);
@@ -617,13 +632,18 @@ fn batch_evidence_priority(batch: &EventBatch) -> u8 {
         .iter()
         .map(|event| match event_memory_traits(&event.event).class {
             MemoryClass::Anchor => 0,
-            MemoryClass::Recovery => 1,
-            MemoryClass::Working => 2,
-            MemoryClass::Control => 3,
-            MemoryClass::Transient => 4,
+            MemoryClass::Recovery
+            | MemoryClass::ToolMutation
+            | MemoryClass::ToolBuild
+            | MemoryClass::ToolDependency => 1,
+            MemoryClass::ToolValidation => 2,
+            MemoryClass::Working => 3,
+            MemoryClass::ToolInspection => 4,
+            MemoryClass::Control => 5,
+            MemoryClass::Transient => 6,
         })
         .min()
-        .unwrap_or(5)
+        .unwrap_or(7)
 }
 
 fn batch_kind_priority(kind: MemoryBatchKind) -> u8 {
@@ -655,6 +675,9 @@ fn batch_identity(
         | Event::RunCancelled => (format!("run:{run}:turn:1"), MemoryBatchKind::Turn),
         Event::ToolCallRequested { call_id, .. } => {
             active_tool_by_run.insert(run.clone(), call_id.clone());
+            (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
+        }
+        Event::ToolCallClassified { call_id, .. } => {
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
         }
         Event::ToolCallCompleted { call_id, .. } => {
@@ -870,6 +893,7 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::SessionClosed
         | Event::RunScheduled
         | Event::RunStarted
+        | Event::ToolCallClassified { .. }
         | Event::RunCompleted { output: None } => return None,
     };
     Some(ShortMemoryEntry {
@@ -877,6 +901,17 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         sequence: envelope.sequence,
         item,
     })
+}
+
+fn tool_interaction_memory_class(kind: ToolInteractionKind) -> MemoryClass {
+    match kind {
+        ToolInteractionKind::Inspection => MemoryClass::ToolInspection,
+        ToolInteractionKind::Mutation => MemoryClass::ToolMutation,
+        ToolInteractionKind::Build => MemoryClass::ToolBuild,
+        ToolInteractionKind::Dependency => MemoryClass::ToolDependency,
+        ToolInteractionKind::Validation => MemoryClass::ToolValidation,
+        ToolInteractionKind::Generic => MemoryClass::Working,
+    }
 }
 
 fn event_memory_traits(event: &Event) -> EventMemoryTraits {
@@ -893,6 +928,11 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         Event::ToolCallRequested { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
         }
+        Event::ToolCallClassified { call_id, kind } => (
+            tool_interaction_memory_class(*kind),
+            Some(format!("tool:{call_id}")),
+            false,
+        ),
         Event::ToolCallCompleted {
             call_id,
             is_error: true,
@@ -941,6 +981,7 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::RunStarted => "run.started",
         Event::MessageAccepted { .. } => "message.accepted",
         Event::ToolCallRequested { .. } => "tool.call.requested",
+        Event::ToolCallClassified { .. } => "tool.call.classified",
         Event::ToolCallCompleted { is_error: true, .. } => "tool.call.error",
         Event::ToolCallCompleted {
             is_error: false, ..
@@ -1062,6 +1103,9 @@ fn event_semantic_key(event: &Event) -> Option<String> {
                 "tool_call name={name} call_id={call_id} {}",
                 compact_text("arguments", &arguments)
             ))
+        }
+        Event::ToolCallClassified { call_id, kind } => {
+            Some(format!("tool_class call_id={call_id} kind={kind:?}").to_lowercase())
         }
         Event::ToolCallCompleted {
             call_id,
@@ -1206,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn detailed_protocol_events_map_to_five_retention_classes() {
+    fn detailed_protocol_events_map_to_retention_classes() {
         assert_eq!(
             ShortMemoryProjector::classify_event(&Event::MessageAccepted {
                 content: "remember this".to_owned(),
@@ -1223,6 +1267,22 @@ mod tests {
         assert_eq!(tool_error.class, MemoryClass::Recovery);
         assert_eq!(tool_error.relation_key.as_deref(), Some("tool:call-1"));
         assert!(tool_error.completes_relation);
+        for (kind, expected_class) in [
+            (ToolInteractionKind::Inspection, MemoryClass::ToolInspection),
+            (ToolInteractionKind::Mutation, MemoryClass::ToolMutation),
+            (ToolInteractionKind::Build, MemoryClass::ToolBuild),
+            (ToolInteractionKind::Dependency, MemoryClass::ToolDependency),
+            (ToolInteractionKind::Validation, MemoryClass::ToolValidation),
+            (ToolInteractionKind::Generic, MemoryClass::Working),
+        ] {
+            let classified = ShortMemoryProjector::classify_event(&Event::ToolCallClassified {
+                call_id: "call-1".to_owned(),
+                kind,
+            });
+            assert_eq!(classified.class, expected_class);
+            assert_eq!(classified.relation_key.as_deref(), Some("tool:call-1"));
+            assert!(!classified.completes_relation);
+        }
         assert_eq!(
             ShortMemoryProjector::classify_event(&Event::CommandOutput {
                 stream: OutputStream::Stdout,
@@ -1234,6 +1294,26 @@ mod tests {
         assert_eq!(
             ShortMemoryProjector::classify_event(&Event::SessionClosed).class,
             MemoryClass::Control
+        );
+    }
+
+    #[test]
+    fn tool_interaction_classes_have_independent_default_ttls() {
+        let policy = ShortMemoryPolicy::default();
+
+        assert_eq!(
+            policy.ttl_for(MemoryClass::ToolInspection),
+            EventTtl::ttl(1)
+        );
+        assert_eq!(policy.ttl_for(MemoryClass::ToolMutation), EventTtl::ttl(8));
+        assert_eq!(policy.ttl_for(MemoryClass::ToolBuild), EventTtl::ttl(8));
+        assert_eq!(
+            policy.ttl_for(MemoryClass::ToolDependency),
+            EventTtl::ttl(8)
+        );
+        assert_eq!(
+            policy.ttl_for(MemoryClass::ToolValidation),
+            EventTtl::ttl(6)
         );
     }
 

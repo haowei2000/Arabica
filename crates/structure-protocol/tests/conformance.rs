@@ -1,6 +1,6 @@
 use structure_protocol::{
     Command, ContextEntry, DisclosureLevel, ErrorCode, Event, OutputStream, RunId, SessionId,
-    WorkspaceId,
+    ToolInteractionKind, WorkspaceId,
 };
 
 #[test]
@@ -118,6 +118,13 @@ fn every_event_has_a_stable_dotted_wire_name() {
                 is_error: false,
             },
             "tool.call.completed",
+        ),
+        (
+            Event::ToolCallClassified {
+                call_id: "call-1".to_owned(),
+                kind: ToolInteractionKind::Mutation,
+            },
+            "tool.call.classified",
         ),
         (
             Event::CommandOutput {

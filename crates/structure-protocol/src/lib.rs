@@ -126,6 +126,21 @@ pub enum RunStatus {
     Cancelled,
 }
 
+/// Provider- and runner-neutral retention semantics for one tool interaction.
+/// Concrete runners classify their own tools; Runtime memory policy consumes
+/// this typed event and never parses tool arguments.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolInteractionKind {
+    Inspection,
+    Mutation,
+    Build,
+    Dependency,
+    Validation,
+    #[default]
+    Generic,
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum Event {
@@ -150,6 +165,11 @@ pub enum Event {
         call_id: String,
         name: String,
         arguments: serde_json::Value,
+    },
+    #[serde(rename = "tool.call.classified")]
+    ToolCallClassified {
+        call_id: String,
+        kind: ToolInteractionKind,
     },
     #[serde(rename = "tool.call.completed")]
     ToolCallCompleted {

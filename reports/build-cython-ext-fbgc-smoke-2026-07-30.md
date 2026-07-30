@@ -186,28 +186,48 @@ one for `memory_read`.
 
 ### Implemented v2 changes
 
-1. FileBackedGC now ranks eligible new batches by information risk before the
-   checkpoint boundary: successful bulk file inspection first, generic results
-   next, state-changing build/install/edit operations after that, and errors
-   last. Existing PointerGC retains chronological behavior for comparison.
-2. Archive paths are deterministic and meaningful while retaining a hash
-   suffix, for example
-   `m/tool/shell/000005-000007-read-file-setup-py-<hash>.json`.
-3. Pointer hints now expose deterministic typed facts such as operation,
-   safe file subject, outcome, call ID, and exact result size. They do not use
-   model-generated compression; full canonical events remain in the file.
-4. The Provider emits the recovery explanation once and keeps each subsequent
+An initial implementation parsed shell command strings inside Runtime/FBGC.
+That approach was rejected because runner-specific command rules would
+contaminate the generic GC policy. The corrected design separates typed
+classification from GC admission:
+
+`raw tool call -> runner classification -> tool.call.classified event -> TTL policy -> generic FBGC gate`
+
+The Harbor shell adapter classifies interactions as `inspection`, `mutation`,
+`build`, `dependency`, `validation`, or `generic`. Other runners can classify
+their own tool vocabulary without teaching Runtime about shell commands. The
+default TTL limits are respectively 1, 8, 8, 8, 6, and 3 decay units. These
+values are initial experimental settings, not yet quality- or cost-optimal.
+
+1. FileBackedGC ranks eligible new batches by net removable bytes before the
+   checkpoint boundary. TTL expiry, relation closure, pinning, cache-reset
+   debt, cooldown, and probability-weighted reuse remain the other admission
+   signals. Existing PointerGC retains chronological behavior for comparison.
+2. The classification event joins the corresponding closed tool batch but is
+   not projected as an extra Provider message. Its independent TTL therefore
+   acts as the retention floor for that interaction.
+3. Archive paths use only typed protocol metadata: batch kind, tool name,
+   sequence range, terminal status, and a hash suffix. For example:
+   `m/tool/shell/000005-000007-success-<hash>.json`.
+4. Pointer residue exposes only protocol-level facts: tool name, success/error
+   status, sequence range, call ID, event count, and exact result size. It does
+   not parse shell command strings or use model-generated compression; full
+   canonical events remain in the file.
+5. The Provider emits the recovery explanation once and keeps each subsequent
    append-only pointer record compact. It no longer repeats the full recovery
    paragraph for every archived batch.
-5. Focused tests prove that a checkpoint with four successful read-only
-   batches and one error archives the reads and keeps the error resident, and
-   that semantic paths/hints remain deterministic.
+6. Focused tests prove that a checkpoint chooses the four candidates with the
+   largest generic net savings and keeps the smaller candidate resident, and
+   that paths/hints do not copy task-specific command content. Separate tests
+   cover runner classification and the TTL assigned to each typed interaction.
 
 All workspace tests and Clippy with warnings denied pass. A deterministic
 12-tool, one-user-message B0/FBGC fixture also passed both arms with zero
 redundant tool calls. B0 used 88,221 cumulative model-input bytes; FBGC used
-86,917 with eight cumulative pointer appearances. This is wiring evidence,
-not a real-token or cache result.
+86,101 with 16 cumulative pointer appearances, a 2.4% byte reduction. This is
+wiring evidence, not a real-token or cache result. The first real LongCat run
+described earlier in this report predates the typed classification event and
+must not be used to validate these TTL values.
 
 The next real test should freeze this v2 binary and first run a purpose-built
 archive-recovery task. It must require an early bulk read after GC and observe
