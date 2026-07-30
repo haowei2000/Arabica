@@ -16,14 +16,14 @@ use structure_runner::{
 };
 use structure_runtime::{
     AutoHydrationObservation, CoreRuntime, PointerGcAdmissionObservation, PointerGcObservationSink,
-    RuntimeArchiveStore, ShortMemoryPolicy,
+    RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
 };
 use structure_session::SessionManager;
 use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
 
-const REPORT_SCHEMA: &str = "structure.harbor-agent/v5";
+const REPORT_SCHEMA: &str = "structure.harbor-agent/v6";
 const DEFAULT_MAX_STEPS: usize = 128;
 const DEFAULT_MAX_TOKENS: u32 = 8_192;
 const DEFAULT_CHECKPOINT_BATCHES: usize = 8;
@@ -38,6 +38,7 @@ const INPUT_SNAPSHOT_COMMAND: &str = "set -eu; snapshot=/tmp/structure-input-sna
 enum Strategy {
     B0,
     Pgc,
+    Fbgc,
 }
 
 impl Strategy {
@@ -45,7 +46,8 @@ impl Strategy {
         match raw.to_ascii_uppercase().as_str() {
             "B0" => Ok(Self::B0),
             "PGC" => Ok(Self::Pgc),
-            _ => Err(format!("invalid strategy {raw}; expected B0 or PGC").into()),
+            "FBGC" | "FILE_BACKED_GC" => Ok(Self::Fbgc),
+            _ => Err(format!("invalid strategy {raw}; expected B0, PGC, or FBGC").into()),
         }
     }
 }
@@ -275,6 +277,7 @@ struct HarborAgentReport {
     schema_version: &'static str,
     strategy: Strategy,
     model: String,
+    compaction_strategy: RuntimeCompactionStrategy,
     pointer_gc_enabled: bool,
     pointer_gc_checkpoint_batches: usize,
     pgc_effort: usize,
@@ -342,9 +345,19 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let recorder = ProviderRecorder::with_snapshot_path(
         config.report.with_file_name("provider-calls.partial.json"),
     );
-    let (policy, pointer_gc_enabled) = match config.strategy {
-        Strategy::B0 => (ShortMemoryPolicy::full_replay(), false),
-        Strategy::Pgc => (ShortMemoryPolicy::ttl_only(), true),
+    let (policy, compaction_strategy) = match config.strategy {
+        Strategy::B0 => (
+            ShortMemoryPolicy::full_replay(),
+            RuntimeCompactionStrategy::Disabled,
+        ),
+        Strategy::Pgc => (
+            ShortMemoryPolicy::ttl_only(),
+            RuntimeCompactionStrategy::PointerGc,
+        ),
+        Strategy::Fbgc => (
+            ShortMemoryPolicy::ttl_only(),
+            RuntimeCompactionStrategy::FileBackedGc,
+        ),
     };
     let archive_root = config
         .report
@@ -355,9 +368,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         RecordingProvider::new(provider, recorder.clone()),
         HarborBridgeRunner::default(),
         policy,
-        pointer_gc_enabled,
+        false,
         RuntimeArchiveStore::File { root: archive_root },
     );
+    runtime.set_compaction_strategy(compaction_strategy);
     runtime.set_pointer_gc_checkpoint_batches(config.checkpoint_batches);
     runtime.set_pointer_gc_effort(config.pgc_effort);
     runtime.set_pointer_gc_continuation_probability_bps(config.pgc_continuation_probability_bps);
@@ -481,7 +495,12 @@ fn build_report(
         schema_version: REPORT_SCHEMA,
         strategy: config.strategy,
         model: config.model.clone(),
-        pointer_gc_enabled: config.strategy == Strategy::Pgc,
+        compaction_strategy: match config.strategy {
+            Strategy::B0 => RuntimeCompactionStrategy::Disabled,
+            Strategy::Pgc => RuntimeCompactionStrategy::PointerGc,
+            Strategy::Fbgc => RuntimeCompactionStrategy::FileBackedGc,
+        },
+        pointer_gc_enabled: config.strategy != Strategy::B0,
         pointer_gc_checkpoint_batches: config.checkpoint_batches,
         pgc_effort: config.pgc_effort,
         pgc_continuation_probability_bps: config.pgc_continuation_probability_bps,
@@ -612,8 +631,8 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
     let mut max_steps = DEFAULT_MAX_STEPS;
     let mut max_tokens = DEFAULT_MAX_TOKENS;
     let mut checkpoint_batches = DEFAULT_CHECKPOINT_BATCHES;
-    let mut pgc_effort = public_env(["PGC_EFFORT"])
-        .map(|value| parse(&value, "PGC_EFFORT"))
+    let mut pgc_effort = public_env(["COMPACTION_EFFORT", "PGC_EFFORT"])
+        .map(|value| parse(&value, "COMPACTION_EFFORT"))
         .transpose()?
         .unwrap_or(DEFAULT_PGC_EFFORT);
     let mut pgc_continuation_probability_bps = public_env(["PGC_CONTINUATION_PROBABILITY_BPS"])
@@ -762,6 +781,10 @@ mod tests {
     fn strategy_parser_accepts_only_the_experiment_arms() {
         assert_eq!(Strategy::parse("b0").expect("B0 is valid"), Strategy::B0);
         assert_eq!(Strategy::parse("pgc").expect("PGC is valid"), Strategy::Pgc);
+        assert_eq!(
+            Strategy::parse("fbgc").expect("FBGC is valid"),
+            Strategy::Fbgc
+        );
         assert!(Strategy::parse("S").is_err());
     }
 

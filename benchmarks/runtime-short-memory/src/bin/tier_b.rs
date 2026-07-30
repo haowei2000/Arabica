@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
-use structure_runtime::{KeyAdmissionPolicy, ShortMemoryPolicy};
+use structure_runtime::{KeyAdmissionPolicy, RuntimeCompactionStrategy, ShortMemoryPolicy};
 use structure_short_memory_benchmark::{
     ExpectedFile, FixtureFileProvider, TierBEvidenceLevel, TierBProviderMetadata, TierBSuiteConfig,
     TierBTask, run_tier_b_suite,
@@ -186,7 +186,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 },
                 runner_root,
                 short_memory_policy,
-                pointer_gc_enabled: true,
+                compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
                 tasks,
             },
@@ -218,7 +218,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 },
                 runner_root,
                 short_memory_policy,
-                pointer_gc_enabled: true,
+                compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
                 tasks,
             },
@@ -294,7 +294,12 @@ impl StrategyResult {
 fn comparison_policies(
     key_admission: KeyAdmissionPolicy,
     selected: Option<&[String]>,
-) -> Vec<(&'static str, &'static str, ShortMemoryPolicy, bool)> {
+) -> Vec<(
+    &'static str,
+    &'static str,
+    ShortMemoryPolicy,
+    RuntimeCompactionStrategy,
+)> {
     let full_replay = ShortMemoryPolicy::full_replay();
     let ttl_only = ShortMemoryPolicy::ttl_only();
     let mut batch_only = ShortMemoryPolicy::batch_only(2);
@@ -304,31 +309,37 @@ fn comparison_policies(
             "B0",
             "full replay through Runtime with TTL and batch compaction disabled",
             full_replay,
-            false,
+            RuntimeCompactionStrategy::Disabled,
         ),
         (
             "B2",
             "Runtime TTL and relation decay with batch compaction disabled",
             ttl_only,
-            false,
+            RuntimeCompactionStrategy::Disabled,
         ),
         (
             "B3",
             "Runtime batch disclosure with TTL and relation decay disabled",
             batch_only,
-            false,
+            RuntimeCompactionStrategy::Disabled,
         ),
         (
             "S",
             "production Runtime short-memory policy",
             structure_policy(key_admission),
-            false,
+            RuntimeCompactionStrategy::Disabled,
         ),
         (
             "PGC",
             "TTL event GC with exact recoverable pointers and no BatchKey",
             ShortMemoryPolicy::ttl_only(),
-            true,
+            RuntimeCompactionStrategy::PointerGc,
+        ),
+        (
+            "FBGC",
+            "lossless file-backed compact for fully TTL-expired closed batches",
+            ShortMemoryPolicy::ttl_only(),
+            RuntimeCompactionStrategy::FileBackedGc,
         ),
     ];
     policies
@@ -425,7 +436,7 @@ async fn run_fixture_comparison(
     selected: Option<&[String]>,
 ) -> Result<StrategyComparisonReport, Box<dyn Error>> {
     let mut strategies = Vec::new();
-    for (strategy, description, policy, pointer_gc_enabled) in
+    for (strategy, description, policy, compaction_strategy) in
         comparison_policies(key_admission, selected)
     {
         let report = run_tier_b_suite(
@@ -439,7 +450,7 @@ async fn run_fixture_comparison(
                 },
                 runner_root: runner_root.join(strategy.to_ascii_lowercase()),
                 short_memory_policy: policy,
-                pointer_gc_enabled,
+                compaction_strategy,
                 pointer_gc_checkpoint_batches: 4,
                 tasks: build_workload_tasks(repetitions, content, workload)?,
             },
@@ -449,7 +460,7 @@ async fn run_fixture_comparison(
         strategies.push(StrategyResult::new(strategy, description, report));
     }
     Ok(StrategyComparisonReport {
-        schema_version: "structure.short-memory.tier-b-comparison/v4",
+        schema_version: "structure.short-memory.tier-b-comparison/v5",
         suite_id: suite_id.to_owned(),
         evidence_level: TierBEvidenceLevel::Fixture,
         workload: workload.id(),
@@ -472,7 +483,7 @@ async fn run_live_comparison(
     selected: Option<&[String]>,
 ) -> Result<StrategyComparisonReport, Box<dyn Error>> {
     let mut strategies = Vec::new();
-    for (strategy, description, policy, pointer_gc_enabled) in
+    for (strategy, description, policy, compaction_strategy) in
         comparison_policies(key_admission, selected)
     {
         let provider = ApiModelProvider::new(ApiProviderConfig::new(
@@ -492,7 +503,7 @@ async fn run_live_comparison(
                 },
                 runner_root: runner_root.join(strategy.to_ascii_lowercase()),
                 short_memory_policy: policy,
-                pointer_gc_enabled,
+                compaction_strategy,
                 pointer_gc_checkpoint_batches: 4,
                 tasks: build_workload_tasks(repetitions, content, workload)?,
             },
@@ -502,7 +513,7 @@ async fn run_live_comparison(
         strategies.push(StrategyResult::new(strategy, description, report));
     }
     Ok(StrategyComparisonReport {
-        schema_version: "structure.short-memory.tier-b-comparison/v4",
+        schema_version: "structure.short-memory.tier-b-comparison/v5",
         suite_id: suite_id.to_owned(),
         evidence_level: TierBEvidenceLevel::LiveApi,
         workload: workload.id(),
@@ -567,7 +578,7 @@ where
 }
 
 fn parse_strategies(raw: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    const VALID: [&str; 5] = ["B0", "B2", "B3", "S", "PGC"];
+    const VALID: [&str; 6] = ["B0", "B2", "B3", "S", "PGC", "FBGC"];
     let mut selected = Vec::new();
     for item in raw
         .split(',')
@@ -577,7 +588,7 @@ fn parse_strategies(raw: &str) -> Result<Vec<String>, Box<dyn Error>> {
         let normalized = item.to_ascii_uppercase();
         if !VALID.contains(&normalized.as_str()) {
             return Err(format!(
-                "invalid strategy {item}; expected a comma-separated subset of B0,B2,B3,S,PGC"
+                "invalid strategy {item}; expected a comma-separated subset of B0,B2,B3,S,PGC,FBGC"
             )
             .into());
         }
@@ -600,8 +611,8 @@ fn print_help() {
          \n\
          Options:\n\
            --fixture                 Use the deterministic provider; no API call\n\
-           --compare                 Run B0, B2, B3, S, and PGC through Runtime\n\
-           --strategies <CSV>        With --compare, run only this subset (for example B0,PGC)\n\
+           --compare                 Run B0, B2, B3, S, PGC, and FBGC through Runtime\n\
+           --strategies <CSV>        With --compare, run only this subset (for example B0,FBGC)\n\
            --suite-id <ID>           Stable suite identifier\n\
            --repetitions <N>         Number of isolated file tasks (default: 1)\n\
            --history-turns <N>       Extra user-message turns for memory-recall (default: 8)\n\
@@ -630,7 +641,7 @@ mod tests {
     fn comparison_maps_only_runtime_executable_policies() {
         let policies = comparison_policies(KeyAdmissionPolicy::default(), None);
         let ids: Vec<_> = policies.iter().map(|(id, _, _, _)| *id).collect();
-        assert_eq!(ids, ["B0", "B2", "B3", "S", "PGC"]);
+        assert_eq!(ids, ["B0", "B2", "B3", "S", "PGC", "FBGC"]);
         assert_eq!(policies[0].2.recent_turns_load_all, usize::MAX);
         assert!(!policies[0].2.batch_compaction_enabled);
         assert!(!policies[1].2.batch_compaction_enabled);
@@ -638,19 +649,21 @@ mod tests {
         assert_eq!(policies[2].2.recent_turns_load_all, 2);
         assert!(policies[2].2.batch_compaction_enabled);
         assert_eq!(policies[3].2, ShortMemoryPolicy::default());
-        assert!(!policies[3].3);
+        assert_eq!(policies[3].3, RuntimeCompactionStrategy::Disabled);
         assert!(!policies[4].2.batch_compaction_enabled);
-        assert!(policies[4].3);
+        assert_eq!(policies[4].3, RuntimeCompactionStrategy::PointerGc);
+        assert!(!policies[5].2.batch_compaction_enabled);
+        assert_eq!(policies[5].3, RuntimeCompactionStrategy::FileBackedGc);
     }
 
     #[test]
     fn comparison_strategy_filter_is_validated_and_ordered_canonically() {
-        let selected = parse_strategies("pgc,b0,PGC").expect("selection is valid");
-        assert_eq!(selected, ["PGC", "B0"]);
+        let selected = parse_strategies("fbgc,b0,FBGC").expect("selection is valid");
+        assert_eq!(selected, ["FBGC", "B0"]);
 
         let policies = comparison_policies(KeyAdmissionPolicy::default(), Some(&selected));
         let ids: Vec<_> = policies.iter().map(|(id, _, _, _)| *id).collect();
-        assert_eq!(ids, ["B0", "PGC"]);
+        assert_eq!(ids, ["B0", "FBGC"]);
         assert!(parse_strategies("B9").is_err());
         assert!(parse_strategies(",").is_err());
     }

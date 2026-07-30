@@ -18,7 +18,7 @@ pub use long_memory::{
     ArchivedMemory, FileArchiveStore, LongMemoryError, LongMemoryErrorKind, LongMemoryManager,
     LongMemoryStore, SqliteArchiveStore,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub use short_memory::{
     DecayMatch, DecayRule, EventBatch, EventMemoryTraits, EventTtl, EventVisibilityDecision,
@@ -129,6 +129,27 @@ pub struct RuntimeSession {
     pub disclosure: DisclosureLevel,
 }
 
+/// Runtime-owned context compaction mode.
+///
+/// `FileBackedGc` is a lossless compact operation: only TTL-expired, closed
+/// event batches are eligible; exact canonical events are persisted before
+/// their Provider projection is replaced by a recoverable pointer. It never
+/// asks the model to summarize evidence.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCompactionStrategy {
+    #[default]
+    Disabled,
+    PointerGc,
+    FileBackedGc,
+}
+
+impl RuntimeCompactionStrategy {
+    fn enabled(self) -> bool {
+        self != Self::Disabled
+    }
+}
+
 /// One cache-aware PointerGC admission decision made before a Provider call.
 ///
 /// Token values are estimates unless they come from
@@ -139,6 +160,7 @@ pub struct RuntimeSession {
 pub struct PointerGcAdmissionObservation {
     pub run_id: RunId,
     pub model_step: usize,
+    pub strategy: RuntimeCompactionStrategy,
     pub eligible_batches: usize,
     pub checkpointed_batches: usize,
     pub committed_batches: usize,
@@ -213,7 +235,7 @@ pub struct CoreRuntime<M, R> {
     sessions: HashMap<SessionId, RuntimeSession>,
     long_memory: HashMap<WorkspaceId, LongMemoryManager>,
     short_memory_policy: ShortMemoryPolicy,
-    pointer_gc_enabled: bool,
+    compaction_strategy: RuntimeCompactionStrategy,
     pointer_gc_checkpoint_batches: usize,
     pointer_gc_effort: usize,
     pointer_gc_continuation_probability_bps: u32,
@@ -234,7 +256,7 @@ impl<M, R> CoreRuntime<M, R> {
             sessions: HashMap::new(),
             long_memory: HashMap::new(),
             short_memory_policy: ShortMemoryPolicy::default(),
-            pointer_gc_enabled: true,
+            compaction_strategy: RuntimeCompactionStrategy::Disabled,
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
@@ -259,7 +281,7 @@ impl<M, R> CoreRuntime<M, R> {
             sessions: HashMap::new(),
             long_memory: HashMap::new(),
             short_memory_policy,
-            pointer_gc_enabled: true,
+            compaction_strategy: RuntimeCompactionStrategy::Disabled,
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
@@ -286,7 +308,11 @@ impl<M, R> CoreRuntime<M, R> {
             sessions: HashMap::new(),
             long_memory: HashMap::new(),
             short_memory_policy,
-            pointer_gc_enabled,
+            compaction_strategy: if pointer_gc_enabled {
+                RuntimeCompactionStrategy::PointerGc
+            } else {
+                RuntimeCompactionStrategy::Disabled
+            },
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
@@ -303,7 +329,15 @@ impl<M, R> CoreRuntime<M, R> {
     }
 
     pub fn pointer_gc_enabled(&self) -> bool {
-        self.pointer_gc_enabled
+        self.compaction_strategy.enabled()
+    }
+
+    pub fn compaction_strategy(&self) -> RuntimeCompactionStrategy {
+        self.compaction_strategy
+    }
+
+    pub fn set_compaction_strategy(&mut self, strategy: RuntimeCompactionStrategy) {
+        self.compaction_strategy = strategy;
     }
 
     pub fn archive_store(&self) -> &RuntimeArchiveStore {
@@ -546,7 +580,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             &protected_event_ids,
                             &self.short_memory_policy,
                             PointerGcProjectionPolicy {
-                                enabled: self.pointer_gc_enabled,
+                                strategy: self.compaction_strategy,
                                 checkpoint_batches: self.pointer_gc_checkpoint_batches,
                                 effort: self.pointer_gc_effort,
                                 model_step,
@@ -890,7 +924,7 @@ impl PointerGcRunEconomics {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PointerGcProjectionPolicy {
-    enabled: bool,
+    strategy: RuntimeCompactionStrategy,
     checkpoint_batches: usize,
     effort: usize,
     model_step: usize,
@@ -908,6 +942,16 @@ fn project_model_step(
     pointer_gc: PointerGcProjectionPolicy,
     memory: &mut LongMemoryManager,
 ) -> Result<ModelStepProjection, RuntimeError> {
+    let file_backed_policy =
+        (pointer_gc.strategy == RuntimeCompactionStrategy::FileBackedGc).then(|| {
+            let mut policy = policy.clone();
+            // FileBackedGC is the only compaction layer for this strategy.
+            // TTL-expired evidence moves to exact file-backed pointers; the
+            // active projection never substitutes lossy BatchKey excerpts.
+            policy.batch_compaction_enabled = false;
+            policy
+        });
+    let policy = file_backed_policy.as_ref().unwrap_or(policy);
     let mut projection_protected_event_ids = protected_event_ids.clone();
     projection_protected_event_ids.extend(pinned_working_state_event_ids(
         history,
@@ -929,11 +973,12 @@ fn project_model_step(
         &projection_protected_event_ids,
         policy,
     );
-    let (entries, pointer_gc_admission) = if pointer_gc.enabled {
+    let (entries, pointer_gc_admission) = if pointer_gc.strategy.enabled() {
         replace_archivable_batches_with_pointers(
             history,
             materialization.entries,
             &materialization.batches,
+            &materialization.visibility,
             run_id,
             pointer_gc,
             memory,
@@ -941,7 +986,7 @@ fn project_model_step(
     } else {
         (materialization.entries, None)
     };
-    let auto_hydration = if pointer_gc.enabled {
+    let auto_hydration = if pointer_gc.strategy.enabled() {
         hydrate_repeated_tool_batch(
             &materialization.batches,
             run_id,
@@ -1158,7 +1203,7 @@ struct PreparedPointerBatch {
     full_entries: Vec<ShortMemoryEntry>,
     source_event_ids: Vec<String>,
     sequence: u64,
-    raw_item_bytes: usize,
+    removable_bytes: usize,
     archived_content: String,
     content_hash: String,
     memory_id: String,
@@ -1170,6 +1215,7 @@ fn replace_archivable_batches_with_pointers(
     history: &[EventEnvelope],
     entries: Vec<ShortMemoryEntry>,
     batches: &[EventBatch],
+    visibility: &[EventVisibilityDecision],
     run_id: &RunId,
     policy: PointerGcProjectionPolicy,
     memory: &mut impl LongMemoryStore,
@@ -1179,11 +1225,17 @@ fn replace_archivable_batches_with_pointers(
         .enumerate()
         .map(|(index, event)| (event.event_id.to_string(), index))
         .collect();
+    let visible_by_event_id: HashMap<_, _> = visibility
+        .iter()
+        .map(|decision| (decision.event_id.clone(), decision.visible))
+        .collect();
     let mut prepared_batches = Vec::new();
     for batch in batches {
         if batch.load_state == MemoryLoadState::LoadAll
             || !is_archivable_batch(batch)
             || batch.raw_item_bytes == 0
+            || (policy.strategy == RuntimeCompactionStrategy::FileBackedGc
+                && !batch_is_fully_ttl_expired(batch, &visible_by_event_id))
         {
             continue;
         }
@@ -1199,15 +1251,41 @@ fn replace_archivable_batches_with_pointers(
         })?;
         let content_hash = stable_content_hash(&archived_content);
         let memory_id = pointer_archive_path(batch, &content_hash);
-        let already_archived = memory
-            .contains_archive(&memory_id)
-            .map_err(long_memory_error)?;
+        let already_archived =
+            if let Some(archive) = memory.get_archive(&memory_id).map_err(long_memory_error)? {
+                if archive.content_hash != content_hash
+                    || stable_content_hash(&archive.content) != content_hash
+                    || archive.content != archived_content
+                {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidLongMemory,
+                        format!("archived runtime evidence failed verification: {memory_id}"),
+                    ));
+                }
+                true
+            } else {
+                false
+            };
         let pointer_item = ShortMemoryItem::MemoryPointer(MemoryPointer {
             path: memory_id.clone(),
+            content_hash: content_hash.clone(),
             context_kind: batch.context_kind,
             event_count: batch.event_count,
             retrieval_hint: pointer_retrieval_hint(batch),
         });
+        let pointer_bytes = short_memory_entry_bytes(&ShortMemoryEntry {
+            source_event_ids: batch
+                .events
+                .iter()
+                .map(|event| event.event_id.to_string())
+                .collect(),
+            sequence: batch.sequence_start,
+            item: pointer_item.clone(),
+        });
+        let removable_bytes = batch.raw_item_bytes.saturating_sub(pointer_bytes);
+        if !already_archived && removable_bytes == 0 {
+            continue;
+        }
         prepared_batches.push(PreparedPointerBatch {
             full_entries,
             source_event_ids: batch
@@ -1216,7 +1294,7 @@ fn replace_archivable_batches_with_pointers(
                 .map(|event| event.event_id.to_string())
                 .collect(),
             sequence: batch.sequence_start,
-            raw_item_bytes: batch.raw_item_bytes,
+            removable_bytes,
             archived_content,
             content_hash,
             memory_id,
@@ -1245,7 +1323,7 @@ fn replace_archivable_batches_with_pointers(
         .iter()
         .take(checkpointed_count)
         .filter(|batch| !batch.already_archived)
-        .map(|batch| batch.raw_item_bytes)
+        .map(|batch| batch.removable_bytes)
         .sum();
     let remaining_step_budget = policy.max_model_steps.saturating_sub(policy.model_step);
     let weighted_remaining_steps_bps = probability_weighted_remaining_steps_bps(
@@ -1281,6 +1359,7 @@ fn replace_archivable_batches_with_pointers(
     let observation = (candidate_count > 0).then(|| PointerGcAdmissionObservation {
         run_id: run_id.clone(),
         model_step: policy.model_step + 1,
+        strategy: policy.strategy,
         eligible_batches: candidate_count,
         checkpointed_batches: checkpointed_count,
         committed_batches: committed_count,
@@ -1355,6 +1434,18 @@ fn replace_archivable_batches_with_pointers(
         positioned.into_iter().map(|(_, _, entry)| entry).collect(),
         observation,
     ))
+}
+
+fn batch_is_fully_ttl_expired(
+    batch: &EventBatch,
+    visible_by_event_id: &HashMap<EventId, bool>,
+) -> bool {
+    !batch.events.is_empty()
+        && batch.events.iter().all(|event| {
+            visible_by_event_id
+                .get(&event.event_id)
+                .is_some_and(|visible| !visible)
+        })
 }
 
 fn short_memory_entry_bytes(entry: &ShortMemoryEntry) -> usize {
@@ -1788,7 +1879,7 @@ mod tests {
 
     fn pointer_gc_policy(checkpoint_batches: usize, effort: usize) -> PointerGcProjectionPolicy {
         PointerGcProjectionPolicy {
-            enabled: true,
+            strategy: RuntimeCompactionStrategy::PointerGc,
             checkpoint_batches,
             effort,
             model_step: 0,
@@ -2265,6 +2356,7 @@ mod tests {
             LargeResultRunner,
             ShortMemoryPolicy::batch_only(0),
         );
+        runtime.set_compaction_strategy(RuntimeCompactionStrategy::PointerGc);
         runtime.set_pointer_gc_checkpoint_batches(2);
         runtime
             .open_session(&session_id, &WorkspaceId::new("workspace-1"))
@@ -2392,6 +2484,62 @@ mod tests {
     }
 
     #[test]
+    fn file_backed_gc_never_uses_batch_keys_for_resident_events() {
+        let history = vec![
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "src/lib.rs"}),
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "resident evidence".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let mut pointer_policy = pointer_gc_policy(1, 1);
+        pointer_policy.strategy = RuntimeCompactionStrategy::FileBackedGc;
+        let mut memory = LongMemoryManager::default();
+
+        let projection = project_model_step(
+            &history,
+            &RunId::new("current-run"),
+            &HashSet::new(),
+            &ShortMemoryPolicy::default(),
+            pointer_policy,
+            &mut memory,
+        )
+        .expect("projection succeeds");
+
+        assert!(
+            projection
+                .short_memory
+                .iter()
+                .all(|entry| { !matches!(entry.item, ShortMemoryItem::BatchKey(_)) })
+        );
+        assert!(matches!(
+            projection.short_memory.as_slice(),
+            [
+                ShortMemoryEntry {
+                    item: ShortMemoryItem::ToolCall(_),
+                    ..
+                },
+                ShortMemoryEntry {
+                    item: ShortMemoryItem::ToolResult(_),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
     fn pointer_gc_compacts_only_complete_checkpoint_epochs() {
         let make_batch = |index: u64| {
             let call_id = format!("call-{index}");
@@ -2445,6 +2593,7 @@ mod tests {
             &history[..6],
             ShortMemoryProjector::project_full(&history[..6]),
             &batches[..3],
+            &[],
             &RunId::new("run-1"),
             pointer_gc_policy(4, 1),
             &mut pending_memory,
@@ -2469,6 +2618,7 @@ mod tests {
             &history,
             entries,
             &batches,
+            &[],
             &RunId::new("run-1"),
             pointer_gc_policy(4, 1),
             &mut checkpoint_memory,
@@ -2496,6 +2646,7 @@ mod tests {
             &history,
             ShortMemoryProjector::project_full(&history),
             &batches,
+            &[],
             &RunId::new("run-1"),
             pointer_gc_policy(4, 100),
             &mut checkpoint_memory,
@@ -2517,6 +2668,7 @@ mod tests {
             &history,
             ShortMemoryProjector::project_full(&history),
             &batches,
+            &[],
             &RunId::new("run-1"),
             pointer_gc_policy(4, 100),
             &mut conservative_memory,
@@ -2553,6 +2705,7 @@ mod tests {
             &history,
             ShortMemoryProjector::project_full(&history),
             &batches,
+            &[],
             &RunId::new("run-1"),
             measured_cache_policy,
             &mut measured_cache_memory,
@@ -2575,6 +2728,202 @@ mod tests {
                 .expect("archive count succeeds"),
             0
         );
+    }
+
+    #[test]
+    fn file_backed_gc_compacts_only_fully_ttl_expired_batches() {
+        let make_batch = |index: u64| {
+            let call_id = format!("call-{index}");
+            let events = vec![
+                history_event(
+                    index * 2 - 1,
+                    Event::ToolCallRequested {
+                        call_id: call_id.clone(),
+                        name: "read_file".to_owned(),
+                        arguments: serde_json::json!({"path": format!("src/{index}.rs")}),
+                    },
+                ),
+                history_event(
+                    index * 2,
+                    Event::ToolCallCompleted {
+                        call_id: call_id.clone(),
+                        name: "read_file".to_owned(),
+                        result: format!("evidence-{index}-{}", "x".repeat(2_000)),
+                        is_error: false,
+                    },
+                ),
+            ];
+            EventBatch {
+                context_key: format!("tool:{call_id}"),
+                context_kind: MemoryBatchKind::Tool,
+                run_id: Some(RunId::new("prior-run")),
+                sequence_start: index * 2 - 1,
+                sequence_end: index * 2,
+                event_count: events.len(),
+                estimated_tokens: 500,
+                raw_item_bytes: 2_000,
+                key_content_budget_bytes: 0,
+                key_content: String::new(),
+                key_content_bytes: 0,
+                materialized_key_bytes: 0,
+                key_admission_rank: None,
+                key_admission: KeyAdmissionDecision::NotCandidate,
+                load_state: MemoryLoadState::NoLoad,
+                events,
+            }
+        };
+        let batches = vec![make_batch(1), make_batch(2)];
+        let history: Vec<_> = batches
+            .iter()
+            .flat_map(|batch| batch.events.clone())
+            .collect();
+        let visibility: Vec<_> = history
+            .iter()
+            .map(|event| EventVisibilityDecision {
+                event_id: event.event_id.clone(),
+                sequence: event.sequence,
+                memory_class: MemoryClass::Working,
+                relation_key: None,
+                accumulated_decay: 1,
+                ttl_events: Some(0),
+                pinned: false,
+                protected_by_recency_floor: false,
+                visible: event.sequence == 4,
+            })
+            .collect();
+        let mut policy = pointer_gc_policy(1, 1);
+        policy.strategy = RuntimeCompactionStrategy::FileBackedGc;
+        policy.continuation_probability_bps = PROBABILITY_SCALE_BPS;
+        let archive_root = std::env::temp_dir().join(format!(
+            "structure-fbgc-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after epoch")
+                .as_nanos()
+        ));
+        let mut memory =
+            LongMemoryManager::with_file_archive(&archive_root).expect("file archive opens");
+
+        let (entries, observation) = replace_archivable_batches_with_pointers(
+            &history,
+            ShortMemoryProjector::project_full(&history),
+            &batches,
+            &visibility,
+            &RunId::new("run-1"),
+            policy,
+            &mut memory,
+        )
+        .expect("file-backed projection succeeds");
+
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+                .count(),
+            1
+        );
+        let pointer_path = entries
+            .iter()
+            .find_map(|entry| match &entry.item {
+                ShortMemoryItem::MemoryPointer(pointer) => Some(pointer.path.clone()),
+                _ => None,
+            })
+            .expect("one file pointer is projected");
+        assert!(archive_root.join(pointer_path).is_file());
+        assert!(entries.iter().any(|entry| {
+            matches!(&entry.item, ShortMemoryItem::ToolCall(call) if call.call_id == "call-2")
+        }));
+        let observation = observation.expect("eligible batch is observed");
+        assert_eq!(
+            observation.strategy,
+            RuntimeCompactionStrategy::FileBackedGc
+        );
+        assert_eq!(observation.eligible_batches, 1);
+        assert!(observation.admitted);
+        assert_eq!(memory.archived_count().expect("archive count succeeds"), 1);
+        std::fs::remove_dir_all(archive_root).expect("file archive fixture is removed");
+    }
+
+    #[test]
+    fn file_backed_gc_rejects_unverified_existing_archive() {
+        let events = vec![
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "src/lib.rs"}),
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallCompleted {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "exact evidence".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let batch = EventBatch {
+            context_key: "tool:call-1".to_owned(),
+            context_kind: MemoryBatchKind::Tool,
+            run_id: Some(RunId::new("prior-run")),
+            sequence_start: 1,
+            sequence_end: 2,
+            event_count: events.len(),
+            estimated_tokens: 100,
+            raw_item_bytes: 400,
+            key_content_budget_bytes: 0,
+            key_content: String::new(),
+            key_content_bytes: 0,
+            materialized_key_bytes: 0,
+            key_admission_rank: None,
+            key_admission: KeyAdmissionDecision::NotCandidate,
+            load_state: MemoryLoadState::NoLoad,
+            events: events.clone(),
+        };
+        let archived_content = serde_json::to_string(&events).expect("events serialize");
+        let expected_hash = stable_content_hash(&archived_content);
+        let archive_path = pointer_archive_path(&batch, &expected_hash);
+        let mut memory = LongMemoryManager::default();
+        memory
+            .put_archive(
+                &archive_path,
+                "tampered evidence".to_owned(),
+                "sha256:tampered".to_owned(),
+            )
+            .expect("tampered fixture is stored");
+        let visibility: Vec<_> = events
+            .iter()
+            .map(|event| EventVisibilityDecision {
+                event_id: event.event_id.clone(),
+                sequence: event.sequence,
+                memory_class: MemoryClass::Working,
+                relation_key: None,
+                accumulated_decay: 1,
+                ttl_events: Some(0),
+                pinned: false,
+                protected_by_recency_floor: false,
+                visible: false,
+            })
+            .collect();
+        let mut policy = pointer_gc_policy(1, 1);
+        policy.strategy = RuntimeCompactionStrategy::FileBackedGc;
+
+        let error = replace_archivable_batches_with_pointers(
+            &events,
+            ShortMemoryProjector::project_full(&events),
+            &[batch],
+            &visibility,
+            &RunId::new("run-1"),
+            policy,
+            &mut memory,
+        )
+        .expect_err("unverified archive must stop compaction");
+
+        assert_eq!(error.kind(), RuntimeErrorKind::InvalidLongMemory);
     }
 
     #[test]

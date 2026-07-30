@@ -248,13 +248,16 @@ stable `turn`, `tool`, `context`, `transient`, and `misc` batches, and assigns
 `LOAD_ALL`, `LOAD_KEY`, or `NO_LOAD`. The result includes explainable
 per-event decisions and batch metadata so model input can be reconstructed
 from the immutable Session event log and the policy. These load states remain
-the pure-policy and benchmark vocabulary. In the production model-step path,
-closed non-`LOAD_ALL` batches are serialized exactly into the runtime archive
-before they leave the prompt. Archival is checkpointed: only complete epochs
-are replaced by typed `MemoryPointer` values, while the current epoch remains
-append-only and lossless. Failed archive writes fail the projection instead of
-losing evidence. The production default is eight eligible batches per
-checkpoint; benchmarks may use a smaller interval to exercise the transition
+the pure-policy and benchmark vocabulary. `FileBackedGC` is a separate,
+lossless compact strategy and disables BatchKey materialisation in the active
+model-step projection. TTL expiry creates eligibility but does not delete an
+event. Only a fully TTL-expired, relation-closed batch outside the protected
+working tail may enter a compact checkpoint. Its exact canonical envelopes are
+serialized to the runtime file archive and SHA-256-verified before they leave
+the prompt. Only complete epochs are replaced by typed `MemoryPointer` values,
+while the current epoch remains append-only and lossless. Failed writes or
+integrity mismatches fail projection instead of losing evidence. The default
+is eight eligible batches per checkpoint; benchmarks may use a smaller interval to exercise the transition
 in a bounded run. Checkpoint completion is necessary but not sufficient for
 collection. Runtime converts removable provider-visible bytes to estimated
 tokens using the preceding real request's observed token density. When real
@@ -264,11 +267,13 @@ projected stable-prefix token count. It then weights the remaining model step
 budget with a geometric survival curve rather than treating checkpoint batch
 count as the future reuse horizon. Collection occurs only when
 `estimated_saved_tokens_per_call * probability_weighted_remaining_steps >=
-estimated_cache_reset_tokens * PGC_EFFORT`. The default continuation
+estimated_cache_reset_tokens * COMPACTION_EFFORT`. The default continuation
 probability is 7,500 basis points and the default effort is 1; higher effort
 requires proportionally more expected return. Once an epoch has been archived,
 its pointers remain committed even if later observations would reject a new
-rewrite, preventing full/pointer oscillation. The server reads `PGC_EFFORT` and
+rewrite, preventing full/pointer oscillation. The server selects
+`file_backed_gc` by default through `STRUCTURE__COMPACTION_STRATEGY`, reads
+`COMPACTION_EFFORT` (with `PGC_EFFORT` as a compatibility fallback), and reads
 `PGC_CONTINUATION_PROBABILITY_BPS`; embedders configure the same policy through
 `CoreRuntime` setters. Each eligible decision is exposed as a
 `PointerGcAdmissionObservation` for attribution.
@@ -279,10 +284,11 @@ step, older closed tool batches from that same run pass through the normal TTL
 and `LOAD_ALL` / `LOAD_KEY` / `NO_LOAD` pipeline. Projected active-run entries
 are encoded after the current user input and before the protected continuation,
 preserving tool-call/result pairing while bounding older same-run context.
-Pointers expose only stable metadata and a relative content-addressed path such
-as `m/tool/write_file/<sha256>.json` inside Runtime. They are omitted from the
-provider prompt. The fixed `memory_search` tool discovers matching logical
-paths without eagerly loading content, and `memory_read` verifies the archived
+Pointers expose only stable metadata, the verified content hash, and a relative
+content-addressed path such as `m/tool/write_file/<sha256>.json` inside Runtime. They are omitted from the
+stable prefix and appended as a compact Provider-visible recovery suffix. The
+fixed `memory_search` tool discovers matching logical paths without eagerly
+loading content, and `memory_read` verifies the archived
 SHA-256 digest and hydrates the exact event envelopes through a normal paired
 tool call/result continuation. Both tool definitions are stable from the first
 model request. The meaningful directory portion is derived from typed event

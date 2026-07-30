@@ -80,39 +80,41 @@ usage so codec expansion can be detected separately. A smaller
 `ShortMemoryItem` does not by itself guarantee fewer tokens after a provider
 maps a BatchKey to wire messages.
 
-`BatchKey` remains an intentional benchmark/ablation representation. The
-production CoreRuntime model-step path can instead use checkpoint PointerGC:
-closed non-`LOAD_ALL` batches are archived exactly, and only complete epochs
-are replaced by SHA-256-verifiable `MemoryPointer` values. The open epoch stays
+`BatchKey` remains an intentional benchmark/ablation representation. The new
+`FileBackedGC` Runtime strategy does not use it. TTL expiry creates GC
+eligibility only; a batch must also be fully expired, relation-closed, outside
+the protected working tail, and strictly smaller as a pointer before it can be
+compacted. Exact canonical event envelopes are written to the configured file
+archive and SHA-256-verified before Provider projection changes. Only complete
+epochs are then replaced by `MemoryPointer` values. The open epoch stays
 append-only and lossless. A complete epoch is only collected when its
 probability-weighted future token savings cover the estimated uncached-token
-cost of a cache reset multiplied by `PGC_EFFORT`. Runtime uses the preceding
+cost of a cache reset multiplied by `COMPACTION_EFFORT`. Runtime uses the preceding
 real Provider response's `cached_input_tokens` as reset cost when usage is
 available, and falls back to the projected stable-prefix token count only when
 it is not. Removable bytes are converted with the preceding request's observed
 token density. Remaining calls use a bounded geometric survival curve controlled by
 `PGC_CONTINUATION_PROBABILITY_BPS` (default 7,500) instead of using checkpoint
-batch count as a horizon proxy. `PGC_EFFORT=1` admits estimated break-even
+batch count as a horizon proxy. `COMPACTION_EFFORT=1` admits estimated break-even
 collection; larger positive integers require proportionally more return.
-Admission checks and accepted epoch transitions are included in Harbor v3
+Admission checks and accepted epoch transitions are included in Harbor v6
 reports.
 Pointers use meaningful logical paths such as
 `m/tool/write_file/<sha256>.json`; the file adapter maps that path beneath its
 configured root, while SQLite uses the same path as its primary key. Absolute
 host paths are never exposed to the model.
 
-MemoryPointer values are Runtime bookkeeping, not provider messages. The
-provider omits them from the prompt so a pointer has zero wire-token cost.
-`memory_search` returns matching logical paths and `memory_read` verifies and
-hydrates one exact archive when the model needs older evidence. Both tool
-schemas are present from the first call so enabling recovery does not mutate
-the reusable prompt prefix.
+MemoryPointer values are encoded as a compact Provider-visible suffix containing
+the relative path, content hash, relation metadata, and exact `memory_read`
+argument. `memory_search` returns matching logical paths and `memory_read`
+verifies and hydrates one exact archive when the model needs older evidence.
+Both tool schemas are present from the first call so enabling recovery does not
+mutate the reusable prompt prefix.
 
-Tier-B v4 keeps B3 and S unchanged for historical BatchKey comparability and
-adds the independent `PGC` strategy: TTL/relation Event GC, no BatchKey, exact
-recoverable pointers, and a persistent file archive. Reports count BatchKey
-and MemoryPointer appearances separately so a PGC result is not valid evidence
-unless its mechanism actually activates.
+Tier-B v5 keeps legacy `PGC` for comparison and adds independent `FBGC`:
+lossless file-backed compact over only fully TTL-expired closed batches, with
+no BatchKey. Reports record the selected Runtime compaction strategy and count
+BatchKey and MemoryPointer appearances separately.
 
 Run the full release-mode scaling matrix:
 
@@ -176,12 +178,12 @@ cargo run -p structure-short-memory-benchmark --bin tier_b -- \
   --single-message-tools 12 --model <MODEL> --pretty --fail-on-task
 ```
 
-Add `--compare` to execute B0, B2, B3, S, and PGC over that same single-message
+Add `--compare` to execute B0, B2, B3, S, PGC, and FBGC over that same single-message
 task. Runtime permits at most 32 model steps per run, so the benchmark remains
 bounded while allowing this workload to cross the default 20-event recency
 floor.
 
-Use `--strategies B0,PGC` with `--compare` for a focused live A/B. This avoids
+Use `--strategies B0,FBGC` with `--compare` for a focused live A/B. This avoids
 spending provider calls on unrelated ablations while measuring cache behavior.
 
 Run the end-to-end policy comparison against the real provider:
@@ -205,7 +207,7 @@ Tail-K is not an executable Runtime policy; including it would not be a genuine
 end-to-end comparison. Use `--compare --fixture` to validate comparison wiring
 without network calls.
 
-The report is versioned as `structure.short-memory.tier-b/v4` and stores the
+The report is versioned as `structure.short-memory.tier-b/v5` and stores the
 serialized policy, exact task checks, provider calls, input/output/cached-input
 and uncached-input tokens, provider latency, tool counts, redundant calls,
 accepted user-message counts, historical/run-memory bytes, continuation item
@@ -248,7 +250,7 @@ harbor run --dataset terminal-bench@2.0 \
   --include-task-name db-wal-recovery \
   --agent benchmarks.harbor.structure_agent:StructureAgent \
   --model longcat/LongCat-2.0 \
-  --agent-kwarg strategy=PGC \
+  --agent-kwarg strategy=FBGC \
   --agent-kwarg max_tokens=8192 \
   --agent-kwarg checkpoint_batches=8 \
   --agent-kwarg pgc_effort=1 \
@@ -256,7 +258,8 @@ harbor run --dataset terminal-bench@2.0 \
   --n-attempts 3 --n-concurrent 1
 ```
 
-`PGC_EFFORT` and `PGC_CONTINUATION_PROBABILITY_BPS` can also be supplied
+`COMPACTION_EFFORT` (or legacy `PGC_EFFORT`) and
+`PGC_CONTINUATION_PROBABILITY_BPS` can also be supplied
 through the Harbor host environment. Explicit agent kwargs take precedence;
 effort must be positive and probability must be between 0 and 10,000 basis
 points.
@@ -264,10 +267,10 @@ points.
 Credentials must be injected into the Harbor host process. Do not place them in
 the job configuration. The agent writes `structure-report.json` on normal
 completion and `provider-calls.partial.json` after every Provider response so
-timeouts retain token/cache evidence. PGC also writes
+timeouts retain token/cache evidence. FBGC also writes
 `pointer-gc-admissions.partial.json` after every eligibility decision so an
 external Harbor cancellation preserves the estimated reset cost, weighted
-horizon, and admission reason. B0 and PGC must use identical model, prompt,
+horizon, and admission reason. B0 and FBGC must use identical model, prompt,
 timeout, task image, and generation settings.
 
 Every Harbor run also retains lossless raw exchanges before any parsing or

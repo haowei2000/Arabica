@@ -16,7 +16,9 @@ use structure_provider::{
     ModelRunResult, ProviderError,
 };
 use structure_runner::LocalRunner;
-use structure_runtime::{CoreRuntime, RuntimeArchiveStore, ShortMemoryPolicy};
+use structure_runtime::{
+    CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+};
 use structure_session::SessionManager;
 use tokio::sync::{Mutex, broadcast};
 use tokio_stream::wrappers::BroadcastStream;
@@ -66,13 +68,14 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         let (events, _) = broadcast::channel(512);
-        let runtime = CoreRuntime::with_memory_configuration(
+        let mut runtime = CoreRuntime::with_memory_configuration(
             ServerModel::Echo(EchoModel::default()),
             LocalRunner::new("."),
             ShortMemoryPolicy::default(),
-            true,
+            false,
             local_file_archive_store(),
         );
+        runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
         Self {
             sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
             events,
@@ -94,12 +97,27 @@ impl AppState {
         let tool_root = std::env::var("STRUCTURE__TOOL_ROOT").unwrap_or_else(|_| ".".to_owned());
         let provider =
             ApiModelProvider::new(ApiProviderConfig::new(api_type, api_key, base_url, model))?;
-        let pgc_effort = std::env::var("PGC_EFFORT")
+        let compaction_strategy = match std::env::var("STRUCTURE__COMPACTION_STRATEGY")
+            .unwrap_or_else(|_| "file_backed_gc".to_owned())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "disabled" => RuntimeCompactionStrategy::Disabled,
+            "pointer_gc" => RuntimeCompactionStrategy::PointerGc,
+            "file_backed_gc" | "fbgc" => RuntimeCompactionStrategy::FileBackedGc,
+            value => {
+                return Err(ProviderError::new(format!(
+                    "invalid STRUCTURE__COMPACTION_STRATEGY {value}; expected disabled, pointer_gc, or file_backed_gc"
+                )));
+            }
+        };
+        let pgc_effort = std::env::var("COMPACTION_EFFORT")
+            .or_else(|_| std::env::var("PGC_EFFORT"))
             .unwrap_or_else(|_| "1".to_owned())
             .parse::<usize>()
-            .map_err(|error| ProviderError::new(format!("invalid PGC_EFFORT: {error}")))?;
+            .map_err(|error| ProviderError::new(format!("invalid COMPACTION_EFFORT: {error}")))?;
         if pgc_effort == 0 {
-            return Err(ProviderError::new("PGC_EFFORT must be positive"));
+            return Err(ProviderError::new("COMPACTION_EFFORT must be positive"));
         }
         let pgc_continuation_probability_bps = std::env::var("PGC_CONTINUATION_PROBABILITY_BPS")
             .unwrap_or_else(|_| "7500".to_owned())
@@ -116,9 +134,10 @@ impl AppState {
             ServerModel::Api(provider),
             LocalRunner::new(tool_root),
             ShortMemoryPolicy::default(),
-            true,
+            false,
             local_file_archive_store(),
         );
+        runtime.set_compaction_strategy(compaction_strategy);
         runtime.set_pointer_gc_effort(pgc_effort);
         runtime.set_pointer_gc_continuation_probability_bps(pgc_continuation_probability_bps);
         let (events, _) = broadcast::channel(512);

@@ -152,6 +152,7 @@ pub struct MemoryBatchKey {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MemoryPointer {
     pub path: String,
+    pub content_hash: String,
     pub context_kind: MemoryBatchKind,
     pub event_count: usize,
     pub retrieval_hint: String,

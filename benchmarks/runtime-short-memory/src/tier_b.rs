@@ -16,10 +16,12 @@ use structure_protocol::{
 };
 use structure_provider::{ModelProvider, ModelRunRequest, ModelRunResult, ProviderError};
 use structure_runner::LocalRunner;
-use structure_runtime::{CoreRuntime, RuntimeArchiveStore, ShortMemoryPolicy};
+use structure_runtime::{
+    CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+};
 use structure_session::SessionManager;
 
-pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v4";
+pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v5";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -185,7 +187,7 @@ pub struct TierBSuiteConfig {
     pub provider: TierBProviderMetadata,
     pub runner_root: PathBuf,
     pub short_memory_policy: ShortMemoryPolicy,
-    pub pointer_gc_enabled: bool,
+    pub compaction_strategy: RuntimeCompactionStrategy,
     pub pointer_gc_checkpoint_batches: usize,
     pub tasks: Vec<TierBTask>,
 }
@@ -314,7 +316,7 @@ pub struct TierBReport {
     pub provider: TierBProviderMetadata,
     pub runner_root: PathBuf,
     pub short_memory_policy: ShortMemoryPolicy,
-    pub pointer_gc_enabled: bool,
+    pub compaction_strategy: RuntimeCompactionStrategy,
     pub pointer_gc_checkpoint_batches: usize,
     pub environment: TierBEnvironment,
     pub runs: Vec<TierBRun>,
@@ -509,11 +511,12 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
         RecordingProvider::new(provider, recorder.clone()),
         LocalRunner::new(&runner_root),
         config.short_memory_policy.clone(),
-        config.pointer_gc_enabled,
+        false,
         RuntimeArchiveStore::File {
             root: runner_root.join("runtime-memory"),
         },
     );
+    runtime.set_compaction_strategy(config.compaction_strategy);
     runtime.set_pointer_gc_checkpoint_batches(config.pointer_gc_checkpoint_batches);
     let mut manager = SessionManager::new(runtime);
     let mut runs = Vec::with_capacity(config.tasks.len());
@@ -583,7 +586,7 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
         provider: config.provider,
         runner_root,
         short_memory_policy: config.short_memory_policy,
-        pointer_gc_enabled: config.pointer_gc_enabled,
+        compaction_strategy: config.compaction_strategy,
         pointer_gc_checkpoint_batches: config.pointer_gc_checkpoint_batches,
         environment: TierBEnvironment {
             target_arch: std::env::consts::ARCH.to_owned(),
@@ -1104,7 +1107,7 @@ mod tests {
                 },
                 runner_root: root.clone(),
                 short_memory_policy: ShortMemoryPolicy::default(),
-                pointer_gc_enabled: true,
+                compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
                 tasks: vec![task],
             },
@@ -1160,7 +1163,7 @@ mod tests {
                 },
                 runner_root: root.clone(),
                 short_memory_policy: ShortMemoryPolicy::default(),
-                pointer_gc_enabled: true,
+                compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
                 tasks: vec![task],
             },
@@ -1233,7 +1236,7 @@ mod tests {
                 },
                 runner_root: root.clone(),
                 short_memory_policy: ShortMemoryPolicy::default(),
-                pointer_gc_enabled: true,
+                compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
                 tasks: vec![
                     TierBTask::write_file("write-file-claim", "run-0001/missing.txt", "must exist")
