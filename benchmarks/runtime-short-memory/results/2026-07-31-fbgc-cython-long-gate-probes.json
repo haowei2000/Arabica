@@ -1,0 +1,113 @@
+{
+  "schema_version": "structure.fbgc-long-gate-probes/v1",
+  "created_at": "2026-07-31",
+  "evidence_level": "live_api",
+  "sample_role": "gc_mechanism_gate_sample",
+  "task": "terminal-bench@2.0/build-cython-ext",
+  "strategy": "FBGC",
+  "provider_protocol": "open_ai_chat_completions",
+  "model": "LongCat-2.0",
+  "execution": {
+    "binary_sha256": "fbdd1749eb0b0f1f9cc04e3a80e937b39ed4c200de207edd3c537903e2545ca5",
+    "git_branch": "codex/file-backed-gc",
+    "base_commit": "f262c5deb77b3b40a130ca0bcb8fab0aef8cb21a",
+    "report_schema": "structure.harbor-agent/v7",
+    "max_model_steps": 128,
+    "max_output_tokens": 8192,
+    "checkpoint_batches": 4,
+    "pgc_effort": 1,
+    "pgc_continuation_probability_bps": 7500,
+    "concurrency": 1,
+    "provider_raw_capture": true,
+    "tool_raw_capture": true
+  },
+  "gc_quality_gate": {
+    "max_first_admission_fraction_bps": 6000,
+    "min_post_admission_provider_calls": 4,
+    "require_post_admission_archive_read": true,
+    "archive_read_definition": "An AutoHydrationObservation whose model_step is strictly greater than the first admitted GC model_step."
+  },
+  "strict_acceptance": {
+    "runtime_terminal_success": true,
+    "harbor_reward": 1.0,
+    "verifier_all_checks_pass": true,
+    "gc_quality_gate_pass": true
+  },
+  "summary": {
+    "attempts": 2,
+    "runtime_terminal_successes": 2,
+    "gc_quality_gate_passes": 2,
+    "verifier_successes": 0,
+    "strictly_accepted": 0,
+    "observed_gate_pass_rate": 1.0,
+    "observed_task_success_rate": 0.0,
+    "shared_verifier_failure": "test_ccomplexity: generated Cython extension still calls removed NumPy alias np.int"
+  },
+  "attempts": [
+    {
+      "trial": "build-cython-ext__DEq7gky",
+      "artifact_root": "target/harbor-terminal-bench/structure-cython-gate-v7-fbgc-probe1/build-cython-ext__DEq7gky",
+      "runtime_terminal_success": true,
+      "harbor_reward": 0.0,
+      "verifier_passed": 10,
+      "verifier_total": 11,
+      "strictly_accepted": false,
+      "input_tokens": 586238,
+      "cached_input_tokens": 421632,
+      "uncached_input_tokens": 164606,
+      "output_tokens": 5003,
+      "provider_calls": 49,
+      "tool_calls": 54,
+      "tool_errors": 15,
+      "elapsed_ms": 406729,
+      "pointer_gc_admissions": 2,
+      "admission_model_steps": [6, 14],
+      "auto_hydration_count": 1,
+      "auto_hydrated_bytes": 10882,
+      "auto_hydration_model_steps": [7],
+      "gc_quality_gate_result": {
+        "first_admission_fraction_bps": 1225,
+        "post_admission_provider_calls": 44,
+        "post_admission_archive_read_count": 1,
+        "early_admission_passed": true,
+        "reuse_window_passed": true,
+        "archive_reread_passed": true,
+        "passed": true
+      },
+      "rejection_reason": "Verifier test_ccomplexity failed because np.int remained in ccomplexity.pyx. The agent inspected that file after GC and hydration but did not patch the deprecated alias."
+    },
+    {
+      "trial": "build-cython-ext__3JW6V4A",
+      "artifact_root": "target/harbor-terminal-bench/structure-cython-gate-v7-fbgc-probe2/build-cython-ext__3JW6V4A",
+      "runtime_terminal_success": true,
+      "harbor_reward": 0.0,
+      "verifier_passed": 10,
+      "verifier_total": 11,
+      "strictly_accepted": false,
+      "input_tokens": 611717,
+      "cached_input_tokens": 440320,
+      "uncached_input_tokens": 171397,
+      "output_tokens": 5999,
+      "provider_calls": 50,
+      "tool_calls": 54,
+      "tool_errors": 11,
+      "elapsed_ms": 475843,
+      "pointer_gc_admissions": 2,
+      "admission_model_steps": [6, 14],
+      "auto_hydration_count": 1,
+      "auto_hydrated_bytes": 10892,
+      "auto_hydration_model_steps": [10],
+      "gc_quality_gate_result": {
+        "first_admission_fraction_bps": 1200,
+        "post_admission_provider_calls": 45,
+        "post_admission_archive_read_count": 1,
+        "early_admission_passed": true,
+        "reuse_window_passed": true,
+        "archive_reread_passed": true,
+        "passed": true
+      },
+      "rejection_reason": "Verifier test_ccomplexity failed because np.int remained in ccomplexity.pyx. The agent inspected that file after GC and hydration but did not patch the deprecated alias."
+    }
+  ],
+  "claim_boundary": "This task is frozen as a GC mechanism-gate sample. Both probes establish an early FBGC transition, a long post-GC reuse interval, and a real post-admission archive hydration. Neither is a valid task-quality sample because both failed one of eleven verifier checks. The repeated failure is not evidence of GC-induced forgetting: each trajectory inspected ccomplexity.pyx after its first hydration but omitted the required NumPy compatibility edit."
+}

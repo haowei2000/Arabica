@@ -31,7 +31,7 @@ use structure_model::{
 };
 use structure_protocol::{
     Command, ContextEntry, DisclosureLevel, Event, EventEnvelope, EventId, OutputStream, RunId,
-    SessionId, WorkspaceId,
+    SessionId, ToolInteractionKind, WorkspaceId,
 };
 use structure_provider::{ModelProvider, ModelRunRequest};
 use structure_runner::{RunnerEnvironment, RunnerOutput, ToolExecutionRequest};
@@ -47,6 +47,8 @@ const DEFAULT_PINNED_ERROR_TOOL_BATCHES: usize = 2;
 const DEFAULT_AUTO_HYDRATION_MAX_BYTES: usize = 64 * 1024;
 const PROBABILITY_SCALE_BPS: u32 = 10_000;
 const FALLBACK_BYTES_PER_TOKEN: usize = 4;
+const MAX_AUTOMATIC_TOOL_RESULT_REUSES: usize = 1;
+const MAX_BLOCKED_TOOL_LOOP_ATTEMPTS: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeErrorKind {
@@ -560,9 +562,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     content: content.clone(),
                 });
                 let tools = self.tools.clone();
-                let mut active_continuation = Vec::new();
                 let mut protected_event_ids = HashSet::new();
                 let mut pointer_gc_economics = PointerGcRunEconomics::default();
+                let mut tool_loop_guard = ToolLoopGuard::default();
                 for model_step in 0..self.max_model_steps_per_run {
                     let history = event_log.snapshot();
                     let projection = {
@@ -619,7 +621,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         long_memory,
                         tools: tools.clone(),
                         tool_choice: ToolChoice::Auto,
-                        continuation: active_continuation.clone(),
+                        continuation: Vec::new(),
                         disclosure,
                     };
                     let request_bytes = model_run_request_bytes(&request);
@@ -627,12 +629,47 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     let result = match result {
                         Ok(result) => result,
                         Err(error) => {
+                            if let Some(request) = error.prepared_request() {
+                                event_log.append(Event::ModelRequestPrepared {
+                                    model_step,
+                                    request: request.clone(),
+                                });
+                            }
                             event_log.append(Event::RunFailed {
                                 message: format!("model provider failed: {error}"),
                             });
                             return Ok(());
                         }
                     };
+                    if let Some(request) = result.prepared_request.as_ref() {
+                        event_log.append(Event::ModelRequestPrepared {
+                            model_step,
+                            request: request.clone(),
+                        });
+                    }
+                    let mut model_response_event_ids = Vec::new();
+                    if let Some(response) = result.response.as_ref() {
+                        for (item_index, item) in response.items.iter().enumerate() {
+                            model_response_event_ids.push(
+                                event_log
+                                    .append(Event::ModelResponseItem {
+                                        model_step,
+                                        item_index,
+                                        item: item.clone(),
+                                    })
+                                    .event_id,
+                            );
+                        }
+                        model_response_event_ids.push(
+                            event_log
+                                .append(Event::ModelResponseCompleted {
+                                    model_step,
+                                    finish_reason: response.finish_reason.clone(),
+                                    usage: response.usage.clone(),
+                                })
+                                .event_id,
+                        );
+                    }
                     pointer_gc_economics.observe(request_bytes, &result);
                     let response_items = result
                         .response
@@ -665,7 +702,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     }
 
                     let mut next_protected_event_ids = HashSet::new();
-                    let mut next_continuation = response_items;
+                    for event_id in model_response_event_ids {
+                        next_protected_event_ids.insert(event_id);
+                    }
                     for call in tool_calls {
                         let interaction_kind = self.runner.classify(&call);
                         let requested = event_log.append(Event::ToolCallRequested {
@@ -700,8 +739,70 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 is_error: tool_result.is_error,
                             });
                             next_protected_event_ids.insert(completed.event_id);
-                            next_continuation.push(RuntimeItem::ToolResult(tool_result));
                             continue;
+                        }
+                        match tool_loop_guard.evaluate(&call, interaction_kind) {
+                            ToolLoopDecision::Execute => {}
+                            ToolLoopDecision::Reuse {
+                                fingerprint,
+                                source_call_id,
+                                source_result,
+                                repeat_count,
+                            } => {
+                                let reused = event_log.append(Event::ToolCallReused {
+                                    call_id: call.call_id.clone(),
+                                    source_call_id: source_call_id.clone(),
+                                    fingerprint,
+                                    repeat_count,
+                                });
+                                next_protected_event_ids.insert(reused.event_id);
+                                let tool_result = reused_tool_result(
+                                    &call,
+                                    &source_call_id,
+                                    repeat_count,
+                                    &source_result,
+                                );
+                                let result_text = tool_result_text(&tool_result);
+                                let completed = event_log.append(Event::ToolCallCompleted {
+                                    call_id: call.call_id.clone(),
+                                    name: call.name,
+                                    result: result_text,
+                                    is_error: false,
+                                });
+                                next_protected_event_ids.insert(completed.event_id);
+                                continue;
+                            }
+                            ToolLoopDecision::Block {
+                                fingerprint,
+                                repeat_count,
+                                terminal,
+                            } => {
+                                let blocked = event_log.append(Event::ToolCallLoopBlocked {
+                                    call_id: call.call_id.clone(),
+                                    fingerprint,
+                                    repeat_count,
+                                });
+                                next_protected_event_ids.insert(blocked.event_id);
+                                let tool_result = blocked_tool_result(&call, repeat_count);
+                                let result_text = tool_result_text(&tool_result);
+                                let completed = event_log.append(Event::ToolCallCompleted {
+                                    call_id: call.call_id.clone(),
+                                    name: call.name.clone(),
+                                    result: result_text,
+                                    is_error: true,
+                                });
+                                next_protected_event_ids.insert(completed.event_id);
+                                if terminal {
+                                    event_log.append(Event::RunFailed {
+                                        message: format!(
+                                            "tool_loop_detected: {} repeated the same successful call {} times without a state-changing tool",
+                                            call.name, repeat_count
+                                        ),
+                                    });
+                                    return Ok(());
+                                }
+                                continue;
+                            }
                         }
                         let execution = self
                             .runner
@@ -734,6 +835,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             next_protected_event_ids.insert(output.event_id);
                         }
                         let tool_result = execution.result;
+                        tool_loop_guard.observe_execution(&call, interaction_kind, &tool_result);
                         let result_text = tool_result_text(&tool_result);
                         let completed = event_log.append(Event::ToolCallCompleted {
                             call_id: call.call_id.clone(),
@@ -742,10 +844,8 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             is_error: tool_result.is_error,
                         });
                         next_protected_event_ids.insert(completed.event_id);
-                        next_continuation.push(RuntimeItem::ToolResult(tool_result));
                     }
                     protected_event_ids = next_protected_event_ids;
-                    active_continuation = next_continuation;
                 }
                 event_log.append(Event::RunFailed {
                     message: format!(
@@ -881,6 +981,186 @@ fn invalid_terminal_response(
     }
 }
 
+#[derive(Clone, Debug)]
+struct SuccessfulToolOutcome {
+    source_call_id: String,
+    result: ToolResultItem,
+    repeat_count: usize,
+}
+
+#[derive(Debug, Default)]
+struct ToolLoopGuard {
+    workspace_epoch: u64,
+    successful_outcomes: HashMap<(u64, String), SuccessfulToolOutcome>,
+}
+
+#[derive(Clone, Debug)]
+enum ToolLoopDecision {
+    Execute,
+    Reuse {
+        fingerprint: String,
+        source_call_id: String,
+        source_result: ToolResultItem,
+        repeat_count: usize,
+    },
+    Block {
+        fingerprint: String,
+        repeat_count: usize,
+        terminal: bool,
+    },
+}
+
+impl ToolLoopGuard {
+    fn evaluate(
+        &mut self,
+        call: &ToolCallItem,
+        interaction_kind: ToolInteractionKind,
+    ) -> ToolLoopDecision {
+        if !tool_result_is_reusable(interaction_kind) {
+            return ToolLoopDecision::Execute;
+        }
+        let fingerprint = semantic_tool_fingerprint(&call.name, &call.arguments);
+        let key = (self.workspace_epoch, fingerprint.clone());
+        let Some(outcome) = self.successful_outcomes.get_mut(&key) else {
+            return ToolLoopDecision::Execute;
+        };
+        outcome.repeat_count = outcome.repeat_count.saturating_add(1);
+        if outcome.repeat_count <= MAX_AUTOMATIC_TOOL_RESULT_REUSES {
+            return ToolLoopDecision::Reuse {
+                fingerprint,
+                source_call_id: outcome.source_call_id.clone(),
+                source_result: outcome.result.clone(),
+                repeat_count: outcome.repeat_count,
+            };
+        }
+        let blocked_attempts = outcome
+            .repeat_count
+            .saturating_sub(MAX_AUTOMATIC_TOOL_RESULT_REUSES);
+        ToolLoopDecision::Block {
+            fingerprint,
+            repeat_count: outcome.repeat_count,
+            terminal: blocked_attempts > MAX_BLOCKED_TOOL_LOOP_ATTEMPTS,
+        }
+    }
+
+    fn observe_execution(
+        &mut self,
+        call: &ToolCallItem,
+        interaction_kind: ToolInteractionKind,
+        result: &ToolResultItem,
+    ) {
+        if tool_interaction_may_change_state(interaction_kind) {
+            self.workspace_epoch = self.workspace_epoch.saturating_add(1);
+            self.successful_outcomes.clear();
+            return;
+        }
+        if result.is_error || !tool_result_is_reusable(interaction_kind) {
+            return;
+        }
+        let fingerprint = semantic_tool_fingerprint(&call.name, &call.arguments);
+        self.successful_outcomes
+            .entry((self.workspace_epoch, fingerprint))
+            .or_insert_with(|| SuccessfulToolOutcome {
+                source_call_id: call.call_id.clone(),
+                result: result.clone(),
+                repeat_count: 0,
+            });
+    }
+}
+
+fn tool_result_is_reusable(kind: ToolInteractionKind) -> bool {
+    matches!(
+        kind,
+        ToolInteractionKind::Inspection | ToolInteractionKind::Validation
+    )
+}
+
+fn tool_interaction_may_change_state(kind: ToolInteractionKind) -> bool {
+    matches!(
+        kind,
+        ToolInteractionKind::Mutation
+            | ToolInteractionKind::Build
+            | ToolInteractionKind::Dependency
+            | ToolInteractionKind::Generic
+    )
+}
+
+fn semantic_tool_fingerprint(name: &str, arguments: &serde_json::Value) -> String {
+    let mut canonical_arguments = String::new();
+    write_canonical_json(arguments, &mut canonical_arguments);
+    let mut hash = Sha256::new();
+    hash.update(name.as_bytes());
+    hash.update([0]);
+    hash.update(canonical_arguments.as_bytes());
+    format!("sha256:{:x}", hash.finalize())
+}
+
+fn write_canonical_json(value: &serde_json::Value, output: &mut String) {
+    match value {
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {
+            output.push_str(&serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned()));
+        }
+        serde_json::Value::Array(values) => {
+            output.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                write_canonical_json(value, output);
+            }
+            output.push(']');
+        }
+        serde_json::Value::Object(values) => {
+            output.push('{');
+            let mut keys = values.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            for (index, key) in keys.into_iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&serde_json::to_string(key).unwrap_or_else(|_| "null".to_owned()));
+                output.push(':');
+                write_canonical_json(&values[key], output);
+            }
+            output.push('}');
+        }
+    }
+}
+
+fn reused_tool_result(
+    call: &ToolCallItem,
+    source_call_id: &str,
+    repeat_count: usize,
+    source_result: &ToolResultItem,
+) -> ToolResultItem {
+    let mut content = vec![ContentBlock::text(format!(
+        "reused_successful_tool_result: source_call_id={source_call_id} repeat_count={repeat_count}; no state-changing tool has run since that result. Do not repeat this call again unless task state changes.\n"
+    ))];
+    content.extend(source_result.content.clone());
+    ToolResultItem {
+        id: None,
+        call_id: call.call_id.clone(),
+        name: Some(call.name.clone()),
+        content,
+        is_error: false,
+    }
+}
+
+fn blocked_tool_result(call: &ToolCallItem, repeat_count: usize) -> ToolResultItem {
+    ToolResultItem {
+        id: None,
+        call_id: call.call_id.clone(),
+        name: Some(call.name.clone()),
+        content: vec![ContentBlock::text(format!(
+            "duplicate_tool_call_blocked: this successful inspection or validation has already been reused and was requested {repeat_count} more times without a state-changing tool. Choose a different action that makes progress, or finish the task."
+        ))],
+        is_error: true,
+    }
+}
+
 #[derive(Debug)]
 struct ModelStepProjection {
     short_memory: Vec<ShortMemoryEntry>,
@@ -969,10 +1249,6 @@ fn project_model_step(
         .filter(|event| event.run_id.as_ref() == Some(run_id))
         .map(|event| event.event_id.to_string())
         .collect();
-    let protected_source_ids: HashSet<_> = protected_event_ids
-        .iter()
-        .map(ToString::to_string)
-        .collect();
     let materialization = ShortMemoryProjector::materialize_for_model_step(
         history,
         run_id,
@@ -1013,16 +1289,9 @@ fn project_model_step(
             short_memory.push(entry);
             continue;
         }
-        let is_protected = entry
-            .source_event_ids
-            .iter()
-            .any(|event_id| protected_source_ids.contains(event_id));
-        if is_protected {
-            continue;
-        }
         // The current user message is already request.input. Command output is
-        // classified and batched, but the typed ToolResult is the canonical
-        // provider continuation item and keeps tool-call ordering valid.
+        // classified and batched. Protected current-run events are loaded
+        // exactly here; continuation is not a second history source.
         if !matches!(
             entry.item,
             ShortMemoryItem::UserMessage { .. } | ShortMemoryItem::Observation { .. }
@@ -1571,6 +1840,7 @@ fn is_archivable_batch(batch: &EventBatch) -> bool {
                 .collect();
             !requested.is_empty() && requested.is_subset(&completed)
         }
+        MemoryBatchKind::Reasoning => true,
         MemoryBatchKind::Turn => batch.events.iter().any(|event| {
             matches!(
                 event.event,
@@ -1612,6 +1882,10 @@ fn pointer_retrieval_hint(batch: &EventBatch) -> String {
         MemoryBatchKind::Turn => {
             "completed run turn; retrieve for exact messages and terminal state".to_owned()
         }
+        MemoryBatchKind::Reasoning => {
+            "provider reasoning continuation state; retrieve only for exact same-provider replay"
+                .to_owned()
+        }
         MemoryBatchKind::Context => {
             "context interaction; retrieve for exact paths and disclosed content".to_owned()
         }
@@ -1635,6 +1909,7 @@ fn pointer_archive_path(batch: &EventBatch, content_hash: &str) -> String {
             format!("tool/{}", tool_name.unwrap_or_else(|| "unknown".to_owned()))
         }
         MemoryBatchKind::Turn => "turn".to_owned(),
+        MemoryBatchKind::Reasoning => "reasoning".to_owned(),
         MemoryBatchKind::Context => "context".to_owned(),
         MemoryBatchKind::Task => "task".to_owned(),
         MemoryBatchKind::Artifact => "artifact".to_owned(),
@@ -1881,6 +2156,7 @@ mod tests {
                 request: None,
                 result: Ok(ModelRunResult {
                     final_output: Some("done".to_owned()),
+                    prepared_request: None,
                     response: None,
                 }),
                 cancel_result: Ok(true),
@@ -2080,22 +2356,34 @@ mod tests {
     async fn runtime_fails_a_length_truncated_model_turn() {
         let session_id = SessionId::new("session-1");
         let run_id = RunId::new("run-1");
+        let prepared_request = structure_model::RuntimeRequest {
+            model: "model-1".to_owned(),
+            items: vec![RuntimeItem::Message(structure_model::MessageItem::text(
+                structure_model::RuntimeRole::User,
+                "run",
+            ))],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            generation: structure_model::RuntimeGenerationConfig::default(),
+        };
+        let recorded_response = structure_model::RuntimeResponse {
+            items: vec![RuntimeItem::Message(structure_model::MessageItem::text(
+                structure_model::RuntimeRole::Assistant,
+                "partial output",
+            ))],
+            finish_reason: Some(FinishReason::Length),
+            usage: structure_model::RuntimeUsage {
+                input_tokens: 100,
+                output_tokens: 8_192,
+                cached_input_tokens: 80,
+            },
+        };
         let model = RecordingModel {
             request: None,
             result: Ok(ModelRunResult {
                 final_output: Some("partial output".to_owned()),
-                response: Some(structure_model::RuntimeResponse {
-                    items: vec![RuntimeItem::Message(structure_model::MessageItem::text(
-                        structure_model::RuntimeRole::Assistant,
-                        "partial output",
-                    ))],
-                    finish_reason: Some(FinishReason::Length),
-                    usage: structure_model::RuntimeUsage {
-                        input_tokens: 100,
-                        output_tokens: 8_192,
-                        cached_input_tokens: 80,
-                    },
-                }),
+                prepared_request: Some(prepared_request.clone()),
+                response: Some(recorded_response.clone()),
             }),
             cancel_result: Ok(true),
         };
@@ -2115,6 +2403,23 @@ mod tests {
         )
         .await
         .expect("truncation is normalized into a protocol event");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelRequestPrepared { model_step: 0, request }
+                if request == &prepared_request
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseItem { model_step: 0, item_index: 0, item }
+                if item == &recorded_response.items[0]
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseCompleted { model_step: 0, finish_reason, usage }
+                if finish_reason == &recorded_response.finish_reason
+                    && usage == &recorded_response.usage
+        )));
 
         assert!(matches!(
             events.last(),
@@ -2232,6 +2537,7 @@ mod tests {
                 if self.step == 1 {
                     return Ok(ModelRunResult {
                         final_output: None,
+                        prepared_request: None,
                         response: Some(structure_model::RuntimeResponse {
                             items: vec![RuntimeItem::ToolCall(structure_model::ToolCallItem {
                                 id: None,
@@ -2247,6 +2553,7 @@ mod tests {
                 }
                 Ok(ModelRunResult {
                     final_output: Some("done".to_owned()),
+                    prepared_request: None,
                     response: None,
                 })
             }
@@ -2336,7 +2643,219 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_run_reprojects_closed_tools_and_preserves_latest_continuation() {
+    async fn repeated_successful_validation_is_reused_then_blocked_without_runner_reexecution() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Debug, Default)]
+        struct RepeatingValidationModel {
+            step: usize,
+        }
+
+        impl ModelProvider for RepeatingValidationModel {
+            async fn complete(
+                &mut self,
+                _request: ModelRunRequest,
+            ) -> Result<ModelRunResult, ProviderError> {
+                self.step += 1;
+                Ok(ModelRunResult {
+                    final_output: None,
+                    prepared_request: None,
+                    response: Some(structure_model::RuntimeResponse {
+                        items: vec![RuntimeItem::ToolCall(ToolCallItem {
+                            id: None,
+                            call_id: format!("validation-call-{}", self.step),
+                            name: "validate".to_owned(),
+                            arguments: serde_json::json!({"suite": "all"}),
+                            provider_state: None,
+                        })],
+                        finish_reason: Some(FinishReason::ToolCalls),
+                        usage: structure_model::RuntimeUsage::default(),
+                    }),
+                })
+            }
+
+            async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+                Ok(false)
+            }
+        }
+
+        #[derive(Debug)]
+        struct CountingValidationRunner {
+            executions: Arc<AtomicUsize>,
+        }
+
+        impl RunnerEnvironment for CountingValidationRunner {
+            fn classify(&self, _call: &ToolCallItem) -> ToolInteractionKind {
+                ToolInteractionKind::Validation
+            }
+
+            async fn execute(
+                &mut self,
+                request: ToolExecutionRequest,
+            ) -> Result<ToolExecutionResult, RunnerError> {
+                self.executions.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolExecutionResult {
+                    result: ToolResultItem {
+                        id: None,
+                        call_id: request.call.call_id,
+                        name: Some(request.call.name),
+                        content: vec![ContentBlock::text("18 passed")],
+                        is_error: false,
+                    },
+                    output: Vec::new(),
+                })
+            }
+
+            async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+                Ok(false)
+            }
+        }
+
+        for strategy in [
+            RuntimeCompactionStrategy::Disabled,
+            RuntimeCompactionStrategy::FileBackedGc,
+        ] {
+            let executions = Arc::new(AtomicUsize::new(0));
+            let mut runtime = CoreRuntime::new(
+                RepeatingValidationModel::default(),
+                CountingValidationRunner {
+                    executions: executions.clone(),
+                },
+            );
+            runtime.set_compaction_strategy(strategy);
+            runtime.set_max_model_steps_per_run(8);
+            let session_id = SessionId::new(format!("session-{strategy:?}"));
+            let run_id = RunId::new(format!("run-{strategy:?}"));
+            runtime
+                .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+                .expect("runtime session opens");
+
+            let events = handle(
+                &mut runtime,
+                &session_id,
+                Some(&run_id),
+                &[],
+                &Command::MessageSend {
+                    content: "run validation".to_owned(),
+                },
+            )
+            .await
+            .expect("loop guard produces terminal protocol events");
+
+            assert_eq!(executions.load(Ordering::SeqCst), 1, "{strategy:?}");
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, Event::ToolCallReused { .. }))
+                    .count(),
+                1,
+                "{strategy:?}"
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, Event::ToolCallLoopBlocked { .. }))
+                    .count(),
+                2,
+                "{strategy:?}"
+            );
+            assert!(
+                matches!(
+                    events.last(),
+                    Some(Event::RunFailed { message }) if message.starts_with("tool_loop_detected:")
+                ),
+                "{strategy:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_changing_tool_invalidates_reusable_validation_and_fingerprint_is_canonical() {
+        let first_arguments = serde_json::json!({"suite": "all", "options": {"b": 2, "a": 1}});
+        let reordered_arguments = serde_json::json!({"options": {"a": 1, "b": 2}, "suite": "all"});
+        assert_eq!(
+            semantic_tool_fingerprint("validate", &first_arguments),
+            semantic_tool_fingerprint("validate", &reordered_arguments)
+        );
+
+        let validation = ToolCallItem {
+            id: None,
+            call_id: "validation-1".to_owned(),
+            name: "validate".to_owned(),
+            arguments: first_arguments,
+            provider_state: None,
+        };
+        let validation_result = ToolResultItem {
+            id: None,
+            call_id: validation.call_id.clone(),
+            name: Some(validation.name.clone()),
+            content: vec![ContentBlock::text("passed")],
+            is_error: false,
+        };
+        let mut guard = ToolLoopGuard::default();
+        guard.observe_execution(
+            &validation,
+            ToolInteractionKind::Validation,
+            &validation_result,
+        );
+        assert!(matches!(
+            guard.evaluate(&validation, ToolInteractionKind::Validation),
+            ToolLoopDecision::Reuse { .. }
+        ));
+
+        let mutation = ToolCallItem {
+            id: None,
+            call_id: "mutation-1".to_owned(),
+            name: "write".to_owned(),
+            arguments: serde_json::json!({"path": "src/lib.rs"}),
+            provider_state: None,
+        };
+        guard.observe_execution(
+            &mutation,
+            ToolInteractionKind::Mutation,
+            &ToolResultItem {
+                id: None,
+                call_id: mutation.call_id.clone(),
+                name: Some(mutation.name.clone()),
+                content: vec![ContentBlock::text("written")],
+                is_error: false,
+            },
+        );
+        assert!(matches!(
+            guard.evaluate(&validation, ToolInteractionKind::Validation),
+            ToolLoopDecision::Execute
+        ));
+    }
+
+    #[test]
+    fn failed_read_only_calls_remain_retryable() {
+        let call = ToolCallItem {
+            id: None,
+            call_id: "validation-error".to_owned(),
+            name: "validate".to_owned(),
+            arguments: serde_json::json!({"suite": "all"}),
+            provider_state: None,
+        };
+        let failed = ToolResultItem {
+            id: None,
+            call_id: call.call_id.clone(),
+            name: Some(call.name.clone()),
+            content: vec![ContentBlock::text("timed out")],
+            is_error: true,
+        };
+        let mut guard = ToolLoopGuard::default();
+
+        guard.observe_execution(&call, ToolInteractionKind::Validation, &failed);
+
+        assert!(matches!(
+            guard.evaluate(&call, ToolInteractionKind::Validation),
+            ToolLoopDecision::Execute
+        ));
+    }
+
+    #[tokio::test]
+    async fn active_run_reprojects_closed_tools_without_continuation_history() {
         #[derive(Debug, Default)]
         struct SequencedToolModel {
             requests: Vec<ModelRunRequest>,
@@ -2352,6 +2871,7 @@ mod tests {
                 if step <= 3 {
                     return Ok(ModelRunResult {
                         final_output: None,
+                        prepared_request: None,
                         response: Some(structure_model::RuntimeResponse {
                             items: vec![RuntimeItem::ToolCall(structure_model::ToolCallItem {
                                 id: None,
@@ -2367,6 +2887,7 @@ mod tests {
                 }
                 Ok(ModelRunResult {
                     final_output: Some("done".to_owned()),
+                    prepared_request: None,
                     response: None,
                 })
             }
@@ -2437,10 +2958,15 @@ mod tests {
         assert_eq!(requests.len(), 4);
         assert!(requests[0].run_memory.is_empty());
         assert!(requests[0].continuation.is_empty());
-        assert!(requests[1].run_memory.is_empty());
+        assert!(requests[1].continuation.is_empty());
         assert!(matches!(
-            requests[1].continuation.as_slice(),
-            [RuntimeItem::ToolCall(call), RuntimeItem::ToolResult(result)]
+            requests[1]
+                .run_memory
+                .iter()
+                .map(|entry| &entry.item)
+                .collect::<Vec<_>>()
+                .as_slice(),
+            [ShortMemoryItem::ToolCall(call), ShortMemoryItem::ToolResult(result)]
                 if call.call_id == "call-1" && result.call_id == "call-1"
         ));
         assert!(
@@ -2449,19 +2975,12 @@ mod tests {
                 .iter()
                 .all(|entry| !matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
         );
-        assert!(requests[2].run_memory.iter().all(|entry| {
-            !matches!(
-                &entry.item,
-                ShortMemoryItem::ToolCall(call) if call.call_id == "call-2"
-            ) && !matches!(
-                &entry.item,
-                ShortMemoryItem::ToolResult(result) if result.call_id == "call-2"
-            )
-        }));
-        assert!(matches!(
-            requests[2].continuation.as_slice(),
-            [RuntimeItem::ToolCall(call), RuntimeItem::ToolResult(result)]
-                if call.call_id == "call-2" && result.call_id == "call-2"
+        assert!(requests[2].continuation.is_empty());
+        assert!(requests[2].run_memory.iter().any(
+            |entry| matches!(&entry.item, ShortMemoryItem::ToolCall(call) if call.call_id == "call-2")
+        ));
+        assert!(requests[2].run_memory.iter().any(
+            |entry| matches!(&entry.item, ShortMemoryItem::ToolResult(result) if result.call_id == "call-2")
         ));
         assert_eq!(
             requests[3]
@@ -2471,10 +2990,9 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(requests[3].continuation.len(), 2);
-        assert!(matches!(
-            &requests[3].continuation[0],
-            RuntimeItem::ToolCall(call) if call.call_id == "call-3"
+        assert!(requests[3].continuation.is_empty());
+        assert!(requests[3].run_memory.iter().any(
+            |entry| matches!(&entry.item, ShortMemoryItem::ToolCall(call) if call.call_id == "call-3")
         ));
         assert_eq!(
             runtime
@@ -3034,6 +3552,54 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_batches_archive_separately_without_leaking_reasoning_text_in_pointer() {
+        let secret_reasoning = "private provider continuation state";
+        let events = vec![history_event(
+            9,
+            Event::ModelResponseItem {
+                model_step: 2,
+                item_index: 0,
+                item: RuntimeItem::Reasoning(structure_model::ReasoningItem {
+                    id: Some("reasoning-2".to_owned()),
+                    summary: Vec::new(),
+                    provider_state: Some(structure_model::ProviderState::OpenAiChatCompletions {
+                        reasoning_content: secret_reasoning.to_owned(),
+                    }),
+                }),
+            },
+        )];
+        let batch = EventBatch {
+            context_key: "run:prior-run:reasoning:2:0".to_owned(),
+            context_kind: MemoryBatchKind::Reasoning,
+            run_id: Some(RunId::new("prior-run")),
+            sequence_start: 9,
+            sequence_end: 9,
+            event_count: 1,
+            estimated_tokens: 20,
+            raw_item_bytes: 200,
+            key_content_budget_bytes: 0,
+            key_content: String::new(),
+            key_content_bytes: 0,
+            materialized_key_bytes: 0,
+            key_admission_rank: None,
+            key_admission: KeyAdmissionDecision::NotCandidate,
+            load_state: MemoryLoadState::NoLoad,
+            events,
+        };
+        let content_hash = stable_content_hash(
+            &serde_json::to_string(&batch.events).expect("reasoning events serialize"),
+        );
+
+        assert!(is_archivable_batch(&batch));
+        let path = pointer_archive_path(&batch, &content_hash);
+        let hint = pointer_retrieval_hint(&batch);
+        assert!(path.starts_with("m/reasoning/"));
+        assert!(hint.contains("same-provider replay"));
+        assert!(!path.contains(secret_reasoning));
+        assert!(!hint.contains(secret_reasoning));
+    }
+
+    #[test]
     fn file_backed_gc_prefers_larger_net_savings_at_checkpoint_boundary() {
         let make_batch = |index: u64, raw_item_bytes: usize| {
             let call_id = format!("call-{index}");
@@ -3345,6 +3911,7 @@ mod tests {
                 if self.requests.len() == 1 {
                     return Ok(ModelRunResult {
                         final_output: None,
+                        prepared_request: None,
                         response: Some(structure_model::RuntimeResponse {
                             items: vec![RuntimeItem::ToolCall(ToolCallItem {
                                 id: None,
@@ -3362,6 +3929,7 @@ mod tests {
                 }
                 Ok(ModelRunResult {
                     final_output: Some("done".to_owned()),
+                    prepared_request: None,
                     response: None,
                 })
             }
@@ -3411,9 +3979,15 @@ mod tests {
             } if call_id == "memory-call" && result == exact_evidence
         )));
         let second_request = &runtime.model().requests[1];
+        assert!(second_request.continuation.is_empty());
         assert!(matches!(
-            second_request.continuation.as_slice(),
-            [RuntimeItem::ToolCall(call), RuntimeItem::ToolResult(result)]
+            second_request
+                .run_memory
+                .iter()
+                .map(|entry| &entry.item)
+                .collect::<Vec<_>>()
+                .as_slice(),
+            [ShortMemoryItem::ToolCall(call), ShortMemoryItem::ToolResult(result)]
                 if call.name == MEMORY_READ_TOOL_NAME
                     && result.content == vec![ContentBlock::text(exact_evidence)]
         ));

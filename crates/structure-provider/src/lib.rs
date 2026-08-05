@@ -14,9 +14,9 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use structure_model::{
-    ContentBlock, FinishReason, MessageItem, RuntimeItem, RuntimeRequest, RuntimeResponse,
-    RuntimeRole, RuntimeUsage, ShortMemoryEntry, ShortMemoryItem, ToolCallItem, ToolChoice,
-    ToolDefinition,
+    ContentBlock, FinishReason, MessageItem, ProviderState, ReasoningItem, RuntimeItem,
+    RuntimeRequest, RuntimeResponse, RuntimeRole, RuntimeUsage, ShortMemoryEntry, ShortMemoryItem,
+    ToolCallItem, ToolChoice, ToolDefinition,
 };
 use structure_protocol::{ContextEntry, DisclosureLevel, RunId, SessionId};
 
@@ -29,15 +29,15 @@ pub struct ModelRunRequest {
     /// not a second source of truth.
     pub short_memory: Vec<ShortMemoryEntry>,
     /// Completed events from the active run, re-projected before each model
-    /// step. Providers place these after the current user input and before the
-    /// lossless active continuation tail.
+    /// step. Providers place these after the current user input.
     pub run_memory: Vec<ShortMemoryEntry>,
     /// Workspace-scoped durable context selected and disclosed by Runtime.
     pub long_memory: Vec<ContextEntry>,
     /// Provider-neutral tool definitions selected by Runtime for this turn.
     pub tools: Vec<ToolDefinition>,
     pub tool_choice: ToolChoice,
-    /// Items produced during the current multi-step agent turn.
+    /// Reserved ephemeral items that are not history. CoreRuntime leaves this
+    /// empty because canonical events are the only continuation source.
     pub continuation: Vec<RuntimeItem>,
     pub disclosure: DisclosureLevel,
 }
@@ -45,6 +45,9 @@ pub struct ModelRunRequest {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelRunResult {
     pub final_output: Option<String>,
+    /// Exact provider-neutral request compiled immediately before wire
+    /// encoding. Runtime persists it beside the corresponding response.
+    pub prepared_request: Option<RuntimeRequest>,
     /// Provider response decoded back into Structure's typed runtime model.
     pub response: Option<RuntimeResponse>,
 }
@@ -52,13 +55,24 @@ pub struct ModelRunResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderError {
     message: String,
+    prepared_request: Option<Box<RuntimeRequest>>,
 }
 
 impl ProviderError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            prepared_request: None,
         }
+    }
+
+    pub fn prepared_request(&self) -> Option<&RuntimeRequest> {
+        self.prepared_request.as_deref()
+    }
+
+    fn with_prepared_request(mut self, request: RuntimeRequest) -> Self {
+        self.prepared_request = Some(Box::new(request));
+        self
     }
 }
 
@@ -363,9 +377,19 @@ impl OpenAiModelProvider {
         format!("{}/chat/completions", self.config.base_url)
     }
 
+    #[cfg(test)]
     fn map_request(&self, request: &ModelRunRequest) -> Result<OpenAiChatRequest, ProviderError> {
-        let mut wire =
-            OpenAiChatCodec.encode(&compile_runtime_request(request, &self.config.model))?;
+        let mut prepared = compile_runtime_request(request, &self.config.model);
+        prepared.generation.max_output_tokens = self.config.max_tokens;
+        prepared.generation.thinking_enabled = self.config.thinking_enabled;
+        self.map_prepared_request(&prepared)
+    }
+
+    fn map_prepared_request(
+        &self,
+        request: &RuntimeRequest,
+    ) -> Result<OpenAiChatRequest, ProviderError> {
+        let mut wire = OpenAiChatCodec.encode(request)?;
         wire.max_tokens = self.config.max_tokens;
         wire.thinking = self
             .config
@@ -413,8 +437,11 @@ impl ModelProvider for OpenAiModelProvider {
     ) -> Result<ModelRunResult, ProviderError> {
         let run_id = request.run_id.clone();
         self.active_runs.insert(run_id.clone());
+        let mut prepared_request = compile_runtime_request(&request, &self.config.model);
+        prepared_request.generation.max_output_tokens = self.config.max_tokens;
+        prepared_request.generation.thinking_enabled = self.config.thinking_enabled;
         let result = async {
-            let wire_request = self.map_request(&request)?;
+            let wire_request = self.map_prepared_request(&prepared_request)?;
             let request_body = serde_json::to_vec(&wire_request).map_err(|error| {
                 ProviderError::new(format!("OpenAI request serialization failed: {error}"))
             })?;
@@ -503,12 +530,13 @@ impl ModelProvider for OpenAiModelProvider {
                 .join("");
             Ok(ModelRunResult {
                 final_output: (!content.is_empty()).then_some(content),
+                prepared_request: Some(prepared_request.clone()),
                 response: Some(response),
             })
         }
         .await;
         self.active_runs.remove(&run_id);
-        result
+        result.map_err(|error| error.with_prepared_request(prepared_request))
     }
 
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
@@ -608,6 +636,8 @@ struct OpenAiMessage {
     role: OpenAiRole,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tool_calls: Vec<OpenAiToolCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -744,6 +774,7 @@ impl ApiCodec for OpenAiChatCodec {
                         RuntimeRole::Assistant => OpenAiRole::Assistant,
                     },
                     content: Some(text_content(&message.content, self.api_type())?),
+                    reasoning_content: None,
                     tool_calls: Vec::new(),
                     tool_call_id: None,
                 }),
@@ -769,6 +800,7 @@ impl ApiCodec for OpenAiChatCodec {
                         messages.push(OpenAiMessage {
                             role: OpenAiRole::Assistant,
                             content: None,
+                            reasoning_content: None,
                             tool_calls: vec![wire_call],
                             tool_call_id: None,
                         });
@@ -777,13 +809,25 @@ impl ApiCodec for OpenAiChatCodec {
                 RuntimeItem::ToolResult(result) => messages.push(OpenAiMessage {
                     role: OpenAiRole::Tool,
                     content: Some(text_content(&result.content, self.api_type())?),
+                    reasoning_content: None,
                     tool_calls: Vec::new(),
                     tool_call_id: Some(result.call_id.clone()),
                 }),
-                RuntimeItem::Reasoning(_) => {
-                    return Err(ProviderError::new(
-                        "open_ai_chat_completions cannot losslessly encode reasoning items",
-                    ));
+                RuntimeItem::Reasoning(reasoning) => {
+                    let Some(ProviderState::OpenAiChatCompletions { reasoning_content }) =
+                        reasoning.provider_state.as_ref()
+                    else {
+                        return Err(ProviderError::new(
+                            "open_ai_chat_completions cannot losslessly encode foreign or untyped reasoning state",
+                        ));
+                    };
+                    messages.push(OpenAiMessage {
+                        role: OpenAiRole::Assistant,
+                        content: None,
+                        reasoning_content: Some(reasoning_content.clone()),
+                        tool_calls: Vec::new(),
+                        tool_call_id: None,
+                    });
                 }
             }
         }
@@ -828,6 +872,17 @@ impl ApiCodec for OpenAiChatCodec {
             .next()
             .ok_or_else(|| ProviderError::new("OpenAI response contained no choices"))?;
         let mut items = Vec::new();
+        if let Some(reasoning_content) = choice
+            .message
+            .reasoning_content
+            .filter(|content| !content.is_empty())
+        {
+            items.push(RuntimeItem::Reasoning(ReasoningItem {
+                id: None,
+                summary: Vec::new(),
+                provider_state: Some(ProviderState::OpenAiChatCompletions { reasoning_content }),
+            }));
+        }
         if let Some(content) = choice.message.content.filter(|content| !content.is_empty()) {
             items.push(RuntimeItem::Message(MessageItem::text(
                 RuntimeRole::Assistant,
@@ -927,6 +982,7 @@ fn compile_runtime_request(request: &ModelRunRequest, model: &str) -> RuntimeReq
         items,
         tools: request.tools.clone(),
         tool_choice: request.tool_choice.clone(),
+        generation: structure_model::RuntimeGenerationConfig::default(),
     }
 }
 
@@ -938,6 +994,7 @@ fn memory_item_to_runtime_item(item: &ShortMemoryItem) -> Option<RuntimeItem> {
         ShortMemoryItem::AssistantMessage { content } => {
             RuntimeItem::Message(MessageItem::text(RuntimeRole::Assistant, content.clone()))
         }
+        ShortMemoryItem::Reasoning(reasoning) => RuntimeItem::Reasoning(reasoning.clone()),
         ShortMemoryItem::ToolCall(call) => RuntimeItem::ToolCall(call.clone()),
         ShortMemoryItem::ToolResult(result) => RuntimeItem::ToolResult(result.clone()),
         ShortMemoryItem::Observation { content } => RuntimeItem::Message(MessageItem::text(
@@ -1035,6 +1092,7 @@ impl ModelProvider for EchoModel {
         self.active_runs.remove(&request.run_id);
         Ok(ModelRunResult {
             final_output: Some(output),
+            prepared_request: None,
             response: None,
         })
     }
@@ -1394,6 +1452,7 @@ mod tests {
             tool_choice: ToolChoice::Specific {
                 name: "write_file".to_owned(),
             },
+            generation: structure_model::RuntimeGenerationConfig::default(),
         };
         let wire = OpenAiChatCodec.encode(&request).expect("request encodes");
         let wire_json = serde_json::to_value(&wire).expect("wire request serializes");
@@ -1409,6 +1468,7 @@ mod tests {
                 "message": {
                     "role": "assistant",
                     "content": null,
+                    "reasoning_content": "I should write the requested file and then inspect the tool result.",
                     "tool_calls": [{
                         "id": "call-1",
                         "type": "function",
@@ -1435,6 +1495,15 @@ mod tests {
         assert_eq!(decoded.usage.cached_input_tokens, 3);
         assert!(matches!(
             &decoded.items[0],
+            RuntimeItem::Reasoning(ReasoningItem {
+                provider_state: Some(ProviderState::OpenAiChatCompletions {
+                    reasoning_content,
+                }),
+                ..
+            }) if reasoning_content == "I should write the requested file and then inspect the tool result."
+        ));
+        assert!(matches!(
+            &decoded.items[1],
             RuntimeItem::ToolCall(ToolCallItem { call_id, name, .. })
                 if call_id == "call-1" && name == "write_file"
         ));
@@ -1443,6 +1512,7 @@ mod tests {
             model: "test-model".to_owned(),
             items: vec![
                 decoded.items[0].clone(),
+                decoded.items[1].clone(),
                 RuntimeItem::ToolResult(ToolResultItem {
                     id: None,
                     call_id: "call-1".to_owned(),
@@ -1453,11 +1523,17 @@ mod tests {
             ],
             tools: request.tools,
             tool_choice: ToolChoice::Auto,
+            generation: structure_model::RuntimeGenerationConfig::default(),
         };
         let wire_follow_up = OpenAiChatCodec
             .encode(&follow_up)
             .expect("tool result encodes");
         assert_eq!(wire_follow_up.messages[0].role, OpenAiRole::Assistant);
+        assert_eq!(
+            wire_follow_up.messages[0].reasoning_content.as_deref(),
+            Some("I should write the requested file and then inspect the tool result.")
+        );
+        assert_eq!(wire_follow_up.messages[0].tool_calls.len(), 1);
         assert_eq!(wire_follow_up.messages[1].role, OpenAiRole::Tool);
         assert_eq!(
             wire_follow_up.messages[1].tool_call_id.as_deref(),

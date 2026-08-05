@@ -319,7 +319,10 @@ impl ShortMemoryProjector {
     /// diagnostics and benchmark baselines. Lifecycle-only events remain in
     /// the audit log but do not become model input items.
     pub fn project_full(events: &[EventEnvelope]) -> Vec<ShortMemoryEntry> {
-        events.iter().filter_map(event_to_short_memory).collect()
+        events
+            .iter()
+            .flat_map(event_to_short_memory_entries)
+            .collect()
     }
 
     /// Return event-level TTL decisions without applying batch disclosure.
@@ -346,9 +349,8 @@ impl ShortMemoryProjector {
     ///
     /// Only the explicitly protected event tail is forced to `LOAD_ALL`.
     /// Older completed batches in the same run remain eligible for TTL and
-    /// BatchKey disclosure. The caller sends the protected tail through the
-    /// provider's lossless continuation channel instead of duplicating it in
-    /// the returned entries.
+    /// BatchKey disclosure. The protected tail is returned as canonical
+    /// projected entries; provider continuation is not a second history.
     pub fn materialize_for_model_step(
         events: &[EventEnvelope],
         current_run_id: &RunId,
@@ -649,12 +651,13 @@ fn batch_evidence_priority(batch: &EventBatch) -> u8 {
 fn batch_kind_priority(kind: MemoryBatchKind) -> u8 {
     match kind {
         MemoryBatchKind::Turn => 0,
-        MemoryBatchKind::Context => 1,
-        MemoryBatchKind::Tool => 2,
-        MemoryBatchKind::Task => 3,
-        MemoryBatchKind::Artifact => 4,
-        MemoryBatchKind::Transient => 5,
-        MemoryBatchKind::Misc => 6,
+        MemoryBatchKind::Reasoning => 1,
+        MemoryBatchKind::Context => 2,
+        MemoryBatchKind::Tool => 3,
+        MemoryBatchKind::Task => 4,
+        MemoryBatchKind::Artifact => 5,
+        MemoryBatchKind::Transient => 6,
+        MemoryBatchKind::Misc => 7,
     }
 }
 
@@ -673,11 +676,37 @@ fn batch_identity(
         | Event::RunCompleted { .. }
         | Event::RunFailed { .. }
         | Event::RunCancelled => (format!("run:{run}:turn:1"), MemoryBatchKind::Turn),
+        Event::ModelResponseItem {
+            model_step,
+            item_index,
+            item: structure_model::RuntimeItem::Reasoning(_),
+        } => (
+            format!("run:{run}:reasoning:{model_step}:{item_index}"),
+            MemoryBatchKind::Reasoning,
+        ),
+        Event::ModelResponseItem {
+            model_step,
+            item_index,
+            ..
+        } => (
+            format!("run:{run}:model-response:{model_step}:{item_index}"),
+            MemoryBatchKind::Transient,
+        ),
+        Event::ModelResponseCompleted { model_step, .. } => (
+            format!("run:{run}:model-response:{model_step}:completed"),
+            MemoryBatchKind::Transient,
+        ),
+        Event::ModelRequestPrepared { model_step, .. } => (
+            format!("run:{run}:model-request:{model_step}"),
+            MemoryBatchKind::Transient,
+        ),
         Event::ToolCallRequested { call_id, .. } => {
             active_tool_by_run.insert(run.clone(), call_id.clone());
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
         }
-        Event::ToolCallClassified { call_id, .. } => {
+        Event::ToolCallClassified { call_id, .. }
+        | Event::ToolCallReused { call_id, .. }
+        | Event::ToolCallLoopBlocked { call_id, .. } => {
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
         }
         Event::ToolCallCompleted { call_id, .. } => {
@@ -805,9 +834,7 @@ fn materialize_entries(events: &[EventEnvelope], batches: &[EventBatch]) -> Vec<
         };
         match batch.load_state {
             MemoryLoadState::LoadAll => {
-                if let Some(entry) = event_to_short_memory(event) {
-                    entries.push(entry);
-                }
+                entries.extend(event_to_short_memory_entries(event));
             }
             MemoryLoadState::LoadKey if *first_in_batch => {
                 entries.push(ShortMemoryEntry {
@@ -824,6 +851,21 @@ fn materialize_entries(events: &[EventEnvelope], batches: &[EventBatch]) -> Vec<
         }
     }
     entries
+}
+
+fn event_to_short_memory_entries(envelope: &EventEnvelope) -> Vec<ShortMemoryEntry> {
+    if let Event::ModelResponseItem {
+        item: structure_model::RuntimeItem::Reasoning(reasoning),
+        ..
+    } = &envelope.event
+    {
+        return vec![ShortMemoryEntry {
+            source_event_ids: vec![envelope.event_id.to_string()],
+            sequence: envelope.sequence,
+            item: ShortMemoryItem::Reasoning(reasoning.clone()),
+        }];
+    }
+    event_to_short_memory(envelope).into_iter().collect()
 }
 
 fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
@@ -893,7 +935,12 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::SessionClosed
         | Event::RunScheduled
         | Event::RunStarted
+        | Event::ModelRequestPrepared { .. }
+        | Event::ModelResponseItem { .. }
+        | Event::ModelResponseCompleted { .. }
         | Event::ToolCallClassified { .. }
+        | Event::ToolCallReused { .. }
+        | Event::ToolCallLoopBlocked { .. }
         | Event::RunCompleted { output: None } => return None,
     };
     Some(ShortMemoryEntry {
@@ -925,6 +972,14 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
             (MemoryClass::Control, None, false)
         }
         Event::MessageAccepted { .. } => (MemoryClass::Anchor, None, false),
+        Event::ModelResponseItem {
+            item: structure_model::RuntimeItem::Reasoning(_),
+            ..
+        } => (MemoryClass::Working, None, false),
+        Event::ModelResponseItem { .. } | Event::ModelResponseCompleted { .. } => {
+            (MemoryClass::Control, None, false)
+        }
+        Event::ModelRequestPrepared { .. } => (MemoryClass::Control, None, false),
         Event::ToolCallRequested { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
         }
@@ -933,6 +988,9 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
             Some(format!("tool:{call_id}")),
             false,
         ),
+        Event::ToolCallReused { call_id, .. } | Event::ToolCallLoopBlocked { call_id, .. } => {
+            (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
+        }
         Event::ToolCallCompleted {
             call_id,
             is_error: true,
@@ -980,8 +1038,13 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::RunScheduled => "run.scheduled",
         Event::RunStarted => "run.started",
         Event::MessageAccepted { .. } => "message.accepted",
+        Event::ModelRequestPrepared { .. } => "model.request.prepared",
+        Event::ModelResponseItem { .. } => "model.response.item",
+        Event::ModelResponseCompleted { .. } => "model.response.completed",
         Event::ToolCallRequested { .. } => "tool.call.requested",
         Event::ToolCallClassified { .. } => "tool.call.classified",
+        Event::ToolCallReused { .. } => "tool.call.reused",
+        Event::ToolCallLoopBlocked { .. } => "tool.call.loop_blocked",
         Event::ToolCallCompleted { is_error: true, .. } => "tool.call.error",
         Event::ToolCallCompleted {
             is_error: false, ..
@@ -1010,7 +1073,7 @@ fn estimate_tokens(events: &[EventEnvelope]) -> u64 {
 fn full_batch_item_bytes(events: &[EventEnvelope]) -> usize {
     let items: Vec<_> = events
         .iter()
-        .filter_map(event_to_short_memory)
+        .flat_map(event_to_short_memory_entries)
         .map(|entry| entry.item)
         .collect();
     serde_json::to_vec(&items).map_or(usize::MAX, |encoded| encoded.len())
@@ -1019,7 +1082,7 @@ fn full_batch_item_bytes(events: &[EventEnvelope]) -> usize {
 fn model_step_full_batch_item_bytes(events: &[EventEnvelope]) -> usize {
     let items: Vec<_> = events
         .iter()
-        .filter_map(event_to_short_memory)
+        .flat_map(event_to_short_memory_entries)
         .map(|entry| entry.item)
         .filter(|item| {
             !matches!(
@@ -1090,6 +1153,37 @@ fn build_key_content(batch: &EventBatch, content_budget_bytes: usize) -> String 
 fn event_semantic_key(event: &Event) -> Option<String> {
     match event {
         Event::MessageAccepted { content } => Some(compact_user_message(content)),
+        Event::ModelResponseItem {
+            model_step,
+            item_index,
+            item,
+        } => Some(format!(
+            "model_response_item step={model_step} index={item_index} kind={}",
+            match item {
+                structure_model::RuntimeItem::Message(_) => "message",
+                structure_model::RuntimeItem::ToolCall(_) => "tool_call",
+                structure_model::RuntimeItem::ToolResult(_) => "tool_result",
+                structure_model::RuntimeItem::Reasoning(_) => "reasoning",
+            },
+        )),
+        Event::ModelResponseCompleted {
+            model_step,
+            finish_reason,
+            usage,
+        } => Some(format!(
+            "model_response_completed step={model_step} finish={finish_reason:?} input_tokens={} output_tokens={} cached_input_tokens={}",
+            usage.input_tokens, usage.output_tokens, usage.cached_input_tokens,
+        )),
+        Event::ModelRequestPrepared {
+            model_step,
+            request,
+        } => Some(format!(
+            "model_request step={model_step} model={} items={} tools={} tool_choice={:?}",
+            request.model,
+            request.items.len(),
+            request.tools.len(),
+            request.tool_choice,
+        )),
         Event::RunCompleted {
             output: Some(content),
         } => Some(compact_text("assistant", content)),
@@ -1107,6 +1201,21 @@ fn event_semantic_key(event: &Event) -> Option<String> {
         Event::ToolCallClassified { call_id, kind } => {
             Some(format!("tool_class call_id={call_id} kind={kind:?}").to_lowercase())
         }
+        Event::ToolCallReused {
+            call_id,
+            source_call_id,
+            fingerprint,
+            repeat_count,
+        } => Some(format!(
+            "tool_reused call_id={call_id} source_call_id={source_call_id} fingerprint={fingerprint} repeat_count={repeat_count}"
+        )),
+        Event::ToolCallLoopBlocked {
+            call_id,
+            fingerprint,
+            repeat_count,
+        } => Some(format!(
+            "tool_loop_blocked call_id={call_id} fingerprint={fingerprint} repeat_count={repeat_count}"
+        )),
         Event::ToolCallCompleted {
             call_id,
             name,
@@ -1214,7 +1323,9 @@ fn truncate_utf8_bytes(value: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use structure_model::{MemoryLoadState, ShortMemoryItem};
+    use structure_model::{
+        MemoryLoadState, ProviderState, ReasoningItem, RuntimeItem, ShortMemoryItem,
+    };
     use structure_protocol::{
         CommandId, EventId, EventMetadata, OutputStream, SessionId, WorkspaceId,
     };
@@ -1247,6 +1358,44 @@ mod tests {
             },
             event,
         )
+    }
+
+    #[test]
+    fn reasoning_response_is_canonical_and_projects_as_its_own_batch() {
+        let reasoning = ReasoningItem {
+            id: Some("reasoning-1".to_owned()),
+            summary: vec!["inspect before changing state".to_owned()],
+            provider_state: Some(ProviderState::OpenAiChatCompletions {
+                reasoning_content: "inspect before changing state".to_owned(),
+            }),
+        };
+        let history = vec![envelope(
+            1,
+            Event::ModelResponseItem {
+                model_step: 0,
+                item_index: 0,
+                item: RuntimeItem::Reasoning(reasoning.clone()),
+            },
+        )];
+
+        let materialization = ShortMemoryProjector::materialize(
+            &history,
+            Some(&RunId::new("run-1")),
+            &ShortMemoryPolicy::full_replay(),
+        );
+
+        assert_eq!(materialization.batches.len(), 1);
+        assert_eq!(
+            materialization.batches[0].context_kind,
+            MemoryBatchKind::Reasoning
+        );
+        assert!(matches!(
+            materialization.entries.as_slice(),
+            [ShortMemoryEntry {
+                item: ShortMemoryItem::Reasoning(projected),
+                ..
+            }] if projected == &reasoning
+        ));
     }
 
     #[test]

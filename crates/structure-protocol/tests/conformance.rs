@@ -1,3 +1,7 @@
+use structure_model::{
+    FinishReason, MessageItem, RuntimeGenerationConfig, RuntimeItem, RuntimeRequest, RuntimeRole,
+    RuntimeUsage, ToolChoice,
+};
 use structure_protocol::{
     Command, ContextEntry, DisclosureLevel, ErrorCode, Event, OutputStream, RunId, SessionId,
     ToolInteractionKind, WorkspaceId,
@@ -103,6 +107,38 @@ fn every_event_has_a_stable_dotted_wire_name() {
             "message.accepted",
         ),
         (
+            Event::ModelRequestPrepared {
+                model_step: 0,
+                request: RuntimeRequest {
+                    model: "model-1".to_owned(),
+                    items: vec![RuntimeItem::Message(MessageItem::text(
+                        RuntimeRole::User,
+                        "hello",
+                    ))],
+                    tools: Vec::new(),
+                    tool_choice: ToolChoice::Auto,
+                    generation: RuntimeGenerationConfig::default(),
+                },
+            },
+            "model.request.prepared",
+        ),
+        (
+            Event::ModelResponseItem {
+                model_step: 0,
+                item_index: 0,
+                item: RuntimeItem::Message(MessageItem::text(RuntimeRole::Assistant, "hello")),
+            },
+            "model.response.item",
+        ),
+        (
+            Event::ModelResponseCompleted {
+                model_step: 0,
+                finish_reason: Some(FinishReason::Stop),
+                usage: RuntimeUsage::default(),
+            },
+            "model.response.completed",
+        ),
+        (
             Event::ToolCallRequested {
                 call_id: "call-1".to_owned(),
                 name: "write_file".to_owned(),
@@ -125,6 +161,23 @@ fn every_event_has_a_stable_dotted_wire_name() {
                 kind: ToolInteractionKind::Mutation,
             },
             "tool.call.classified",
+        ),
+        (
+            Event::ToolCallReused {
+                call_id: "call-2".to_owned(),
+                source_call_id: "call-1".to_owned(),
+                fingerprint: "sha256:abcd".to_owned(),
+                repeat_count: 1,
+            },
+            "tool.call.reused",
+        ),
+        (
+            Event::ToolCallLoopBlocked {
+                call_id: "call-3".to_owned(),
+                fingerprint: "sha256:abcd".to_owned(),
+                repeat_count: 2,
+            },
+            "tool.call.loop_blocked",
         ),
         (
             Event::CommandOutput {
@@ -189,4 +242,15 @@ fn every_event_has_a_stable_dotted_wire_name() {
         let value = serde_json::to_value(event).expect("event serializes");
         assert_eq!(value["type"], expected_name);
     }
+}
+
+#[test]
+fn model_exchange_events_are_internal_to_the_canonical_log() {
+    let event = Event::ModelResponseItem {
+        model_step: 0,
+        item_index: 0,
+        item: RuntimeItem::Message(MessageItem::text(RuntimeRole::Assistant, "private")),
+    };
+    assert!(!event.is_client_visible());
+    assert!(Event::RunCompleted { output: None }.is_client_visible());
 }

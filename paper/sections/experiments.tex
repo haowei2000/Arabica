@@ -112,3 +112,23 @@ indicate stronger compression at comparable accuracy.
 \paragraph{Decision rule.} We treat a result as supporting the paper
 claim only if \textsc{Structure} improves tokens per scored point at
 comparable accuracy on at least two of the three narrowed benchmarks.
+
+\subsection{Supplementary End-to-End Runtime Baseline}
+
+We additionally record a coding-agent runtime baseline that is
+supplementary to the three memory benchmarks and is not used to answer
+RQ1--RQ3. The task is Terminal-Bench 2.0
+\texttt{db-wal-recovery}; the B0 policy replays the full Provider-visible
+event history without context compaction. We ran five sequential
+LongCat-2.0 attempts with one frozen binary (SHA-256 prefix
+\texttt{1cd20b3b024d}; the full digest is in the released ledger),
+a 128-step limit, an 8,192-token output limit, and concurrency one.
+
+An attempt enters the success-conditioned cost baseline only when the
+Runtime emits a successful terminal event, Harbor reports reward 1,
+all seven task verifier checks pass, and the Provider/tool raw captures
+are complete. We report task effectiveness over all five attempts and
+cost only over accepted attempts. This two-level rule prevents failed
+or length-truncated trajectories from disappearing through
+success-only selection. The credential-free run ledger is released at
+\path{benchmarks/runtime-short-memory/results/2026-07-31-b0-wal-baseline.json}.

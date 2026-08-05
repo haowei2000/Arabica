@@ -93,10 +93,13 @@ impl RuntimeEventLog for SessionRuntimeEventLog<'_> {
     }
 
     fn append(&mut self, event: Event) -> EventEnvelope {
+        let client_visible = event.is_client_visible();
         let envelope = self
             .session
             .append_event(&self.command_id, self.run_id.as_ref(), event);
-        self.emitted.push(envelope.clone());
+        if client_visible {
+            self.emitted.push(envelope.clone());
+        }
         envelope
     }
 }
@@ -543,6 +546,7 @@ mod tests {
             self.requests.push(request);
             Ok(ModelRunResult {
                 final_output: Some(output),
+                prepared_request: None,
                 response: None,
             })
         }
@@ -562,6 +566,7 @@ mod tests {
         ) -> Result<ModelRunResult, ProviderError> {
             Ok(ModelRunResult {
                 final_output: None,
+                prepared_request: None,
                 response: Some(RuntimeResponse {
                     items: Vec::new(),
                     finish_reason: Some(FinishReason::Length),

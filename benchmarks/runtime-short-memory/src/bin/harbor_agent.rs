@@ -24,12 +24,14 @@ use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
 
-const REPORT_SCHEMA: &str = "structure.harbor-agent/v6";
+const REPORT_SCHEMA: &str = "structure.harbor-agent/v7";
 const DEFAULT_MAX_STEPS: usize = 128;
 const DEFAULT_MAX_TOKENS: u32 = 8_192;
 const DEFAULT_CHECKPOINT_BATCHES: usize = 8;
 const DEFAULT_PGC_EFFORT: usize = 1;
 const DEFAULT_PGC_CONTINUATION_PROBABILITY_BPS: u32 = 7_500;
+const GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS: u32 = 6_000;
+const GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS: usize = 4;
 const MAX_TOOL_OUTPUT_CHARS: usize = 8_000;
 const INPUT_SNAPSHOT_PATH: &str = "/tmp/structure-input-snapshot";
 const INPUT_SNAPSHOT_COMMAND: &str = "set -eu; snapshot=/tmp/structure-input-snapshot; mkdir -p \"$snapshot\"; find /app -maxdepth 1 -type f \\( -name '*.db' -o -name '*.db-*' -o -name '*.sqlite' -o -name '*.sqlite-*' -o -name '*.wal' \\) -exec cp -p {} \"$snapshot\"/ \\;";
@@ -90,6 +92,7 @@ enum BridgeOutput<'a> {
         command: &'a str,
         cwd: Option<&'a str>,
         timeout_sec: u64,
+        strict_pipeline: bool,
     },
     Done {
         report: &'a str,
@@ -176,6 +179,7 @@ impl RunnerEnvironment for HarborBridgeRunner {
                 command: INPUT_SNAPSHOT_COMMAND,
                 cwd: Some("/app"),
                 timeout_sec: 120,
+                strict_pipeline: false,
             })?;
             let BridgeInput::ExecResult {
                 id,
@@ -225,6 +229,7 @@ impl RunnerEnvironment for HarborBridgeRunner {
             command,
             cwd,
             timeout_sec,
+            strict_pipeline: shell_requires_strict_pipeline(command),
         })?;
         let BridgeInput::ExecResult {
             id: response_id,
@@ -272,17 +277,18 @@ impl RunnerEnvironment for HarborBridgeRunner {
 
 fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     let command = command.to_ascii_lowercase();
-    if [
-        "sed -i",
-        "perl -pi",
-        "apply_patch",
-        " tee ",
-        "touch ",
-        "mkdir ",
-        "git clone",
-    ]
-    .iter()
-    .any(|pattern| command.contains(pattern))
+    if has_shell_output_redirection(&command)
+        || [
+            "sed -i",
+            "perl -pi",
+            "apply_patch",
+            " tee ",
+            "touch ",
+            "mkdir ",
+            "git clone",
+        ]
+        .iter()
+        .any(|pattern| command.contains(pattern))
     {
         ToolInteractionKind::Mutation
     } else if [
@@ -296,6 +302,12 @@ fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     .any(|pattern| command.contains(pattern))
     {
         ToolInteractionKind::Dependency
+    } else if looks_like_inline_validation(&command) {
+        // Inspect the executable shape before scanning the embedded program.
+        // Inline validation source can legitimately contain strings such as
+        // `import package.make as make`, which must not turn a read-only probe
+        // into a state-changing build event.
+        ToolInteractionKind::Validation
     } else if ["build_ext", "cargo build", "cmake ", "make "]
         .iter()
         .any(|pattern| command.contains(pattern))
@@ -327,6 +339,93 @@ fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     }
 }
 
+fn has_shell_output_redirection(command: &str) -> bool {
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+    let chars: Vec<char> = command.chars().collect();
+    for (index, character) in chars.iter().copied().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && !single_quoted {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' && !double_quoted {
+            single_quoted = !single_quoted;
+            continue;
+        }
+        if character == '"' && !single_quoted {
+            double_quoted = !double_quoted;
+            continue;
+        }
+        if character != '>' || single_quoted || double_quoted {
+            continue;
+        }
+        // Descriptor duplication such as `2>&1` changes stream routing, not
+        // workspace state. All other unquoted output redirects can write a
+        // file and therefore invalidate reusable read-only results.
+        if chars.get(index + 1) != Some(&'&') {
+            return true;
+        }
+    }
+    false
+}
+
+fn looks_like_inline_validation(command: &str) -> bool {
+    let invokes_inline_program = [
+        "python -c",
+        "python3 -c",
+        "python - <<",
+        "python3 - <<",
+        "python <<",
+        "python3 <<",
+    ]
+    .iter()
+    .any(|pattern| command.contains(pattern));
+    let reports_a_check = command.contains("print(") || command.contains("assert ");
+    let may_mutate = [
+        "open(",
+        ".write(",
+        "write_text(",
+        "write_bytes(",
+        "unlink(",
+        "remove(",
+        "rename(",
+        "mkdir(",
+        "subprocess",
+        "os.system",
+        "shutil",
+    ]
+    .iter()
+    .any(|pattern| command.contains(pattern));
+    invokes_inline_program && reports_a_check && !may_mutate
+}
+
+fn shell_requires_strict_pipeline(command: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    [
+        "pip install",
+        "uv pip",
+        "apt-get install",
+        "npm install",
+        "cargo add",
+        "build_ext",
+        "cargo build",
+        "cmake ",
+        "make ",
+        "pytest",
+        "cargo test",
+        "npm test",
+        "unittest",
+    ]
+    .iter()
+    .any(|pattern| command.contains(pattern))
+        || looks_like_inline_validation(&command)
+}
+
 fn truncate_output(value: String) -> String {
     let chars = value.chars().count();
     if chars <= MAX_TOOL_OUTPUT_CHARS {
@@ -339,6 +438,23 @@ fn truncate_output(value: String) -> String {
         "{head}\n...[truncated {} characters; rerun a narrower command to inspect them]...\n{tail}",
         chars - MAX_TOOL_OUTPUT_CHARS
     )
+}
+
+#[derive(Serialize)]
+struct GcQualityGate {
+    applicable: bool,
+    max_first_admission_fraction_bps: u32,
+    min_post_admission_provider_calls: usize,
+    require_post_admission_archive_read: bool,
+    first_admission_model_step: Option<usize>,
+    first_admission_fraction_bps: Option<u32>,
+    post_admission_provider_calls: usize,
+    post_admission_archive_read_count: usize,
+    first_post_admission_archive_read_model_step: Option<usize>,
+    early_admission_passed: bool,
+    reuse_window_passed: bool,
+    archive_reread_passed: bool,
+    passed: bool,
 }
 
 #[derive(Serialize)]
@@ -357,6 +473,7 @@ struct HarborAgentReport {
     auto_hydration_count: usize,
     auto_hydrated_bytes: usize,
     auto_hydration_observations: Vec<AutoHydrationObservation>,
+    gc_quality_gate: GcQualityGate,
     max_model_steps: usize,
     elapsed_ms: u64,
     terminal_success: bool,
@@ -560,6 +677,12 @@ fn build_report(
                 && calls[1].memory_pointer_entries > calls[0].memory_pointer_entries
         })
         .count();
+    let gc_quality_gate = build_gc_quality_gate(
+        config.strategy,
+        provider_calls.len(),
+        &pointer_gc_admission_observations,
+        &auto_hydration_observations,
+    );
     HarborAgentReport {
         schema_version: REPORT_SCHEMA,
         strategy: config.strategy,
@@ -585,6 +708,7 @@ fn build_report(
             .map(|observation| observation.hydrated_bytes)
             .sum(),
         auto_hydration_observations,
+        gc_quality_gate,
         max_model_steps: config.max_steps,
         elapsed_ms: saturating_u64(started.elapsed().as_millis()),
         terminal_success,
@@ -616,6 +740,85 @@ fn build_report(
             .sum(),
         provider_calls,
         events,
+    }
+}
+
+fn build_gc_quality_gate(
+    strategy: Strategy,
+    total_provider_calls: usize,
+    admission_observations: &[PointerGcAdmissionObservation],
+    hydration_observations: &[AutoHydrationObservation],
+) -> GcQualityGate {
+    let first_admission_model_step = admission_observations
+        .iter()
+        .filter(|observation| observation.admitted)
+        .map(|observation| observation.model_step)
+        .min();
+    let hydration_steps = hydration_observations
+        .iter()
+        .map(|observation| observation.model_step)
+        .collect::<Vec<_>>();
+    evaluate_gc_quality_gate(
+        strategy,
+        total_provider_calls,
+        first_admission_model_step,
+        &hydration_steps,
+    )
+}
+
+fn evaluate_gc_quality_gate(
+    strategy: Strategy,
+    total_provider_calls: usize,
+    first_admission_model_step: Option<usize>,
+    hydration_steps: &[usize],
+) -> GcQualityGate {
+    let applicable = strategy == Strategy::Fbgc;
+    let first_admission_fraction_bps = first_admission_model_step.and_then(|model_step| {
+        (total_provider_calls > 0).then(|| {
+            let numerator = model_step.saturating_mul(10_000);
+            u32::try_from(numerator.div_ceil(total_provider_calls)).unwrap_or(u32::MAX)
+        })
+    });
+    let post_admission_provider_calls = first_admission_model_step
+        .map(|model_step| total_provider_calls.saturating_sub(model_step.saturating_sub(1)))
+        .unwrap_or_default();
+    let first_post_admission_archive_read_model_step =
+        first_admission_model_step.and_then(|model_step| {
+            hydration_steps
+                .iter()
+                .copied()
+                .filter(|hydration_step| *hydration_step > model_step)
+                .min()
+        });
+    let post_admission_archive_read_count = first_admission_model_step
+        .map(|model_step| {
+            hydration_steps
+                .iter()
+                .filter(|hydration_step| **hydration_step > model_step)
+                .count()
+        })
+        .unwrap_or_default();
+    let early_admission_passed = applicable
+        && first_admission_fraction_bps
+            .is_some_and(|fraction| fraction <= GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS);
+    let reuse_window_passed =
+        applicable && post_admission_provider_calls >= GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS;
+    let archive_reread_passed = applicable && post_admission_archive_read_count > 0;
+
+    GcQualityGate {
+        applicable,
+        max_first_admission_fraction_bps: GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS,
+        min_post_admission_provider_calls: GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS,
+        require_post_admission_archive_read: true,
+        first_admission_model_step,
+        first_admission_fraction_bps,
+        post_admission_provider_calls,
+        post_admission_archive_read_count,
+        first_post_admission_archive_read_model_step,
+        early_admission_passed,
+        reuse_window_passed,
+        archive_reread_passed,
+        passed: early_admission_passed && reuse_window_passed && archive_reread_passed,
     }
 }
 
@@ -860,11 +1063,73 @@ mod tests {
                 ToolInteractionKind::Dependency,
             ),
             ("pytest -q", ToolInteractionKind::Validation),
+            (
+                "python3 -c \"import package; print('Result:', package.check())\"",
+                ToolInteractionKind::Validation,
+            ),
+            (
+                "python3 -c \"from pathlib import Path; Path('x').write_text('x'); print('done')\"",
+                ToolInteractionKind::Generic,
+            ),
             ("sed -i 's/old/new/' file", ToolInteractionKind::Mutation),
             ("python scripts/generate.py", ToolInteractionKind::Generic),
         ] {
             assert_eq!(classify_shell_interaction(command), expected, "{command}");
         }
+    }
+
+    #[test]
+    fn validation_build_and_dependency_pipelines_require_strict_status() {
+        for command in [
+            "pytest -q 2>&1 | tail -20",
+            "python setup.py build_ext --inplace 2>&1 | tail -100",
+            "pip install cython 2>&1 | tail -5",
+            "sed -i 's/old/new/' file && pytest -q | tail -20",
+        ] {
+            assert!(shell_requires_strict_pipeline(command), "{command}");
+        }
+        assert!(!shell_requires_strict_pipeline("grep -R TODO src | head"));
+    }
+
+    #[test]
+    fn inline_validation_source_does_not_match_build_substrings() {
+        let command = r#"cd /app/pyknotid && python3 -c "
+import pyknotid.make as mk
+print(mk.three_twist(num_points=100))
+" 2>&1"#;
+
+        assert_eq!(
+            classify_shell_interaction(command),
+            ToolInteractionKind::Validation
+        );
+    }
+
+    #[test]
+    fn python_heredoc_without_dash_is_classified_as_validation() {
+        let command = r#"cd /app/pyknotid && python3 << 'EOF'
+import planarity
+print(planarity.PGraph())
+EOF"#;
+
+        assert_eq!(
+            classify_shell_interaction(command),
+            ToolInteractionKind::Validation
+        );
+    }
+
+    #[test]
+    fn shell_file_redirection_is_mutation_but_descriptor_merging_is_not() {
+        assert_eq!(
+            classify_shell_interaction(
+                "cat > /tmp/fix.py << 'EOF'\nprint('fix')\nEOF\npython /tmp/fix.py"
+            ),
+            ToolInteractionKind::Mutation
+        );
+        assert_eq!(
+            classify_shell_interaction("pytest -q 2>&1 | tail -20"),
+            ToolInteractionKind::Validation
+        );
+        assert!(!has_shell_output_redirection("python3 -c \"print(2 > 1)\""));
     }
 
     #[test]
@@ -876,6 +1141,51 @@ mod tests {
             Strategy::Fbgc
         );
         assert!(Strategy::parse("S").is_err());
+    }
+
+    #[test]
+    fn gc_quality_gate_requires_early_gc_reuse_window_and_later_archive_read() {
+        let passed = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(6), &[7]);
+        assert_eq!(passed.first_admission_fraction_bps, Some(6_000));
+        assert_eq!(passed.post_admission_provider_calls, 5);
+        assert_eq!(passed.post_admission_archive_read_count, 1);
+        assert_eq!(passed.first_post_admission_archive_read_model_step, Some(7));
+        assert!(passed.early_admission_passed);
+        assert!(passed.reuse_window_passed);
+        assert!(passed.archive_reread_passed);
+        assert!(passed.passed);
+
+        let late = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(7), &[8]);
+        assert_eq!(late.first_admission_fraction_bps, Some(7_000));
+        assert!(!late.early_admission_passed);
+        assert!(late.reuse_window_passed);
+        assert!(late.archive_reread_passed);
+        assert!(!late.passed);
+
+        let short = evaluate_gc_quality_gate(Strategy::Fbgc, 5, Some(3), &[4]);
+        assert!(short.early_admission_passed);
+        assert_eq!(short.post_admission_provider_calls, 3);
+        assert!(!short.reuse_window_passed);
+        assert!(short.archive_reread_passed);
+        assert!(!short.passed);
+
+        let unread = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(6), &[5, 6]);
+        assert_eq!(unread.post_admission_archive_read_count, 0);
+        assert!(!unread.archive_reread_passed);
+        assert!(!unread.passed);
+    }
+
+    #[test]
+    fn gc_quality_gate_is_not_applicable_without_file_backed_gc() {
+        let disabled = evaluate_gc_quality_gate(Strategy::B0, 10, Some(2), &[3]);
+        assert!(!disabled.applicable);
+        assert!(!disabled.passed);
+
+        let missing = evaluate_gc_quality_gate(Strategy::Fbgc, 10, None, &[3]);
+        assert_eq!(missing.first_admission_fraction_bps, None);
+        assert_eq!(missing.post_admission_provider_calls, 0);
+        assert_eq!(missing.post_admission_archive_read_count, 0);
+        assert!(!missing.passed);
     }
 
     #[test]

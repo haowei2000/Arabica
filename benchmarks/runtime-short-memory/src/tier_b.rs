@@ -893,13 +893,14 @@ impl ModelProvider for FixtureFileProvider {
             ));
         }
         if request
-            .continuation
+            .run_memory
             .iter()
-            .any(|item| matches!(item, RuntimeItem::ToolResult(_)))
+            .any(|entry| matches!(entry.item, ShortMemoryItem::ToolResult(_)))
         {
             let output = "TASK_COMPLETE".to_owned();
             return Ok(ModelRunResult {
                 final_output: Some(output.clone()),
+                prepared_request: None,
                 response: Some(RuntimeResponse {
                     items: vec![RuntimeItem::Message(MessageItem::text(
                         RuntimeRole::Assistant,
@@ -918,6 +919,7 @@ impl ModelProvider for FixtureFileProvider {
             let output = "MEMORY_STORED".to_owned();
             return Ok(ModelRunResult {
                 final_output: Some(output.clone()),
+                prepared_request: None,
                 response: Some(RuntimeResponse {
                     items: vec![RuntimeItem::Message(MessageItem::text(
                         RuntimeRole::Assistant,
@@ -936,6 +938,7 @@ impl ModelProvider for FixtureFileProvider {
             let output = "HISTORY_ACKNOWLEDGED".to_owned();
             return Ok(ModelRunResult {
                 final_output: Some(output.clone()),
+                prepared_request: None,
                 response: Some(RuntimeResponse {
                     items: vec![RuntimeItem::Message(MessageItem::text(
                         RuntimeRole::Assistant,
@@ -977,6 +980,7 @@ impl ModelProvider for FixtureFileProvider {
 fn fixture_text_response(output: &str, input_tokens: u64) -> ModelRunResult {
     ModelRunResult {
         final_output: Some(output.to_owned()),
+        prepared_request: None,
         response: Some(RuntimeResponse {
             items: vec![RuntimeItem::Message(MessageItem::text(
                 RuntimeRole::Assistant,
@@ -995,6 +999,7 @@ fn fixture_text_response(output: &str, input_tokens: u64) -> ModelRunResult {
 fn fixture_tool_response(call: ToolCallItem, input_tokens: u64) -> ModelRunResult {
     ModelRunResult {
         final_output: None,
+        prepared_request: None,
         response: Some(RuntimeResponse {
             items: vec![RuntimeItem::ToolCall(call)],
             finish_reason: Some(FinishReason::ToolCalls),
@@ -1178,16 +1183,15 @@ mod tests {
         assert!(run.checks.user_message_count_matches);
         assert_eq!(run.tool_call_count, 12);
         assert_eq!(run.provider_calls.len(), 13);
-        assert_eq!(run.provider_calls[0].continuation_items, 0);
+        assert!(
+            run.provider_calls
+                .iter()
+                .all(|call| call.continuation_items == 0)
+        );
         assert!(
             run.provider_calls[1..]
                 .iter()
-                .all(|call| call.continuation_items == 2)
-        );
-        assert!(
-            run.provider_calls[2..]
-                .iter()
-                .any(|call| call.run_memory_entries > 0)
+                .all(|call| call.run_memory_entries >= 2)
         );
         assert!(run.file_oracles.iter().all(|file| file.content_matches));
         assert_eq!(report.aggregate.total_user_messages, 1);
@@ -1208,6 +1212,7 @@ mod tests {
             ) -> Result<ModelRunResult, ProviderError> {
                 Ok(ModelRunResult {
                     final_output: Some("TASK_COMPLETE".to_owned()),
+                    prepared_request: None,
                     response: Some(RuntimeResponse {
                         items: vec![RuntimeItem::Message(MessageItem::text(
                             RuntimeRole::Assistant,

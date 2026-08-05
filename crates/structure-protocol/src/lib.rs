@@ -6,6 +6,7 @@
 
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
+use structure_model::{FinishReason, RuntimeItem, RuntimeRequest, RuntimeUsage};
 
 pub const PROTOCOL_VERSION: &str = "1.0";
 
@@ -160,6 +161,26 @@ pub enum Event {
     RunStarted,
     #[serde(rename = "message.accepted")]
     MessageAccepted { content: String },
+    /// Exact provider-neutral request immediately before wire encoding.
+    #[serde(rename = "model.request.prepared")]
+    ModelRequestPrepared {
+        model_step: usize,
+        request: RuntimeRequest,
+    },
+    /// One exact ordered item from a provider-neutral model response.
+    #[serde(rename = "model.response.item")]
+    ModelResponseItem {
+        model_step: usize,
+        item_index: usize,
+        item: RuntimeItem,
+    },
+    /// Completion metadata for the preceding ordered response items.
+    #[serde(rename = "model.response.completed")]
+    ModelResponseCompleted {
+        model_step: usize,
+        finish_reason: Option<FinishReason>,
+        usage: RuntimeUsage,
+    },
     #[serde(rename = "tool.call.requested")]
     ToolCallRequested {
         call_id: String,
@@ -170,6 +191,19 @@ pub enum Event {
     ToolCallClassified {
         call_id: String,
         kind: ToolInteractionKind,
+    },
+    #[serde(rename = "tool.call.reused")]
+    ToolCallReused {
+        call_id: String,
+        source_call_id: String,
+        fingerprint: String,
+        repeat_count: usize,
+    },
+    #[serde(rename = "tool.call.loop_blocked")]
+    ToolCallLoopBlocked {
+        call_id: String,
+        fingerprint: String,
+        repeat_count: usize,
     },
     #[serde(rename = "tool.call.completed")]
     ToolCallCompleted {
@@ -198,6 +232,20 @@ pub enum Event {
     ContextDisclosureSet { level: DisclosureLevel },
     #[serde(rename = "error")]
     Error { code: ErrorCode, message: String },
+}
+
+impl Event {
+    /// Model exchange events are canonical audit/runtime facts but can contain
+    /// system prompts, disclosed memory, and provider reasoning state. They
+    /// must not cross the ordinary client event transport boundary.
+    pub const fn is_client_visible(&self) -> bool {
+        !matches!(
+            self,
+            Self::ModelRequestPrepared { .. }
+                | Self::ModelResponseItem { .. }
+                | Self::ModelResponseCompleted { .. }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]

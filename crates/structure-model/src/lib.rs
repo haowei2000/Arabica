@@ -3,10 +3,11 @@
 //! Runtime and provider adapters exchange these types. Provider wire shapes
 //! must not leak into Session Management or the Command/Event Protocol.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeRole {
     System,
@@ -15,7 +16,7 @@ pub enum RuntimeRole {
     Assistant,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ContentBlock {
     Text {
@@ -40,7 +41,7 @@ impl ContentBlock {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct MessageItem {
     pub id: Option<String>,
     pub role: RuntimeRole,
@@ -57,7 +58,7 @@ impl MessageItem {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct ToolCallItem {
     pub id: Option<String>,
     pub call_id: String,
@@ -66,7 +67,7 @@ pub struct ToolCallItem {
     pub provider_state: Option<ProviderState>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct ToolResultItem {
     pub id: Option<String>,
     pub call_id: String,
@@ -75,7 +76,7 @@ pub struct ToolResultItem {
     pub is_error: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct ReasoningItem {
     pub id: Option<String>,
     pub summary: Vec<String>,
@@ -86,9 +87,12 @@ pub struct ReasoningItem {
 ///
 /// These fields are not portable semantics. Adapters for another API dialect
 /// must reject unsupported state instead of silently discarding it.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ProviderState {
+    OpenAiChatCompletions {
+        reasoning_content: String,
+    },
     OpenAi {
         item_id: Option<String>,
         encrypted_content: Option<String>,
@@ -101,7 +105,7 @@ pub enum ProviderState {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum RuntimeItem {
     Message(MessageItem),
@@ -115,6 +119,7 @@ pub enum RuntimeItem {
 #[serde(rename_all = "snake_case")]
 pub enum MemoryBatchKind {
     Turn,
+    Reasoning,
     Tool,
     Context,
     Task,
@@ -164,6 +169,7 @@ pub struct MemoryPointer {
 pub enum ShortMemoryItem {
     UserMessage { content: String },
     AssistantMessage { content: String },
+    Reasoning(ReasoningItem),
     ToolCall(ToolCallItem),
     ToolResult(ToolResultItem),
     Observation { content: String },
@@ -181,7 +187,7 @@ pub struct ShortMemoryEntry {
     pub item: ShortMemoryItem,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
@@ -189,7 +195,7 @@ pub struct ToolDefinition {
     pub strict: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ToolChoice {
     #[default]
@@ -201,15 +207,22 @@ pub enum ToolChoice {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct RuntimeGenerationConfig {
+    pub max_output_tokens: Option<u32>,
+    pub thinking_enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct RuntimeRequest {
     pub model: String,
     pub items: Vec<RuntimeItem>,
     pub tools: Vec<ToolDefinition>,
     pub tool_choice: ToolChoice,
+    pub generation: RuntimeGenerationConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum FinishReason {
     Stop,
@@ -219,7 +232,7 @@ pub enum FinishReason {
     Provider { value: String },
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct RuntimeUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -227,7 +240,7 @@ pub struct RuntimeUsage {
     pub cached_input_tokens: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct RuntimeResponse {
     pub items: Vec<RuntimeItem>,
     pub finish_reason: Option<FinishReason>,
@@ -297,6 +310,7 @@ mod tests {
                 strict: Some(true),
             }],
             tool_choice: ToolChoice::Auto,
+            generation: RuntimeGenerationConfig::default(),
         };
 
         assert_eq!(request.items.len(), 1);

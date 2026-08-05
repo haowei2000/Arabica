@@ -288,3 +288,11 @@ Provider raw capture never writes the Authorization header or API key. These
 artifacts can still contain task data, prompts, model reasoning fields, and
 tool output, so they belong in the private Harbor job directory under
 `target/` and must not be committed.
+
+Harbor report schema `structure.harbor-agent/v7` adds `gc_quality_gate` for
+long-task FBGC experiments. The gate passes only when the first admitted GC is
+at or before 60% of the final Provider trajectory, the compacted projection is
+used for at least four Provider calls, and an exact auto-hydration reads an
+archive at a strictly later model step. This is a trajectory gate, not a task
+quality result: formal acceptance must additionally require Runtime terminal
+success, Harbor reward 1, and all verifier checks.

@@ -11,6 +11,27 @@ performance result.
 
 \input{tables/harness_validation}
 
+\subsection{Supplementary B0 Runtime Baseline}
+
+The end-to-end B0 run completed all seven verifier checks in three of
+five attempts, for an observed success rate of 60\%. Both rejected
+attempts ended with \texttt{finish\_reason=length}; they remain in the
+released ledger and in the effectiveness denominator. Across the three
+accepted trajectories, mean input was 45,940 tokens, mean uncached input
+was 13,428 tokens, the aggregate cached-token ratio was 70.8\%, and mean
+wall time was 109.0 seconds. Table~\ref{tab:b0-wal-baseline} reports the
+individual success-conditioned costs.
+
+\input{tables/b0_wal_baseline}
+
+This small sample establishes a reproducible full-replay operating
+point and exposes material trajectory variance, but it is neither a
+confidence interval nor evidence that file-backed garbage collection
+improves utility or cost. A treatment comparison requires the same
+frozen binary, task, attempt count, and acceptance rule for FBGC, with
+both all-attempt effectiveness and success-conditioned efficiency
+reported.
+
 \subsection{Main Live Results}
 
 Table~\ref{tab:main} is reserved for live model runs produced by

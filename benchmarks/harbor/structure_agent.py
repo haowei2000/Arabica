@@ -8,6 +8,7 @@ isolated BaseEnvironment interface.
 import asyncio
 import json
 import os
+import shlex
 from pathlib import Path
 
 from harbor.agents.base import BaseAgent
@@ -145,8 +146,11 @@ class StructureAgent(BaseAgent):
                     tool_exchange_index, message
                 )
                 try:
+                    command = message["command"]
+                    if message.get("strict_pipeline", False):
+                        command = f"bash -o pipefail -c {shlex.quote(command)}"
                     result = await environment.exec(
-                        command=message["command"],
+                        command=command,
                         cwd=message.get("cwd") or "/app",
                         timeout_sec=int(message.get("timeout_sec", 120)),
                     )
@@ -211,6 +215,7 @@ class StructureAgent(BaseAgent):
             "memory_pointer_appearances": report["memory_pointer_appearances"],
             "auto_hydration_count": report["auto_hydration_count"],
             "auto_hydrated_bytes": report["auto_hydrated_bytes"],
+            "gc_quality_gate": report.get("gc_quality_gate"),
             "provider_raw_dir": str(self.logs_dir / "provider-raw"),
             "tool_raw_dir": str(self.logs_dir / "tool-raw"),
         }
@@ -265,6 +270,7 @@ class StructureAgent(BaseAgent):
             "command": message.get("command"),
             "cwd": message.get("cwd") or "/app",
             "timeout_sec": int(message.get("timeout_sec", 120)),
+            "strict_pipeline": bool(message.get("strict_pipeline", False)),
         }
         (exchange_dir / "request.raw.json").write_text(
             json.dumps(request, ensure_ascii=False, separators=(",", ":")),
