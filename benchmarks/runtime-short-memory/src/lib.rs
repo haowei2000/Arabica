@@ -19,8 +19,8 @@ pub use baseline::{
 pub use cli_comparison::{
     CLI_COMPARISON_MANIFEST_SCHEMA, CLI_COMPARISON_REPORT_SCHEMA, CLI_COMPARISON_SUITE_SCHEMA,
     CliComparisonManifest, CliComparisonPlan, CliComparisonSummary, CliPreflightReport,
-    CliScenario, CliSuite, CliSurface, CliTrial, CliTrialReport, CliUsage, CliVerifierResult,
-    create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
+    CliProgressDiagnostics, CliScenario, CliSuite, CliSurface, CliTrial, CliTrialReport, CliUsage,
+    CliVerifierResult, create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
     summarize_cli_comparison,
 };
 pub use gates::{

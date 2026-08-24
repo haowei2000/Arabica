@@ -1,9 +1,9 @@
-# PiAgent and Codex CLI comparison protocol
+# PiAgent, Codex CLI, and Structure comparison protocol
 
 ## Purpose
 
 This protocol measures whether PiAgent changes task completion, fresh-token use,
-and elapsed time relative to controlled Codex CLI under identical local tasks.
+and elapsed time relative to controlled Codex CLI or Structure under identical local tasks.
 It does not treat either project's published benchmark as independent evidence.
 
 PiAgent v1.5.5 was inspected at commit
@@ -20,8 +20,11 @@ own fixture and verifier ownership.
 - Fresh workspace for every trial; no session resume or conversation reuse.
 - Codex runs ephemerally with user configuration and repository rules disabled.
 - PiAgent runs through its official `init-project.sh`, guard extension, and skill
-  package. Its deterministic bootstrap happens before the task baseline is
-  frozen.
+  package. The runner then creates and commits the clean Git baseline expected
+  by PiAgent's task contract. Deterministic bootstrap and Git metadata are not
+  counted as task edits.
+- Structure runs its real Rust Session, Runtime, provider adapter, canonical
+  Event Log, and confined local runner. It is not simulated through another CLI.
 - Pair order is deterministically randomized per task and repetition.
 - Only synthetic fixtures are allowed. Prompts and output markers must never
   contain credentials or user data.
@@ -39,9 +42,13 @@ ratios only for pairs where both trials resolve. Completion counts remain an
 independent quality gate: the report cannot label a token improvement unless
 PiAgent is non-inferior on resolved tasks.
 
-Raw stdout and stderr are parsed in memory and reduced to typed usage and
-SHA-256 digests. This keeps the result auditable without persisting provider
-reasoning or potentially sensitive transcript text.
+Raw stdout and stderr are captured incrementally, including before timeout,
+then reduced to typed usage, progress diagnostics, and SHA-256 digests. The
+diagnostics count model turns, tool-use turns without observed call items, and
+failed tool results without persisting provider reasoning or transcript text.
+
+Structure additionally stores exact provider wire exchanges in the private
+trial directory. They are diagnostic evidence and must not be committed.
 
 ## Claim boundary
 

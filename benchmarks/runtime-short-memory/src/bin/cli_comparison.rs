@@ -3,12 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use structure_short_memory_benchmark::{
-    CliComparisonManifest, CliComparisonPlan, CliTrialReport, create_cli_comparison_manifest,
-    preflight_cli_comparison, run_cli_trial, summarize_cli_comparison,
+    CliComparisonManifest, CliComparisonPlan, CliSurface, CliTrialReport,
+    create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
+    summarize_cli_comparison,
 };
 
 const USAGE: &str = "usage:
-  cli_comparison plan --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL --piagent-package-root DIR [--provider-base-url URL --provider-api-key-env NAME] [--repeats N] [--timeout-seconds N] [--seed N] [--codex-program PATH] [--pi-program PATH]
+  cli_comparison plan --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL --piagent-package-root DIR [--surfaces piagent,codex-cli|piagent,structure] [--provider-base-url URL --provider-api-key-env NAME] [--repeats N] [--timeout-seconds N] [--seed N] [--codex-program PATH] [--pi-program PATH]
   cli_comparison preflight --manifest FILE
   cli_comparison run --manifest FILE --trial-id ID --output-root DIR --yes
   cli_comparison summarize --manifest FILE --reports-root DIR";
@@ -79,6 +80,11 @@ fn plan(args: &[String]) -> Result<(), Box<dyn Error>> {
     if output.exists() {
         return Err(format!("manifest already exists: {}", output.display()).into());
     }
+    let surfaces = optional(args, "--surfaces")
+        .unwrap_or("piagent,codex-cli")
+        .split(',')
+        .map(CliSurface::parse)
+        .collect::<Result<Vec<_>, _>>()?;
     let manifest = create_cli_comparison_manifest(
         suite,
         CliComparisonPlan {
@@ -96,6 +102,7 @@ fn plan(args: &[String]) -> Result<(), Box<dyn Error>> {
             piagent_package_root: required(args, "--piagent-package-root")?.to_owned(),
             provider_base_url: optional(args, "--provider-base-url").map(str::to_owned),
             provider_api_key_env: optional(args, "--provider-api-key-env").map(str::to_owned),
+            surfaces,
         },
     )?;
     if let Some(parent) = output.parent() {
