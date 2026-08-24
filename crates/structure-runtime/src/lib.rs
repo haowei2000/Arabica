@@ -30,8 +30,9 @@ use structure_model::{
     ShortMemoryEntry, ShortMemoryItem, ToolCallItem, ToolChoice, ToolDefinition, ToolResultItem,
 };
 use structure_protocol::{
-    Command, ContextEntry, DisclosureLevel, Event, EventEnvelope, EventId, OutputStream, RunId,
-    SessionId, ToolInteractionKind, WorkspaceId,
+    AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, Event, EventEnvelope,
+    EventId, ModelResponseRejectionReason, OutputStream, RunId, SessionId, ToolInteractionKind,
+    WorkspaceId,
 };
 use structure_provider::{ModelProvider, ModelRunRequest};
 use structure_runner::{RunnerEnvironment, RunnerOutput, ToolExecutionRequest};
@@ -49,6 +50,7 @@ const PROBABILITY_SCALE_BPS: u32 = 10_000;
 const FALLBACK_BYTES_PER_TOKEN: usize = 4;
 const MAX_AUTOMATIC_TOOL_RESULT_REUSES: usize = 1;
 const MAX_BLOCKED_TOOL_LOOP_ATTEMPTS: usize = 1;
+const DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS: usize = 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeErrorKind {
@@ -246,6 +248,7 @@ pub struct CoreRuntime<M, R> {
     auto_hydration_observations: Vec<AutoHydrationObservation>,
     pointer_gc_observation_sink: Option<Box<dyn PointerGcObservationSink>>,
     max_model_steps_per_run: usize,
+    max_model_steps_without_progress: usize,
     tools: Vec<ToolDefinition>,
     archive_store: RuntimeArchiveStore,
     model: M,
@@ -267,6 +270,7 @@ impl<M, R> CoreRuntime<M, R> {
             auto_hydration_observations: Vec::new(),
             pointer_gc_observation_sink: None,
             max_model_steps_per_run: DEFAULT_MAX_MODEL_STEPS_PER_RUN,
+            max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
             tools: default_tool_definitions(),
             archive_store: RuntimeArchiveStore::Memory,
             model,
@@ -292,6 +296,7 @@ impl<M, R> CoreRuntime<M, R> {
             auto_hydration_observations: Vec::new(),
             pointer_gc_observation_sink: None,
             max_model_steps_per_run: DEFAULT_MAX_MODEL_STEPS_PER_RUN,
+            max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
             tools: default_tool_definitions(),
             archive_store: RuntimeArchiveStore::Memory,
             model,
@@ -323,6 +328,7 @@ impl<M, R> CoreRuntime<M, R> {
             auto_hydration_observations: Vec::new(),
             pointer_gc_observation_sink: None,
             max_model_steps_per_run: DEFAULT_MAX_MODEL_STEPS_PER_RUN,
+            max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
             tools: default_tool_definitions(),
             archive_store,
             model,
@@ -391,6 +397,10 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_max_model_steps_per_run(&mut self, steps: usize) {
         self.max_model_steps_per_run = steps.max(1);
+    }
+
+    pub fn set_max_model_steps_without_progress(&mut self, steps: usize) {
+        self.max_model_steps_without_progress = steps.max(1);
     }
 
     pub fn set_tools(&mut self, tools: Vec<ToolDefinition>) {
@@ -565,6 +575,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 let mut protected_event_ids = HashSet::new();
                 let mut pointer_gc_economics = PointerGcRunEconomics::default();
                 let mut tool_loop_guard = ToolLoopGuard::default();
+                let mut consecutive_no_progress_steps = 0usize;
                 for model_step in 0..self.max_model_steps_per_run {
                     let history = event_log.snapshot();
                     let projection = {
@@ -683,7 +694,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             _ => None,
                         })
                         .collect();
-                    if let Some(message) = invalid_terminal_response(
+                    if let Some(rejection) = invalid_terminal_response(
                         result
                             .response
                             .as_ref()
@@ -691,7 +702,22 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         tool_calls.len(),
                         result.final_output.as_deref(),
                     ) {
-                        event_log.append(Event::RunFailed { message });
+                        event_log.append(Event::ModelResponseRejected {
+                            model_step,
+                            reason: rejection,
+                            finish_reason: result
+                                .response
+                                .as_ref()
+                                .and_then(|response| response.finish_reason.clone()),
+                            tool_call_count: tool_calls.len(),
+                            final_output_present: result
+                                .final_output
+                                .as_deref()
+                                .is_some_and(|output| !output.trim().is_empty()),
+                        });
+                        event_log.append(Event::RunFailed {
+                            message: model_response_rejection_message(rejection).to_owned(),
+                        });
                         return Ok(());
                     }
                     if tool_calls.is_empty() {
@@ -705,6 +731,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     for event_id in model_response_event_ids {
                         next_protected_event_ids.insert(event_id);
                     }
+                    let mut made_state_progress = false;
                     for call in tool_calls {
                         let interaction_kind = self.runner.classify(&call);
                         let requested = event_log.append(Event::ToolCallRequested {
@@ -835,6 +862,11 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             next_protected_event_ids.insert(output.event_id);
                         }
                         let tool_result = execution.result;
+                        if !tool_result.is_error
+                            && tool_interaction_may_change_state(interaction_kind)
+                        {
+                            made_state_progress = true;
+                        }
                         tool_loop_guard.observe_execution(&call, interaction_kind, &tool_result);
                         let result_text = tool_result_text(&tool_result);
                         let completed = event_log.append(Event::ToolCallCompleted {
@@ -845,8 +877,32 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         });
                         next_protected_event_ids.insert(completed.event_id);
                     }
+                    if made_state_progress {
+                        consecutive_no_progress_steps = 0;
+                    } else {
+                        consecutive_no_progress_steps =
+                            consecutive_no_progress_steps.saturating_add(1);
+                    }
+                    if consecutive_no_progress_steps >= self.max_model_steps_without_progress {
+                        event_log.append(Event::AgentLoopTerminated {
+                            model_step,
+                            reason: AgentLoopTerminationReason::NoStateProgress,
+                            consecutive_no_progress_steps,
+                        });
+                        event_log.append(Event::RunFailed {
+                            message: format!(
+                                "agent_no_progress: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps"
+                            ),
+                        });
+                        return Ok(());
+                    }
                     protected_event_ids = next_protected_event_ids;
                 }
+                event_log.append(Event::AgentLoopTerminated {
+                    model_step: self.max_model_steps_per_run,
+                    reason: AgentLoopTerminationReason::ModelStepLimit,
+                    consecutive_no_progress_steps,
+                });
                 event_log.append(Event::RunFailed {
                     message: format!(
                         "agent loop exceeded {} model steps",
@@ -957,27 +1013,40 @@ fn invalid_terminal_response(
     finish_reason: Option<&FinishReason>,
     tool_call_count: usize,
     final_output: Option<&str>,
-) -> Option<String> {
+) -> Option<ModelResponseRejectionReason> {
     match finish_reason {
-        Some(FinishReason::Length) => Some(
-            "model_output_truncated: provider reached the output token limit before producing a complete response"
-                .to_owned(),
-        ),
-        Some(FinishReason::ContentFilter) => Some(
-            "model_output_filtered: provider blocked the response before task completion".to_owned(),
-        ),
-        Some(FinishReason::ToolCalls) if tool_call_count == 0 => Some(
-            "model_protocol_error: provider reported tool_calls without a tool call item".to_owned(),
-        ),
-        Some(FinishReason::Stop) if tool_call_count > 0 => Some(
-            "model_protocol_error: provider reported stop while returning tool call items".to_owned(),
-        ),
-        _ if tool_call_count == 0
-            && final_output.is_none_or(|output| output.trim().is_empty()) =>
-        {
-            Some("model_output_empty: provider ended without a usable final output".to_owned())
+        Some(FinishReason::Length) => Some(ModelResponseRejectionReason::OutputLength),
+        Some(FinishReason::ContentFilter) => Some(ModelResponseRejectionReason::ContentFilter),
+        Some(FinishReason::ToolCalls) if tool_call_count == 0 => {
+            Some(ModelResponseRejectionReason::ToolCallsWithoutItem)
+        }
+        Some(FinishReason::Stop) if tool_call_count > 0 => {
+            Some(ModelResponseRejectionReason::StopWithToolCall)
+        }
+        _ if tool_call_count == 0 && final_output.is_none_or(|output| output.trim().is_empty()) => {
+            Some(ModelResponseRejectionReason::EmptyOutput)
         }
         _ => None,
+    }
+}
+
+const fn model_response_rejection_message(reason: ModelResponseRejectionReason) -> &'static str {
+    match reason {
+        ModelResponseRejectionReason::OutputLength => {
+            "model_output_truncated: provider reached the output token limit before producing a complete response"
+        }
+        ModelResponseRejectionReason::ContentFilter => {
+            "model_output_filtered: provider blocked the response before task completion"
+        }
+        ModelResponseRejectionReason::ToolCallsWithoutItem => {
+            "model_protocol_error: provider reported tool_calls without a tool call item"
+        }
+        ModelResponseRejectionReason::StopWithToolCall => {
+            "model_protocol_error: provider reported stop while returning tool call items"
+        }
+        ModelResponseRejectionReason::EmptyOutput => {
+            "model_output_empty: provider ended without a usable final output"
+        }
     }
 }
 
@@ -1993,8 +2062,28 @@ fn write_file_definition() -> ToolDefinition {
     }
 }
 
+fn read_file_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "read_file".to_owned(),
+        description: "Read one UTF-8 file relative to the confined workspace root.".to_owned(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative file path inside the workspace root"
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+        strict: Some(true),
+    }
+}
+
 fn default_tool_definitions() -> Vec<ToolDefinition> {
     vec![
+        read_file_definition(),
         write_file_definition(),
         memory_search_definition(),
         memory_read_definition(),
@@ -2421,6 +2510,16 @@ mod tests {
                 if finish_reason == &recorded_response.finish_reason
                     && usage == &recorded_response.usage
         )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseRejected {
+                model_step: 0,
+                reason: ModelResponseRejectionReason::OutputLength,
+                finish_reason: Some(FinishReason::Length),
+                tool_call_count: 0,
+                final_output_present: true,
+            }
+        )));
 
         assert!(matches!(
             events.last(),
@@ -2769,6 +2868,112 @@ mod tests {
                 "{strategy:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn varying_inspections_trip_the_no_progress_guard() {
+        #[derive(Debug, Default)]
+        struct VaryingInspectionModel {
+            step: usize,
+        }
+
+        impl ModelProvider for VaryingInspectionModel {
+            async fn complete(
+                &mut self,
+                _request: ModelRunRequest,
+            ) -> Result<ModelRunResult, ProviderError> {
+                self.step += 1;
+                Ok(ModelRunResult {
+                    final_output: None,
+                    prepared_request: None,
+                    response: Some(structure_model::RuntimeResponse {
+                        items: vec![RuntimeItem::ToolCall(ToolCallItem {
+                            id: None,
+                            call_id: format!("inspection-call-{}", self.step),
+                            name: "inspect".to_owned(),
+                            arguments: serde_json::json!({"page": self.step}),
+                            provider_state: None,
+                        })],
+                        finish_reason: Some(FinishReason::ToolCalls),
+                        usage: structure_model::RuntimeUsage::default(),
+                    }),
+                })
+            }
+
+            async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+                Ok(false)
+            }
+        }
+
+        #[derive(Debug, Default)]
+        struct InspectionRunner;
+
+        impl RunnerEnvironment for InspectionRunner {
+            fn classify(&self, _call: &ToolCallItem) -> ToolInteractionKind {
+                ToolInteractionKind::Inspection
+            }
+
+            async fn execute(
+                &mut self,
+                request: ToolExecutionRequest,
+            ) -> Result<ToolExecutionResult, RunnerError> {
+                Ok(ToolExecutionResult {
+                    result: ToolResultItem {
+                        id: None,
+                        call_id: request.call.call_id,
+                        name: Some(request.call.name),
+                        content: vec![ContentBlock::text("observed")],
+                        is_error: false,
+                    },
+                    output: Vec::new(),
+                })
+            }
+
+            async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+                Ok(false)
+            }
+        }
+
+        let session_id = SessionId::new("session-no-progress");
+        let run_id = RunId::new("run-no-progress");
+        let mut runtime = CoreRuntime::new(VaryingInspectionModel::default(), InspectionRunner);
+        runtime.set_max_model_steps_per_run(10);
+        runtime.set_max_model_steps_without_progress(3);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "inspect forever".to_owned(),
+            },
+        )
+        .await
+        .expect("no-progress loop becomes terminal events");
+
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::ToolCallRequested { .. }))
+                .count(),
+            3
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::AgentLoopTerminated {
+                model_step: 2,
+                reason: AgentLoopTerminationReason::NoStateProgress,
+                consecutive_no_progress_steps: 3,
+            }
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(Event::RunFailed { message }) if message.starts_with("agent_no_progress:")
+        ));
     }
 
     #[test]

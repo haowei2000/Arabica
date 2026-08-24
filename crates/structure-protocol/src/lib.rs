@@ -142,6 +142,23 @@ pub enum ToolInteractionKind {
     Generic,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelResponseRejectionReason {
+    OutputLength,
+    ContentFilter,
+    ToolCallsWithoutItem,
+    StopWithToolCall,
+    EmptyOutput,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLoopTerminationReason {
+    NoStateProgress,
+    ModelStepLimit,
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum Event {
@@ -181,6 +198,16 @@ pub enum Event {
         finish_reason: Option<FinishReason>,
         usage: RuntimeUsage,
     },
+    /// Typed audit evidence explaining why an otherwise losslessly recorded
+    /// provider response could not be executed or accepted as terminal.
+    #[serde(rename = "model.response.rejected")]
+    ModelResponseRejected {
+        model_step: usize,
+        reason: ModelResponseRejectionReason,
+        finish_reason: Option<FinishReason>,
+        tool_call_count: usize,
+        final_output_present: bool,
+    },
     #[serde(rename = "tool.call.requested")]
     ToolCallRequested {
         call_id: String,
@@ -211,6 +238,12 @@ pub enum Event {
         name: String,
         result: String,
         is_error: bool,
+    },
+    #[serde(rename = "agent.loop.terminated")]
+    AgentLoopTerminated {
+        model_step: usize,
+        reason: AgentLoopTerminationReason,
+        consecutive_no_progress_steps: usize,
     },
     #[serde(rename = "command.output")]
     CommandOutput { stream: OutputStream, chunk: String },
@@ -244,6 +277,7 @@ impl Event {
             Self::ModelRequestPrepared { .. }
                 | Self::ModelResponseItem { .. }
                 | Self::ModelResponseCompleted { .. }
+                | Self::ModelResponseRejected { .. }
         )
     }
 }

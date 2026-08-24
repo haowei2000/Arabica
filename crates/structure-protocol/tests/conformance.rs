@@ -3,8 +3,8 @@ use structure_model::{
     RuntimeUsage, ToolChoice,
 };
 use structure_protocol::{
-    Command, ContextEntry, DisclosureLevel, ErrorCode, Event, OutputStream, RunId, SessionId,
-    ToolInteractionKind, WorkspaceId,
+    AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, ErrorCode, Event,
+    ModelResponseRejectionReason, OutputStream, RunId, SessionId, ToolInteractionKind, WorkspaceId,
 };
 
 #[test]
@@ -139,6 +139,16 @@ fn every_event_has_a_stable_dotted_wire_name() {
             "model.response.completed",
         ),
         (
+            Event::ModelResponseRejected {
+                model_step: 0,
+                reason: ModelResponseRejectionReason::ToolCallsWithoutItem,
+                finish_reason: Some(FinishReason::ToolCalls),
+                tool_call_count: 0,
+                final_output_present: false,
+            },
+            "model.response.rejected",
+        ),
+        (
             Event::ToolCallRequested {
                 call_id: "call-1".to_owned(),
                 name: "write_file".to_owned(),
@@ -178,6 +188,14 @@ fn every_event_has_a_stable_dotted_wire_name() {
                 repeat_count: 2,
             },
             "tool.call.loop_blocked",
+        ),
+        (
+            Event::AgentLoopTerminated {
+                model_step: 8,
+                reason: AgentLoopTerminationReason::NoStateProgress,
+                consecutive_no_progress_steps: 8,
+            },
+            "agent.loop.terminated",
         ),
         (
             Event::CommandOutput {

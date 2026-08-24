@@ -12,6 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use structure_model::{ContentBlock, ToolCallItem, ToolResultItem};
 use structure_protocol::{RunId, ToolInteractionKind};
 
+const MAX_LOCAL_READ_BYTES: u64 = 1024 * 1024;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunnerOutput {
     Stdout(String),
@@ -99,6 +101,49 @@ impl LocalRunner {
         &self.root
     }
 
+    async fn resolve_existing_file(&self, path: &str) -> Result<PathBuf, RunnerError> {
+        let relative = validate_local_path(path)?;
+        let root = tokio::fs::canonicalize(&self.root)
+            .await
+            .map_err(|error| RunnerError::new(format!("local runner root unavailable: {error}")))?;
+        let unresolved_target = root.join(relative);
+        let unresolved_metadata = tokio::fs::symlink_metadata(&unresolved_target)
+            .await
+            .map_err(|error| RunnerError::new(format!("local file unavailable: {error}")))?;
+        if unresolved_metadata.file_type().is_symlink() {
+            return Err(RunnerError::new("read_file refuses symbolic links"));
+        }
+        let target = tokio::fs::canonicalize(unresolved_target)
+            .await
+            .map_err(|error| RunnerError::new(format!("local file unavailable: {error}")))?;
+        if !target.starts_with(&root) {
+            return Err(RunnerError::new("local file path escapes runner root"));
+        }
+        let metadata = tokio::fs::metadata(&target)
+            .await
+            .map_err(|error| RunnerError::new(format!("local file unavailable: {error}")))?;
+        if !metadata.is_file() {
+            return Err(RunnerError::new("local path is not a regular file"));
+        }
+        if metadata.len() > MAX_LOCAL_READ_BYTES {
+            return Err(RunnerError::new(format!(
+                "read_file exceeds the {MAX_LOCAL_READ_BYTES}-byte limit"
+            )));
+        }
+        Ok(target)
+    }
+
+    async fn read_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
+        let path = arguments
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RunnerError::new("read_file.path must be a string"))?;
+        let target = self.resolve_existing_file(path).await?;
+        tokio::fs::read_to_string(&target)
+            .await
+            .map_err(|error| RunnerError::new(format!("read_file failed: {error}")))
+    }
+
     async fn write_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
         let path = arguments
             .get("path")
@@ -142,6 +187,7 @@ impl LocalRunner {
 impl RunnerEnvironment for LocalRunner {
     fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
         match call.name.as_str() {
+            "read_file" => ToolInteractionKind::Inspection,
             "write_file" => ToolInteractionKind::Mutation,
             _ => ToolInteractionKind::Generic,
         }
@@ -153,6 +199,7 @@ impl RunnerEnvironment for LocalRunner {
     ) -> Result<ToolExecutionResult, RunnerError> {
         self.active_runs.insert(request.run_id.clone());
         let execution = match request.call.name.as_str() {
+            "read_file" => self.read_file(&request.call.arguments).await,
             "write_file" => self.write_file(&request.call.arguments).await,
             name => Err(RunnerError::new(format!("unknown local tool: {name}"))),
         };
@@ -259,6 +306,41 @@ mod tests {
             .await
             .expect("policy failure is a tool result");
         assert!(escaped.result.is_error);
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("test root is removed");
+    }
+
+    #[tokio::test]
+    async fn local_runner_reads_only_regular_files_inside_its_root() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("structure-local-reader-{unique}"));
+        tokio::fs::create_dir(&root)
+            .await
+            .expect("test root is created");
+        tokio::fs::write(root.join("input.txt"), "evidence")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::new(&root);
+        let result = runner
+            .execute(ToolExecutionRequest {
+                run_id: RunId::new("run-read"),
+                call: ToolCallItem {
+                    id: None,
+                    call_id: "call-read".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "input.txt"}),
+                    provider_state: None,
+                },
+            })
+            .await
+            .expect("read is reported");
+        assert!(!result.result.is_error);
+        assert_eq!(result.result.content, vec![ContentBlock::text("evidence")]);
+
         tokio::fs::remove_dir_all(root)
             .await
             .expect("test root is removed");
