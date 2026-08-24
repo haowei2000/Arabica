@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: structure-experiments
+resources:
+  - namespace.yaml
+  - api-center.yaml
+  - experiment-rbac.yaml
+  - network-policies.yaml
+configMapGenerator:
+  - name: api-center-config
+    files:
+      - longcat.conf.template=api-center-config.yaml
+generatorOptions:
+  disableNameSuffixHash: false

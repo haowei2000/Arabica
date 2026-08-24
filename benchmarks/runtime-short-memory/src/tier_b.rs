@@ -21,7 +21,7 @@ use structure_runtime::{
 };
 use structure_session::SessionManager;
 
-pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v5";
+pub const TIER_B_REPORT_SCHEMA_VERSION: &str = "structure.short-memory.tier-b/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -189,7 +189,13 @@ pub struct TierBSuiteConfig {
     pub short_memory_policy: ShortMemoryPolicy,
     pub compaction_strategy: RuntimeCompactionStrategy,
     pub pointer_gc_checkpoint_batches: usize,
+    #[serde(default = "default_max_model_steps_per_run")]
+    pub max_model_steps_per_run: usize,
     pub tasks: Vec<TierBTask>,
+}
+
+fn default_max_model_steps_per_run() -> usize {
+    32
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -215,6 +221,8 @@ pub struct ProviderCallObservation {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
     pub latency_ms: u64,
     pub succeeded: bool,
     pub error: Option<String>,
@@ -280,6 +288,8 @@ pub struct TierBRun {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
     pub provider_latency_ms: u64,
     pub elapsed_ms: u64,
     pub tool_call_count: usize,
@@ -299,6 +309,7 @@ pub struct TierBAggregate {
     pub total_uncached_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_cached_input_tokens: u64,
+    pub total_cache_creation_input_tokens: u64,
     pub total_model_input_bytes: usize,
     pub total_batch_key_entries: usize,
     pub total_memory_pointer_entries: usize,
@@ -474,6 +485,7 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             cached_input_tokens: usage.cached_input_tokens,
+            cache_creation_input_tokens: usage.cache_creation_input_tokens,
             latency_ms,
             succeeded: error.is_none(),
             error,
@@ -518,6 +530,7 @@ pub async fn run_tier_b_suite<P: ModelProvider>(
     );
     runtime.set_compaction_strategy(config.compaction_strategy);
     runtime.set_pointer_gc_checkpoint_batches(config.pointer_gc_checkpoint_batches);
+    runtime.set_max_model_steps_per_run(config.max_model_steps_per_run);
     let mut manager = SessionManager::new(runtime);
     let mut runs = Vec::with_capacity(config.tasks.len());
 
@@ -677,6 +690,10 @@ async fn score_run(
         .iter()
         .map(|call| call.cached_input_tokens)
         .sum();
+    let cache_creation_input_tokens = provider_calls
+        .iter()
+        .map(|call| call.cache_creation_input_tokens)
+        .sum();
     let provider_latency_ms = provider_calls.iter().map(|call| call.latency_ms).sum();
 
     TierBRun {
@@ -692,6 +709,7 @@ async fn score_run(
         input_tokens,
         output_tokens,
         cached_input_tokens,
+        cache_creation_input_tokens,
         provider_latency_ms,
         elapsed_ms,
         tool_call_count: tool_calls.len(),
@@ -746,6 +764,10 @@ fn aggregate(runs: &[TierBRun]) -> TierBAggregate {
             .sum(),
         total_output_tokens: runs.iter().map(|run| run.output_tokens).sum(),
         total_cached_input_tokens: runs.iter().map(|run| run.cached_input_tokens).sum(),
+        total_cache_creation_input_tokens: runs
+            .iter()
+            .map(|run| run.cache_creation_input_tokens)
+            .sum(),
         total_model_input_bytes: runs
             .iter()
             .flat_map(|run| &run.provider_calls)
@@ -911,6 +933,7 @@ impl ModelProvider for FixtureFileProvider {
                         input_tokens,
                         output_tokens: 2,
                         cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
                     },
                 }),
             });
@@ -930,6 +953,7 @@ impl ModelProvider for FixtureFileProvider {
                         input_tokens,
                         output_tokens: 2,
                         cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
                     },
                 }),
             });
@@ -949,6 +973,7 @@ impl ModelProvider for FixtureFileProvider {
                         input_tokens,
                         output_tokens: 2,
                         cached_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
                     },
                 }),
             });
@@ -991,6 +1016,7 @@ fn fixture_text_response(output: &str, input_tokens: u64) -> ModelRunResult {
                 input_tokens,
                 output_tokens: 2,
                 cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             },
         }),
     }
@@ -1007,6 +1033,7 @@ fn fixture_tool_response(call: ToolCallItem, input_tokens: u64) -> ModelRunResul
                 input_tokens,
                 output_tokens: 8,
                 cached_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             },
         }),
     }
@@ -1114,6 +1141,7 @@ mod tests {
                 short_memory_policy: ShortMemoryPolicy::default(),
                 compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: 32,
                 tasks: vec![task],
             },
             FixtureFileProvider::default(),
@@ -1170,6 +1198,7 @@ mod tests {
                 short_memory_policy: ShortMemoryPolicy::default(),
                 compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: 32,
                 tasks: vec![task],
             },
             FixtureFileProvider::default(),
@@ -1243,6 +1272,7 @@ mod tests {
                 short_memory_policy: ShortMemoryPolicy::default(),
                 compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: 32,
                 tasks: vec![
                     TierBTask::write_file("write-file-claim", "run-0001/missing.txt", "must exist")
                         .expect("task is valid"),

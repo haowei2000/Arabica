@@ -238,6 +238,10 @@ pub struct RuntimeUsage {
     pub output_tokens: u64,
     #[serde(default)]
     pub cached_input_tokens: u64,
+    /// Tokens written into a provider prompt cache for this response.
+    /// Providers that do not expose cache-write accounting report zero.
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]

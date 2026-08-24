@@ -109,3 +109,17 @@ perform some dynamic test-runner installation. Candidate stability was therefore
 defined by deterministic assertions and the absence of stochastic sampling,
 runtime-speed thresholds, or large system-package setup. The next controlled
 variable should be Provider thinking mode, not another unbounded task search.
+
+## 2026-08-06 M3 gate (utility or uncached cost)
+
+- decision: **not met**
+- report: `reports/m3-fbgc-utility-or-uncached-2026-08-06.md`
+- valid live artifact: `2026-08-06-m3-fbgc-live.json`
+- evidence level: `live_api` (DeepSeek OpenAI-compatible; Harbor blocked on
+  local Docker socket permissions)
+- workload: single-message agent, 12 `write_file` calls, 4096-byte payloads
+- result: B0 and FBGC both 1/1; FBGC total input −6.4% and model-input bytes
+  −9.1%, but uncached input **+36.6%** after a late cache-resetting GC at call
+  11/13
+- scope: reproduces the prompt-cache economic failure mode; does not establish
+  an FBGC utility or uncached-cost win

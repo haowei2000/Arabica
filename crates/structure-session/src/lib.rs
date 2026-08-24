@@ -574,6 +574,7 @@ mod tests {
                         input_tokens: 100,
                         output_tokens: 8_192,
                         cached_input_tokens: 80,
+                        cache_creation_input_tokens: 0,
                     },
                 }),
             })

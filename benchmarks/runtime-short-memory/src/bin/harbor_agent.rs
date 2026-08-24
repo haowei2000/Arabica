@@ -24,7 +24,7 @@ use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
 
-const REPORT_SCHEMA: &str = "structure.harbor-agent/v7";
+const REPORT_SCHEMA: &str = "structure.harbor-agent/v8";
 const DEFAULT_MAX_STEPS: usize = 128;
 const DEFAULT_MAX_TOKENS: u32 = 8_192;
 const DEFAULT_CHECKPOINT_BATCHES: usize = 8;
@@ -42,6 +42,7 @@ enum Strategy {
     B0,
     Pgc,
     Fbgc,
+    Capc,
 }
 
 impl Strategy {
@@ -50,7 +51,8 @@ impl Strategy {
             "B0" => Ok(Self::B0),
             "PGC" => Ok(Self::Pgc),
             "FBGC" | "FILE_BACKED_GC" => Ok(Self::Fbgc),
-            _ => Err(format!("invalid strategy {raw}; expected B0, PGC, or FBGC").into()),
+            "CAPC" => Ok(Self::Capc),
+            _ => Err(format!("invalid strategy {raw}; expected B0, PGC, FBGC, or CAPC").into()),
         }
     }
 }
@@ -62,11 +64,13 @@ struct Config {
     model: String,
     base_url: String,
     api_key: String,
+    api_type: ApiType,
     max_steps: usize,
     max_tokens: u32,
     checkpoint_batches: usize,
     pgc_effort: usize,
     pgc_continuation_probability_bps: u32,
+    thinking_enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -462,6 +466,7 @@ struct HarborAgentReport {
     schema_version: &'static str,
     strategy: Strategy,
     model: String,
+    api_type: ApiType,
     compaction_strategy: RuntimeCompactionStrategy,
     pointer_gc_enabled: bool,
     pointer_gc_checkpoint_batches: usize,
@@ -482,6 +487,7 @@ struct HarborAgentReport {
     input_tokens: u64,
     uncached_input_tokens: u64,
     cached_input_tokens: u64,
+    cache_creation_input_tokens: u64,
     output_tokens: u64,
     peak_input_tokens: u64,
     peak_model_input_bytes: usize,
@@ -518,13 +524,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     let provider = ApiModelProvider::new(
         ApiProviderConfig::new(
-            ApiType::OpenAiChatCompletions,
+            config.api_type,
             config.api_key.clone(),
             config.base_url.clone(),
             config.model.clone(),
         )
         .with_max_tokens(config.max_tokens)
-        .with_thinking(true)
+        .with_thinking(config.thinking_enabled)
+        .with_anthropic_cache_static_prefix(config.strategy == Strategy::Capc)
         .with_request_timeout_secs(480)
         .with_raw_exchange_dir(config.report.with_file_name("provider-raw")),
     )?;
@@ -543,6 +550,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         Strategy::Fbgc => (
             ShortMemoryPolicy::ttl_only(),
             RuntimeCompactionStrategy::FileBackedGc,
+        ),
+        Strategy::Capc => (
+            ShortMemoryPolicy::full_replay(),
+            RuntimeCompactionStrategy::Disabled,
         ),
     };
     let archive_root = config
@@ -687,12 +698,14 @@ fn build_report(
         schema_version: REPORT_SCHEMA,
         strategy: config.strategy,
         model: config.model.clone(),
+        api_type: config.api_type,
         compaction_strategy: match config.strategy {
             Strategy::B0 => RuntimeCompactionStrategy::Disabled,
             Strategy::Pgc => RuntimeCompactionStrategy::PointerGc,
             Strategy::Fbgc => RuntimeCompactionStrategy::FileBackedGc,
+            Strategy::Capc => RuntimeCompactionStrategy::Disabled,
         },
-        pointer_gc_enabled: config.strategy != Strategy::B0,
+        pointer_gc_enabled: matches!(config.strategy, Strategy::Pgc | Strategy::Fbgc),
         pointer_gc_checkpoint_batches: config.checkpoint_batches,
         pgc_effort: config.pgc_effort,
         pgc_continuation_probability_bps: config.pgc_continuation_probability_bps,
@@ -716,6 +729,10 @@ fn build_report(
         input_tokens,
         uncached_input_tokens: input_tokens.saturating_sub(cached_input_tokens),
         cached_input_tokens,
+        cache_creation_input_tokens: provider_calls
+            .iter()
+            .map(|call| call.cache_creation_input_tokens)
+            .sum(),
         output_tokens: provider_calls.iter().map(|call| call.output_tokens).sum(),
         peak_input_tokens: provider_calls
             .iter()
@@ -900,6 +917,10 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
     let mut report = None;
     let mut model = None;
     let mut base_url = None;
+    let mut api_type = public_env(["STRUCTURE_API_TYPE", "API_TYPE"])
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(ApiType::OpenAiChatCompletions);
     let mut max_steps = DEFAULT_MAX_STEPS;
     let mut max_tokens = DEFAULT_MAX_TOKENS;
     let mut checkpoint_batches = DEFAULT_CHECKPOINT_BATCHES;
@@ -911,6 +932,10 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         .map(|value| parse(&value, "PGC_CONTINUATION_PROBABILITY_BPS"))
         .transpose()?
         .unwrap_or(DEFAULT_PGC_CONTINUATION_PROBABILITY_BPS);
+    let mut thinking_enabled = public_env(["STRUCTURE_THINKING", "THINKING"])
+        .map(|value| parse_bool(&value, "STRUCTURE_THINKING"))
+        .transpose()?
+        .unwrap_or(true);
     let mut index = 0;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -921,6 +946,7 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
             "--report" => report = Some(PathBuf::from(value(&arguments, &mut index, option)?)),
             "--model" => model = Some(value(&arguments, &mut index, option)?.to_owned()),
             "--base-url" => base_url = Some(value(&arguments, &mut index, option)?.to_owned()),
+            "--api-type" => api_type = value(&arguments, &mut index, option)?.parse()?,
             "--max-steps" => max_steps = parse(value(&arguments, &mut index, option)?, option)?,
             "--max-tokens" => max_tokens = parse(value(&arguments, &mut index, option)?, option)?,
             "--checkpoint-batches" => {
@@ -931,6 +957,10 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
                 pgc_continuation_probability_bps =
                     parse(value(&arguments, &mut index, option)?, option)?
             }
+            "--thinking" => {
+                thinking_enabled = parse_bool(value(&arguments, &mut index, option)?, option)?
+            }
+            "--no-thinking" => thinking_enabled = false,
             _ => return Err(format!("unknown option {option}").into()),
         }
         index += 1;
@@ -947,24 +977,43 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         strategy: strategy.ok_or("--strategy is required")?,
         report: report.ok_or("--report is required")?,
         model: model
-            .or_else(|| public_env(["OPENAI_MODEL", "OPENAI__MODEL"]))
+            .or_else(|| match api_type {
+                ApiType::AnthropicMessages => public_env(["ANTHROPIC_MODEL"]),
+                _ => public_env(["OPENAI_MODEL", "OPENAI__MODEL"]),
+            })
             .ok_or("model is required")?
             .trim_matches('"')
             .to_owned(),
         base_url: base_url
-            .or_else(|| public_env(["OPENAI_BASE_URL", "OPENAI__BASE_URL"]))
+            .or_else(|| match api_type {
+                ApiType::AnthropicMessages => public_env(["ANTHROPIC_BASE_URL"]),
+                _ => public_env(["OPENAI_BASE_URL", "OPENAI__BASE_URL"]),
+            })
             .ok_or("base URL is required")?
             .trim_matches('"')
             .to_owned(),
-        api_key: secret_env(["LONGCAT_API_KEY", "OPENAI_API_KEY", "OPENAI__API_KEY"])?
-            .trim_matches('"')
-            .to_owned(),
+        api_key: match api_type {
+            ApiType::AnthropicMessages => secret_env(["ANTHROPIC_API_KEY"])?,
+            _ => secret_env(["LONGCAT_API_KEY", "OPENAI_API_KEY", "OPENAI__API_KEY"])?,
+        }
+        .trim_matches('"')
+        .to_owned(),
+        api_type,
         max_steps,
         max_tokens,
         checkpoint_batches,
         pgc_effort,
         pgc_continuation_probability_bps,
+        thinking_enabled,
     })
+}
+
+fn parse_bool(raw: &str, option: &str) -> Result<bool, Box<dyn Error>> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!("invalid boolean for {option}: {raw}").into()),
+    }
 }
 
 fn public_env<const N: usize>(names: [&str; N]) -> Option<String> {
@@ -1013,11 +1062,13 @@ mod tests {
             model: "test-model".to_owned(),
             base_url: "https://example.invalid/v1".to_owned(),
             api_key: "test-key".to_owned(),
+            api_type: ApiType::OpenAiChatCompletions,
             max_steps: 8,
             max_tokens: 128,
             checkpoint_batches: 4,
             pgc_effort: 1,
             pgc_continuation_probability_bps: 7_500,
+            thinking_enabled: false,
         };
         build_report(
             &config,

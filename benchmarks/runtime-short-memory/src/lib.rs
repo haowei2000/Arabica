@@ -7,6 +7,7 @@
 mod baseline;
 mod gates;
 mod generator;
+mod long_horizon;
 mod scaling;
 mod schema;
 mod tier_b;
@@ -19,6 +20,11 @@ pub use gates::{
     ProjectionMetrics,
 };
 pub use generator::{GeneratorError, SyntheticTraceConfig, SyntheticTraceGenerator};
+pub use long_horizon::{
+    ExperimentPhase, LONG_HORIZON_MANIFEST_SCHEMA, LongHorizonArm, LongHorizonManifest,
+    PairedPrimarySummary, QUALIFICATION_CANDIDATES, ScheduledTrial, TrialLedgerEntry,
+    summarize_primary,
+};
 pub use scaling::{
     ScalingConfig, ScalingEnvironment, ScalingError, ScalingReport, ScalingRunner, ScalingSample,
 };

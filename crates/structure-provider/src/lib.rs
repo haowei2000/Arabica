@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use structure_model::{
     ContentBlock, FinishReason, MessageItem, ProviderState, ReasoningItem, RuntimeItem,
     RuntimeRequest, RuntimeResponse, RuntimeRole, RuntimeUsage, ShortMemoryEntry, ShortMemoryItem,
@@ -166,6 +167,9 @@ pub struct ApiProviderConfig {
     pub model: String,
     pub max_tokens: Option<u32>,
     pub thinking_enabled: bool,
+    /// Enables Anthropic's ephemeral cache marker on the immutable system
+    /// prefix and tool definitions. Dynamic history is never cache-marked.
+    pub anthropic_cache_static_prefix: bool,
     pub request_timeout_secs: u64,
     /// Optional private artifact directory for exact wire request/response
     /// bodies. Authorization headers are never written.
@@ -186,6 +190,7 @@ impl ApiProviderConfig {
             model: model.into(),
             max_tokens: None,
             thinking_enabled: false,
+            anthropic_cache_static_prefix: false,
             request_timeout_secs: 300,
             raw_exchange_dir: None,
         }
@@ -198,6 +203,11 @@ impl ApiProviderConfig {
 
     pub fn with_thinking(mut self, enabled: bool) -> Self {
         self.thinking_enabled = enabled;
+        self
+    }
+
+    pub fn with_anthropic_cache_static_prefix(mut self, enabled: bool) -> Self {
+        self.anthropic_cache_static_prefix = enabled;
         self
     }
 
@@ -220,6 +230,7 @@ impl ApiProviderConfig {
 #[derive(Debug)]
 pub enum ApiModelProvider {
     OpenAiChatCompletions(OpenAiModelProvider),
+    AnthropicMessages(AnthropicModelProvider),
 }
 
 impl ApiModelProvider {
@@ -236,6 +247,13 @@ impl ApiModelProvider {
                     provider_config,
                 )))
             }
+            ApiType::AnthropicMessages => Ok(Self::AnthropicMessages(AnthropicModelProvider::new(
+                AnthropicProviderConfig::new(config.api_key, config.base_url, config.model)?
+                    .with_optional_max_tokens(config.max_tokens)
+                    .with_cache_static_prefix(config.anthropic_cache_static_prefix)
+                    .with_request_timeout_secs(config.request_timeout_secs)
+                    .with_optional_raw_exchange_dir(config.raw_exchange_dir),
+            ))),
             api_type => Err(ProviderError::new(format!(
                 "API adapter {api_type} is declared but not implemented"
             ))),
@@ -245,6 +263,7 @@ impl ApiModelProvider {
     pub const fn api_type(&self) -> ApiType {
         match self {
             Self::OpenAiChatCompletions(_) => ApiType::OpenAiChatCompletions,
+            Self::AnthropicMessages(_) => ApiType::AnthropicMessages,
         }
     }
 }
@@ -256,12 +275,14 @@ impl ModelProvider for ApiModelProvider {
     ) -> Result<ModelRunResult, ProviderError> {
         match self {
             Self::OpenAiChatCompletions(adapter) => adapter.complete(request).await,
+            Self::AnthropicMessages(adapter) => adapter.complete(request).await,
         }
     }
 
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
         match self {
             Self::OpenAiChatCompletions(adapter) => adapter.cancel(run_id).await,
+            Self::AnthropicMessages(adapter) => adapter.cancel(run_id).await,
         }
     }
 }
@@ -545,6 +566,312 @@ impl ModelProvider for OpenAiModelProvider {
         // the planned background-dispatch/event-sink revision.
         Ok(self.active_runs.remove(run_id))
     }
+}
+
+/// Configuration for Anthropic's Messages API.  The cache flag only marks the
+/// immutable system/tool prefix; it never places task state in a cache block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnthropicProviderConfig {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    pub max_tokens: Option<u32>,
+    pub cache_static_prefix: bool,
+    pub request_timeout_secs: u64,
+    pub raw_exchange_dir: Option<PathBuf>,
+}
+
+impl AnthropicProviderConfig {
+    pub fn new(
+        api_key: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
+        let config = Self {
+            api_key: api_key.into(),
+            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            model: model.into(),
+            max_tokens: None,
+            cache_static_prefix: false,
+            request_timeout_secs: 300,
+            raw_exchange_dir: None,
+        };
+        if config.api_key.trim().is_empty()
+            || config.base_url.trim().is_empty()
+            || config.model.trim().is_empty()
+        {
+            return Err(ProviderError::new(
+                "Anthropic API key, base URL, and model must not be empty",
+            ));
+        }
+        Ok(config)
+    }
+    pub fn with_optional_max_tokens(mut self, value: Option<u32>) -> Self {
+        self.max_tokens = value.map(|value| value.max(1));
+        self
+    }
+    pub fn with_cache_static_prefix(mut self, enabled: bool) -> Self {
+        self.cache_static_prefix = enabled;
+        self
+    }
+    pub fn with_request_timeout_secs(mut self, seconds: u64) -> Self {
+        self.request_timeout_secs = seconds.max(1);
+        self
+    }
+    fn with_optional_raw_exchange_dir(mut self, directory: Option<PathBuf>) -> Self {
+        self.raw_exchange_dir = directory;
+        self
+    }
+}
+
+#[derive(Debug)]
+pub struct AnthropicModelProvider {
+    client: Client,
+    config: AnthropicProviderConfig,
+    active_runs: HashSet<RunId>,
+    raw_exchange_sequence: u64,
+}
+
+impl AnthropicModelProvider {
+    pub fn new(config: AnthropicProviderConfig) -> Self {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self {
+            client,
+            config,
+            active_runs: HashSet::new(),
+            raw_exchange_sequence: 0,
+        }
+    }
+    fn endpoint(&self) -> String {
+        if self.config.base_url.ends_with("/v1") {
+            format!("{}/messages", self.config.base_url)
+        } else {
+            format!("{}/v1/messages", self.config.base_url)
+        }
+    }
+    fn capture(
+        &mut self,
+        run_id: &RunId,
+        request: &[u8],
+    ) -> Result<Option<PathBuf>, ProviderError> {
+        let Some(root) = self.config.raw_exchange_dir.clone() else {
+            return Ok(None);
+        };
+        self.raw_exchange_sequence = self.raw_exchange_sequence.saturating_add(1);
+        let directory = root.join(format!(
+            "{:04}-{}",
+            self.raw_exchange_sequence,
+            safe_path_component(&run_id.to_string())
+        ));
+        std::fs::create_dir_all(&root).map_err(raw_exchange_error)?;
+        std::fs::create_dir(&directory).map_err(raw_exchange_error)?;
+        std::fs::write(directory.join("request.raw.json"), request).map_err(raw_exchange_error)?;
+        write_json_file(
+            &directory.join("exchange.json"),
+            &RawExchangeStart {
+                sequence: self.raw_exchange_sequence,
+                run_id: run_id.to_string(),
+                started_at_unix_ms: unix_time_ms(),
+                request_bytes: request.len(),
+                authorization_header_recorded: false,
+            },
+        )?;
+        Ok(Some(directory))
+    }
+    fn encode(&self, request: &RuntimeRequest) -> Result<Value, ProviderError> {
+        anthropic_request(
+            request,
+            self.config.max_tokens.unwrap_or(8_192),
+            self.config.cache_static_prefix,
+        )
+    }
+}
+
+impl ModelProvider for AnthropicModelProvider {
+    async fn complete(
+        &mut self,
+        request: ModelRunRequest,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let run_id = request.run_id.clone();
+        self.active_runs.insert(run_id.clone());
+        let mut prepared = compile_runtime_request(&request, &self.config.model);
+        prepared.generation.max_output_tokens = self.config.max_tokens;
+        let result = async {
+            let wire = self.encode(&prepared)?;
+            let body = serde_json::to_vec(&wire).map_err(|error| {
+                ProviderError::new(format!("Anthropic request serialization failed: {error}"))
+            })?;
+            let captured = self.capture(&run_id, &body)?;
+            let response = self
+                .client
+                .post(self.endpoint())
+                .header("x-api-key", &self.config.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .send()
+                .await
+                .map_err(|error| {
+                    ProviderError::new(format!("Anthropic request failed: {error}"))
+                })?;
+            let status = response.status();
+            let bytes = response.bytes().await.map_err(|error| {
+                ProviderError::new(format!("Anthropic response failed: {error}"))
+            })?;
+            if let Some(directory) = captured {
+                std::fs::write(directory.join("response.raw"), &bytes)
+                    .map_err(raw_exchange_error)?;
+                write_json_file(
+                    &directory.join("response.json"),
+                    &RawExchangeResponse {
+                        status: status.as_u16(),
+                        received_at_unix_ms: unix_time_ms(),
+                        response_bytes: bytes.len(),
+                    },
+                )?;
+            }
+            let value: Value = serde_json::from_slice(&bytes).map_err(|error| {
+                ProviderError::new(format!("invalid Anthropic response: {error}"))
+            })?;
+            if !status.is_success() {
+                return Err(ProviderError::new(format!(
+                    "Anthropic endpoint rejected request: {}",
+                    value
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                )));
+            }
+            let response = anthropic_response(value)?;
+            let final_output = response
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RuntimeItem::Message(message) if message.role == RuntimeRole::Assistant => {
+                        Some(
+                            message
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<String>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .find(|text| !text.is_empty());
+            Ok(ModelRunResult {
+                final_output,
+                prepared_request: Some(prepared.clone()),
+                response: Some(response),
+            })
+        }
+        .await;
+        self.active_runs.remove(&run_id);
+        result.map_err(|error| error.with_prepared_request(prepared))
+    }
+    async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
+        Ok(self.active_runs.remove(run_id))
+    }
+}
+
+fn anthropic_request(
+    request: &RuntimeRequest,
+    max_tokens: u32,
+    cache_static_prefix: bool,
+) -> Result<Value, ProviderError> {
+    let mut system = Vec::new();
+    let mut messages: Vec<Value> = Vec::new();
+    for item in &request.items {
+        match item {
+        RuntimeItem::Message(message) if matches!(message.role, RuntimeRole::System | RuntimeRole::Developer) => { let mut block = json!({"type":"text", "text": text_content(&message.content, ApiType::AnthropicMessages)?}); if cache_static_prefix { block["cache_control"] = json!({"type":"ephemeral"}); } system.push(block); }
+        RuntimeItem::Message(message) => messages.push(json!({"role": if message.role == RuntimeRole::Assistant { "assistant" } else { "user" }, "content": text_content(&message.content, ApiType::AnthropicMessages)?})),
+        RuntimeItem::ToolCall(call) => messages.push(json!({"role":"assistant", "content":[{"type":"tool_use", "id":call.call_id, "name":call.name, "input":call.arguments}]})),
+        RuntimeItem::ToolResult(result) => messages.push(json!({"role":"user", "content":[{"type":"tool_result", "tool_use_id":result.call_id, "content":text_content(&result.content, ApiType::AnthropicMessages)?}]})),
+        RuntimeItem::Reasoning(_) => {}
+    }
+    }
+    let tools: Vec<Value> = request.tools.iter().map(|tool| { let mut value = json!({"name":tool.name, "description":tool.description, "input_schema":tool.input_schema}); if cache_static_prefix { value["cache_control"] = json!({"type":"ephemeral"}); } value }).collect();
+    let mut value = json!({"model":request.model,"max_tokens":max_tokens,"system":system,"messages":messages,"tools":tools});
+    match &request.tool_choice {
+        ToolChoice::Auto => {}
+        ToolChoice::None => value["tool_choice"] = json!({"type":"none"}),
+        ToolChoice::Required => value["tool_choice"] = json!({"type":"any"}),
+        ToolChoice::Specific { name } => value["tool_choice"] = json!({"type":"tool", "name":name}),
+    }
+    Ok(value)
+}
+
+fn anthropic_response(value: Value) -> Result<RuntimeResponse, ProviderError> {
+    let mut items = Vec::new();
+    for block in value
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => items.push(RuntimeItem::Message(MessageItem::text(
+                RuntimeRole::Assistant,
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ))),
+            Some("tool_use") => items.push(RuntimeItem::ToolCall(ToolCallItem {
+                id: None,
+                call_id: block
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                name: block
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                arguments: block.get("input").cloned().unwrap_or_else(|| json!({})),
+                provider_state: None,
+            })),
+            _ => {}
+        }
+    }
+    let usage = value.get("usage");
+    Ok(RuntimeResponse {
+        items,
+        finish_reason: match value.get("stop_reason").and_then(Value::as_str) {
+            Some("end_turn") => Some(FinishReason::Stop),
+            Some("max_tokens") => Some(FinishReason::Length),
+            Some("tool_use") => Some(FinishReason::ToolCalls),
+            Some(other) => Some(FinishReason::Provider {
+                value: other.to_owned(),
+            }),
+            None => None,
+        },
+        usage: RuntimeUsage {
+            input_tokens: usage
+                .and_then(|v| v.get("input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .and_then(|v| v.get("output_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cached_input_tokens: usage
+                .and_then(|v| v.get("cache_read_input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            cache_creation_input_tokens: usage
+                .and_then(|v| v.get("cache_creation_input_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        },
+    })
 }
 
 #[derive(Serialize)]
@@ -911,6 +1238,7 @@ impl ApiCodec for OpenAiChatCodec {
                 cached_input_tokens: usage
                     .prompt_tokens_details
                     .map_or(0, |details| details.cached_tokens),
+                cache_creation_input_tokens: 0,
             },
         })
     }
@@ -1682,15 +2010,15 @@ mod tests {
     }
 
     #[test]
-    fn api_provider_rejects_declared_but_unimplemented_dialects() {
+    fn api_provider_constructs_anthropic_messages_adapter() {
         let error = ApiModelProvider::new(ApiProviderConfig::new(
             ApiType::AnthropicMessages,
             "test-key",
             "https://api.anthropic.com",
             "test-model",
         ))
-        .expect_err("unimplemented adapter is rejected");
+        .expect("Anthropic adapter is implemented");
 
-        assert!(error.to_string().contains("declared but not implemented"));
+        assert_eq!(ApiType::AnthropicMessages, error.api_type());
     }
 }

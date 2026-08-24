@@ -33,6 +33,7 @@ class StructureAgent(BaseAgent):
         checkpoint_batches: int = 8,
         pgc_effort: int | None = None,
         pgc_continuation_probability_bps: int | None = None,
+        thinking: bool | str | None = None,
         binary_path: str | None = None,
         **kwargs,
     ):
@@ -64,6 +65,23 @@ class StructureAgent(BaseAgent):
             raise ValueError(
                 "pgc_continuation_probability_bps must be between 0 and 10000"
             )
+        if thinking is None:
+            thinking_env = os.environ.get("STRUCTURE_THINKING", "true")
+            self.thinking = str(thinking_env).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        elif isinstance(thinking, bool):
+            self.thinking = thinking
+        else:
+            self.thinking = str(thinking).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
         self.binary_path = binary_path or os.environ.get(
             "STRUCTURE_HARBOR_AGENT_BIN",
             "target/release/harbor_agent",
@@ -108,6 +126,8 @@ class StructureAgent(BaseAgent):
             str(self.pgc_effort),
             "--pgc-continuation-probability-bps",
             str(self.pgc_continuation_probability_bps),
+            "--thinking",
+            "true" if self.thinking else "false",
         ]
         if model:
             command.extend(["--model", model])

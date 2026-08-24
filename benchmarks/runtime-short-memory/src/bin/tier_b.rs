@@ -30,6 +30,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut history_turns = 8_usize;
     let mut history_turns_was_set = false;
     let mut single_message_tools = None;
+    let mut payload_bytes = 0_usize;
     let mut model = None;
     let mut base_url = None;
     let mut api_type = ApiType::OpenAiChatCompletions;
@@ -62,6 +63,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
             "--single-message-tools" => {
                 single_message_tools =
                     Some(parse(value(&arguments, &mut index, argument)?, argument)?);
+            }
+            "--payload-bytes" => {
+                payload_bytes = parse(value(&arguments, &mut index, argument)?, argument)?;
             }
             "--model" => model = Some(value(&arguments, &mut index, argument)?.to_owned()),
             "--base-url" => {
@@ -110,8 +114,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     .into(),
             );
         }
-        TierBWorkload::SingleMessageAgent { tool_calls }
+        TierBWorkload::SingleMessageAgent {
+            tool_calls,
+            payload_bytes,
+        }
     } else {
+        if payload_bytes > 0 {
+            return Err("--payload-bytes requires --single-message-tools".into());
+        }
         TierBWorkload::MemoryRecall { history_turns }
     };
 
@@ -188,6 +198,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 short_memory_policy,
                 compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: 32,
                 tasks,
             },
             FixtureFileProvider::default(),
@@ -220,6 +231,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 short_memory_policy,
                 compaction_strategy: RuntimeCompactionStrategy::FileBackedGc,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: 32,
                 tasks,
             },
             provider,
@@ -389,8 +401,13 @@ fn build_comparison_tasks(
 
 #[derive(Clone, Copy)]
 enum TierBWorkload {
-    MemoryRecall { history_turns: usize },
-    SingleMessageAgent { tool_calls: usize },
+    MemoryRecall {
+        history_turns: usize,
+    },
+    SingleMessageAgent {
+        tool_calls: usize,
+        payload_bytes: usize,
+    },
 }
 
 impl TierBWorkload {
@@ -398,6 +415,13 @@ impl TierBWorkload {
         match self {
             Self::MemoryRecall { .. } => "memory_recall_chat_history",
             Self::SingleMessageAgent { .. } => "single_message_agent",
+        }
+    }
+
+    fn max_model_steps(self) -> usize {
+        match self {
+            Self::MemoryRecall { history_turns } => (history_turns + 8).max(32),
+            Self::SingleMessageAgent { tool_calls, .. } => (tool_calls + 8).max(32),
         }
     }
 }
@@ -411,12 +435,25 @@ fn build_workload_tasks(
         TierBWorkload::MemoryRecall { history_turns } => {
             build_comparison_tasks(repetitions, content, history_turns)
         }
-        TierBWorkload::SingleMessageAgent { tool_calls } => (1..=repetitions)
+        TierBWorkload::SingleMessageAgent {
+            tool_calls,
+            payload_bytes,
+        } => (1..=repetitions)
             .map(|repetition| {
                 let files = (1..=tool_calls)
-                    .map(|tool_index| ExpectedFile {
-                        path: format!("run-{repetition:04}/single-message-{tool_index:04}.txt"),
-                        exact_content: format!("{content}:{tool_index:04}"),
+                    .map(|tool_index| {
+                        let marker = format!("{content}:{tool_index:04}");
+                        let exact_content = if payload_bytes == 0 {
+                            marker
+                        } else {
+                            let pad_len = payload_bytes.saturating_sub(marker.len());
+                            let pad = "X".repeat(pad_len);
+                            format!("{pad}{marker}")
+                        };
+                        ExpectedFile {
+                            path: format!("run-{repetition:04}/single-message-{tool_index:04}.txt"),
+                            exact_content,
+                        }
                     })
                     .collect();
                 TierBTask::write_files(format!("single-message-{repetition:04}"), files)
@@ -452,6 +489,7 @@ async fn run_fixture_comparison(
                 short_memory_policy: policy,
                 compaction_strategy,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: workload.max_model_steps(),
                 tasks: build_workload_tasks(repetitions, content, workload)?,
             },
             FixtureFileProvider::default(),
@@ -505,6 +543,7 @@ async fn run_live_comparison(
                 short_memory_policy: policy,
                 compaction_strategy,
                 pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: workload.max_model_steps(),
                 tasks: build_workload_tasks(repetitions, content, workload)?,
             },
             provider,
@@ -617,6 +656,7 @@ fn print_help() {
            --repetitions <N>         Number of isolated file tasks (default: 1)\n\
            --history-turns <N>       Extra user-message turns for memory-recall (default: 8)\n\
            --single-message-tools <N> One user message requiring N exact write_file calls\n\
+           --payload-bytes <N>       Pad each write_file content to N bytes (single-message only)\n\
            --api-type <TYPE>         Provider wire API (default: open_ai_chat_completions)\n\
            --model <MODEL>           Live model; or OPENAI_MODEL / OPENAI__MODEL\n\
            --base-url <URL>          Live endpoint; or OPENAI_BASE_URL / OPENAI__BASE_URL\n\
@@ -673,7 +713,10 @@ mod tests {
         let tasks = build_workload_tasks(
             1,
             "EXPECTED",
-            TierBWorkload::SingleMessageAgent { tool_calls: 6 },
+            TierBWorkload::SingleMessageAgent {
+                tool_calls: 6,
+                payload_bytes: 0,
+            },
         )
         .expect("workload is valid");
 

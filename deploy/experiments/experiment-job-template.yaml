@@ -1,0 +1,50 @@
+# This template is intentionally not included as a runnable Kustomize resource.
+# The manifest controller must substitute TRIAL_ID and RESULT_URI from a frozen
+# experiment manifest. Terminal-Bench needs a dedicated sandbox backend; do not
+# add a host Docker socket or privileged mode to this Pod.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: structure-trial-TRIAL_ID
+  labels:
+    app.kubernetes.io/component: experiment-trial
+    structure.dev/trial-id: TRIAL_ID
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: experiment-trial
+    spec:
+      restartPolicy: Never
+      serviceAccountName: experiment-runner
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: trial
+          image: ghcr.io/haowei2000/structure-experiment-runner:RELEASE_SHA
+          env:
+            - name: OPENAI_BASE_URL
+              value: http://api-center.structure-experiments.svc.cluster.local:4000/openai/v1
+            - name: OPENAI_MODEL
+              value: LongCat-2.0
+            # This is not an upstream credential. The center overwrites it
+            # before forwarding the request to LongCat.
+            - name: OPENAI_API_KEY
+              value: experiment-internal-client
+            - name: STRUCTURE_THINKING
+              value: "false"
+            - name: TRIAL_ID
+              value: TRIAL_ID
+            - name: RESULT_URI
+              value: RESULT_URI
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "2", memory: "8Gi" }
+            limits: { cpu: "4", memory: "16Gi" }

@@ -1,0 +1,39 @@
+# Not part of the Kustomize base. Apply manually for an in-cluster health test:
+# kubectl apply -f deploy/experiments/api-center-smoke-test.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: api-center-smoke
+  namespace: structure-experiments
+  labels:
+    app.kubernetes.io/component: experiment-trial
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: experiment-trial
+    spec:
+      restartPolicy: Never
+      serviceAccountName: experiment-runner
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: healthcheck
+          image: curlimages/curl:8.10.1
+          args:
+            - --fail
+            - --silent
+            - --show-error
+            - http://api-center:4000/healthz
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

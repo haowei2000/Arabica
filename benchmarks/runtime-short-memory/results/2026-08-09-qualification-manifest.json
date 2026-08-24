@@ -1,0 +1,216 @@
+{
+  "schema_version": "structure.long-horizon/2026-08",
+  "provider": "longcat",
+  "model": "LongCat-2.0",
+  "thinking_enabled": false,
+  "max_output_tokens": 8192,
+  "tasks": [
+    "db-wal-recovery",
+    "build-cython-ext",
+    "fix-code-vulnerability",
+    "llm-inference-batching-scheduler",
+    "custom-memory-heap-crash"
+  ],
+  "trials": [
+    {
+      "trial_id": "qualification-db-wal-recovery-b01-b0",
+      "task": "db-wal-recovery",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 1,
+      "arm": "B0",
+      "seed": 6017840105955925450,
+      "report_path": "trials/qualification/db-wal-recovery/block-01/b0.json"
+    },
+    {
+      "trial_id": "qualification-db-wal-recovery-b01-fbgc",
+      "task": "db-wal-recovery",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 2,
+      "arm": "FBGC",
+      "seed": 3575417767289135503,
+      "report_path": "trials/qualification/db-wal-recovery/block-01/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-db-wal-recovery-b02-fbgc",
+      "task": "db-wal-recovery",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 1,
+      "arm": "FBGC",
+      "seed": 10902684783289505344,
+      "report_path": "trials/qualification/db-wal-recovery/block-02/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-db-wal-recovery-b02-b0",
+      "task": "db-wal-recovery",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 2,
+      "arm": "B0",
+      "seed": 8460262444622715397,
+      "report_path": "trials/qualification/db-wal-recovery/block-02/b0.json"
+    },
+    {
+      "trial_id": "qualification-build-cython-ext-b01-fbgc",
+      "task": "build-cython-ext",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 1,
+      "arm": "FBGC",
+      "seed": 17989344973442382397,
+      "report_path": "trials/qualification/build-cython-ext/block-01/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-build-cython-ext-b01-b0",
+      "task": "build-cython-ext",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 2,
+      "arm": "B0",
+      "seed": 12297334045341704700,
+      "report_path": "trials/qualification/build-cython-ext/block-01/b0.json"
+    },
+    {
+      "trial_id": "qualification-build-cython-ext-b02-b0",
+      "task": "build-cython-ext",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 1,
+      "arm": "B0",
+      "seed": 10926622755934186175,
+      "report_path": "trials/qualification/build-cython-ext/block-02/b0.json"
+    },
+    {
+      "trial_id": "qualification-build-cython-ext-b02-fbgc",
+      "task": "build-cython-ext",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 2,
+      "arm": "FBGC",
+      "seed": 5234611827833508478,
+      "report_path": "trials/qualification/build-cython-ext/block-02/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-fix-code-vulnerability-b01-fbgc",
+      "task": "fix-code-vulnerability",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 1,
+      "arm": "FBGC",
+      "seed": 17384694726927651329,
+      "report_path": "trials/qualification/fix-code-vulnerability/block-01/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-fix-code-vulnerability-b01-b0",
+      "task": "fix-code-vulnerability",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 2,
+      "arm": "B0",
+      "seed": 1235288593933231496,
+      "report_path": "trials/qualification/fix-code-vulnerability/block-01/b0.json"
+    },
+    {
+      "trial_id": "qualification-fix-code-vulnerability-b02-b0",
+      "task": "fix-code-vulnerability",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 1,
+      "arm": "B0",
+      "seed": 12790018845497387763,
+      "report_path": "trials/qualification/fix-code-vulnerability/block-02/b0.json"
+    },
+    {
+      "trial_id": "qualification-fix-code-vulnerability-b02-fbgc",
+      "task": "fix-code-vulnerability",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 2,
+      "arm": "FBGC",
+      "seed": 15087356786212519546,
+      "report_path": "trials/qualification/fix-code-vulnerability/block-02/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-llm-inference-batching-scheduler-b01-fbgc",
+      "task": "llm-inference-batching-scheduler",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 1,
+      "arm": "FBGC",
+      "seed": 11822902655121678739,
+      "report_path": "trials/qualification/llm-inference-batching-scheduler/block-01/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-llm-inference-batching-scheduler-b01-b0",
+      "task": "llm-inference-batching-scheduler",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 2,
+      "arm": "B0",
+      "seed": 11437648183335231762,
+      "report_path": "trials/qualification/llm-inference-batching-scheduler/block-01/b0.json"
+    },
+    {
+      "trial_id": "qualification-llm-inference-batching-scheduler-b02-b0",
+      "task": "llm-inference-batching-scheduler",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 1,
+      "arm": "B0",
+      "seed": 12593411598694572693,
+      "report_path": "trials/qualification/llm-inference-batching-scheduler/block-02/b0.json"
+    },
+    {
+      "trial_id": "qualification-llm-inference-batching-scheduler-b02-fbgc",
+      "task": "llm-inference-batching-scheduler",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 2,
+      "arm": "FBGC",
+      "seed": 12208157126908125716,
+      "report_path": "trials/qualification/llm-inference-batching-scheduler/block-02/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-custom-memory-heap-crash-b01-fbgc",
+      "task": "custom-memory-heap-crash",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 1,
+      "arm": "FBGC",
+      "seed": 7091675120379601927,
+      "report_path": "trials/qualification/custom-memory-heap-crash/block-01/fbgc.json"
+    },
+    {
+      "trial_id": "qualification-custom-memory-heap-crash-b01-b0",
+      "task": "custom-memory-heap-crash",
+      "phase": "qualification",
+      "block": 1,
+      "sequence_in_block": 2,
+      "arm": "B0",
+      "seed": 4306294151781661094,
+      "report_path": "trials/qualification/custom-memory-heap-crash/block-01/b0.json"
+    },
+    {
+      "trial_id": "qualification-custom-memory-heap-crash-b02-b0",
+      "task": "custom-memory-heap-crash",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 1,
+      "arm": "B0",
+      "seed": 12662437057575483593,
+      "report_path": "trials/qualification/custom-memory-heap-crash/block-02/b0.json"
+    },
+    {
+      "trial_id": "qualification-custom-memory-heap-crash-b02-fbgc",
+      "task": "custom-memory-heap-crash",
+      "phase": "qualification",
+      "block": 2,
+      "sequence_in_block": 2,
+      "arm": "FBGC",
+      "seed": 9877056088977542760,
+      "report_path": "trials/qualification/custom-memory-heap-crash/block-02/fbgc.json"
+    }
+  ]
+}
