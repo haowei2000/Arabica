@@ -118,6 +118,10 @@ pub struct CliComparisonManifest {
     pub codex_program: String,
     pub pi_program: String,
     pub piagent_package_root: String,
+    #[serde(default)]
+    pub provider_base_url: Option<String>,
+    #[serde(default)]
+    pub provider_api_key_env: Option<String>,
     pub trials: Vec<CliTrial>,
 }
 
@@ -131,6 +135,8 @@ pub struct CliComparisonPlan {
     pub codex_program: String,
     pub pi_program: String,
     pub piagent_package_root: String,
+    pub provider_base_url: Option<String>,
+    pub provider_api_key_env: Option<String>,
 }
 
 pub fn create_cli_comparison_manifest(
@@ -189,6 +195,8 @@ pub fn create_cli_comparison_manifest(
         codex_program: plan.codex_program,
         pi_program: plan.pi_program,
         piagent_package_root: plan.piagent_package_root,
+        provider_base_url: plan.provider_base_url,
+        provider_api_key_env: plan.provider_api_key_env,
         trials,
     })
 }
@@ -203,6 +211,19 @@ impl CliComparisonManifest {
         }
         if self.model.trim().is_empty() || self.thinking.trim().is_empty() {
             return Err("model and thinking level are required".to_owned());
+        }
+        if self.provider_base_url.is_some() != self.provider_api_key_env.is_some() {
+            return Err(
+                "provider base URL and API key environment must be set together".to_owned(),
+            );
+        }
+        if let Some(name) = &self.provider_api_key_env
+            && (name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'))
+        {
+            return Err("provider API key environment name is invalid".to_owned());
         }
         let mut ids = BTreeSet::new();
         let mut artifacts = BTreeSet::new();
@@ -265,6 +286,11 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
     }
     if !piagent_package_ready {
         blockers.push("piagent-package-root-not-ready".to_owned());
+    }
+    if let Some(name) = &manifest.provider_api_key_env
+        && std::env::var_os(name).is_none()
+    {
+        blockers.push(format!("provider-api-key-environment-missing:{name}"));
     }
     CliPreflightReport {
         manifest_valid,
@@ -415,13 +441,19 @@ pub async fn run_cli_trial(
         }
         CliSurface::PiAgent => {
             let args = piagent_args(manifest, scenario, &workspace, &prompt);
-            let env = vec![
+            let mut env = vec![
                 ("PIAGENT_NO_UPDATE_CHECK".to_owned(), "1".to_owned()),
                 (
                     "PIAGENT_PERMISSION_PROFILE".to_owned(),
                     "workspace-write".to_owned(),
                 ),
             ];
+            if let Some(pi_home) = prepare_pi_runtime(manifest, &workspace_root)? {
+                env.push((
+                    "PI_CODING_AGENT_DIR".to_owned(),
+                    pi_home.to_string_lossy().into_owned(),
+                ));
+            }
             run_process(
                 &manifest.pi_program,
                 &args,
@@ -503,7 +535,7 @@ fn codex_args(manifest: &CliComparisonManifest, workspace: &Path) -> Vec<String>
     } else {
         &manifest.thinking
     };
-    vec![
+    let mut args = vec![
         "exec".to_owned(),
         "--json".to_owned(),
         "--ephemeral".to_owned(),
@@ -521,7 +553,71 @@ fn codex_args(manifest: &CliComparisonManifest, workspace: &Path) -> Vec<String>
         "--config".to_owned(),
         format!("model_reasoning_effort=\"{thinking}\""),
         "-".to_owned(),
-    ]
+    ];
+    if let (Some(base_url), Some(api_key_env)) =
+        (&manifest.provider_base_url, &manifest.provider_api_key_env)
+    {
+        args.splice(
+            args.len() - 1..args.len() - 1,
+            [
+                "--config".to_owned(),
+                "model_provider=\"benchmark_provider\"".to_owned(),
+                "--config".to_owned(),
+                format!(
+                    "model_providers.benchmark_provider={{ name=\"Benchmark provider\", base_url=\"{base_url}\", env_key=\"{api_key_env}\", wire_api=\"responses\", requires_openai_auth=false }}"
+                ),
+                "--config".to_owned(),
+                "disable_response_storage=true".to_owned(),
+                "--config".to_owned(),
+                "model_supports_reasoning_summaries=true".to_owned(),
+            ],
+        );
+    }
+    args
+}
+
+fn prepare_pi_runtime(
+    manifest: &CliComparisonManifest,
+    workspace_root: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let (Some(base_url), Some(api_key_env)) =
+        (&manifest.provider_base_url, &manifest.provider_api_key_env)
+    else {
+        return Ok(None);
+    };
+    let (provider, model) = manifest
+        .model
+        .split_once('/')
+        .unwrap_or(("benchmark-provider", &manifest.model));
+    validate_identifier(provider, "provider id")?;
+    let pi_home = workspace_root.join("pi-home");
+    std::fs::create_dir_all(&pi_home)
+        .map_err(|error| format!("cannot create isolated Pi home: {error}"))?;
+    let models = serde_json::json!({
+        "providers": {
+            provider: {
+                "baseUrl": base_url,
+                "api": "openai-responses",
+                "apiKey": format!("${api_key_env}"),
+                "models": [{
+                    "id": model,
+                    "name": model,
+                    "reasoning": true,
+                    "input": ["text"],
+                    "contextWindow": 1_048_576,
+                    "maxTokens": 131_072,
+                    "compat": { "supportsStore": false }
+                }]
+            }
+        }
+    });
+    std::fs::write(
+        pi_home.join("models.json"),
+        serde_json::to_vec_pretty(&models)
+            .map_err(|error| format!("cannot encode Pi models: {error}"))?,
+    )
+    .map_err(|error| format!("cannot write Pi models: {error}"))?;
+    Ok(Some(pi_home))
 }
 
 fn piagent_args(
@@ -1069,6 +1165,8 @@ mod tests {
             codex_program: "codex".to_owned(),
             pi_program: "pi".to_owned(),
             piagent_package_root: "/tmp/piagent".to_owned(),
+            provider_base_url: None,
+            provider_api_key_env: None,
             trials: vec![
                 CliTrial {
                     trial_id: "task-r01-piagent".to_owned(),
