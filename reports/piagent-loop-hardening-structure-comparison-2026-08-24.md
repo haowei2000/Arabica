@@ -100,3 +100,40 @@ class.
 Raw provider exchanges and Pi runtime state remain in the private temporary
 experiment directory because they can contain prompts, reasoning, and tool
 output. Only aggregate evidence is committed.
+
+## Expanded follow-up: three repeats plus broader tasks
+
+The original two scenarios were extended to three independent repetitions, and
+two additional scenarios were added: `stable-dedupe` exercises order,
+SameValueZero equality, callback cardinality, and input immutability;
+`config-batch` requires a coordinated two-file API change. This produced eight
+paired runs and sixteen total paid trials.
+
+| Aggregate | PiAgent | Structure |
+|---|---:|---:|
+| Strictly resolved | 7/8 | 8/8 |
+| Hidden verifier passed | 8/8 | 8/8 |
+| Timeout | 0 | 0 |
+| Empty `toolUse` turns | 0 | 0 |
+| Mean fresh tokens | 11,479 | 2,804 |
+| Mean duration | 120.5 s | 25.0 s |
+| Mean tool calls | 9.25 | 2.75 |
+| Failed tool results | 20 | 0 |
+
+Across the seven pairs where both surfaces strictly resolved, the geometric
+mean PiAgent/Structure fresh-token ratio was `4.0120` and the mean duration
+ratio was `4.2642`. Structure used fewer fresh tokens in every comparable pair.
+
+The one PiAgent strict failure passed every functional verifier but added
+`test/config.test.js` despite the prompt saying to edit only `src/config.js`.
+PiAgent's generated task contract had automatically expanded its own scope to
+`test/**`, `tests/**`, `spec/**`, and `__tests__/**`; the guard therefore allowed
+the edit. The benchmark correctly retains this as a scope failure because the
+user-authored constraint was narrower.
+
+Most importantly for the original incident, none of the sixteen corrected
+trials timed out and neither surface produced a `toolUse` turn without an
+observed call item. The clean Git lifecycle fix therefore held across repeats
+and the two broader tasks. This still remains a small controlled pilot, but it
+now distinguishes the fixed loop class from a separate PiAgent scope-discipline
+issue.

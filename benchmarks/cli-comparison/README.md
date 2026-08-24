@@ -1,6 +1,6 @@
 # PiAgent paired CLI pilot
 
-This suite independently checks two small repository tasks with hidden verifier
+This suite independently checks four small repository tasks with hidden verifier
 scripts. PiAgent can be paired with Codex CLI or Structure. Each surface receives
 the same fixture, prompt, model, thinking level, timeout, and repeat schedule.
 Workspaces are fresh and trial order is deterministically randomized within each
@@ -38,7 +38,7 @@ cargo run -p structure-short-memory-benchmark --bin cli_comparison -- run \
 
 Only paired trials where both surfaces pass are included in the fresh-token
 ratio. Quality non-inferiority is required before a token improvement is
-reported. This two-task suite is a local pilot, not a general product claim.
+reported. This four-task suite is a local pilot, not a general product claim.
 
 For the real Structure Runtime, select `--surfaces piagent,structure` and provide
 `--provider-base-url` plus `--provider-api-key-env`. The key itself must remain

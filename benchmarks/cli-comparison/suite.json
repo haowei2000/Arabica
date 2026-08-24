@@ -19,6 +19,24 @@
       "verifier": ["node", "verifiers/bounded-retry.mjs", "{workspace}"],
       "allowed_changes": ["src/retry.js"],
       "piagent_profile": "node-typescript"
+    },
+    {
+      "id": "stable-dedupe",
+      "title": "Deduplicate by stable computed keys",
+      "fixture": "fixtures/stable-dedupe",
+      "prompt": "prompts/stable-dedupe.md",
+      "verifier": ["node", "verifiers/stable-dedupe.mjs", "{workspace}"],
+      "allowed_changes": ["src/unique.js"],
+      "piagent_profile": "node-typescript"
+    },
+    {
+      "id": "config-batch",
+      "title": "Add a batch configuration API across modules",
+      "fixture": "fixtures/config-batch",
+      "prompt": "prompts/config-batch.md",
+      "verifier": ["node", "verifiers/config-batch.mjs", "{workspace}"],
+      "allowed_changes": ["src/config.js", "src/index.js"],
+      "piagent_profile": "node-typescript"
     }
   ]
 }

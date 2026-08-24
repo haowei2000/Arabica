@@ -52,7 +52,7 @@ trial directory. They are diagnostic evidence and must not be committed.
 
 ## Claim boundary
 
-The bundled two-task suite has claim tier `controlled-local-pilot`. It can catch
+The bundled four-task suite has claim tier `controlled-local-pilot`. It can catch
 harness regressions and provide an initial directional comparison, but it cannot
 support a general quality, cost, or token-efficiency claim. A broader claim needs
 generated hidden variants, multiple domains, enough paired repetitions for a
