@@ -1,0 +1,1 @@
+Fix `src/config.js`. Explicit override values `false`, `0`, and the empty string are valid and must not fall back to defaults. Missing or `undefined` values must still use defaults. Keep the exported API unchanged and only edit `src/config.js`.

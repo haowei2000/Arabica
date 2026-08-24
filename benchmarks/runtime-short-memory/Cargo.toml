@@ -12,6 +12,7 @@ default-run = "structure-short-memory-benchmark"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 structure-model = { path = "../../crates/structure-model" }
 structure-provider = { path = "../../crates/structure-provider" }
 structure-protocol = { path = "../../crates/structure-protocol" }

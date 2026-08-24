@@ -1,0 +1,24 @@
+{
+  "schema_version": "structure.cli-comparison-suite/2026-08",
+  "suite_id": "structure-cli-pilot-v1",
+  "scenarios": [
+    {
+      "id": "falsey-config",
+      "title": "Preserve explicit false and zero configuration values",
+      "fixture": "fixtures/falsey-config",
+      "prompt": "prompts/falsey-config.md",
+      "verifier": ["node", "verifiers/falsey-config.mjs", "{workspace}"],
+      "allowed_changes": ["src/config.js"],
+      "piagent_profile": "node-typescript"
+    },
+    {
+      "id": "bounded-retry",
+      "title": "Implement bounded asynchronous retries",
+      "fixture": "fixtures/bounded-retry",
+      "prompt": "prompts/bounded-retry.md",
+      "verifier": ["node", "verifiers/bounded-retry.mjs", "{workspace}"],
+      "allowed_changes": ["src/retry.js"],
+      "piagent_profile": "node-typescript"
+    }
+  ]
+}

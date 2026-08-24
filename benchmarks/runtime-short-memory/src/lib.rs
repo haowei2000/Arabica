@@ -5,6 +5,7 @@
 //! `structure-runtime`.
 
 mod baseline;
+mod cli_comparison;
 mod gates;
 mod generator;
 mod long_horizon;
@@ -14,6 +15,13 @@ mod tier_b;
 
 pub use baseline::{
     Baseline, BaselineError, BenchmarkProjection, ProjectionBatch, ProjectionVisibility,
+};
+pub use cli_comparison::{
+    CLI_COMPARISON_MANIFEST_SCHEMA, CLI_COMPARISON_REPORT_SCHEMA, CLI_COMPARISON_SUITE_SCHEMA,
+    CliComparisonManifest, CliComparisonPlan, CliComparisonSummary, CliPreflightReport,
+    CliScenario, CliSuite, CliSurface, CliTrial, CliTrialReport, CliUsage, CliVerifierResult,
+    create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
+    summarize_cli_comparison,
 };
 pub use gates::{
     BenchmarkRun, BenchmarkRunError, CorrectnessGates, EvidenceRecallGate, GateCheck,
