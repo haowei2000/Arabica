@@ -3,13 +3,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use structure_short_memory_benchmark::{
-    CliComparisonManifest, CliComparisonPlan, CliSurface, CliTrialReport,
+    CliComparisonManifest, CliComparisonMode, CliComparisonPlan, CliSurface, CliTrialReport,
     create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
     summarize_cli_comparison,
 };
 
 const USAGE: &str = "usage:
-  cli_comparison plan --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL --piagent-package-root DIR [--surfaces piagent,codex-cli|piagent,structure] [--provider-base-url URL --provider-api-key-env NAME] [--repeats N] [--timeout-seconds N] [--seed N] [--codex-program PATH] [--pi-program PATH]
+  cli_comparison plan --mode agent-stack --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL [--piagent-package-root DIR] [--surfaces piagent,codex-cli|piagent,structure|codex-cli,structure] [--provider-base-url URL --provider-api-key-env NAME] [--repeats N] [--timeout-seconds N] [--seed N] [--codex-program PATH] [--pi-program PATH]
+  cli_comparison plan --mode context-policy --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL --provider-base-url URL --provider-api-key-env NAME [--repeats N] [--timeout-seconds N] [--seed N]
   cli_comparison preflight --manifest FILE
   cli_comparison run --manifest FILE --trial-id ID --output-root DIR --yes
   cli_comparison summarize --manifest FILE --reports-root DIR";
@@ -80,17 +81,24 @@ fn plan(args: &[String]) -> Result<(), Box<dyn Error>> {
     if output.exists() {
         return Err(format!("manifest already exists: {}", output.display()).into());
     }
+    let benchmark_mode =
+        CliComparisonMode::parse(optional(args, "--mode").unwrap_or("agent-stack"))?;
+    let default_surfaces = match benchmark_mode {
+        CliComparisonMode::AgentStack => "piagent,codex-cli",
+        CliComparisonMode::ContextPolicy => "structure-full-replay,structure-file-backed-gc",
+    };
     let surfaces = optional(args, "--surfaces")
-        .unwrap_or("piagent,codex-cli")
+        .unwrap_or(default_surfaces)
         .split(',')
         .map(CliSurface::parse)
         .collect::<Result<Vec<_>, _>>()?;
     let manifest = create_cli_comparison_manifest(
         suite,
         CliComparisonPlan {
+            benchmark_mode,
             model: required(args, "--model")?.to_owned(),
             thinking: required(args, "--thinking")?.to_owned(),
-            repetitions: optional(args, "--repeats").unwrap_or("3").parse()?,
+            repetitions: optional(args, "--repeats").unwrap_or("5").parse()?,
             timeout_seconds: optional(args, "--timeout-seconds")
                 .unwrap_or("900")
                 .parse()?,
@@ -99,7 +107,9 @@ fn plan(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .unwrap_or("codex")
                 .to_owned(),
             pi_program: optional(args, "--pi-program").unwrap_or("pi").to_owned(),
-            piagent_package_root: required(args, "--piagent-package-root")?.to_owned(),
+            piagent_package_root: optional(args, "--piagent-package-root")
+                .unwrap_or(".")
+                .to_owned(),
             provider_base_url: optional(args, "--provider-base-url").map(str::to_owned),
             provider_api_key_env: optional(args, "--provider-api-key-env").map(str::to_owned),
             surfaces,

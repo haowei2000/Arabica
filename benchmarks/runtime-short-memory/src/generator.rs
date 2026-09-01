@@ -110,6 +110,7 @@ impl SyntheticTraceGenerator {
                         call_id: call_id.clone(),
                         name: "read_file".to_owned(),
                         arguments: serde_json::json!({"path": path}),
+                        provider_state: None,
                     },
                 );
                 let call_event_id = call.event_id.clone();

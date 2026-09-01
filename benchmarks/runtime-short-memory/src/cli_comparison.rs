@@ -1,4 +1,4 @@
-//! Controlled, paired comparison harness for PiAgent and Codex CLI.
+//! Controlled, paired comparison harness for PiAgent, Codex CLI, and Structure.
 //!
 //! The harness keeps model execution opt-in. Planning, validation, preflight,
 //! and summary generation are provider-free. Each paid trial runs in a fresh
@@ -21,14 +21,18 @@ use structure_protocol::{
 };
 use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
 use structure_runner::LocalRunner;
-use structure_runtime::CoreRuntime;
+use structure_runtime::{
+    CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+};
 use structure_session::SessionManager;
 
 use crate::tier_b::{ProviderCallObservation, ProviderRecorder, RecordingProvider};
 
 pub const CLI_COMPARISON_SUITE_SCHEMA: &str = "structure.cli-comparison-suite/2026-08";
-pub const CLI_COMPARISON_MANIFEST_SCHEMA: &str = "structure.cli-comparison-manifest/2026-08";
-pub const CLI_COMPARISON_REPORT_SCHEMA: &str = "structure.cli-comparison-report/2026-08";
+pub const CLI_COMPARISON_MANIFEST_SCHEMA: &str = "structure.cli-comparison-manifest/2026-08-v3";
+pub const CLI_COMPARISON_REPORT_SCHEMA: &str = "structure.cli-comparison-report/2026-08-v3";
+const MIN_FORMAL_PAIRED_RUNS: usize = 5;
+const COMPARISON_BOOTSTRAP_RESAMPLES: usize = 10_000;
 static PROCESS_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -37,6 +41,9 @@ pub enum CliSurface {
     PiAgent,
     CodexCli,
     Structure,
+    StructureFullReplay,
+    StructureShortMemory,
+    StructureFileBackedGc,
 }
 
 impl CliSurface {
@@ -45,7 +52,20 @@ impl CliSurface {
             Self::PiAgent => "piagent",
             Self::CodexCli => "codex-cli",
             Self::Structure => "structure",
+            Self::StructureFullReplay => "structure-full-replay",
+            Self::StructureShortMemory => "structure-short-memory",
+            Self::StructureFileBackedGc => "structure-file-backed-gc",
         }
+    }
+
+    const fn is_structure(self) -> bool {
+        matches!(
+            self,
+            Self::Structure
+                | Self::StructureFullReplay
+                | Self::StructureShortMemory
+                | Self::StructureFileBackedGc
+        )
     }
 
     pub fn parse(value: &str) -> Result<Self, String> {
@@ -53,8 +73,38 @@ impl CliSurface {
             "piagent" => Ok(Self::PiAgent),
             "codex-cli" => Ok(Self::CodexCli),
             "structure" => Ok(Self::Structure),
+            "structure-full-replay" => Ok(Self::StructureFullReplay),
+            "structure-short-memory" => Ok(Self::StructureShortMemory),
+            "structure-file-backed-gc" => Ok(Self::StructureFileBackedGc),
             _ => Err(format!(
-                "unknown comparison surface {value}; expected piagent, codex-cli, or structure"
+                "unknown comparison surface {value}; expected piagent, codex-cli, structure, structure-full-replay, structure-short-memory, or structure-file-backed-gc"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CliComparisonMode {
+    #[default]
+    AgentStack,
+    ContextPolicy,
+}
+
+impl CliComparisonMode {
+    pub const fn claim_tier(self) -> &'static str {
+        match self {
+            Self::AgentStack => "agent-stack-pilot",
+            Self::ContextPolicy => "context-policy-ab",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "agent-stack" => Ok(Self::AgentStack),
+            "context-policy" => Ok(Self::ContextPolicy),
+            _ => Err(format!(
+                "unknown comparison mode {value}; expected agent-stack or context-policy"
             )),
         }
     }
@@ -132,6 +182,7 @@ pub struct CliTrial {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CliComparisonManifest {
     pub schema_version: String,
+    pub benchmark_mode: CliComparisonMode,
     pub claim_tier: String,
     pub suite_path: String,
     pub suite_digest: String,
@@ -152,6 +203,7 @@ pub struct CliComparisonManifest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CliComparisonPlan {
+    pub benchmark_mode: CliComparisonMode,
     pub model: String,
     pub thinking: String,
     pub repetitions: usize,
@@ -187,7 +239,8 @@ pub fn create_cli_comparison_manifest(
     if plan.surfaces.len() != 2 || plan.surfaces[0] == plan.surfaces[1] {
         return Err("exactly two distinct comparison surfaces are required".to_owned());
     }
-    if plan.surfaces.contains(&CliSurface::Structure)
+    validate_mode_surfaces(plan.benchmark_mode, &plan.surfaces)?;
+    if plan.surfaces.iter().any(|surface| surface.is_structure())
         && (plan.provider_base_url.is_none() || plan.provider_api_key_env.is_none())
     {
         return Err(
@@ -220,7 +273,8 @@ pub fn create_cli_comparison_manifest(
     }
     Ok(CliComparisonManifest {
         schema_version: CLI_COMPARISON_MANIFEST_SCHEMA.to_owned(),
-        claim_tier: "controlled-local-pilot".to_owned(),
+        benchmark_mode: plan.benchmark_mode,
+        claim_tier: plan.benchmark_mode.claim_tier().to_owned(),
         suite_path: suite_path.to_string_lossy().into_owned(),
         suite_digest,
         model: plan.model,
@@ -248,6 +302,12 @@ impl CliComparisonManifest {
         if self.model.trim().is_empty() || self.thinking.trim().is_empty() {
             return Err("model and thinking level are required".to_owned());
         }
+        if self.claim_tier != self.benchmark_mode.claim_tier() {
+            return Err(format!(
+                "claim tier {} does not match benchmark mode",
+                self.claim_tier
+            ));
+        }
         if self.provider_base_url.is_some() != self.provider_api_key_env.is_some() {
             return Err(
                 "provider base URL and API key environment must be set together".to_owned(),
@@ -263,6 +323,11 @@ impl CliComparisonManifest {
         }
         let mut ids = BTreeSet::new();
         let mut artifacts = BTreeSet::new();
+        let surfaces: BTreeSet<_> = self.trials.iter().map(|trial| trial.surface).collect();
+        validate_mode_surfaces(
+            self.benchmark_mode,
+            &surfaces.iter().copied().collect::<Vec<_>>(),
+        )?;
         for trial in &self.trials {
             if !ids.insert(&trial.trial_id) || !artifacts.insert(&trial.artifact_path) {
                 return Err("trial ids and artifact paths must be unique".to_owned());
@@ -272,9 +337,47 @@ impl CliComparisonManifest {
     }
 }
 
+fn validate_mode_surfaces(mode: CliComparisonMode, surfaces: &[CliSurface]) -> Result<(), String> {
+    let actual: BTreeSet<_> = surfaces.iter().copied().collect();
+    match mode {
+        CliComparisonMode::AgentStack => {
+            if actual.len() != 2
+                || actual.iter().any(|surface| {
+                    matches!(
+                        surface,
+                        CliSurface::StructureFullReplay
+                            | CliSurface::StructureShortMemory
+                            | CliSurface::StructureFileBackedGc
+                    )
+                })
+            {
+                return Err(
+                    "agent-stack mode requires exactly two distinct native agent surfaces"
+                        .to_owned(),
+                );
+            }
+        }
+        CliComparisonMode::ContextPolicy => {
+            let expected = BTreeSet::from([
+                CliSurface::StructureFullReplay,
+                CliSurface::StructureFileBackedGc,
+            ]);
+            if actual != expected {
+                return Err(
+                    "context-policy mode requires exactly structure-full-replay and structure-file-backed-gc"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ExecutableProbe {
     pub program: String,
+    pub resolved_path: Option<String>,
+    pub sha256: Option<String>,
     pub available: bool,
     pub version: Option<String>,
     pub error: Option<String>,
@@ -287,6 +390,13 @@ pub struct CliPreflightReport {
     pub codex: ExecutableProbe,
     pub pi: ExecutableProbe,
     pub piagent_package_ready: bool,
+    pub piagent_git_revision: Option<String>,
+    pub piagent_git_clean: bool,
+    pub piagent_dirty_digest: Option<String>,
+    pub structure_git_revision: Option<String>,
+    pub structure_git_clean: bool,
+    pub structure_dirty_digest: Option<String>,
+    pub harness_executable_sha256: Option<String>,
     pub ready: bool,
     pub blockers: Vec<String>,
 }
@@ -307,6 +417,15 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
     ]
     .iter()
     .all(|path| package_root.join(path).exists());
+    let (piagent_git_revision, piagent_git_clean, piagent_dirty_digest) =
+        probe_git_checkout(package_root).await;
+    let structure_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (structure_git_revision, structure_git_clean, structure_dirty_digest) =
+        probe_git_checkout(&structure_root).await;
+    let harness_executable_sha256 = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| sha256(&bytes));
     let mut blockers = Vec::new();
     if !manifest_valid {
         blockers.push("manifest-invalid".to_owned());
@@ -324,7 +443,10 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
     if surfaces.contains(&CliSurface::PiAgent) && !piagent_package_ready {
         blockers.push("piagent-package-root-not-ready".to_owned());
     }
-    if surfaces.contains(&CliSurface::Structure)
+    if surfaces.contains(&CliSurface::PiAgent) && !piagent_git_clean {
+        blockers.push("piagent-package-root-not-clean".to_owned());
+    }
+    if surfaces.iter().any(|surface| surface.is_structure())
         && (manifest.provider_base_url.is_none() || manifest.provider_api_key_env.is_none())
     {
         blockers.push("structure-provider-configuration-missing".to_owned());
@@ -340,32 +462,136 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
         codex,
         pi,
         piagent_package_ready,
+        piagent_git_revision,
+        piagent_git_clean,
+        piagent_dirty_digest,
+        structure_git_revision,
+        structure_git_clean,
+        structure_dirty_digest,
+        harness_executable_sha256,
         ready: blockers.is_empty(),
         blockers,
     }
 }
 
 async fn probe(program: &str) -> ExecutableProbe {
+    let resolved = resolve_executable(program);
+    let resolved_path = resolved
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned());
+    let executable_sha256 = resolved
+        .as_ref()
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| sha256(&bytes));
     match Command::new(program).arg("--version").output().await {
         Ok(output) if output.status.success() => ExecutableProbe {
             program: program.to_owned(),
+            resolved_path,
+            sha256: executable_sha256,
             available: true,
             version: Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()),
             error: None,
         },
         Ok(output) => ExecutableProbe {
             program: program.to_owned(),
+            resolved_path,
+            sha256: executable_sha256,
             available: false,
             version: None,
             error: Some(String::from_utf8_lossy(&output.stderr).trim().to_owned()),
         },
         Err(error) => ExecutableProbe {
             program: program.to_owned(),
+            resolved_path,
+            sha256: executable_sha256,
             available: false,
             version: None,
             error: Some(error.to_string()),
         },
     }
+}
+
+fn resolve_executable(program: &str) -> Option<PathBuf> {
+    let requested = Path::new(program);
+    if requested.components().count() > 1 {
+        return requested.canonicalize().ok();
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| candidate.canonicalize().ok())
+}
+
+async fn probe_git_checkout(root: &Path) -> (Option<String>, bool, Option<String>) {
+    let revision = Command::new("git")
+        .args(["-C", &root.to_string_lossy(), "rev-parse", "HEAD"])
+        .output()
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    let status = Command::new("git")
+        .args([
+            "-C",
+            &root.to_string_lossy(),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ])
+        .output()
+        .await
+        .ok()
+        .filter(|output| output.status.success());
+    let clean = status
+        .as_ref()
+        .is_some_and(|output| output.stdout.is_empty());
+    let dirty_digest = if clean {
+        None
+    } else if let Some(status) = status {
+        let mut digest = Sha256::new();
+        digest.update(&status.stdout);
+        if let Ok(diff) = Command::new("git")
+            .args(["-C", &root.to_string_lossy(), "diff", "--binary", "HEAD"])
+            .output()
+            .await
+            && diff.status.success()
+        {
+            digest.update(&diff.stdout);
+        }
+        if let Ok(untracked) = Command::new("git")
+            .args([
+                "-C",
+                &root.to_string_lossy(),
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ])
+            .output()
+            .await
+            && untracked.status.success()
+        {
+            for relative in untracked.stdout.split(|byte| *byte == 0) {
+                if relative.is_empty() {
+                    continue;
+                }
+                digest.update((relative.len() as u64).to_be_bytes());
+                digest.update(relative);
+                if let Ok(bytes) =
+                    std::fs::read(root.join(String::from_utf8_lossy(relative).as_ref()))
+                {
+                    digest.update((bytes.len() as u64).to_be_bytes());
+                    digest.update(bytes);
+                }
+            }
+        }
+        Some(format!("sha256:{:x}", digest.finalize()))
+    } else {
+        None
+    };
+    (revision, clean, dirty_digest)
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -375,6 +601,11 @@ pub struct CliUsage {
     pub cache_write_input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_output_tokens: u64,
+    /// Provider input that was not served from a read cache. This excludes
+    /// model output so context-policy claims cannot be won by shorter answers.
+    #[serde(default)]
+    pub fresh_input_tokens: u64,
+    /// Fresh input plus model output, used as the agent-stack economic metric.
     pub fresh_tokens: u64,
     pub tool_calls: u64,
     pub event_count: u64,
@@ -398,11 +629,16 @@ pub struct CliProgressDiagnostics {
     pub tool_use_without_observed_call_turns: u64,
     pub max_consecutive_tool_use_without_observed_call_turns: u64,
     pub failed_tool_results: u64,
+    pub gc_admission_checks: u64,
+    pub gc_admissions: u64,
+    pub memory_pointer_provider_calls: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CliTrialReport {
     pub schema_version: String,
+    pub benchmark_mode: CliComparisonMode,
+    pub claim_tier: String,
     pub trial_id: String,
     pub scenario_id: String,
     pub surface: CliSurface,
@@ -422,6 +658,10 @@ pub struct CliTrialReport {
     pub usage: CliUsage,
     #[serde(default)]
     pub progress: CliProgressDiagnostics,
+    #[serde(default)]
+    pub stdout_artifact: String,
+    #[serde(default)]
+    pub stderr_artifact: String,
     pub stdout_sha256: String,
     pub stderr_sha256: String,
 }
@@ -431,6 +671,13 @@ pub async fn run_cli_trial(
     trial_id: &str,
     output_root: &Path,
 ) -> Result<CliTrialReport, String> {
+    let output_root = if output_root.is_absolute() {
+        output_root.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("cannot resolve current directory: {error}"))?
+            .join(output_root)
+    };
     manifest.validate()?;
     let preflight = preflight_cli_comparison(manifest).await;
     if !preflight.ready {
@@ -483,12 +730,13 @@ pub async fn run_cli_trial(
     let started = Instant::now();
     let process = match trial.surface {
         CliSurface::CodexCli => {
+            let env = prepare_codex_runtime(&workspace_root)?;
             run_process(
                 &manifest.codex_program,
                 &codex_args(manifest, &workspace),
                 &workspace,
                 Some(prompt.as_bytes()),
-                &[],
+                &env,
                 manifest.timeout_seconds,
             )
             .await?
@@ -518,10 +766,19 @@ pub async fn run_cli_trial(
             )
             .await?
         }
-        CliSurface::Structure => {
+        CliSurface::Structure
+        | CliSurface::StructureFullReplay
+        | CliSurface::StructureShortMemory
+        | CliSurface::StructureFileBackedGc => {
             match tokio::time::timeout(
                 Duration::from_secs(manifest.timeout_seconds),
-                run_structure_trial(manifest, &workspace_root, &workspace, &prompt),
+                run_structure_trial(
+                    manifest,
+                    trial.surface,
+                    &workspace_root,
+                    &workspace,
+                    &prompt,
+                ),
             )
             .await
             {
@@ -531,6 +788,25 @@ pub async fn run_cli_trial(
         }
     };
     let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+    let process_artifact_root = workspace_root.join("process-output");
+    std::fs::create_dir(&process_artifact_root)
+        .map_err(|error| format!("cannot create process artifact directory: {error}"))?;
+    let stdout_path = process_artifact_root.join("stdout.bin");
+    let stderr_path = process_artifact_root.join("stderr.bin");
+    std::fs::write(&stdout_path, &process.stdout)
+        .map_err(|error| format!("cannot persist process stdout: {error}"))?;
+    std::fs::write(&stderr_path, &process.stderr)
+        .map_err(|error| format!("cannot persist process stderr: {error}"))?;
+    let stdout_artifact = stdout_path
+        .strip_prefix(&output_root)
+        .map_err(|error| format!("cannot relativize stdout artifact: {error}"))?
+        .to_string_lossy()
+        .into_owned();
+    let stderr_artifact = stderr_path
+        .strip_prefix(&output_root)
+        .map_err(|error| format!("cannot relativize stderr artifact: {error}"))?
+        .to_string_lossy()
+        .into_owned();
     let after = tree_snapshot(&workspace)?;
     let changed_files = changed_paths(&before, &after);
     let outside_scope: Vec<_> = changed_files
@@ -558,12 +834,18 @@ pub async fn run_cli_trial(
     let usage = match trial.surface {
         CliSurface::CodexCli => parse_codex_usage(&process.stdout),
         CliSurface::PiAgent => parse_pi_usage(&process.stdout),
-        CliSurface::Structure => process.usage.clone().unwrap_or_default(),
+        CliSurface::Structure
+        | CliSurface::StructureFullReplay
+        | CliSurface::StructureShortMemory
+        | CliSurface::StructureFileBackedGc => process.usage.clone().unwrap_or_default(),
     };
     let progress = match trial.surface {
         CliSurface::PiAgent => parse_pi_progress(&process.stdout),
         CliSurface::CodexCli => CliProgressDiagnostics::default(),
-        CliSurface::Structure => process.progress.clone().unwrap_or_default(),
+        CliSurface::Structure
+        | CliSurface::StructureFullReplay
+        | CliSurface::StructureShortMemory
+        | CliSurface::StructureFileBackedGc => process.progress.clone().unwrap_or_default(),
     };
     let scope_passed = outside_scope.is_empty();
     let resolved = process.exit_code == Some(0)
@@ -574,6 +856,8 @@ pub async fn run_cli_trial(
         && forbidden_output_passed;
     Ok(CliTrialReport {
         schema_version: CLI_COMPARISON_REPORT_SCHEMA.to_owned(),
+        benchmark_mode: manifest.benchmark_mode,
+        claim_tier: manifest.claim_tier.clone(),
         trial_id: trial.trial_id.clone(),
         scenario_id: trial.scenario_id.clone(),
         surface: trial.surface,
@@ -592,9 +876,26 @@ pub async fn run_cli_trial(
         forbidden_output_passed,
         usage,
         progress,
+        stdout_artifact,
+        stderr_artifact,
         stdout_sha256: sha256(&process.stdout),
         stderr_sha256: sha256(&process.stderr),
     })
+}
+
+fn prepare_codex_runtime(workspace_root: &Path) -> Result<Vec<(String, String)>, String> {
+    // Ignore-user-config alone still reads personal auth, history, and state.
+    // Keep the actual Codex home outside the task's scored file tree.
+    let codex_home = workspace_root.join("codex-home");
+    std::fs::create_dir(&codex_home)
+        .map_err(|error| format!("cannot create isolated Codex home: {error}"))?;
+    let codex_home = codex_home
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve isolated Codex home: {error}"))?;
+    Ok(vec![(
+        "CODEX_HOME".to_owned(),
+        codex_home.to_string_lossy().into_owned(),
+    )])
 }
 
 fn codex_args(manifest: &CliComparisonManifest, workspace: &Path) -> Vec<String> {
@@ -782,6 +1083,7 @@ async fn initialize_git_baseline(workspace: &Path) -> Result<(), String> {
 
 async fn run_structure_trial(
     manifest: &CliComparisonManifest,
+    surface: CliSurface,
     workspace_root: &Path,
     workspace: &Path,
     prompt: &str,
@@ -800,19 +1102,45 @@ async fn run_structure_trial(
         .model
         .split_once('/')
         .map_or(manifest.model.as_str(), |(_, model)| model);
-    let provider = ApiModelProvider::new(
-        ApiProviderConfig::new(ApiType::OpenAiChatCompletions, api_key, base_url, model)
+    let mut provider_config =
+        ApiProviderConfig::new(ApiType::OpenAiResponses, api_key, base_url, model)
             .with_thinking(manifest.thinking != "off")
             .with_request_timeout_secs(manifest.timeout_seconds)
-            .with_raw_exchange_dir(workspace_root.join("provider-raw")),
-    )
-    .map_err(|error| format!("cannot initialize Structure provider: {error}"))?;
+            .with_raw_exchange_dir(workspace_root.join("provider-raw"));
+    if manifest.thinking != "off" {
+        provider_config = provider_config.with_reasoning_effort(manifest.thinking.clone());
+    }
+    let provider = ApiModelProvider::new(provider_config)
+        .map_err(|error| format!("cannot initialize Structure provider: {error}"))?;
     let recorder =
         ProviderRecorder::with_snapshot_path(workspace_root.join("provider-calls.partial.json"));
-    let mut runtime = CoreRuntime::new(
+    let (short_memory_policy, compaction_strategy) = match surface {
+        CliSurface::StructureFullReplay => (
+            ShortMemoryPolicy::full_replay(),
+            RuntimeCompactionStrategy::Disabled,
+        ),
+        CliSurface::StructureFileBackedGc => (
+            ShortMemoryPolicy::ttl_only(),
+            RuntimeCompactionStrategy::FileBackedGc,
+        ),
+        CliSurface::Structure | CliSurface::StructureShortMemory => (
+            ShortMemoryPolicy::default(),
+            RuntimeCompactionStrategy::Disabled,
+        ),
+        CliSurface::PiAgent | CliSurface::CodexCli => {
+            return Err("non-Structure surface reached Structure runtime".to_owned());
+        }
+    };
+    let mut runtime = CoreRuntime::with_memory_configuration(
         RecordingProvider::new(provider, recorder.clone()),
         LocalRunner::new(workspace),
+        short_memory_policy,
+        false,
+        RuntimeArchiveStore::File {
+            root: workspace_root.join("runtime-memory"),
+        },
     );
+    runtime.set_compaction_strategy(compaction_strategy);
     runtime.set_max_model_steps_per_run(32);
     runtime.set_max_model_steps_without_progress(8);
     let mut manager = SessionManager::new(runtime);
@@ -842,6 +1170,13 @@ async fn run_structure_trial(
         .await
         .map_err(|error| format!("Structure task failed: {error}"))?;
     let calls = recorder.from(0);
+    let gc_admission_checks = manager.runtime().pointer_gc_admission_observations().len() as u64;
+    let gc_admissions = manager
+        .runtime()
+        .pointer_gc_admission_observations()
+        .iter()
+        .filter(|observation| observation.admitted)
+        .count() as u64;
     let terminal_output = events.iter().rev().find_map(|event| match &event.event {
         Event::RunCompleted { output } => output.clone(),
         _ => None,
@@ -872,6 +1207,12 @@ async fn run_structure_trial(
         failed_tool_results: events
             .iter()
             .filter(|event| matches!(event.event, Event::ToolCallCompleted { is_error: true, .. }))
+            .count() as u64,
+        gc_admission_checks,
+        gc_admissions,
+        memory_pointer_provider_calls: calls
+            .iter()
+            .filter(|call| call.memory_pointer_entries > 0)
             .count() as u64,
     };
     Ok(ProcessResult {
@@ -904,7 +1245,8 @@ fn structure_usage(
             .map(|call| call.cache_creation_input_tokens)
             .sum(),
         output_tokens: calls.iter().map(|call| call.output_tokens).sum(),
-        reasoning_output_tokens: 0,
+        reasoning_output_tokens: calls.iter().map(|call| call.reasoning_output_tokens).sum(),
+        fresh_input_tokens: 0,
         fresh_tokens: 0,
         tool_calls: events
             .iter()
@@ -917,6 +1259,7 @@ fn structure_usage(
         .input_tokens
         .saturating_sub(usage.cached_input_tokens)
         .saturating_add(usage.output_tokens);
+    usage.fresh_input_tokens = usage.input_tokens.saturating_sub(usage.cached_input_tokens);
     usage
 }
 
@@ -934,6 +1277,10 @@ fn structure_timeout_result(workspace_root: &Path) -> Result<ProcessResult, Stri
         usage: Some(structure_usage(&calls, &[])),
         progress: Some(CliProgressDiagnostics {
             model_turns: calls.len() as u64,
+            memory_pointer_provider_calls: calls
+                .iter()
+                .filter(|call| call.memory_pointer_entries > 0)
+                .count() as u64,
             ..CliProgressDiagnostics::default()
         }),
     })
@@ -1119,6 +1466,7 @@ fn parse_codex_usage(bytes: &[u8]) -> CliUsage {
         .input_tokens
         .saturating_sub(usage.cached_input_tokens)
         .saturating_add(usage.output_tokens);
+    usage.fresh_input_tokens = usage.input_tokens.saturating_sub(usage.cached_input_tokens);
     usage
 }
 
@@ -1144,6 +1492,7 @@ fn parse_pi_usage(bytes: &[u8]) -> CliUsage {
         }
     }
     usage.fresh_tokens = usage.input_tokens.saturating_add(usage.output_tokens);
+    usage.fresh_input_tokens = usage.input_tokens;
     usage
 }
 
@@ -1212,7 +1561,30 @@ fn field(value: &Value, name: &str) -> u64 {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CliComparisonSummary {
+    pub benchmark_mode: CliComparisonMode,
+    pub claim_tier: String,
+    pub cost_metric: String,
     pub paired_runs: usize,
+    pub mechanism_activated_pairs: usize,
+    pub mechanism_gate_passed: bool,
+    pub surface_a: CliSurface,
+    pub surface_a_resolved: usize,
+    pub surface_b: CliSurface,
+    pub surface_b_resolved: usize,
+    pub surface_a_fresh_token_wins: usize,
+    pub surface_b_fresh_token_wins: usize,
+    /// Geometric mean of surface A fresh tokens divided by surface B.
+    pub geometric_mean_fresh_token_ratio_a_over_b: Option<f64>,
+    pub fresh_token_ratio_ci95_lower_a_over_b: Option<f64>,
+    pub fresh_token_ratio_ci95_upper_a_over_b: Option<f64>,
+    /// Mean of surface A duration divided by surface B.
+    pub mean_duration_ratio_a_over_b: Option<f64>,
+    pub surface_a_quality_non_inferior: bool,
+    pub surface_a_token_improvement: bool,
+    /// Set only when one surface is quality-non-inferior and its paired fresh
+    /// token ratio is significant under the frozen 10,000-resample bootstrap.
+    pub overall_winner: Option<CliSurface>,
+    /// Deprecated PiAgent-oriented compatibility fields.
     pub piagent_resolved: usize,
     pub counterpart: CliSurface,
     pub counterpart_resolved: usize,
@@ -1234,93 +1606,191 @@ pub fn summarize_cli_comparison(
     reports: &[CliTrialReport],
 ) -> Result<CliComparisonSummary, String> {
     manifest.validate()?;
+    for report in reports {
+        if report.schema_version != CLI_COMPARISON_REPORT_SCHEMA
+            || report.benchmark_mode != manifest.benchmark_mode
+            || report.claim_tier != manifest.claim_tier
+            || report.requested_model != manifest.model
+            || report.requested_thinking != manifest.thinking
+        {
+            return Err(format!(
+                "report {} metadata does not match manifest",
+                report.trial_id
+            ));
+        }
+        let Some(trial) = manifest
+            .trials
+            .iter()
+            .find(|trial| trial.trial_id == report.trial_id)
+        else {
+            return Err(format!("report {} is not in manifest", report.trial_id));
+        };
+        if report.surface != trial.surface
+            || report.scenario_id != trial.scenario_id
+            || report.repeat != trial.repeat
+        {
+            return Err(format!(
+                "report {} treatment does not match manifest",
+                report.trial_id
+            ));
+        }
+    }
     let observed: BTreeMap<_, _> = reports
         .iter()
         .map(|report| (report.trial_id.as_str(), report))
         .collect();
-    let counterpart = manifest
+    if observed.len() != reports.len() {
+        return Err("duplicate trial reports are forbidden".to_owned());
+    }
+    let surfaces = manifest
         .trials
         .iter()
         .map(|trial| trial.surface)
-        .find(|surface| *surface != CliSurface::PiAgent)
-        .ok_or_else(|| "comparison manifest must include PiAgent and one counterpart".to_owned())?;
-    if !manifest
-        .trials
-        .iter()
-        .any(|trial| trial.surface == CliSurface::PiAgent)
-    {
-        return Err("comparison manifest must include PiAgent".to_owned());
+        .collect::<BTreeSet<_>>();
+    if surfaces.len() != 2 {
+        return Err("comparison manifest must include exactly two surfaces".to_owned());
     }
-    let mut piagent_resolved = 0usize;
-    let mut counterpart_resolved = 0usize;
+    let mut surfaces = surfaces.into_iter();
+    let surface_a = surfaces.next().expect("two surfaces were checked");
+    let surface_b = surfaces.next().expect("two surfaces were checked");
+    let counterpart = surface_b;
+    let mut surface_a_resolved = 0usize;
+    let mut surface_b_resolved = 0usize;
     for report in reports {
         if report.resolved {
             match report.surface {
-                CliSurface::PiAgent => piagent_resolved += 1,
-                surface if surface == counterpart => counterpart_resolved += 1,
+                surface if surface == surface_a => surface_a_resolved += 1,
+                surface if surface == surface_b => surface_b_resolved += 1,
                 _ => {}
             }
         }
     }
     let mut ratios = Vec::new();
     let mut duration_ratios = Vec::new();
-    let mut piagent_wins = 0usize;
-    let mut counterpart_wins = 0usize;
+    let mut surface_a_wins = 0usize;
+    let mut surface_b_wins = 0usize;
     let mut ties = 0usize;
     let mut paired_runs = 0usize;
-    for pi_trial in manifest
+    let mut mechanism_activated_pairs = 0usize;
+    for first_trial in manifest
         .trials
         .iter()
-        .filter(|trial| trial.surface == CliSurface::PiAgent)
+        .filter(|trial| trial.surface == surface_a)
     {
-        let counterpart_trial = manifest.trials.iter().find(|trial| {
-            trial.surface == counterpart
-                && trial.scenario_id == pi_trial.scenario_id
-                && trial.repeat == pi_trial.repeat
+        let second_trial = manifest.trials.iter().find(|trial| {
+            trial.surface == surface_b
+                && trial.scenario_id == first_trial.scenario_id
+                && trial.repeat == first_trial.repeat
         });
-        let (Some(pi), Some(other)) = (
-            observed.get(pi_trial.trial_id.as_str()),
-            counterpart_trial.and_then(|trial| observed.get(trial.trial_id.as_str())),
+        let (Some(first), Some(second)) = (
+            observed.get(first_trial.trial_id.as_str()),
+            second_trial.and_then(|trial| observed.get(trial.trial_id.as_str())),
         ) else {
             continue;
         };
         paired_runs += 1;
-        if pi.resolved
-            && other.resolved
-            && pi.usage.fresh_tokens > 0
-            && other.usage.fresh_tokens > 0
-        {
-            ratios.push(pi.usage.fresh_tokens as f64 / other.usage.fresh_tokens as f64);
-            if pi.duration_ms > 0 && other.duration_ms > 0 {
-                duration_ratios.push(pi.duration_ms as f64 / other.duration_ms as f64);
+        let first_cost = comparison_cost(manifest.benchmark_mode, &first.usage);
+        let second_cost = comparison_cost(manifest.benchmark_mode, &second.usage);
+        if first.resolved && second.resolved && first_cost > 0 && second_cost > 0 {
+            let mechanism_activated = manifest.benchmark_mode == CliComparisonMode::AgentStack
+                || [*first, *second].into_iter().any(|report| {
+                    report.surface == CliSurface::StructureFileBackedGc
+                        && report.progress.gc_admissions > 0
+                        && report.progress.memory_pointer_provider_calls > 0
+                });
+            mechanism_activated_pairs += usize::from(mechanism_activated);
+            ratios.push(first_cost as f64 / second_cost as f64);
+            if first.duration_ms > 0 && second.duration_ms > 0 {
+                duration_ratios.push(first.duration_ms as f64 / second.duration_ms as f64);
             }
-            match pi.usage.fresh_tokens.cmp(&other.usage.fresh_tokens) {
-                std::cmp::Ordering::Less => piagent_wins += 1,
-                std::cmp::Ordering::Greater => counterpart_wins += 1,
+            match first_cost.cmp(&second_cost) {
+                std::cmp::Ordering::Less => surface_a_wins += 1,
+                std::cmp::Ordering::Greater => surface_b_wins += 1,
                 std::cmp::Ordering::Equal => ties += 1,
             }
         }
     }
     let geometric_mean = (!ratios.is_empty())
         .then(|| (ratios.iter().map(|ratio| ratio.ln()).sum::<f64>() / ratios.len() as f64).exp());
+    let (ratio_ci95_lower, ratio_ci95_upper) =
+        bootstrap_ratio_ci95(&ratios, manifest.seed ^ 0x434c_4943_4f4d_5032);
     let mean_duration_ratio = (!duration_ratios.is_empty())
         .then(|| duration_ratios.iter().sum::<f64>() / duration_ratios.len() as f64);
-    let quality_non_inferior = piagent_resolved >= counterpart_resolved;
+    let quality_non_inferior = surface_a_resolved >= surface_b_resolved;
+    let surface_b_quality_non_inferior = surface_b_resolved >= surface_a_resolved;
+    let sufficient_pairs = ratios.len() >= MIN_FORMAL_PAIRED_RUNS;
+    let mechanism_gate_passed = manifest.benchmark_mode == CliComparisonMode::AgentStack
+        || (!ratios.is_empty() && mechanism_activated_pairs == ratios.len());
+    let surface_a_token_improvement = quality_non_inferior
+        && sufficient_pairs
+        && mechanism_gate_passed
+        && ratio_ci95_upper.is_some_and(|upper| upper < 1.0);
+    let surface_b_token_improvement = surface_b_quality_non_inferior
+        && sufficient_pairs
+        && mechanism_gate_passed
+        && ratio_ci95_lower.is_some_and(|lower| lower > 1.0);
+    let overall_winner = if surface_a_token_improvement {
+        Some(surface_a)
+    } else if surface_b_token_improvement {
+        Some(surface_b)
+    } else {
+        None
+    };
+    let piagent_is_a = surface_a == CliSurface::PiAgent;
+    let piagent_is_b = surface_b == CliSurface::PiAgent;
     Ok(CliComparisonSummary {
+        benchmark_mode: manifest.benchmark_mode,
+        claim_tier: manifest.claim_tier.clone(),
+        cost_metric: match manifest.benchmark_mode {
+            CliComparisonMode::AgentStack => "fresh_input_plus_output_tokens",
+            CliComparisonMode::ContextPolicy => "fresh_input_tokens",
+        }
+        .to_owned(),
         paired_runs,
-        piagent_resolved,
+        mechanism_activated_pairs,
+        mechanism_gate_passed,
+        surface_a,
+        surface_a_resolved,
+        surface_b,
+        surface_b_resolved,
+        surface_a_fresh_token_wins: surface_a_wins,
+        surface_b_fresh_token_wins: surface_b_wins,
+        geometric_mean_fresh_token_ratio_a_over_b: geometric_mean,
+        fresh_token_ratio_ci95_lower_a_over_b: ratio_ci95_lower,
+        fresh_token_ratio_ci95_upper_a_over_b: ratio_ci95_upper,
+        mean_duration_ratio_a_over_b: mean_duration_ratio,
+        surface_a_quality_non_inferior: quality_non_inferior,
+        surface_a_token_improvement,
+        overall_winner,
+        piagent_resolved: if piagent_is_a {
+            surface_a_resolved
+        } else if piagent_is_b {
+            surface_b_resolved
+        } else {
+            0
+        },
         counterpart,
-        counterpart_resolved,
-        counterpart_fresh_token_wins: counterpart_wins,
-        codex_resolved: if counterpart == CliSurface::CodexCli {
-            counterpart_resolved
+        counterpart_resolved: surface_b_resolved,
+        counterpart_fresh_token_wins: surface_b_wins,
+        codex_resolved: if surface_a == CliSurface::CodexCli {
+            surface_a_resolved
+        } else if surface_b == CliSurface::CodexCli {
+            surface_b_resolved
         } else {
             0
         },
         comparable_success_pairs: ratios.len(),
-        piagent_fresh_token_wins: piagent_wins,
-        codex_fresh_token_wins: if counterpart == CliSurface::CodexCli {
-            counterpart_wins
+        piagent_fresh_token_wins: if piagent_is_a {
+            surface_a_wins
+        } else if piagent_is_b {
+            surface_b_wins
+        } else {
+            0
+        },
+        codex_fresh_token_wins: if surface_a == CliSurface::CodexCli {
+            surface_a_wins
+        } else if surface_b == CliSurface::CodexCli {
+            surface_b_wins
         } else {
             0
         },
@@ -1328,8 +1798,36 @@ pub fn summarize_cli_comparison(
         geometric_mean_fresh_token_ratio: geometric_mean,
         mean_duration_ratio,
         quality_non_inferior,
-        token_improvement: quality_non_inferior && geometric_mean.is_some_and(|ratio| ratio < 1.0),
+        token_improvement: surface_a_token_improvement,
     })
+}
+
+fn comparison_cost(mode: CliComparisonMode, usage: &CliUsage) -> u64 {
+    match mode {
+        CliComparisonMode::AgentStack => usage.fresh_tokens,
+        CliComparisonMode::ContextPolicy => usage.fresh_input_tokens,
+    }
+}
+
+fn bootstrap_ratio_ci95(values: &[f64], mut state: u64) -> (Option<f64>, Option<f64>) {
+    if values.is_empty() {
+        return (None, None);
+    }
+    let mut estimates = Vec::with_capacity(COMPARISON_BOOTSTRAP_RESAMPLES);
+    for _ in 0..COMPARISON_BOOTSTRAP_RESAMPLES {
+        let mut log_sum = 0.0;
+        for _ in 0..values.len() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            log_sum += values[(state as usize) % values.len()].ln();
+        }
+        estimates.push((log_sum / values.len() as f64).exp());
+    }
+    estimates.sort_by(f64::total_cmp);
+    let lower = estimates[COMPARISON_BOOTSTRAP_RESAMPLES * 25 / 1_000];
+    let upper = estimates[COMPARISON_BOOTSTRAP_RESAMPLES * 975 / 1_000];
+    (Some(lower), Some(upper))
 }
 
 fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
@@ -1496,12 +1994,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codex_home_is_fresh_and_outside_the_scored_workspace() {
+        let root = std::env::temp_dir().join(format!(
+            "structure-codex-isolation-test-{}-{}",
+            std::process::id(),
+            PROCESS_CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let env = prepare_codex_runtime(&root).unwrap();
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "CODEX_HOME");
+        let isolated_home = Path::new(&env[0].1);
+        assert_eq!(
+            isolated_home,
+            root.join("codex-home").canonicalize().unwrap()
+        );
+        assert!(!isolated_home.starts_with(root.canonicalize().unwrap().join("project")));
+        assert_eq!(std::fs::read_dir(isolated_home).unwrap().count(), 0);
+        assert!(prepare_codex_runtime(&root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn codex_usage_uses_uncached_input_plus_output() {
         let bytes = br#"{"type":"item.completed","item":{"type":"command_execution"}}
 {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":60,"cache_write_input_tokens":5,"output_tokens":20,"reasoning_output_tokens":7}}
 "#;
         let usage = parse_codex_usage(bytes);
         assert_eq!(usage.fresh_tokens, 60);
+        assert_eq!(usage.fresh_input_tokens, 40);
         assert_eq!(usage.tool_calls, 1);
         assert_eq!(usage.reasoning_output_tokens, 7);
     }
@@ -1514,6 +2035,7 @@ mod tests {
 "#;
         let usage = parse_pi_usage(bytes);
         assert_eq!(usage.fresh_tokens, 60);
+        assert_eq!(usage.fresh_input_tokens, 45);
         assert_eq!(usage.cached_input_tokens, 30);
         assert_eq!(usage.tool_calls, 1);
     }
@@ -1522,7 +2044,8 @@ mod tests {
     fn summary_is_paired_and_success_conditioned() {
         let manifest = CliComparisonManifest {
             schema_version: CLI_COMPARISON_MANIFEST_SCHEMA.to_owned(),
-            claim_tier: "test".to_owned(),
+            benchmark_mode: CliComparisonMode::AgentStack,
+            claim_tier: CliComparisonMode::AgentStack.claim_tier().to_owned(),
             suite_path: "/tmp/suite.json".to_owned(),
             suite_digest: "sha256:test".to_owned(),
             model: "model".to_owned(),
@@ -1554,8 +2077,13 @@ mod tests {
                 },
             ],
         };
+        let args = codex_args(&manifest, Path::new("/tmp/task/project"));
+        assert!(args.iter().any(|arg| arg == "--ignore-user-config"));
+        assert!(args.iter().any(|arg| arg == "--ignore-rules"));
         let report = |trial_id: &str, surface, fresh_tokens| CliTrialReport {
             schema_version: CLI_COMPARISON_REPORT_SCHEMA.to_owned(),
+            benchmark_mode: CliComparisonMode::AgentStack,
+            claim_tier: CliComparisonMode::AgentStack.claim_tier().to_owned(),
             trial_id: trial_id.to_owned(),
             scenario_id: "task".to_owned(),
             surface,
@@ -1582,6 +2110,8 @@ mod tests {
                 ..CliUsage::default()
             },
             progress: CliProgressDiagnostics::default(),
+            stdout_artifact: "stdout.bin".to_owned(),
+            stderr_artifact: "stderr.bin".to_owned(),
             stdout_sha256: "x".to_owned(),
             stderr_sha256: "y".to_owned(),
         };
@@ -1596,7 +2126,71 @@ mod tests {
         assert_eq!(summary.comparable_success_pairs, 1);
         assert_eq!(summary.piagent_fresh_token_wins, 1);
         assert_eq!(summary.geometric_mean_fresh_token_ratio, Some(0.5));
-        assert!(summary.token_improvement);
+        assert!(!summary.token_improvement);
+        assert_eq!(summary.overall_winner, None);
+
+        let mut codex_structure_manifest = manifest;
+        codex_structure_manifest.trials[0].trial_id = "task-r01-structure".to_owned();
+        codex_structure_manifest.trials[0].surface = CliSurface::Structure;
+        let generic_summary = summarize_cli_comparison(
+            &codex_structure_manifest,
+            &[
+                report("task-r01-structure", CliSurface::Structure, 50),
+                report("task-r01-codex-cli", CliSurface::CodexCli, 100),
+            ],
+        )
+        .expect("Codex and Structure can be summarized directly");
+        assert_eq!(generic_summary.surface_a, CliSurface::CodexCli);
+        assert_eq!(generic_summary.surface_b, CliSurface::Structure);
+        assert_eq!(
+            generic_summary.geometric_mean_fresh_token_ratio_a_over_b,
+            Some(2.0)
+        );
+        assert_eq!(generic_summary.surface_b_fresh_token_wins, 1);
+        assert_eq!(generic_summary.overall_winner, None);
+    }
+
+    #[test]
+    fn bootstrap_ratio_is_deterministic_for_repeated_pairs() {
+        let ratios = vec![0.5; MIN_FORMAL_PAIRED_RUNS];
+        let (lower, upper) = bootstrap_ratio_ci95(&ratios, 7);
+        assert_eq!(lower, Some(0.5));
+        assert_eq!(upper, Some(0.5));
+    }
+
+    #[test]
+    fn benchmark_modes_reject_mixed_treatments() {
+        assert!(
+            validate_mode_surfaces(
+                CliComparisonMode::AgentStack,
+                &[CliSurface::CodexCli, CliSurface::Structure]
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_mode_surfaces(
+                CliComparisonMode::AgentStack,
+                &[CliSurface::CodexCli, CliSurface::StructureShortMemory,]
+            )
+            .is_err()
+        );
+        assert!(
+            validate_mode_surfaces(
+                CliComparisonMode::ContextPolicy,
+                &[
+                    CliSurface::StructureFullReplay,
+                    CliSurface::StructureFileBackedGc,
+                ]
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_mode_surfaces(
+                CliComparisonMode::ContextPolicy,
+                &[CliSurface::Structure, CliSurface::StructureFullReplay]
+            )
+            .is_err()
+        );
     }
 
     #[test]

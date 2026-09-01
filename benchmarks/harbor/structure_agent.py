@@ -33,8 +33,12 @@ class StructureAgent(BaseAgent):
         checkpoint_batches: int = 8,
         pgc_effort: int | None = None,
         pgc_continuation_probability_bps: int | None = None,
+        pgc_cached_input_cost_bps: int = 0,
         thinking: bool | str | None = None,
         binary_path: str | None = None,
+        provider_base_url: str | None = None,
+        provider_client_token: str | None = None,
+        provider_api_type: str | None = None,
         **kwargs,
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
@@ -65,6 +69,9 @@ class StructureAgent(BaseAgent):
             raise ValueError(
                 "pgc_continuation_probability_bps must be between 0 and 10000"
             )
+        if not 0 <= pgc_cached_input_cost_bps <= 10_000:
+            raise ValueError("pgc_cached_input_cost_bps must be between 0 and 10000")
+        self.pgc_cached_input_cost_bps = pgc_cached_input_cost_bps
         if thinking is None:
             thinking_env = os.environ.get("STRUCTURE_THINKING", "true")
             self.thinking = str(thinking_env).strip().lower() in {
@@ -86,6 +93,9 @@ class StructureAgent(BaseAgent):
             "STRUCTURE_HARBOR_AGENT_BIN",
             "target/release/harbor_agent",
         )
+        self.provider_base_url = provider_base_url
+        self.provider_client_token = provider_client_token
+        self.provider_api_type = provider_api_type
 
     def version(self) -> str:
         return "0.1.0"
@@ -126,17 +136,27 @@ class StructureAgent(BaseAgent):
             str(self.pgc_effort),
             "--pgc-continuation-probability-bps",
             str(self.pgc_continuation_probability_bps),
+            "--pgc-cached-input-cost-bps",
+            str(self.pgc_cached_input_cost_bps),
             "--thinking",
             "true" if self.thinking else "false",
         ]
         if model:
             command.extend(["--model", model])
 
+        process_environment = os.environ.copy()
+        if self.provider_base_url is not None:
+            process_environment["OPENAI_BASE_URL"] = self.provider_base_url
+        if self.provider_client_token is not None:
+            process_environment["OPENAI_API_KEY"] = self.provider_client_token
+        if self.provider_api_type is not None:
+            process_environment["STRUCTURE_API_TYPE"] = self.provider_api_type
         process = await asyncio.create_subprocess_exec(
             *command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=process_environment,
         )
         assert process.stdin is not None
         assert process.stdout is not None
@@ -228,6 +248,7 @@ class StructureAgent(BaseAgent):
             "pointer_gc_admission_checks": report["pointer_gc_admission_checks"],
             "pointer_gc_admissions": report["pointer_gc_admissions"],
             "provider_latency_ms": report["provider_latency_ms"],
+            "reasoning_output_tokens": report["reasoning_output_tokens"],
             "tool_calls": report["tool_calls"],
             "tool_errors": report["tool_errors"],
             "memory_search_calls": report["memory_search_calls"],
@@ -267,6 +288,9 @@ class StructureAgent(BaseAgent):
             "uncached_input_tokens": input_tokens - cached_tokens,
             "cache_reset_count": cache_resets,
             "provider_calls": len(calls),
+            "reasoning_output_tokens": sum(
+                call.get("reasoning_output_tokens", 0) for call in calls
+            ),
             "memory_pointer_appearances": sum(
                 call.get("memory_pointer_entries", 0) for call in calls
             ),

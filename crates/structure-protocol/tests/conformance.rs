@@ -135,6 +135,7 @@ fn every_event_has_a_stable_dotted_wire_name() {
                 model_step: 0,
                 finish_reason: Some(FinishReason::Stop),
                 usage: RuntimeUsage::default(),
+                provider_state: None,
             },
             "model.response.completed",
         ),
@@ -153,6 +154,7 @@ fn every_event_has_a_stable_dotted_wire_name() {
                 call_id: "call-1".to_owned(),
                 name: "write_file".to_owned(),
                 arguments: serde_json::json!({"path": "note.txt"}),
+                provider_state: None,
             },
             "tool.call.requested",
         ),
@@ -188,6 +190,14 @@ fn every_event_has_a_stable_dotted_wire_name() {
                 repeat_count: 2,
             },
             "tool.call.loop_blocked",
+        ),
+        (
+            Event::AgentProgressAdvisory {
+                model_step: 6,
+                consecutive_no_progress_steps: 6,
+                message: "finish or make progress".to_owned(),
+            },
+            "agent.progress.advisory",
         ),
         (
             Event::AgentLoopTerminated {

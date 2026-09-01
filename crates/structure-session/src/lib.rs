@@ -575,7 +575,9 @@ mod tests {
                         output_tokens: 8_192,
                         cached_input_tokens: 80,
                         cache_creation_input_tokens: 0,
+                        reasoning_output_tokens: 0,
                     },
+                    provider_state: None,
                 }),
             })
         }

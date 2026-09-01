@@ -14,7 +14,9 @@ use structure_model::{
 use structure_protocol::{
     Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, WorkspaceId,
 };
-use structure_provider::{ModelProvider, ModelRunRequest, ModelRunResult, ProviderError};
+use structure_provider::{
+    ModelProvider, ModelRunRequest, ModelRunResult, ProviderError, compile_runtime_request,
+};
 use structure_runner::LocalRunner;
 use structure_runtime::{
     CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
@@ -215,6 +217,11 @@ pub struct ProviderCallObservation {
     /// Provider-neutral JSON size of every request field that contributes to
     /// model context. Provider-reported token usage remains authoritative.
     pub model_input_bytes: usize,
+    /// Serialized typed Provider input after Structure's memory projection.
+    /// This is not a dialect-specific HTTP body or an authoritative token
+    /// count, but it captures pointer aggregation omitted by model_input_bytes.
+    #[serde(default)]
+    pub provider_projection_bytes: usize,
     pub tool_definitions: usize,
     pub response_items: usize,
     pub finish_reason: Option<FinishReason>,
@@ -223,6 +230,8 @@ pub struct ProviderCallObservation {
     pub cached_input_tokens: u64,
     #[serde(default)]
     pub cache_creation_input_tokens: u64,
+    #[serde(default)]
+    pub reasoning_output_tokens: u64,
     pub latency_ms: u64,
     pub succeeded: bool,
     pub error: Option<String>,
@@ -311,6 +320,8 @@ pub struct TierBAggregate {
     pub total_cached_input_tokens: u64,
     pub total_cache_creation_input_tokens: u64,
     pub total_model_input_bytes: usize,
+    #[serde(default)]
+    pub total_provider_projection_bytes: usize,
     pub total_batch_key_entries: usize,
     pub total_memory_pointer_entries: usize,
     pub total_provider_latency_ms: u64,
@@ -444,6 +455,9 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             "disclosure": &request.disclosure,
         }))
         .map_or(0, |encoded| encoded.len());
+        let provider_projection_bytes =
+            serde_json::to_vec(&compile_runtime_request(&request, "benchmark-model"))
+                .map_or(0, |encoded| encoded.len());
         let started = Instant::now();
         let result = self.inner.complete(request.clone()).await;
         let latency_ms = saturating_u64(started.elapsed().as_millis());
@@ -479,6 +493,7 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             continuation_items: request.continuation.len(),
             continuation_item_bytes,
             model_input_bytes,
+            provider_projection_bytes,
             tool_definitions: request.tools.len(),
             response_items,
             finish_reason,
@@ -486,6 +501,7 @@ impl<P: ModelProvider> ModelProvider for RecordingProvider<P> {
             output_tokens: usage.output_tokens,
             cached_input_tokens: usage.cached_input_tokens,
             cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            reasoning_output_tokens: usage.reasoning_output_tokens,
             latency_ms,
             succeeded: error.is_none(),
             error,
@@ -773,6 +789,11 @@ fn aggregate(runs: &[TierBRun]) -> TierBAggregate {
             .flat_map(|run| &run.provider_calls)
             .map(|call| call.model_input_bytes)
             .sum(),
+        total_provider_projection_bytes: runs
+            .iter()
+            .flat_map(|run| &run.provider_calls)
+            .map(|call| call.provider_projection_bytes)
+            .sum(),
         total_batch_key_entries: runs
             .iter()
             .flat_map(|run| &run.provider_calls)
@@ -918,6 +939,10 @@ impl ModelProvider for FixtureFileProvider {
             .run_memory
             .iter()
             .any(|entry| matches!(entry.item, ShortMemoryItem::ToolResult(_)))
+            || request
+                .continuation
+                .iter()
+                .any(|item| matches!(item, RuntimeItem::ToolResult(_)))
         {
             let output = "TASK_COMPLETE".to_owned();
             return Ok(ModelRunResult {
@@ -934,7 +959,9 @@ impl ModelProvider for FixtureFileProvider {
                         output_tokens: 2,
                         cached_input_tokens: 0,
                         cache_creation_input_tokens: 0,
+                        reasoning_output_tokens: 0,
                     },
+                    provider_state: None,
                 }),
             });
         }
@@ -954,7 +981,9 @@ impl ModelProvider for FixtureFileProvider {
                         output_tokens: 2,
                         cached_input_tokens: 0,
                         cache_creation_input_tokens: 0,
+                        reasoning_output_tokens: 0,
                     },
+                    provider_state: None,
                 }),
             });
         }
@@ -974,7 +1003,9 @@ impl ModelProvider for FixtureFileProvider {
                         output_tokens: 2,
                         cached_input_tokens: 0,
                         cache_creation_input_tokens: 0,
+                        reasoning_output_tokens: 0,
                     },
+                    provider_state: None,
                 }),
             });
         }
@@ -1017,7 +1048,9 @@ fn fixture_text_response(output: &str, input_tokens: u64) -> ModelRunResult {
                 output_tokens: 2,
                 cached_input_tokens: 0,
                 cache_creation_input_tokens: 0,
+                reasoning_output_tokens: 0,
             },
+            provider_state: None,
         }),
     }
 }
@@ -1034,7 +1067,9 @@ fn fixture_tool_response(call: ToolCallItem, input_tokens: u64) -> ModelRunResul
                 output_tokens: 8,
                 cached_input_tokens: 0,
                 cache_creation_input_tokens: 0,
+                reasoning_output_tokens: 0,
             },
+            provider_state: None,
         }),
     }
 }
@@ -1212,15 +1247,11 @@ mod tests {
         assert!(run.checks.user_message_count_matches);
         assert_eq!(run.tool_call_count, 12);
         assert_eq!(run.provider_calls.len(), 13);
-        assert!(
-            run.provider_calls
-                .iter()
-                .all(|call| call.continuation_items == 0)
-        );
+        assert_eq!(run.provider_calls[0].continuation_items, 0);
         assert!(
             run.provider_calls[1..]
                 .iter()
-                .all(|call| call.run_memory_entries >= 2)
+                .all(|call| call.continuation_items >= 2)
         );
         assert!(run.file_oracles.iter().all(|file| file.content_matches));
         assert_eq!(report.aggregate.total_user_messages, 1);
@@ -1249,6 +1280,7 @@ mod tests {
                         ))],
                         finish_reason: Some(FinishReason::Stop),
                         usage: RuntimeUsage::default(),
+                        provider_state: None,
                     }),
                 })
             }

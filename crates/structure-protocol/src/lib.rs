@@ -6,7 +6,9 @@
 
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
-use structure_model::{FinishReason, RuntimeItem, RuntimeRequest, RuntimeUsage};
+use structure_model::{
+    FinishReason, ProviderResponseState, ProviderState, RuntimeItem, RuntimeRequest, RuntimeUsage,
+};
 
 pub const PROTOCOL_VERSION: &str = "1.0";
 
@@ -197,6 +199,10 @@ pub enum Event {
         model_step: usize,
         finish_reason: Option<FinishReason>,
         usage: RuntimeUsage,
+        /// Exact provider envelope. This remains private runtime evidence and
+        /// is not required to participate in short-memory projection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_state: Option<ProviderResponseState>,
     },
     /// Typed audit evidence explaining why an otherwise losslessly recorded
     /// provider response could not be executed or accepted as terminal.
@@ -213,6 +219,8 @@ pub enum Event {
         call_id: String,
         name: String,
         arguments: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_state: Option<ProviderState>,
     },
     #[serde(rename = "tool.call.classified")]
     ToolCallClassified {
@@ -238,6 +246,12 @@ pub enum Event {
         name: String,
         result: String,
         is_error: bool,
+    },
+    #[serde(rename = "agent.progress.advisory")]
+    AgentProgressAdvisory {
+        model_step: usize,
+        consecutive_no_progress_steps: usize,
+        message: String,
     },
     #[serde(rename = "agent.loop.terminated")]
     AgentLoopTerminated {

@@ -72,7 +72,9 @@ cargo run -p structure-server
 Optional configuration:
 
 - `STRUCTURE__PORT`: listening port, default `4096`
-- `STRUCTURE__API_TYPE`: provider API type, default OpenAI Chat Completions
+- `STRUCTURE__API_TYPE`: provider API dialect, default
+  `open_ai_chat_completions`; `open_ai_responses` enables stateless Responses
+  replay with exact reasoning/output-item retention
 - `STRUCTURE__TOOL_ROOT`: root directory available to the local runner
 - `STRUCTURE__COMPACTION_STRATEGY`: `file_backed_gc` (default), `pointer_gc`,
   or `disabled`

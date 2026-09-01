@@ -675,6 +675,7 @@ fn batch_identity(
         | Event::RunStarted
         | Event::RunCompleted { .. }
         | Event::RunFailed { .. }
+        | Event::AgentProgressAdvisory { .. }
         | Event::AgentLoopTerminated { .. }
         | Event::RunCancelled => (format!("run:{run}:turn:1"), MemoryBatchKind::Turn),
         Event::ModelResponseItem {
@@ -859,16 +860,27 @@ fn materialize_entries(events: &[EventEnvelope], batches: &[EventBatch]) -> Vec<
 }
 
 fn event_to_short_memory_entries(envelope: &EventEnvelope) -> Vec<ShortMemoryEntry> {
-    if let Event::ModelResponseItem {
-        item: structure_model::RuntimeItem::Reasoning(reasoning),
-        ..
-    } = &envelope.event
-    {
-        return vec![ShortMemoryEntry {
-            source_event_ids: vec![envelope.event_id.to_string()],
-            sequence: envelope.sequence,
-            item: ShortMemoryItem::Reasoning(reasoning.clone()),
-        }];
+    if let Event::ModelResponseItem { item, .. } = &envelope.event {
+        let item = match item {
+            structure_model::RuntimeItem::Reasoning(reasoning) => {
+                Some(ShortMemoryItem::Reasoning(reasoning.clone()))
+            }
+            structure_model::RuntimeItem::Message(message) => {
+                Some(ShortMemoryItem::ProviderMessage(message.clone()))
+            }
+            // Tool calls are projected from tool.call.requested so their
+            // execution relation remains one stable batch. That event carries
+            // the exact same provider state.
+            structure_model::RuntimeItem::ToolCall(_)
+            | structure_model::RuntimeItem::ToolResult(_) => None,
+        };
+        if let Some(item) = item {
+            return vec![ShortMemoryEntry {
+                source_event_ids: vec![envelope.event_id.to_string()],
+                sequence: envelope.sequence,
+                item,
+            }];
+        }
     }
     event_to_short_memory(envelope).into_iter().collect()
 }
@@ -887,12 +899,13 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
             call_id,
             name,
             arguments,
+            provider_state,
         } => ShortMemoryItem::ToolCall(ToolCallItem {
             id: Some(envelope.event_id.to_string()),
             call_id: call_id.clone(),
             name: name.clone(),
             arguments: arguments.clone(),
-            provider_state: None,
+            provider_state: provider_state.clone(),
         }),
         Event::ToolCallCompleted {
             call_id,
@@ -914,6 +927,9 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
                 message: message.clone(),
             }
         }
+        Event::AgentProgressAdvisory { message, .. } => ShortMemoryItem::Observation {
+            content: message.clone(),
+        },
         Event::RunCancelled => ShortMemoryItem::RunCancelled,
         Event::ContextRead { entry } | Event::ContextUpdated { entry } => {
             ShortMemoryItem::Observation {
@@ -1011,6 +1027,7 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         Event::CommandOutput { .. } => (MemoryClass::Transient, None, false),
         Event::RunCompleted { output: Some(_) } => (MemoryClass::Anchor, None, false),
         Event::RunCompleted { output: None } => (MemoryClass::Control, None, false),
+        Event::AgentProgressAdvisory { .. } => (MemoryClass::Control, None, false),
         Event::RunFailed { .. } | Event::AgentLoopTerminated { .. } | Event::Error { .. } => {
             (MemoryClass::Recovery, None, false)
         }
@@ -1059,6 +1076,7 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::ToolCallCompleted {
             is_error: false, ..
         } => "tool.call.completed",
+        Event::AgentProgressAdvisory { .. } => "agent.progress.advisory",
         Event::AgentLoopTerminated { .. } => "agent.loop.terminated",
         Event::CommandOutput { .. } => "command.output",
         Event::RunCompleted { .. } => "run.completed",
@@ -1181,6 +1199,7 @@ fn event_semantic_key(event: &Event) -> Option<String> {
             model_step,
             finish_reason,
             usage,
+            ..
         } => Some(format!(
             "model_response_completed step={model_step} finish={finish_reason:?} input_tokens={} output_tokens={} cached_input_tokens={}",
             usage.input_tokens, usage.output_tokens, usage.cached_input_tokens,
@@ -1214,6 +1233,7 @@ fn event_semantic_key(event: &Event) -> Option<String> {
             call_id,
             name,
             arguments,
+            ..
         } => {
             let arguments = serde_json::to_string(arguments).unwrap_or_default();
             Some(format!(
@@ -1250,6 +1270,14 @@ fn event_semantic_key(event: &Event) -> Option<String> {
             compact_text("result", result)
         )),
         Event::RunFailed { message } => Some(compact_text("run_failure", message)),
+        Event::AgentProgressAdvisory {
+            model_step,
+            consecutive_no_progress_steps,
+            message,
+        } => Some(format!(
+            "agent_progress_advisory step={model_step} consecutive_no_progress_steps={consecutive_no_progress_steps} {}",
+            compact_text("message", message)
+        )),
         Event::AgentLoopTerminated {
             model_step,
             reason,
@@ -1432,6 +1460,74 @@ mod tests {
     }
 
     #[test]
+    fn responses_message_and_tool_state_survive_active_run_projection() {
+        let raw_message = serde_json::json!({
+            "id": "msg-1",
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{"type": "output_text", "text": "I will inspect it."}]
+        });
+        let raw_call = serde_json::json!({
+            "id": "fc-1",
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "read_file",
+            "arguments": "{\"path\":\"src/lib.rs\"}"
+        });
+        let message = structure_model::MessageItem {
+            id: Some("msg-1".to_owned()),
+            role: structure_model::RuntimeRole::Assistant,
+            content: vec![ContentBlock::text("I will inspect it.")],
+            provider_state: Some(ProviderState::OpenAi {
+                item_id: Some("msg-1".to_owned()),
+                encrypted_content: None,
+                raw_item: Some(raw_message),
+            }),
+        };
+        let call_state = ProviderState::OpenAi {
+            item_id: Some("fc-1".to_owned()),
+            encrypted_content: None,
+            raw_item: Some(raw_call),
+        };
+        let history = vec![
+            envelope(
+                1,
+                Event::ModelResponseItem {
+                    model_step: 0,
+                    item_index: 0,
+                    item: RuntimeItem::Message(message.clone()),
+                },
+            ),
+            envelope(
+                2,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({"path": "src/lib.rs"}),
+                    provider_state: Some(call_state.clone()),
+                },
+            ),
+        ];
+
+        let materialization = ShortMemoryProjector::materialize(
+            &history,
+            Some(&RunId::new("run-1")),
+            &ShortMemoryPolicy::full_replay(),
+        );
+
+        assert!(materialization.entries.iter().any(|entry| matches!(
+            &entry.item,
+            ShortMemoryItem::ProviderMessage(projected) if projected == &message
+        )));
+        assert!(materialization.entries.iter().any(|entry| matches!(
+            &entry.item,
+            ShortMemoryItem::ToolCall(projected)
+                if projected.provider_state.as_ref() == Some(&call_state)
+        )));
+    }
+
+    #[test]
     fn detailed_protocol_events_map_to_retention_classes() {
         assert_eq!(
             ShortMemoryProjector::classify_event(&Event::MessageAccepted {
@@ -1508,6 +1604,7 @@ mod tests {
                     call_id: "call-1".to_owned(),
                     name: "read".to_owned(),
                     arguments: serde_json::json!({}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1551,6 +1648,7 @@ mod tests {
                     call_id: "call-1".to_owned(),
                     name: "read".to_owned(),
                     arguments: serde_json::json!({}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1631,6 +1729,7 @@ mod tests {
                     call_id: "call-7".to_owned(),
                     name: "write_file".to_owned(),
                     arguments: serde_json::json!({"path": "note.txt"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1680,6 +1779,7 @@ mod tests {
                     call_id: "call-old".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "old.txt"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1697,6 +1797,7 @@ mod tests {
                     call_id: "call-active".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "active.txt"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1750,6 +1851,7 @@ mod tests {
                     call_id: "call-error".to_owned(),
                     name: "shell".to_owned(),
                     arguments: serde_json::json!({"command": "pytest"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1767,6 +1869,7 @@ mod tests {
                     call_id: "call-new".to_owned(),
                     name: "shell".to_owned(),
                     arguments: serde_json::json!({"command": "pwd"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1826,6 +1929,7 @@ mod tests {
                     call_id: "call-old".to_owned(),
                     name: "write_file".to_owned(),
                     arguments: serde_json::json!({"path": "old.txt", "content": "ok"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1870,6 +1974,7 @@ mod tests {
                     call_id: "call-old".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "old.txt"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -1887,6 +1992,7 @@ mod tests {
                     call_id: "call-active".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "active.txt"}),
+                    provider_state: None,
                 },
             ),
             envelope(
@@ -2185,6 +2291,7 @@ mod tests {
                     call_id: "call-large".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "src/large.rs"}),
+                    provider_state: None,
                 },
             ),
             envelope(

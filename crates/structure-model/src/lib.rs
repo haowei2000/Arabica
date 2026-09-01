@@ -46,6 +46,10 @@ pub struct MessageItem {
     pub id: Option<String>,
     pub role: RuntimeRole,
     pub content: Vec<ContentBlock>,
+    /// Same-provider continuation data. Provider adapters must reject foreign
+    /// state rather than silently projecting it away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_state: Option<ProviderState>,
 }
 
 impl MessageItem {
@@ -54,6 +58,7 @@ impl MessageItem {
             id: None,
             role,
             content: vec![ContentBlock::text(text)],
+            provider_state: None,
         }
     }
 }
@@ -96,6 +101,11 @@ pub enum ProviderState {
     OpenAi {
         item_id: Option<String>,
         encrypted_content: Option<String>,
+        /// Exact Responses output item used for stateless continuation. This
+        /// retains provider extensions such as `phase` without teaching the
+        /// Runtime their semantics.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_item: Option<Value>,
     },
     Anthropic {
         signature: String,
@@ -167,13 +177,24 @@ pub struct MemoryPointer {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ShortMemoryItem {
-    UserMessage { content: String },
-    AssistantMessage { content: String },
+    UserMessage {
+        content: String,
+    },
+    AssistantMessage {
+        content: String,
+    },
+    /// Exact provider-originated message retained for same-provider stateless
+    /// continuation. User-facing turn summaries may remain lossy.
+    ProviderMessage(MessageItem),
     Reasoning(ReasoningItem),
     ToolCall(ToolCallItem),
     ToolResult(ToolResultItem),
-    Observation { content: String },
-    RunFailure { message: String },
+    Observation {
+        content: String,
+    },
+    RunFailure {
+        message: String,
+    },
     RunCancelled,
     BatchKey(MemoryBatchKey),
     MemoryPointer(MemoryPointer),
@@ -211,6 +232,10 @@ pub enum ToolChoice {
 pub struct RuntimeGenerationConfig {
     pub max_output_tokens: Option<u32>,
     pub thinking_enabled: bool,
+    /// Provider-neutral requested reasoning effort. Adapters that cannot
+    /// represent it must reject it instead of silently changing semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -242,6 +267,19 @@ pub struct RuntimeUsage {
     /// Providers that do not expose cache-write accounting report zero.
     #[serde(default)]
     pub cache_creation_input_tokens: u64,
+    /// Reasoning tokens are a subset of output tokens when exposed by the
+    /// provider. Zero means unreported, not necessarily absent.
+    #[serde(default)]
+    pub reasoning_output_tokens: u64,
+}
+
+/// Exact provider response envelope retained by the immutable Event Log.
+/// Runtime consumes the typed projection while audit/replay can recover the
+/// original provider body byte-for-byte.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum ProviderResponseState {
+    OpenAiResponses { raw_body: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -249,6 +287,8 @@ pub struct RuntimeResponse {
     pub items: Vec<RuntimeItem>,
     pub finish_reason: Option<FinishReason>,
     pub usage: RuntimeUsage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_state: Option<ProviderResponseState>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

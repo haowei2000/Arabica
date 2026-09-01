@@ -177,6 +177,8 @@ cython_debug/
 /logs/
 /.structure/
 /benchmark_runs/
+/.local/benchmarks/
+/.codex/
 /benchmarks/data/
 /docker/*/data
 /.idea/*

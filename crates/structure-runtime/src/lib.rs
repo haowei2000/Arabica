@@ -40,17 +40,23 @@ use structure_runner::{RunnerEnvironment, RunnerOutput, ToolExecutionRequest};
 const DEFAULT_MAX_MODEL_STEPS_PER_RUN: usize = 32;
 const MEMORY_READ_TOOL_NAME: &str = "memory_read";
 const MEMORY_SEARCH_TOOL_NAME: &str = "memory_search";
+pub const RUNTIME_COMPLETE_TOOL_NAME: &str = "runtime_complete";
 const DEFAULT_POINTER_GC_CHECKPOINT_BATCHES: usize = 8;
 const DEFAULT_POINTER_GC_EFFORT: usize = 1;
 const DEFAULT_POINTER_GC_CONTINUATION_BPS: u32 = 7_500;
+const DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS: u32 = 0;
 const DEFAULT_POINTER_GC_MIN_REUSE_STEPS: usize = 8;
+const MAX_FILE_BACKED_GC_CHECKPOINT_BATCHES: usize = 4;
+const POINTER_GC_CACHE_WARMUP_REQUESTS: u64 = 2;
 const DEFAULT_PINNED_ERROR_TOOL_BATCHES: usize = 2;
+const DEFAULT_PINNED_INSPECTION_TOOL_BATCHES: usize = 2;
 const DEFAULT_AUTO_HYDRATION_MAX_BYTES: usize = 64 * 1024;
 const PROBABILITY_SCALE_BPS: u32 = 10_000;
 const FALLBACK_BYTES_PER_TOKEN: usize = 4;
 const MAX_AUTOMATIC_TOOL_RESULT_REUSES: usize = 1;
 const MAX_BLOCKED_TOOL_LOOP_ATTEMPTS: usize = 1;
 const DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS: usize = 12;
+const DEFAULT_COMPLETION_ADVISORY_NO_PROGRESS_STEPS: usize = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeErrorKind {
@@ -158,8 +164,10 @@ impl RuntimeCompactionStrategy {
 ///
 /// Token values are estimates unless they come from
 /// `previous_cached_input_tokens`, which is copied from the preceding real
-/// Provider response. `weighted_remaining_steps_bps` uses 10,000 units per
-/// expected call so the decision stays deterministic and float-free.
+/// Provider response. The configured continuation probability is a prior;
+/// the effective probability incorporates continuations already observed in
+/// this run. `weighted_remaining_steps_bps` uses 10,000 units per expected
+/// call so the decision stays deterministic and float-free.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PointerGcAdmissionObservation {
     pub run_id: RunId,
@@ -170,14 +178,25 @@ pub struct PointerGcAdmissionObservation {
     pub committed_batches: usize,
     pub new_checkpoint_batches: usize,
     pub removable_bytes_per_call: usize,
+    pub estimated_total_saved_tokens_per_call: u64,
+    /// Estimated reduction in uncached Provider input per reuse call.
     pub estimated_saved_tokens_per_call: u64,
+    /// Provider-price-weighted savings used by admission. A zero cached-input
+    /// cost makes this equal to fresh savings; 5,000 bps values cached input
+    /// at half the price of uncached input.
+    pub estimated_economic_saved_tokens_per_call: u64,
+    pub cached_input_cost_bps: u32,
     pub previous_request_bytes: usize,
     pub previous_input_tokens: u64,
     pub previous_cached_input_tokens: u64,
+    pub observed_input_tokens: u64,
+    pub observed_cached_input_tokens: u64,
     pub estimated_cache_reset_tokens: u64,
     pub used_provider_cache_measurement: bool,
     pub remaining_step_budget: usize,
     pub continuation_probability_bps: u32,
+    pub observed_continuations: usize,
+    pub effective_continuation_probability_bps: u32,
     pub weighted_remaining_steps_bps: u64,
     pub effort: usize,
     pub effective_effort: usize,
@@ -243,6 +262,7 @@ pub struct CoreRuntime<M, R> {
     pointer_gc_checkpoint_batches: usize,
     pointer_gc_effort: usize,
     pointer_gc_continuation_probability_bps: u32,
+    pointer_gc_cached_input_cost_bps: u32,
     pointer_gc_min_reuse_steps: usize,
     pointer_gc_admission_observations: Vec<PointerGcAdmissionObservation>,
     auto_hydration_observations: Vec<AutoHydrationObservation>,
@@ -265,6 +285,7 @@ impl<M, R> CoreRuntime<M, R> {
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
+            pointer_gc_cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             pointer_gc_min_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
             pointer_gc_admission_observations: Vec::new(),
             auto_hydration_observations: Vec::new(),
@@ -291,6 +312,7 @@ impl<M, R> CoreRuntime<M, R> {
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
+            pointer_gc_cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             pointer_gc_min_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
             pointer_gc_admission_observations: Vec::new(),
             auto_hydration_observations: Vec::new(),
@@ -323,6 +345,7 @@ impl<M, R> CoreRuntime<M, R> {
             pointer_gc_checkpoint_batches: DEFAULT_POINTER_GC_CHECKPOINT_BATCHES,
             pointer_gc_effort: DEFAULT_POINTER_GC_EFFORT,
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
+            pointer_gc_cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             pointer_gc_min_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
             pointer_gc_admission_observations: Vec::new(),
             auto_hydration_observations: Vec::new(),
@@ -370,6 +393,14 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_pointer_gc_continuation_probability_bps(&mut self, probability_bps: u32) {
         self.pointer_gc_continuation_probability_bps = probability_bps.min(PROBABILITY_SCALE_BPS);
+    }
+
+    pub fn pointer_gc_cached_input_cost_bps(&self) -> u32 {
+        self.pointer_gc_cached_input_cost_bps
+    }
+
+    pub fn set_pointer_gc_cached_input_cost_bps(&mut self, cost_bps: u32) {
+        self.pointer_gc_cached_input_cost_bps = cost_bps.min(PROBABILITY_SCALE_BPS);
     }
 
     pub fn pointer_gc_min_reuse_steps(&self) -> usize {
@@ -576,6 +607,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 let mut pointer_gc_economics = PointerGcRunEconomics::default();
                 let mut tool_loop_guard = ToolLoopGuard::default();
                 let mut consecutive_no_progress_steps = 0usize;
+                let mut no_progress_window_steps = 0usize;
+                let mut no_progress_window_tool_errors = 0usize;
+                let mut last_no_progress_advisory_had_errors = None;
                 for model_step in 0..self.max_model_steps_per_run {
                     let history = event_log.snapshot();
                     let projection = {
@@ -600,6 +634,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 max_model_steps: self.max_model_steps_per_run,
                                 continuation_probability_bps: self
                                     .pointer_gc_continuation_probability_bps,
+                                cached_input_cost_bps: self.pointer_gc_cached_input_cost_bps,
                                 minimum_reuse_steps: self.pointer_gc_min_reuse_steps,
                                 economics: pointer_gc_economics,
                             },
@@ -623,16 +658,35 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         .get(&workspace_id)
                         .expect("workspace memory was validated above")
                         .entries(disclosure);
+                    let continuation = exact_run_continuation(
+                        &history,
+                        run_id,
+                        &projection.continuation_substitution,
+                    );
+                    let run_memory = projection
+                        .run_memory
+                        .into_iter()
+                        .filter(|entry| {
+                            continuation.is_empty()
+                                || !matches!(
+                                    &entry.item,
+                                    ShortMemoryItem::ProviderMessage(_)
+                                        | ShortMemoryItem::Reasoning(_)
+                                        | ShortMemoryItem::ToolCall(_)
+                                        | ShortMemoryItem::ToolResult(_)
+                                )
+                        })
+                        .collect();
                     let request = ModelRunRequest {
                         session_id: session_id.clone(),
                         run_id: run_id.clone(),
                         input: content.clone(),
                         short_memory: projection.short_memory,
-                        run_memory: projection.run_memory,
+                        run_memory,
                         long_memory,
                         tools: tools.clone(),
                         tool_choice: ToolChoice::Auto,
-                        continuation: Vec::new(),
+                        continuation,
                         disclosure,
                     };
                     let request_bytes = model_run_request_bytes(&request);
@@ -677,6 +731,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     model_step,
                                     finish_reason: response.finish_reason.clone(),
                                     usage: response.usage.clone(),
+                                    provider_state: response.provider_state.clone(),
                                 })
                                 .event_id,
                         );
@@ -694,6 +749,8 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             _ => None,
                         })
                         .collect();
+                    let sole_runtime_completion_call =
+                        tool_calls.len() == 1 && tool_calls[0].name == RUNTIME_COMPLETE_TOOL_NAME;
                     if let Some(rejection) = invalid_terminal_response(
                         result
                             .response
@@ -732,12 +789,18 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         next_protected_event_ids.insert(event_id);
                     }
                     let mut made_state_progress = false;
+                    let mut step_tool_errors = 0usize;
                     for call in tool_calls {
-                        let interaction_kind = self.runner.classify(&call);
+                        let interaction_kind = if call.name == RUNTIME_COMPLETE_TOOL_NAME {
+                            ToolInteractionKind::Inspection
+                        } else {
+                            self.runner.classify(&call)
+                        };
                         let requested = event_log.append(Event::ToolCallRequested {
                             call_id: call.call_id.clone(),
                             name: call.name.clone(),
                             arguments: call.arguments.clone(),
+                            provider_state: call.provider_state.clone(),
                         });
                         next_protected_event_ids.insert(requested.event_id);
                         let classified = event_log.append(Event::ToolCallClassified {
@@ -745,6 +808,34 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             kind: interaction_kind,
                         });
                         next_protected_event_ids.insert(classified.event_id);
+                        if call.name == RUNTIME_COMPLETE_TOOL_NAME {
+                            let completion = if sole_runtime_completion_call {
+                                runtime_completion_output(&call)
+                            } else {
+                                Err("runtime_complete must be the only tool call in a model response; finish any other tool calls first, then submit completion on the next turn".to_owned())
+                            };
+                            let (result, completion_output) = match completion {
+                                Ok(output) => {
+                                    ("runtime completion accepted".to_owned(), Some(output))
+                                }
+                                Err(message) => (message, None),
+                            };
+                            let completed = event_log.append(Event::ToolCallCompleted {
+                                call_id: call.call_id,
+                                name: call.name,
+                                result,
+                                is_error: completion_output.is_none(),
+                            });
+                            next_protected_event_ids.insert(completed.event_id);
+                            if let Some(output) = completion_output {
+                                event_log.append(Event::RunCompleted {
+                                    output: Some(output),
+                                });
+                                return Ok(());
+                            }
+                            step_tool_errors = step_tool_errors.saturating_add(1);
+                            continue;
+                        }
                         if matches!(
                             call.name.as_str(),
                             MEMORY_SEARCH_TOOL_NAME | MEMORY_READ_TOOL_NAME
@@ -759,6 +850,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 memory_read_result(memory, &call)
                             };
                             let result_text = tool_result_text(&tool_result);
+                            if tool_result.is_error {
+                                step_tool_errors = step_tool_errors.saturating_add(1);
+                            }
                             let completed = event_log.append(Event::ToolCallCompleted {
                                 call_id: call.call_id.clone(),
                                 name: call.name,
@@ -819,6 +913,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     is_error: true,
                                 });
                                 next_protected_event_ids.insert(completed.event_id);
+                                step_tool_errors = step_tool_errors.saturating_add(1);
                                 if terminal {
                                     event_log.append(Event::RunFailed {
                                         message: format!(
@@ -862,6 +957,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             next_protected_event_ids.insert(output.event_id);
                         }
                         let tool_result = execution.result;
+                        if tool_result.is_error {
+                            step_tool_errors = step_tool_errors.saturating_add(1);
+                        }
                         if !tool_result.is_error
                             && tool_interaction_may_change_state(interaction_kind)
                         {
@@ -879,11 +977,40 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     }
                     if made_state_progress {
                         consecutive_no_progress_steps = 0;
+                        no_progress_window_steps = 0;
+                        no_progress_window_tool_errors = 0;
+                        last_no_progress_advisory_had_errors = None;
                     } else {
                         consecutive_no_progress_steps =
                             consecutive_no_progress_steps.saturating_add(1);
+                        no_progress_window_steps = no_progress_window_steps.saturating_add(1);
+                        no_progress_window_tool_errors =
+                            no_progress_window_tool_errors.saturating_add(step_tool_errors);
                     }
-                    if consecutive_no_progress_steps >= self.max_model_steps_without_progress {
+                    let mut recovered_clean_window = false;
+                    if no_progress_window_steps >= DEFAULT_COMPLETION_ADVISORY_NO_PROGRESS_STEPS {
+                        let window_had_errors = no_progress_window_tool_errors > 0;
+                        recovered_clean_window = last_no_progress_advisory_had_errors == Some(true)
+                            && !window_had_errors;
+                        if last_no_progress_advisory_had_errors != Some(window_had_errors) {
+                            let advisory = event_log.append(Event::AgentProgressAdvisory {
+                                model_step,
+                                consecutive_no_progress_steps,
+                                message: completion_advisory_message(
+                                    consecutive_no_progress_steps,
+                                    no_progress_window_steps,
+                                    no_progress_window_tool_errors,
+                                ),
+                            });
+                            next_protected_event_ids.insert(advisory.event_id);
+                        }
+                        last_no_progress_advisory_had_errors = Some(window_had_errors);
+                        no_progress_window_steps = 0;
+                        no_progress_window_tool_errors = 0;
+                    }
+                    if consecutive_no_progress_steps >= self.max_model_steps_without_progress
+                        && !recovered_clean_window
+                    {
                         event_log.append(Event::AgentLoopTerminated {
                             model_step,
                             reason: AgentLoopTerminationReason::NoStateProgress,
@@ -1007,6 +1134,61 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
             )),
         }
     }
+}
+
+fn completion_advisory_message(
+    consecutive_no_progress_steps: usize,
+    window_steps: usize,
+    window_tool_errors: usize,
+) -> String {
+    if window_tool_errors > 0 {
+        return format!(
+            "runtime_progress_advisory: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps, and the latest {window_steps}-step window contained {window_tool_errors} tool errors. The task is not yet validated: stop varying optional checks, address one concrete failure with a corrective mutation, dependency, or build action, then rerun the required validation. Do not call runtime_complete while required validation is failing."
+        );
+    }
+    format!(
+        "runtime_progress_advisory: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps and no tool errors occurred in the latest {window_steps}-step window. If all task requirements and validation are already satisfied, call runtime_complete now. Otherwise choose one action that changes task state; do not continue optional investigation."
+    )
+}
+
+/// Reconstruct the exact active-run Provider exchange, except for complete
+/// evidence groups that FileBackedGC has replaced with recoverable pointers.
+fn exact_run_continuation(
+    history: &[EventEnvelope],
+    run_id: &RunId,
+    substitution: &ContinuationSubstitution,
+) -> Vec<RuntimeItem> {
+    history
+        .iter()
+        .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+        .filter(|envelope| {
+            !substitution
+                .event_ids
+                .contains(&envelope.event_id.to_string())
+        })
+        .filter_map(|envelope| match &envelope.event {
+            Event::ModelResponseItem {
+                item: RuntimeItem::ToolCall(call),
+                ..
+            } if substitution.call_ids.contains(&call.call_id) => None,
+            Event::ModelResponseItem { item, .. } => Some(item.clone()),
+            Event::ToolCallCompleted {
+                call_id,
+                name,
+                result,
+                is_error,
+            } if !substitution.call_ids.contains(call_id) => {
+                Some(RuntimeItem::ToolResult(ToolResultItem {
+                    id: Some(envelope.event_id.to_string()),
+                    call_id: call_id.clone(),
+                    name: Some(name.clone()),
+                    content: vec![ContentBlock::text(result.clone())],
+                    is_error: *is_error,
+                }))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn invalid_terminal_response(
@@ -1234,8 +1416,15 @@ fn blocked_tool_result(call: &ToolCallItem, repeat_count: usize) -> ToolResultIt
 struct ModelStepProjection {
     short_memory: Vec<ShortMemoryEntry>,
     run_memory: Vec<ShortMemoryEntry>,
+    continuation_substitution: ContinuationSubstitution,
     pointer_gc_admission: Option<PointerGcAdmissionObservation>,
     auto_hydration: Option<AutoHydrationObservation>,
+}
+
+#[derive(Debug, Default)]
+struct ContinuationSubstitution {
+    event_ids: HashSet<String>,
+    call_ids: HashSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1243,6 +1432,8 @@ struct PointerGcRunEconomics {
     previous_request_bytes: usize,
     previous_input_tokens: u64,
     previous_cached_input_tokens: u64,
+    observed_input_tokens: u64,
+    observed_cached_input_tokens: u64,
     reset_debt_tokens: u64,
     estimated_savings_per_call: u64,
     calls_since_last_admission: usize,
@@ -1257,6 +1448,15 @@ impl PointerGcRunEconomics {
         self.previous_request_bytes = request_bytes;
         self.previous_input_tokens = response.usage.input_tokens;
         self.previous_cached_input_tokens = response.usage.cached_input_tokens;
+        self.observed_input_tokens = self
+            .observed_input_tokens
+            .saturating_add(response.usage.input_tokens);
+        self.observed_cached_input_tokens = self.observed_cached_input_tokens.saturating_add(
+            response
+                .usage
+                .cached_input_tokens
+                .min(response.usage.input_tokens),
+        );
         if self.admission_count > 0 {
             self.calls_since_last_admission = self.calls_since_last_admission.saturating_add(1);
             self.reset_debt_tokens = self
@@ -1268,7 +1468,7 @@ impl PointerGcRunEconomics {
     fn observe_admission(&mut self, observation: &PointerGcAdmissionObservation) {
         self.admission_count = self.admission_count.saturating_add(1);
         self.calls_since_last_admission = 0;
-        self.estimated_savings_per_call = observation.estimated_saved_tokens_per_call;
+        self.estimated_savings_per_call = observation.estimated_economic_saved_tokens_per_call;
         self.reset_debt_tokens = self.reset_debt_tokens.saturating_add(
             observation
                 .estimated_cache_reset_tokens
@@ -1285,6 +1485,7 @@ struct PointerGcProjectionPolicy {
     model_step: usize,
     max_model_steps: usize,
     continuation_probability_bps: u32,
+    cached_input_cost_bps: u32,
     minimum_reuse_steps: usize,
     economics: PointerGcRunEconomics,
 }
@@ -1312,6 +1513,7 @@ fn project_model_step(
         history,
         run_id,
         DEFAULT_PINNED_ERROR_TOOL_BATCHES,
+        DEFAULT_PINNED_INSPECTION_TOOL_BATCHES,
     ));
     let current_event_ids: HashSet<_> = history
         .iter()
@@ -1371,12 +1573,43 @@ fn project_model_step(
     if let Some((entry, _)) = &auto_hydration {
         run_memory.push(entry.clone());
     }
+    let continuation_substitution =
+        if pointer_gc.strategy == RuntimeCompactionStrategy::FileBackedGc {
+            continuation_substitution(history, short_memory.iter().chain(&run_memory))
+        } else {
+            ContinuationSubstitution::default()
+        };
     Ok(ModelStepProjection {
         short_memory,
         run_memory,
+        continuation_substitution,
         pointer_gc_admission,
         auto_hydration: auto_hydration.map(|(_, observation)| observation),
     })
+}
+
+fn continuation_substitution<'a>(
+    history: &[EventEnvelope],
+    entries: impl Iterator<Item = &'a ShortMemoryEntry>,
+) -> ContinuationSubstitution {
+    let event_ids = entries
+        .filter(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        .flat_map(|entry| entry.source_event_ids.iter().cloned())
+        .collect::<HashSet<_>>();
+    let call_ids = history
+        .iter()
+        .filter(|event| event_ids.contains(&event.event_id.to_string()))
+        .filter_map(|event| match &event.event {
+            Event::ToolCallRequested { call_id, .. } | Event::ToolCallCompleted { call_id, .. } => {
+                Some(call_id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    ContinuationSubstitution {
+        event_ids,
+        call_ids,
+    }
 }
 
 fn hydrate_repeated_tool_batch(
@@ -1471,6 +1704,7 @@ fn tool_batch_signature(batch: &EventBatch) -> Option<(String, String, String)> 
             call_id,
             name,
             arguments,
+            ..
         } => Some((
             call_id.clone(),
             name.clone(),
@@ -1497,11 +1731,21 @@ fn pinned_working_state_event_ids(
     history: &[EventEnvelope],
     run_id: &RunId,
     error_batch_limit: usize,
+    inspection_batch_limit: usize,
 ) -> HashSet<EventId> {
-    if error_batch_limit == 0 {
+    if error_batch_limit == 0 && inspection_batch_limit == 0 {
         return HashSet::new();
     }
-    let pinned_call_ids: HashSet<_> = history
+
+    let interaction_kinds: HashMap<_, _> = history
+        .iter()
+        .filter(|event| event.run_id.as_ref() == Some(run_id))
+        .filter_map(|event| match &event.event {
+            Event::ToolCallClassified { call_id, kind } => Some((call_id.clone(), *kind)),
+            _ => None,
+        })
+        .collect();
+    let mut pinned_call_ids: HashSet<_> = history
         .iter()
         .rev()
         .filter(|event| event.run_id.as_ref() == Some(run_id))
@@ -1515,13 +1759,30 @@ fn pinned_working_state_event_ids(
         })
         .take(error_batch_limit)
         .collect();
+    pinned_call_ids.extend(
+        history
+            .iter()
+            .rev()
+            .filter(|event| event.run_id.as_ref() == Some(run_id))
+            .filter_map(|event| match &event.event {
+                Event::ToolCallCompleted {
+                    call_id,
+                    is_error: false,
+                    ..
+                } if interaction_kinds.get(call_id) == Some(&ToolInteractionKind::Inspection) => {
+                    Some(call_id.clone())
+                }
+                _ => None,
+            })
+            .take(inspection_batch_limit),
+    );
     history
         .iter()
         .filter(|event| event.run_id.as_ref() == Some(run_id))
         .filter(|event| match &event.event {
-            Event::ToolCallRequested { call_id, .. } | Event::ToolCallCompleted { call_id, .. } => {
-                pinned_call_ids.contains(call_id)
-            }
+            Event::ToolCallRequested { call_id, .. }
+            | Event::ToolCallClassified { call_id, .. }
+            | Event::ToolCallCompleted { call_id, .. } => pinned_call_ids.contains(call_id),
             _ => false,
         })
         .map(|event| event.event_id.clone())
@@ -1647,8 +1908,8 @@ fn replace_archivable_batches_with_pointers(
         });
     }
     let candidate_count = prepared_batches.len();
-    let checkpointed_count =
-        candidate_count / policy.checkpoint_batches.max(1) * policy.checkpoint_batches.max(1);
+    let checkpoint_batches = effective_pointer_gc_checkpoint_batches(policy);
+    let checkpointed_count = candidate_count / checkpoint_batches * checkpoint_batches;
     let committed_count = prepared_batches
         .iter()
         .filter(|batch| batch.already_archived)
@@ -1684,26 +1945,41 @@ fn replace_archivable_batches_with_pointers(
         .filter(|batch| selected_new_memory_ids.contains(&batch.memory_id))
         .map(|batch| batch.removable_bytes)
         .sum();
+    let minimum_reuse_steps = policy.minimum_reuse_steps.max(1);
     let remaining_step_budget = policy.max_model_steps.saturating_sub(policy.model_step);
+    let observed_continuations = policy.model_step;
+    let effective_continuation_probability_bps = posterior_continuation_probability_bps(
+        policy.continuation_probability_bps,
+        observed_continuations,
+        minimum_reuse_steps,
+    );
     let weighted_remaining_steps_bps = probability_weighted_remaining_steps_bps(
         remaining_step_budget,
-        policy.continuation_probability_bps,
+        effective_continuation_probability_bps,
     );
-    let estimated_saved_tokens_per_call = estimate_tokens_for_bytes(
+    let estimated_total_saved_tokens_per_call = estimate_tokens_for_bytes(
         removable_bytes,
         policy.economics.previous_request_bytes,
         policy.economics.previous_input_tokens,
+    );
+    let estimated_saved_tokens_per_call =
+        estimate_uncached_saved_tokens(estimated_total_saved_tokens_per_call, policy.economics);
+    let estimated_economic_saved_tokens_per_call = estimate_weighted_saved_tokens(
+        estimated_total_saved_tokens_per_call,
+        policy.economics,
+        policy.cached_input_cost_bps,
     );
     let stable_prefix_tokens = estimate_tokens_for_bytes(
         stable_prefix_bytes,
         policy.economics.previous_request_bytes,
         policy.economics.previous_input_tokens,
     );
-    let (estimated_cache_reset_tokens, used_provider_cache_measurement) =
+    let (raw_cache_reset_tokens, used_provider_cache_measurement) =
         estimate_cache_reset_tokens(stable_prefix_tokens, policy.economics);
+    let estimated_cache_reset_tokens =
+        scale_cache_reset_cost(raw_cache_reset_tokens, policy.cached_input_cost_bps);
     let prior_admissions = policy.economics.admission_count;
     let effective_effort = cumulative_pointer_gc_effort(policy.effort, prior_admissions);
-    let minimum_reuse_steps = policy.minimum_reuse_steps.max(1);
     let (blocked_by_reset_debt, blocked_by_cooldown) =
         pointer_gc_epoch_blockers(policy.economics, minimum_reuse_steps);
     let checkpoint_is_profitable = new_checkpoint_count > 0
@@ -1711,7 +1987,7 @@ fn replace_archivable_batches_with_pointers(
         && !blocked_by_cooldown
         && pointer_gc_is_profitable(
             estimated_cache_reset_tokens,
-            estimated_saved_tokens_per_call,
+            estimated_economic_saved_tokens_per_call,
             weighted_remaining_steps_bps,
             effective_effort,
         );
@@ -1724,14 +2000,21 @@ fn replace_archivable_batches_with_pointers(
         committed_batches: committed_count,
         new_checkpoint_batches: new_checkpoint_count,
         removable_bytes_per_call: removable_bytes,
+        estimated_total_saved_tokens_per_call,
         estimated_saved_tokens_per_call,
+        estimated_economic_saved_tokens_per_call,
+        cached_input_cost_bps: policy.cached_input_cost_bps,
         previous_request_bytes: policy.economics.previous_request_bytes,
         previous_input_tokens: policy.economics.previous_input_tokens,
         previous_cached_input_tokens: policy.economics.previous_cached_input_tokens,
+        observed_input_tokens: policy.economics.observed_input_tokens,
+        observed_cached_input_tokens: policy.economics.observed_cached_input_tokens,
         estimated_cache_reset_tokens,
         used_provider_cache_measurement,
         remaining_step_budget,
         continuation_probability_bps: policy.continuation_probability_bps,
+        observed_continuations,
+        effective_continuation_probability_bps,
         weighted_remaining_steps_bps,
         effort: policy.effort,
         effective_effort,
@@ -1751,9 +2034,9 @@ fn replace_archivable_batches_with_pointers(
         let newly_admitted =
             checkpoint_is_profitable && selected_new_memory_ids.contains(&batch.memory_id);
         if !batch.already_archived && !newly_admitted {
-            // Keep the open epoch append-only. TTL eligibility is recorded in
-            // the pure projection, but prompt compaction happens only when a
-            // complete checkpoint batch is available.
+            // Keep rejected evidence exact and append-only. TTL eligibility is
+            // recorded in the pure projection, but prompt compaction happens
+            // only after the cache-aware admission gate accepts it.
             replacements.extend(batch.full_entries);
             continue;
         }
@@ -1812,6 +2095,19 @@ fn short_memory_entry_bytes(entry: &ShortMemoryEntry) -> usize {
     serde_json::to_vec(&entry.item).map_or(usize::MAX, |encoded| encoded.len())
 }
 
+fn effective_pointer_gc_checkpoint_batches(policy: PointerGcProjectionPolicy) -> usize {
+    let configured = policy.checkpoint_batches.max(1);
+    if policy.strategy == RuntimeCompactionStrategy::FileBackedGc {
+        // File-backed batches are independently atomic and verified. Keep
+        // epochs small enough to expose savings before medium-length runs end;
+        // the profitability, reset-debt, and cooldown gates still decide
+        // whether each complete epoch is actually admitted.
+        configured.min(MAX_FILE_BACKED_GC_CHECKPOINT_BATCHES)
+    } else {
+        configured
+    }
+}
+
 fn estimate_tokens_for_bytes(
     bytes: usize,
     previous_request_bytes: usize,
@@ -1833,10 +2129,61 @@ fn estimate_cache_reset_tokens(
     economics: PointerGcRunEconomics,
 ) -> (u64, bool) {
     if economics.previous_request_bytes > 0 && economics.previous_input_tokens > 0 {
-        (economics.previous_cached_input_tokens, true)
+        let reset_tokens = if economics.observed_cached_input_tokens > 0
+            || economics.previous_cached_input_tokens > 0
+        {
+            economics
+                .previous_input_tokens
+                .saturating_mul(POINTER_GC_CACHE_WARMUP_REQUESTS)
+        } else {
+            0
+        };
+        (reset_tokens, true)
     } else {
         (stable_prefix_tokens, false)
     }
+}
+
+fn estimate_uncached_saved_tokens(
+    total_saved_tokens: u64,
+    economics: PointerGcRunEconomics,
+) -> u64 {
+    estimate_weighted_saved_tokens(total_saved_tokens, economics, 0)
+}
+
+fn estimate_weighted_saved_tokens(
+    total_saved_tokens: u64,
+    economics: PointerGcRunEconomics,
+    cached_input_cost_bps: u32,
+) -> u64 {
+    if total_saved_tokens == 0 || economics.previous_input_tokens == 0 {
+        return total_saved_tokens;
+    }
+    let input_tokens = if economics.observed_input_tokens > 0 {
+        economics.observed_input_tokens
+    } else {
+        economics.previous_input_tokens
+    };
+    let cached_tokens = if economics.observed_input_tokens > 0 {
+        economics.observed_cached_input_tokens.min(input_tokens)
+    } else {
+        economics.previous_cached_input_tokens.min(input_tokens)
+    };
+    let uncached_tokens = input_tokens.saturating_sub(cached_tokens);
+    let cached_input_cost_bps = cached_input_cost_bps.min(PROBABILITY_SCALE_BPS) as u128;
+    let weighted_input_bps = (uncached_tokens as u128)
+        .saturating_mul(PROBABILITY_SCALE_BPS as u128)
+        .saturating_add((cached_tokens as u128).saturating_mul(cached_input_cost_bps));
+    let numerator = (total_saved_tokens as u128).saturating_mul(weighted_input_bps);
+    let denominator = (input_tokens as u128).saturating_mul(PROBABILITY_SCALE_BPS as u128);
+    u64::try_from(numerator.div_ceil(denominator)).unwrap_or(u64::MAX)
+}
+
+fn scale_cache_reset_cost(reset_tokens: u64, cached_input_cost_bps: u32) -> u64 {
+    let uncached_premium_bps =
+        PROBABILITY_SCALE_BPS.saturating_sub(cached_input_cost_bps.min(PROBABILITY_SCALE_BPS));
+    let numerator = (reset_tokens as u128).saturating_mul(uncached_premium_bps as u128);
+    u64::try_from(numerator.div_ceil(PROBABILITY_SCALE_BPS as u128)).unwrap_or(u64::MAX)
 }
 
 fn probability_weighted_remaining_steps_bps(
@@ -1856,6 +2203,27 @@ fn probability_weighted_remaining_steps_bps(
         }
     }
     u64::try_from(weighted_steps_bps).unwrap_or(u64::MAX)
+}
+
+/// Treat the configured continuation probability as a beta-prior mean and
+/// update it with the successful continuations already observed in this run.
+/// A run only reaches the next projection after the preceding model call
+/// continued, so every prior model step is a real positive observation. The
+/// minimum reuse window supplies the prior sample mass: admission remains
+/// conservative early, then adapts when a run is demonstrably long-lived.
+fn posterior_continuation_probability_bps(
+    prior_probability_bps: u32,
+    observed_continuations: usize,
+    prior_weight: usize,
+) -> u32 {
+    let prior_probability_bps = prior_probability_bps.min(PROBABILITY_SCALE_BPS) as u128;
+    let prior_weight = prior_weight.max(1) as u128;
+    let observed_continuations = observed_continuations as u128;
+    let numerator = prior_probability_bps
+        .saturating_mul(prior_weight)
+        .saturating_add(observed_continuations.saturating_mul(PROBABILITY_SCALE_BPS as u128));
+    let denominator = prior_weight.saturating_add(observed_continuations);
+    u32::try_from(numerator / denominator).unwrap_or(PROBABILITY_SCALE_BPS)
 }
 
 fn pointer_gc_is_profitable(
@@ -2087,7 +2455,38 @@ fn default_tool_definitions() -> Vec<ToolDefinition> {
         write_file_definition(),
         memory_search_definition(),
         memory_read_definition(),
+        runtime_complete_tool_definition(),
     ]
+}
+
+pub fn runtime_complete_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: RUNTIME_COMPLETE_TOOL_NAME.to_owned(),
+        description: "End the active run successfully after all task requirements and validation are complete. Call this alone, with no other tool calls in the same response.".to_owned(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Concise final status describing the completed work and validation"
+                }
+            },
+            "required": ["summary"],
+            "additionalProperties": false
+        }),
+        strict: Some(true),
+    }
+}
+
+fn runtime_completion_output(call: &ToolCallItem) -> Result<String, String> {
+    call.arguments
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "runtime_complete requires a non-empty string summary".to_owned())
 }
 
 fn memory_read_definition() -> ToolDefinition {
@@ -2290,6 +2689,7 @@ mod tests {
             model_step: 0,
             max_model_steps: 128,
             continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
+            cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             minimum_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
             economics: PointerGcRunEconomics::default(),
         }
@@ -2442,6 +2842,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_complete_tool_ends_the_run_without_invoking_the_runner() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = RecordingModel {
+            request: None,
+            result: Ok(ModelRunResult {
+                final_output: None,
+                prepared_request: None,
+                response: Some(structure_model::RuntimeResponse {
+                    items: vec![RuntimeItem::ToolCall(ToolCallItem {
+                        id: None,
+                        call_id: "complete-1".to_owned(),
+                        name: RUNTIME_COMPLETE_TOOL_NAME.to_owned(),
+                        arguments: serde_json::json!({"summary": "tests pass"}),
+                        provider_state: None,
+                    })],
+                    finish_reason: Some(FinishReason::ToolCalls),
+                    usage: structure_model::RuntimeUsage::default(),
+                    provider_state: None,
+                }),
+            }),
+            cancel_result: Ok(false),
+        };
+        let mut runtime = CoreRuntime::new(model, NoopRunner);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "complete the task".to_owned(),
+            },
+        )
+        .await
+        .expect("completion tool succeeds");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallCompleted {
+                call_id,
+                name,
+                is_error: false,
+                ..
+            } if call_id == "complete-1" && name == RUNTIME_COMPLETE_TOOL_NAME
+        )));
+        assert_eq!(
+            events.last(),
+            Some(&Event::RunCompleted {
+                output: Some("tests pass".to_owned())
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn runtime_fails_a_length_truncated_model_turn() {
         let session_id = SessionId::new("session-1");
         let run_id = RunId::new("run-1");
@@ -2466,7 +2924,11 @@ mod tests {
                 output_tokens: 8_192,
                 cached_input_tokens: 80,
                 cache_creation_input_tokens: 0,
+                reasoning_output_tokens: 0,
             },
+            provider_state: Some(structure_model::ProviderResponseState::OpenAiResponses {
+                raw_body: "{\"id\":\"resp-test\"}".to_owned(),
+            }),
         };
         let model = RecordingModel {
             request: None,
@@ -2506,9 +2968,15 @@ mod tests {
         )));
         assert!(events.iter().any(|event| matches!(
             event,
-            Event::ModelResponseCompleted { model_step: 0, finish_reason, usage }
+            Event::ModelResponseCompleted {
+                model_step: 0,
+                finish_reason,
+                usage,
+                provider_state,
+            }
                 if finish_reason == &recorded_response.finish_reason
                     && usage == &recorded_response.usage
+                    && provider_state == &recorded_response.provider_state
         )));
         assert!(events.iter().any(|event| matches!(
             event,
@@ -2543,6 +3011,24 @@ mod tests {
         assert!(invalid_terminal_response(Some(&FinishReason::ToolCalls), 0, None).is_some());
         assert!(invalid_terminal_response(Some(&FinishReason::Stop), 1, Some("done")).is_some());
         assert!(invalid_terminal_response(None, 0, None).is_some());
+    }
+
+    #[test]
+    fn runtime_complete_requires_a_non_empty_summary() {
+        let call = |arguments| ToolCallItem {
+            id: None,
+            call_id: "complete-1".to_owned(),
+            name: RUNTIME_COMPLETE_TOOL_NAME.to_owned(),
+            arguments,
+            provider_state: None,
+        };
+
+        assert_eq!(
+            runtime_completion_output(&call(serde_json::json!({"summary": " done "}))),
+            Ok("done".to_owned())
+        );
+        assert!(runtime_completion_output(&call(serde_json::json!({"summary": "  "}))).is_err());
+        assert!(runtime_completion_output(&call(serde_json::json!({}))).is_err());
     }
 
     #[tokio::test]
@@ -2648,6 +3134,7 @@ mod tests {
                             })],
                             finish_reason: Some(structure_model::FinishReason::ToolCalls),
                             usage: structure_model::RuntimeUsage::default(),
+                            provider_state: None,
                         }),
                     });
                 }
@@ -2771,6 +3258,7 @@ mod tests {
                         })],
                         finish_reason: Some(FinishReason::ToolCalls),
                         usage: structure_model::RuntimeUsage::default(),
+                        provider_state: None,
                     }),
                 })
             }
@@ -2896,6 +3384,7 @@ mod tests {
                         })],
                         finish_reason: Some(FinishReason::ToolCalls),
                         usage: structure_model::RuntimeUsage::default(),
+                        provider_state: None,
                     }),
                 })
             }
@@ -2938,7 +3427,7 @@ mod tests {
         let run_id = RunId::new("run-no-progress");
         let mut runtime = CoreRuntime::new(VaryingInspectionModel::default(), InspectionRunner);
         runtime.set_max_model_steps_per_run(10);
-        runtime.set_max_model_steps_without_progress(3);
+        runtime.set_max_model_steps_without_progress(7);
         runtime
             .open_session(&session_id, &WorkspaceId::new("workspace-1"))
             .expect("runtime session opens");
@@ -2960,20 +3449,170 @@ mod tests {
                 .iter()
                 .filter(|event| matches!(event, Event::ToolCallRequested { .. }))
                 .count(),
-            3
+            7
         );
         assert!(events.iter().any(|event| matches!(
             event,
+            Event::AgentProgressAdvisory {
+                model_step: 5,
+                consecutive_no_progress_steps: 6,
+                message,
+            } if message.contains("call runtime_complete now")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
             Event::AgentLoopTerminated {
-                model_step: 2,
+                model_step: 6,
                 reason: AgentLoopTerminationReason::NoStateProgress,
-                consecutive_no_progress_steps: 3,
+                consecutive_no_progress_steps: 7,
             }
         )));
         assert!(matches!(
             events.last(),
             Some(Event::RunFailed { message }) if message.starts_with("agent_no_progress:")
         ));
+    }
+
+    #[test]
+    fn completion_advisory_distinguishes_failed_work_from_clean_validation() {
+        let clean = completion_advisory_message(6, 6, 0);
+        assert!(clean.contains("no tool errors"));
+        assert!(clean.contains("call runtime_complete now"));
+
+        let failed = completion_advisory_message(6, 6, 3);
+        assert!(failed.contains("contained 3 tool errors"));
+        assert!(failed.contains("corrective mutation, dependency, or build action"));
+        assert!(failed.contains("Do not call runtime_complete"));
+    }
+
+    #[tokio::test]
+    async fn recovered_clean_advisory_window_gets_one_completion_turn_at_hard_limit() {
+        #[derive(Debug, Default)]
+        struct RecoveringValidationModel {
+            step: usize,
+        }
+
+        impl ModelProvider for RecoveringValidationModel {
+            async fn complete(
+                &mut self,
+                _request: ModelRunRequest,
+            ) -> Result<ModelRunResult, ProviderError> {
+                self.step += 1;
+                let call = if self.step <= 12 {
+                    ToolCallItem {
+                        id: None,
+                        call_id: format!("validation-call-{}", self.step),
+                        name: if self.step <= 6 {
+                            "failing-validation".to_owned()
+                        } else {
+                            "clean-validation".to_owned()
+                        },
+                        arguments: serde_json::json!({"attempt": self.step}),
+                        provider_state: None,
+                    }
+                } else {
+                    ToolCallItem {
+                        id: None,
+                        call_id: "completion-call".to_owned(),
+                        name: RUNTIME_COMPLETE_TOOL_NAME.to_owned(),
+                        arguments: serde_json::json!({"summary": "validation recovered"}),
+                        provider_state: None,
+                    }
+                };
+                Ok(ModelRunResult {
+                    final_output: None,
+                    prepared_request: None,
+                    response: Some(structure_model::RuntimeResponse {
+                        items: vec![RuntimeItem::ToolCall(call)],
+                        finish_reason: Some(FinishReason::ToolCalls),
+                        usage: structure_model::RuntimeUsage::default(),
+                        provider_state: None,
+                    }),
+                })
+            }
+
+            async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+                Ok(false)
+            }
+        }
+
+        #[derive(Debug, Default)]
+        struct RecoveringValidationRunner;
+
+        impl RunnerEnvironment for RecoveringValidationRunner {
+            fn classify(&self, _call: &ToolCallItem) -> ToolInteractionKind {
+                ToolInteractionKind::Validation
+            }
+
+            async fn execute(
+                &mut self,
+                request: ToolExecutionRequest,
+            ) -> Result<ToolExecutionResult, RunnerError> {
+                let is_error = request.call.name == "failing-validation";
+                Ok(ToolExecutionResult {
+                    result: ToolResultItem {
+                        id: None,
+                        call_id: request.call.call_id,
+                        name: Some(request.call.name),
+                        content: vec![ContentBlock::text(if is_error {
+                            "failed"
+                        } else {
+                            "passed"
+                        })],
+                        is_error,
+                    },
+                    output: Vec::new(),
+                })
+            }
+
+            async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+                Ok(false)
+            }
+        }
+
+        let session_id = SessionId::new("session-recovered-window");
+        let run_id = RunId::new("run-recovered-window");
+        let mut runtime = CoreRuntime::new(
+            RecoveringValidationModel::default(),
+            RecoveringValidationRunner,
+        );
+        runtime.set_max_model_steps_per_run(20);
+        runtime.set_max_model_steps_without_progress(12);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "recover validation and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("recovered validation receives a completion turn");
+
+        let advisories = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::AgentProgressAdvisory { message, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(advisories.len(), 2);
+        assert!(advisories[0].contains("contained 6 tool errors"));
+        assert!(advisories[1].contains("no tool errors"));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::RunCompleted { output: Some(output) } if output == "validation recovered"
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::AgentLoopTerminated { .. }))
+        );
     }
 
     #[test]
@@ -3088,6 +3727,7 @@ mod tests {
                             })],
                             finish_reason: Some(structure_model::FinishReason::ToolCalls),
                             usage: structure_model::RuntimeUsage::default(),
+                            provider_state: None,
                         }),
                     });
                 }
@@ -3164,29 +3804,32 @@ mod tests {
         assert_eq!(requests.len(), 4);
         assert!(requests[0].run_memory.is_empty());
         assert!(requests[0].continuation.is_empty());
-        assert!(requests[1].continuation.is_empty());
         assert!(matches!(
             requests[1]
-                .run_memory
+                .continuation
                 .iter()
-                .map(|entry| &entry.item)
                 .collect::<Vec<_>>()
                 .as_slice(),
-            [ShortMemoryItem::ToolCall(call), ShortMemoryItem::ToolResult(result)]
+            [RuntimeItem::ToolCall(call), RuntimeItem::ToolResult(result)]
                 if call.call_id == "call-1" && result.call_id == "call-1"
         ));
+        assert!(requests[1].run_memory.iter().all(|entry| !matches!(
+            entry.item,
+            ShortMemoryItem::ToolCall(_) | ShortMemoryItem::ToolResult(_)
+        )));
         assert!(
             requests[2]
                 .run_memory
                 .iter()
                 .all(|entry| !matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
         );
-        assert!(requests[2].continuation.is_empty());
-        assert!(requests[2].run_memory.iter().any(
-            |entry| matches!(&entry.item, ShortMemoryItem::ToolCall(call) if call.call_id == "call-2")
-        ));
-        assert!(requests[2].run_memory.iter().any(
-            |entry| matches!(&entry.item, ShortMemoryItem::ToolResult(result) if result.call_id == "call-2")
+        assert!(
+            requests[2].continuation.iter().any(
+                |item| matches!(item, RuntimeItem::ToolCall(call) if call.call_id == "call-2")
+            )
+        );
+        assert!(requests[2].continuation.iter().any(
+            |item| matches!(item, RuntimeItem::ToolResult(result) if result.call_id == "call-2")
         ));
         assert_eq!(
             requests[3]
@@ -3196,10 +3839,11 @@ mod tests {
                 .count(),
             2
         );
-        assert!(requests[3].continuation.is_empty());
-        assert!(requests[3].run_memory.iter().any(
-            |entry| matches!(&entry.item, ShortMemoryItem::ToolCall(call) if call.call_id == "call-3")
-        ));
+        assert!(
+            requests[3].continuation.iter().any(
+                |item| matches!(item, RuntimeItem::ToolCall(call) if call.call_id == "call-3")
+            )
+        );
         assert_eq!(
             runtime
                 .long_memory(&WorkspaceId::new("workspace-1"))
@@ -3219,6 +3863,7 @@ mod tests {
                     call_id: "small-call".to_owned(),
                     name: "read".to_owned(),
                     arguments: serde_json::json!({}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -3268,6 +3913,7 @@ mod tests {
                     call_id: "call-1".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "src/lib.rs"}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -3326,6 +3972,7 @@ mod tests {
                         call_id: call_id.clone(),
                         name: "read_file".to_owned(),
                         arguments: serde_json::json!({"path": format!("src/{index}.rs")}),
+                        provider_state: None,
                     },
                 ),
                 history_event(
@@ -3474,7 +4121,7 @@ mod tests {
         measured_cache_policy.economics = PointerGcRunEconomics {
             previous_request_bytes: 16_000,
             previous_input_tokens: 4_000,
-            previous_cached_input_tokens: 10_000,
+            previous_cached_input_tokens: 3_000,
             ..PointerGcRunEconomics::default()
         };
         let (_, measured_cache_observation) = replace_archivable_batches_with_pointers(
@@ -3491,7 +4138,11 @@ mod tests {
             measured_cache_observation.expect("measured cache decision is observed");
         assert_eq!(
             measured_cache_observation.estimated_cache_reset_tokens,
-            10_000
+            8_000
+        );
+        assert!(
+            measured_cache_observation.estimated_total_saved_tokens_per_call
+                > measured_cache_observation.estimated_saved_tokens_per_call
         );
         assert_eq!(
             measured_cache_observation.weighted_remaining_steps_bps,
@@ -3517,6 +4168,7 @@ mod tests {
                         call_id: call_id.clone(),
                         name: "read_file".to_owned(),
                         arguments: serde_json::json!({"path": format!("src/{index}.rs")}),
+                        provider_state: None,
                     },
                 ),
                 history_event(
@@ -3622,6 +4274,152 @@ mod tests {
     }
 
     #[test]
+    fn file_backed_gc_caps_checkpoint_epoch_for_medium_runs() {
+        let mut policy = pointer_gc_policy(8, 1);
+        policy.strategy = RuntimeCompactionStrategy::FileBackedGc;
+        policy.minimum_reuse_steps = 8;
+        assert_eq!(effective_pointer_gc_checkpoint_batches(policy), 4);
+
+        policy.checkpoint_batches = 2;
+        assert_eq!(effective_pointer_gc_checkpoint_batches(policy), 2);
+
+        policy.strategy = RuntimeCompactionStrategy::PointerGc;
+        policy.checkpoint_batches = 8;
+        assert_eq!(effective_pointer_gc_checkpoint_batches(policy), 8);
+    }
+
+    #[test]
+    fn file_backed_pointers_substitute_exact_continuation_items() {
+        let tool_call = |call_id: &str| {
+            RuntimeItem::ToolCall(ToolCallItem {
+                id: None,
+                call_id: call_id.to_owned(),
+                name: "shell".to_owned(),
+                arguments: serde_json::json!({"command": call_id}),
+                provider_state: None,
+            })
+        };
+        let history = vec![
+            history_event(
+                1,
+                Event::ModelResponseItem {
+                    model_step: 0,
+                    item_index: 0,
+                    item: RuntimeItem::Reasoning(structure_model::ReasoningItem {
+                        id: Some("reasoning-1".to_owned()),
+                        summary: Vec::new(),
+                        provider_state: None,
+                    }),
+                },
+            ),
+            history_event(
+                2,
+                Event::ModelResponseItem {
+                    model_step: 0,
+                    item_index: 1,
+                    item: tool_call("call-1"),
+                },
+            ),
+            history_event(
+                3,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({"command": "old"}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                4,
+                Event::ToolCallCompleted {
+                    call_id: "call-1".to_owned(),
+                    name: "shell".to_owned(),
+                    result: "x".repeat(5_000),
+                    is_error: false,
+                },
+            ),
+            history_event(
+                5,
+                Event::ModelResponseItem {
+                    model_step: 1,
+                    item_index: 0,
+                    item: tool_call("call-2"),
+                },
+            ),
+            history_event(
+                6,
+                Event::ToolCallRequested {
+                    call_id: "call-2".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({"command": "current"}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                7,
+                Event::ToolCallCompleted {
+                    call_id: "call-2".to_owned(),
+                    name: "shell".to_owned(),
+                    result: "current exact output".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ];
+        let pointer = |source_event_ids: Vec<String>, sequence| ShortMemoryEntry {
+            source_event_ids,
+            sequence,
+            item: ShortMemoryItem::MemoryPointer(MemoryPointer {
+                path: format!("m/archive/{sequence}.json"),
+                content_hash: format!("sha256:{sequence}"),
+                context_kind: MemoryBatchKind::Tool,
+                event_count: 1,
+                retrieval_hint: "archived test evidence".to_owned(),
+            }),
+        };
+        let entries = [
+            pointer(vec!["event-1".to_owned()], 1),
+            pointer(vec!["event-3".to_owned(), "event-4".to_owned()], 3),
+        ];
+        let baseline = exact_run_continuation(
+            &history,
+            &RunId::new("prior-run"),
+            &ContinuationSubstitution::default(),
+        );
+        let substitution = continuation_substitution(&history, entries.iter());
+        let continuation =
+            exact_run_continuation(&history, &RunId::new("prior-run"), &substitution);
+
+        assert_eq!(substitution.call_ids, HashSet::from(["call-1".to_owned()]));
+        assert!(continuation.iter().all(|item| !matches!(
+            item,
+            RuntimeItem::Reasoning(reasoning) if reasoning.id.as_deref() == Some("reasoning-1")
+        )));
+        assert!(continuation.iter().all(|item| !matches!(
+            item,
+            RuntimeItem::ToolCall(call) if call.call_id == "call-1"
+        )));
+        assert!(continuation.iter().all(|item| !matches!(
+            item,
+            RuntimeItem::ToolResult(result) if result.call_id == "call-1"
+        )));
+        assert!(
+            continuation.iter().any(
+                |item| matches!(item, RuntimeItem::ToolCall(call) if call.call_id == "call-2")
+            )
+        );
+        assert!(continuation.iter().any(
+            |item| matches!(item, RuntimeItem::ToolResult(result) if result.call_id == "call-2")
+        ));
+        let baseline_bytes = serde_json::to_vec(&baseline)
+            .expect("baseline serializes")
+            .len();
+        let substituted_bytes = serde_json::to_vec(&(&entries, &continuation))
+            .expect("substituted request projection serializes")
+            .len();
+        assert!(substituted_bytes < baseline_bytes);
+    }
+
+    #[test]
     fn file_backed_gc_rejects_unverified_existing_archive() {
         let events = vec![
             history_event(
@@ -3630,6 +4428,7 @@ mod tests {
                     call_id: "call-1".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "src/lib.rs"}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -3713,6 +4512,7 @@ mod tests {
                     arguments: serde_json::json!({
                         "command": "cd /app/project && cat src/setup.py"
                     }),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -3818,6 +4618,7 @@ mod tests {
                         arguments: serde_json::json!({
                             "command": format!("cat src/{index}.rs")
                         }),
+                        provider_state: None,
                     },
                 ),
                 history_event(
@@ -3951,6 +4752,7 @@ mod tests {
                     call_id: "error-old".to_owned(),
                     name: "shell".to_owned(),
                     arguments: serde_json::json!({"command": "old"}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -3968,6 +4770,7 @@ mod tests {
                     call_id: "error-new".to_owned(),
                     name: "shell".to_owned(),
                     arguments: serde_json::json!({"command": "new"}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -3981,11 +4784,106 @@ mod tests {
             ),
         ];
 
-        let pinned = pinned_working_state_event_ids(&history, &RunId::new("prior-run"), 1);
+        let pinned = pinned_working_state_event_ids(&history, &RunId::new("prior-run"), 1, 0);
 
         assert_eq!(
             pinned,
             HashSet::from([EventId::new("event-3"), EventId::new("event-4"),])
+        );
+    }
+
+    #[test]
+    fn latest_successful_inspection_batches_are_pinned_without_pinning_mutations() {
+        let mut history = Vec::new();
+        let interactions = [
+            ("inspection-old", ToolInteractionKind::Inspection),
+            ("mutation", ToolInteractionKind::Mutation),
+            ("inspection-new", ToolInteractionKind::Inspection),
+        ];
+        let mut sequence = 1;
+        for (call_id, kind) in interactions {
+            history.push(history_event(
+                sequence,
+                Event::ToolCallRequested {
+                    call_id: call_id.to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({"command": call_id}),
+                    provider_state: None,
+                },
+            ));
+            sequence += 1;
+            history.push(history_event(
+                sequence,
+                Event::ToolCallClassified {
+                    call_id: call_id.to_owned(),
+                    kind,
+                },
+            ));
+            sequence += 1;
+            history.push(history_event(
+                sequence,
+                Event::ToolCallCompleted {
+                    call_id: call_id.to_owned(),
+                    name: "shell".to_owned(),
+                    result: "success".to_owned(),
+                    is_error: false,
+                },
+            ));
+            sequence += 1;
+        }
+
+        let pinned = pinned_working_state_event_ids(&history, &RunId::new("prior-run"), 0, 1);
+
+        assert_eq!(
+            pinned,
+            HashSet::from([
+                EventId::new("event-7"),
+                EventId::new("event-8"),
+                EventId::new("event-9"),
+            ])
+        );
+    }
+
+    #[test]
+    fn failed_inspection_is_pinned_as_an_error_not_as_successful_inspection() {
+        let history = vec![
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "inspection-error".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({"command": "inspect"}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallClassified {
+                    call_id: "inspection-error".to_owned(),
+                    kind: ToolInteractionKind::Inspection,
+                },
+            ),
+            history_event(
+                3,
+                Event::ToolCallCompleted {
+                    call_id: "inspection-error".to_owned(),
+                    name: "shell".to_owned(),
+                    result: "failure".to_owned(),
+                    is_error: true,
+                },
+            ),
+        ];
+
+        assert!(
+            pinned_working_state_event_ids(&history, &RunId::new("prior-run"), 0, 1).is_empty()
+        );
+        assert_eq!(
+            pinned_working_state_event_ids(&history, &RunId::new("prior-run"), 1, 0),
+            HashSet::from([
+                EventId::new("event-1"),
+                EventId::new("event-2"),
+                EventId::new("event-3"),
+            ])
         );
     }
 
@@ -3998,6 +4896,7 @@ mod tests {
                     call_id: "call-old".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "src/lib.rs"}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -4015,6 +4914,7 @@ mod tests {
                     call_id: "call-repeat".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "src/lib.rs"}),
+                    provider_state: None,
                 },
             ),
             history_event(
@@ -4087,11 +4987,103 @@ mod tests {
     }
 
     #[test]
+    fn pointer_gc_values_only_uncached_savings_when_usage_is_available() {
+        let cached = PointerGcRunEconomics {
+            previous_input_tokens: 4_000,
+            previous_cached_input_tokens: 3_000,
+            ..PointerGcRunEconomics::default()
+        };
+        assert_eq!(estimate_uncached_saved_tokens(1_000, cached), 250);
+
+        let uncached = PointerGcRunEconomics {
+            previous_input_tokens: 4_000,
+            previous_cached_input_tokens: 0,
+            ..PointerGcRunEconomics::default()
+        };
+        assert_eq!(estimate_uncached_saved_tokens(1_000, uncached), 1_000);
+        let temporarily_uncached_after_reset = PointerGcRunEconomics {
+            previous_request_bytes: 16_000,
+            previous_input_tokens: 4_000,
+            previous_cached_input_tokens: 0,
+            observed_input_tokens: 8_000,
+            observed_cached_input_tokens: 6_000,
+            ..PointerGcRunEconomics::default()
+        };
+        assert_eq!(
+            estimate_uncached_saved_tokens(1_000, temporarily_uncached_after_reset),
+            250
+        );
+        assert_eq!(
+            estimate_cache_reset_tokens(3_000, temporarily_uncached_after_reset),
+            (8_000, true)
+        );
+        assert_eq!(
+            estimate_uncached_saved_tokens(1_000, PointerGcRunEconomics::default()),
+            1_000
+        );
+    }
+
+    #[test]
+    fn pointer_gc_price_weights_cached_savings_and_reset_premium() {
+        let cached = PointerGcRunEconomics {
+            previous_input_tokens: 4_000,
+            previous_cached_input_tokens: 3_000,
+            ..PointerGcRunEconomics::default()
+        };
+
+        assert_eq!(estimate_weighted_saved_tokens(1_000, cached, 0), 250);
+        assert_eq!(estimate_weighted_saved_tokens(1_000, cached, 5_000), 625);
+        assert_eq!(estimate_weighted_saved_tokens(1_000, cached, 10_000), 1_000);
+        assert_eq!(scale_cache_reset_cost(8_000, 0), 8_000);
+        assert_eq!(scale_cache_reset_cost(8_000, 5_000), 4_000);
+        assert_eq!(scale_cache_reset_cost(8_000, 10_000), 0);
+    }
+
+    #[test]
+    fn cached_prefix_rewrite_requires_fresh_savings_to_repay_warmup() {
+        // Regression values are scaled from a real high-cache admission: the
+        // total context reduction looked profitable, but only 1,515 tokens per
+        // call were fresh while two cache-warmup requests cost 11,804 tokens.
+        assert!(!pointer_gc_is_profitable(11_804, 1_515, 59_857, 1));
+        assert!(pointer_gc_is_profitable(0, 1_515, 59_857, 1));
+    }
+
+    #[test]
+    fn half_price_cache_can_admit_a_real_cost_win_without_relabeling_fresh_tokens() {
+        let high_cache = PointerGcRunEconomics {
+            previous_input_tokens: 4_000,
+            previous_cached_input_tokens: 3_000,
+            ..PointerGcRunEconomics::default()
+        };
+        let fresh_savings = estimate_uncached_saved_tokens(1_000, high_cache);
+        let priced_savings = estimate_weighted_saved_tokens(1_000, high_cache, 5_000);
+        let priced_reset = scale_cache_reset_cost(8_000, 5_000);
+
+        assert_eq!(fresh_savings, 250);
+        assert_eq!(priced_savings, 625);
+        assert!(!pointer_gc_is_profitable(8_000, fresh_savings, 80_000, 1));
+        assert!(pointer_gc_is_profitable(
+            priced_reset,
+            priced_savings,
+            80_000,
+            1
+        ));
+    }
+
+    #[test]
     fn remaining_steps_are_probability_weighted_and_budget_bounded() {
         assert_eq!(probability_weighted_remaining_steps_bps(0, 7_500), 0);
         assert_eq!(probability_weighted_remaining_steps_bps(1, 7_500), 10_000);
         assert_eq!(probability_weighted_remaining_steps_bps(4, 5_000), 18_750);
         assert_eq!(probability_weighted_remaining_steps_bps(4, 10_000), 40_000);
+    }
+
+    #[test]
+    fn observed_run_survival_updates_the_continuation_prior() {
+        assert_eq!(posterior_continuation_probability_bps(7_500, 0, 8), 7_500);
+        assert_eq!(posterior_continuation_probability_bps(7_500, 8, 8), 8_750);
+        assert_eq!(posterior_continuation_probability_bps(7_500, 40, 8), 9_583);
+        assert_eq!(posterior_continuation_probability_bps(20_000, 0, 8), 10_000);
     }
 
     #[test]
@@ -4130,6 +5122,7 @@ mod tests {
                             })],
                             finish_reason: Some(structure_model::FinishReason::ToolCalls),
                             usage: structure_model::RuntimeUsage::default(),
+                            provider_state: None,
                         }),
                     });
                 }
@@ -4185,15 +5178,13 @@ mod tests {
             } if call_id == "memory-call" && result == exact_evidence
         )));
         let second_request = &runtime.model().requests[1];
-        assert!(second_request.continuation.is_empty());
         assert!(matches!(
             second_request
-                .run_memory
+                .continuation
                 .iter()
-                .map(|entry| &entry.item)
                 .collect::<Vec<_>>()
                 .as_slice(),
-            [ShortMemoryItem::ToolCall(call), ShortMemoryItem::ToolResult(result)]
+            [RuntimeItem::ToolCall(call), RuntimeItem::ToolResult(result)]
                 if call.name == MEMORY_READ_TOOL_NAME
                     && result.content == vec![ContentBlock::text(exact_evidence)]
         ));

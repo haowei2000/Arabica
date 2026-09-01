@@ -18,18 +18,20 @@ use structure_runner::{
 use structure_runtime::{
     AutoHydrationObservation, CoreRuntime, PointerGcAdmissionObservation, PointerGcObservationSink,
     RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+    runtime_complete_tool_definition,
 };
 use structure_session::SessionManager;
 use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
 
-const REPORT_SCHEMA: &str = "structure.harbor-agent/v8";
+const REPORT_SCHEMA: &str = "structure.harbor-agent/v11";
 const DEFAULT_MAX_STEPS: usize = 128;
 const DEFAULT_MAX_TOKENS: u32 = 8_192;
 const DEFAULT_CHECKPOINT_BATCHES: usize = 8;
 const DEFAULT_PGC_EFFORT: usize = 1;
 const DEFAULT_PGC_CONTINUATION_PROBABILITY_BPS: u32 = 7_500;
+const DEFAULT_PGC_CACHED_INPUT_COST_BPS: u32 = 0;
 const GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS: u32 = 6_000;
 const GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS: usize = 4;
 const MAX_TOOL_OUTPUT_CHARS: usize = 8_000;
@@ -70,6 +72,7 @@ struct Config {
     checkpoint_batches: usize,
     pgc_effort: usize,
     pgc_continuation_probability_bps: u32,
+    pgc_cached_input_cost_bps: u32,
     thinking_enabled: bool,
 }
 
@@ -281,21 +284,7 @@ impl RunnerEnvironment for HarborBridgeRunner {
 
 fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     let command = command.to_ascii_lowercase();
-    if has_shell_output_redirection(&command)
-        || [
-            "sed -i",
-            "perl -pi",
-            "apply_patch",
-            " tee ",
-            "touch ",
-            "mkdir ",
-            "git clone",
-        ]
-        .iter()
-        .any(|pattern| command.contains(pattern))
-    {
-        ToolInteractionKind::Mutation
-    } else if [
+    if [
         "pip install",
         "uv pip",
         "apt-get install",
@@ -306,6 +295,27 @@ fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     .any(|pattern| command.contains(pattern))
     {
         ToolInteractionKind::Dependency
+    } else if has_shell_output_redirection(&command)
+        || looks_like_inline_mutation(&command)
+        || [
+            "sed -i",
+            "perl -pi",
+            "apply_patch",
+            " tee ",
+            "touch ",
+            "mkdir ",
+            "git clone",
+            "cp ",
+            "mv ",
+            "rm ",
+            "chmod ",
+            "chown ",
+            "ln ",
+        ]
+        .iter()
+        .any(|pattern| command.contains(pattern))
+    {
+        ToolInteractionKind::Mutation
     } else if looks_like_inline_validation(&command) {
         // Inspect the executable shape before scanning the embedded program.
         // Inline validation source can legitimately contain strings such as
@@ -368,10 +378,11 @@ fn has_shell_output_redirection(command: &str) -> bool {
         if character != '>' || single_quoted || double_quoted {
             continue;
         }
-        // Descriptor duplication such as `2>&1` changes stream routing, not
-        // workspace state. All other unquoted output redirects can write a
-        // file and therefore invalidate reusable read-only results.
-        if chars.get(index + 1) != Some(&'&') {
+        // Descriptor duplication such as `2>&1` and discarding a stream to
+        // `/dev/null` change routing, not workspace state. Other unquoted
+        // output redirects can write a file and invalidate reusable results.
+        let target = chars[index + 1..].iter().collect::<String>();
+        if chars.get(index + 1) != Some(&'&') && !target.trim_start().starts_with("/dev/null") {
             return true;
         }
     }
@@ -379,7 +390,17 @@ fn has_shell_output_redirection(command: &str) -> bool {
 }
 
 fn looks_like_inline_validation(command: &str) -> bool {
-    let invokes_inline_program = [
+    invokes_inline_program(command)
+        && (command.contains("print(") || command.contains("assert "))
+        && !inline_program_may_mutate(command)
+}
+
+fn looks_like_inline_mutation(command: &str) -> bool {
+    invokes_inline_program(command) && inline_program_may_mutate(command)
+}
+
+fn invokes_inline_program(command: &str) -> bool {
+    [
         "python -c",
         "python3 -c",
         "python - <<",
@@ -388,9 +409,11 @@ fn looks_like_inline_validation(command: &str) -> bool {
         "python3 <<",
     ]
     .iter()
-    .any(|pattern| command.contains(pattern));
-    let reports_a_check = command.contains("print(") || command.contains("assert ");
-    let may_mutate = [
+    .any(|pattern| command.contains(pattern))
+}
+
+fn inline_program_may_mutate(command: &str) -> bool {
+    [
         "open(",
         ".write(",
         "write_text(",
@@ -404,8 +427,7 @@ fn looks_like_inline_validation(command: &str) -> bool {
         "shutil",
     ]
     .iter()
-    .any(|pattern| command.contains(pattern));
-    invokes_inline_program && reports_a_check && !may_mutate
+    .any(|pattern| command.contains(pattern))
 }
 
 fn shell_requires_strict_pipeline(command: &str) -> bool {
@@ -450,14 +472,20 @@ struct GcQualityGate {
     max_first_admission_fraction_bps: u32,
     min_post_admission_provider_calls: usize,
     require_post_admission_archive_read: bool,
+    require_pointer_projection: bool,
+    require_substitutive_projection: bool,
     first_admission_model_step: Option<usize>,
     first_admission_fraction_bps: Option<u32>,
     post_admission_provider_calls: usize,
     post_admission_archive_read_count: usize,
     first_post_admission_archive_read_model_step: Option<usize>,
+    pointer_projection_provider_calls: usize,
+    substitutive_projection_transitions: usize,
     early_admission_passed: bool,
     reuse_window_passed: bool,
     archive_reread_passed: bool,
+    pointer_projection_passed: bool,
+    substitutive_projection_passed: bool,
     passed: bool,
 }
 
@@ -472,6 +500,7 @@ struct HarborAgentReport {
     pointer_gc_checkpoint_batches: usize,
     pgc_effort: usize,
     pgc_continuation_probability_bps: u32,
+    pgc_cached_input_cost_bps: u32,
     pointer_gc_admission_checks: usize,
     pointer_gc_admissions: usize,
     pointer_gc_admission_observations: Vec<PointerGcAdmissionObservation>,
@@ -489,6 +518,7 @@ struct HarborAgentReport {
     cached_input_tokens: u64,
     cache_creation_input_tokens: u64,
     output_tokens: u64,
+    reasoning_output_tokens: u64,
     peak_input_tokens: u64,
     peak_model_input_bytes: usize,
     cache_reset_count: usize,
@@ -572,6 +602,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     runtime.set_pointer_gc_checkpoint_batches(config.checkpoint_batches);
     runtime.set_pointer_gc_effort(config.pgc_effort);
     runtime.set_pointer_gc_continuation_probability_bps(config.pgc_continuation_probability_bps);
+    runtime.set_pointer_gc_cached_input_cost_bps(config.pgc_cached_input_cost_bps);
     runtime.set_pointer_gc_observation_sink(PointerGcPartialRecorder::new(
         config
             .report
@@ -582,6 +613,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         shell_definition(),
         memory_search_definition(),
         memory_read_definition(),
+        runtime_complete_tool_definition(),
     ]);
 
     let started = Instant::now();
@@ -690,7 +722,7 @@ fn build_report(
         .count();
     let gc_quality_gate = build_gc_quality_gate(
         config.strategy,
-        provider_calls.len(),
+        &provider_calls,
         &pointer_gc_admission_observations,
         &auto_hydration_observations,
     );
@@ -709,6 +741,7 @@ fn build_report(
         pointer_gc_checkpoint_batches: config.checkpoint_batches,
         pgc_effort: config.pgc_effort,
         pgc_continuation_probability_bps: config.pgc_continuation_probability_bps,
+        pgc_cached_input_cost_bps: config.pgc_cached_input_cost_bps,
         pointer_gc_admission_checks: pointer_gc_admission_observations.len(),
         pointer_gc_admissions: pointer_gc_admission_observations
             .iter()
@@ -734,6 +767,10 @@ fn build_report(
             .map(|call| call.cache_creation_input_tokens)
             .sum(),
         output_tokens: provider_calls.iter().map(|call| call.output_tokens).sum(),
+        reasoning_output_tokens: provider_calls
+            .iter()
+            .map(|call| call.reasoning_output_tokens)
+            .sum(),
         peak_input_tokens: provider_calls
             .iter()
             .map(|call| call.input_tokens)
@@ -762,7 +799,7 @@ fn build_report(
 
 fn build_gc_quality_gate(
     strategy: Strategy,
-    total_provider_calls: usize,
+    provider_calls: &[ProviderCallObservation],
     admission_observations: &[PointerGcAdmissionObservation],
     hydration_observations: &[AutoHydrationObservation],
 ) -> GcQualityGate {
@@ -775,11 +812,24 @@ fn build_gc_quality_gate(
         .iter()
         .map(|observation| observation.model_step)
         .collect::<Vec<_>>();
+    let pointer_projection_provider_calls = provider_calls
+        .iter()
+        .filter(|call| call.memory_pointer_entries > 0)
+        .count();
+    let substitutive_projection_transitions = provider_calls
+        .windows(2)
+        .filter(|calls| {
+            calls[1].memory_pointer_entries > calls[0].memory_pointer_entries
+                && calls[1].continuation_item_bytes < calls[0].continuation_item_bytes
+        })
+        .count();
     evaluate_gc_quality_gate(
         strategy,
-        total_provider_calls,
+        provider_calls.len(),
         first_admission_model_step,
         &hydration_steps,
+        pointer_projection_provider_calls,
+        substitutive_projection_transitions,
     )
 }
 
@@ -788,6 +838,8 @@ fn evaluate_gc_quality_gate(
     total_provider_calls: usize,
     first_admission_model_step: Option<usize>,
     hydration_steps: &[usize],
+    pointer_projection_provider_calls: usize,
+    substitutive_projection_transitions: usize,
 ) -> GcQualityGate {
     let applicable = strategy == Strategy::Fbgc;
     let first_admission_fraction_bps = first_admission_model_step.and_then(|model_step| {
@@ -821,21 +873,32 @@ fn evaluate_gc_quality_gate(
     let reuse_window_passed =
         applicable && post_admission_provider_calls >= GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS;
     let archive_reread_passed = applicable && post_admission_archive_read_count > 0;
+    let pointer_projection_passed = applicable && pointer_projection_provider_calls > 0;
+    let substitutive_projection_passed = applicable && substitutive_projection_transitions > 0;
 
     GcQualityGate {
         applicable,
         max_first_admission_fraction_bps: GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS,
         min_post_admission_provider_calls: GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS,
-        require_post_admission_archive_read: true,
+        require_post_admission_archive_read: false,
+        require_pointer_projection: true,
+        require_substitutive_projection: true,
         first_admission_model_step,
         first_admission_fraction_bps,
         post_admission_provider_calls,
         post_admission_archive_read_count,
         first_post_admission_archive_read_model_step,
+        pointer_projection_provider_calls,
+        substitutive_projection_transitions,
         early_admission_passed,
         reuse_window_passed,
         archive_reread_passed,
-        passed: early_admission_passed && reuse_window_passed && archive_reread_passed,
+        pointer_projection_passed,
+        substitutive_projection_passed,
+        passed: early_admission_passed
+            && reuse_window_passed
+            && pointer_projection_passed
+            && substitutive_projection_passed,
     }
 }
 
@@ -891,7 +954,7 @@ fn memory_read_definition() -> ToolDefinition {
 
 fn terminal_instruction(instruction: &str) -> String {
     format!(
-        "You are operating inside an isolated Linux task environment. Complete the task using the shell tool. Inspect existing files before editing, preserve task constraints, and run relevant validation. Before invoking any program that might mutate, normalize, checkpoint, or delete an input, make a byte-for-byte backup of the input and all related sidecar files; database clients are not guaranteed to be read-only even for SELECT queries. The shell boundary also creates an automatic safety copy of database inputs at {INPUT_SNAPSHOT_PATH} before the first command; if an original sidecar disappears, immediately restore or analyze its copy there instead of searching the filesystem. Keep commands and output bounded: inspect binary data with targeted byte ranges, metadata, or short scripts instead of dumping whole files. Treat investigation as a budget: after at most twelve read-only shell calls, make the best justified change or create the required deliverable, then test it and iterate from concrete failures. Do not merely explain a solution or spend the whole run investigating: make the required changes in the environment. When the task is complete, return a concise final status.\n\n{instruction}"
+        "You are operating inside an isolated Linux task environment. Complete the task using the shell tool. Inspect existing files before editing, preserve task constraints, and run relevant validation. Before invoking any program that might mutate, normalize, checkpoint, or delete an input, make a byte-for-byte backup of the input and all related sidecar files; database clients are not guaranteed to be read-only even for SELECT queries. The shell boundary also creates an automatic safety copy of database inputs at {INPUT_SNAPSHOT_PATH} before the first command; if an original sidecar disappears, immediately restore or analyze its copy there instead of searching the filesystem. Keep commands and output bounded: inspect binary data with targeted byte ranges, metadata, or short scripts instead of dumping whole files. Treat investigation as a budget: after at most twelve read-only shell calls, make the best justified change or create the required deliverable, then test it and iterate from concrete failures. Do not merely explain a solution or spend the whole run investigating: make the required changes in the environment. After the task requirements and validation are complete, call runtime_complete by itself with a concise final status; do not continue optional investigation.\n\n{instruction}"
     )
 }
 
@@ -932,6 +995,10 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         .map(|value| parse(&value, "PGC_CONTINUATION_PROBABILITY_BPS"))
         .transpose()?
         .unwrap_or(DEFAULT_PGC_CONTINUATION_PROBABILITY_BPS);
+    let mut pgc_cached_input_cost_bps = public_env(["PGC_CACHED_INPUT_COST_BPS"])
+        .map(|value| parse(&value, "PGC_CACHED_INPUT_COST_BPS"))
+        .transpose()?
+        .unwrap_or(DEFAULT_PGC_CACHED_INPUT_COST_BPS);
     let mut thinking_enabled = public_env(["STRUCTURE_THINKING", "THINKING"])
         .map(|value| parse_bool(&value, "STRUCTURE_THINKING"))
         .transpose()?
@@ -957,6 +1024,9 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
                 pgc_continuation_probability_bps =
                     parse(value(&arguments, &mut index, option)?, option)?
             }
+            "--pgc-cached-input-cost-bps" => {
+                pgc_cached_input_cost_bps = parse(value(&arguments, &mut index, option)?, option)?
+            }
             "--thinking" => {
                 thinking_enabled = parse_bool(value(&arguments, &mut index, option)?, option)?
             }
@@ -972,6 +1042,9 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
     }
     if pgc_continuation_probability_bps > 10_000 {
         return Err("PGC continuation probability must be between 0 and 10000 bps".into());
+    }
+    if pgc_cached_input_cost_bps > 10_000 {
+        return Err("PGC cached-input cost must be between 0 and 10000 bps".into());
     }
     Ok(Config {
         strategy: strategy.ok_or("--strategy is required")?,
@@ -1004,6 +1077,7 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         checkpoint_batches,
         pgc_effort,
         pgc_continuation_probability_bps,
+        pgc_cached_input_cost_bps,
         thinking_enabled,
     })
 }
@@ -1068,6 +1142,7 @@ mod tests {
             checkpoint_batches: 4,
             pgc_effort: 1,
             pgc_continuation_probability_bps: 7_500,
+            pgc_cached_input_cost_bps: 0,
             thinking_enabled: false,
         };
         build_report(
@@ -1120,7 +1195,7 @@ mod tests {
             ),
             (
                 "python3 -c \"from pathlib import Path; Path('x').write_text('x'); print('done')\"",
-                ToolInteractionKind::Generic,
+                ToolInteractionKind::Mutation,
             ),
             ("sed -i 's/old/new/' file", ToolInteractionKind::Mutation),
             ("python scripts/generate.py", ToolInteractionKind::Generic),
@@ -1184,6 +1259,27 @@ EOF"#;
     }
 
     #[test]
+    fn shell_classification_protects_real_mutations_not_dev_null_routing() {
+        assert_eq!(
+            classify_shell_interaction(
+                "which sqlite3; sqlite3 --version 2>/dev/null; python3 -c \"import sqlite3; print(sqlite3.sqlite_version)\""
+            ),
+            ToolInteractionKind::Validation
+        );
+        assert_eq!(
+            classify_shell_interaction("cp -a /app/main.db /tmp/main.db.bak && ls -la /tmp"),
+            ToolInteractionKind::Mutation
+        );
+        assert_eq!(
+            classify_shell_interaction(
+                "python3 - <<'EOF'\ndata = open('/tmp/in','rb').read()\nopen('/app/out','wb').write(data)\nprint(len(data))\nEOF"
+            ),
+            ToolInteractionKind::Mutation
+        );
+        assert!(!has_shell_output_redirection("pytest -q 2>/dev/null"));
+    }
+
+    #[test]
     fn strategy_parser_accepts_only_the_experiment_arms() {
         assert_eq!(Strategy::parse("b0").expect("B0 is valid"), Strategy::B0);
         assert_eq!(Strategy::parse("pgc").expect("PGC is valid"), Strategy::Pgc);
@@ -1195,44 +1291,46 @@ EOF"#;
     }
 
     #[test]
-    fn gc_quality_gate_requires_early_gc_reuse_window_and_later_archive_read() {
-        let passed = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(6), &[7]);
+    fn gc_quality_gate_requires_early_reused_and_substitutive_pointer_projection() {
+        let passed = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(6), &[], 5, 2);
         assert_eq!(passed.first_admission_fraction_bps, Some(6_000));
         assert_eq!(passed.post_admission_provider_calls, 5);
-        assert_eq!(passed.post_admission_archive_read_count, 1);
-        assert_eq!(passed.first_post_admission_archive_read_model_step, Some(7));
+        assert_eq!(passed.post_admission_archive_read_count, 0);
+        assert_eq!(passed.first_post_admission_archive_read_model_step, None);
         assert!(passed.early_admission_passed);
         assert!(passed.reuse_window_passed);
-        assert!(passed.archive_reread_passed);
+        assert!(!passed.archive_reread_passed);
+        assert!(passed.pointer_projection_passed);
+        assert!(passed.substitutive_projection_passed);
         assert!(passed.passed);
 
-        let late = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(7), &[8]);
+        let late = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(7), &[8], 4, 1);
         assert_eq!(late.first_admission_fraction_bps, Some(7_000));
         assert!(!late.early_admission_passed);
         assert!(late.reuse_window_passed);
         assert!(late.archive_reread_passed);
         assert!(!late.passed);
 
-        let short = evaluate_gc_quality_gate(Strategy::Fbgc, 5, Some(3), &[4]);
+        let short = evaluate_gc_quality_gate(Strategy::Fbgc, 5, Some(3), &[4], 2, 1);
         assert!(short.early_admission_passed);
         assert_eq!(short.post_admission_provider_calls, 3);
         assert!(!short.reuse_window_passed);
         assert!(short.archive_reread_passed);
         assert!(!short.passed);
 
-        let unread = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(6), &[5, 6]);
-        assert_eq!(unread.post_admission_archive_read_count, 0);
-        assert!(!unread.archive_reread_passed);
-        assert!(!unread.passed);
+        let additive = evaluate_gc_quality_gate(Strategy::Fbgc, 10, Some(6), &[7], 5, 0);
+        assert!(additive.pointer_projection_passed);
+        assert!(!additive.substitutive_projection_passed);
+        assert!(!additive.passed);
     }
 
     #[test]
     fn gc_quality_gate_is_not_applicable_without_file_backed_gc() {
-        let disabled = evaluate_gc_quality_gate(Strategy::B0, 10, Some(2), &[3]);
+        let disabled = evaluate_gc_quality_gate(Strategy::B0, 10, Some(2), &[3], 4, 1);
         assert!(!disabled.applicable);
         assert!(!disabled.passed);
 
-        let missing = evaluate_gc_quality_gate(Strategy::Fbgc, 10, None, &[3]);
+        let missing = evaluate_gc_quality_gate(Strategy::Fbgc, 10, None, &[3], 0, 0);
         assert_eq!(missing.first_admission_fraction_bps, None);
         assert_eq!(missing.post_admission_provider_calls, 0);
         assert_eq!(missing.post_admission_archive_read_count, 0);
@@ -1255,5 +1353,7 @@ EOF"#;
         });
         assert!(completed.terminal_success);
         assert_eq!(completed.final_output.as_deref(), Some("done"));
+        assert_eq!(completed.schema_version, "structure.harbor-agent/v11");
+        assert_eq!(completed.reasoning_output_tokens, 0);
     }
 }

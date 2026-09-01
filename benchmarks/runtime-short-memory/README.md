@@ -273,6 +273,15 @@ external Harbor cancellation preserves the estimated reset cost, weighted
 horizon, and admission reason. B0 and FBGC must use identical model, prompt,
 timeout, task image, and generation settings.
 
+Primary B0/FBGC blocks also assign the same sampling seed to both treatments
+and randomize only their execution order. The frozen primary decision uses
+five repetitions per task. It admits cost evidence only from pairs where both
+arms pass without infrastructure failure, requires at least five such pairs,
+requires the FBGC trajectory gate, applies a 10 percentage-point quality
+non-inferiority margin, and accepts cost improvement only when the geometric
+mean fresh-input reduction is at least 10% and its deterministic
+10,000-resample paired-bootstrap 95% confidence interval excludes no change.
+
 Every Harbor run also retains lossless raw exchanges before any parsing or
 context truncation:
 
@@ -289,7 +298,8 @@ artifacts can still contain task data, prompts, model reasoning fields, and
 tool output, so they belong in the private Harbor job directory under
 `target/` and must not be committed.
 
-Harbor report schema `structure.harbor-agent/v7` adds `gc_quality_gate` for
+Harbor report schema `structure.harbor-agent/v9` includes aggregate reasoning
+output tokens and the `gc_quality_gate` for
 long-task FBGC experiments. The gate passes only when the first admitted GC is
 at or before 60% of the final Provider trajectory, the compacted projection is
 used for at least four Provider calls, and an exact auto-hydration reads an
