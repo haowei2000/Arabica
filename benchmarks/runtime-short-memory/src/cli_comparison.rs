@@ -1,4 +1,4 @@
-//! Controlled, paired comparison harness for PiAgent, Codex CLI, and Structure.
+//! Controlled common-control comparison harness for five native agent stacks.
 //!
 //! The harness keeps model execution opt-in. Planning, validation, preflight,
 //! and summary generation are provider-free. Each paid trial runs in a fresh
@@ -29,8 +29,13 @@ use structure_session::SessionManager;
 use crate::tier_b::{ProviderCallObservation, ProviderRecorder, RecordingProvider};
 
 pub const CLI_COMPARISON_SUITE_SCHEMA: &str = "structure.cli-comparison-suite/2026-08";
-pub const CLI_COMPARISON_MANIFEST_SCHEMA: &str = "structure.cli-comparison-manifest/2026-08-v3";
-pub const CLI_COMPARISON_REPORT_SCHEMA: &str = "structure.cli-comparison-report/2026-08-v3";
+pub const CLI_COMPARISON_MANIFEST_SCHEMA: &str = "structure.cli-comparison-manifest/2026-09-v4";
+pub const CLI_COMPARISON_REPORT_SCHEMA: &str = "structure.cli-comparison-report/2026-09-v4";
+pub const PINNED_CODEX_VERSION: &str = "0.151.0";
+pub const PINNED_PIAGENT_VERSION: &str = "1.6.1";
+pub const PINNED_PIAGENT_REVISION_PREFIX: &str = "4aa91ef";
+pub const PINNED_OPENCODE_VERSION: &str = "1.18.25";
+pub const PINNED_AIDER_VERSION: &str = "0.86.0";
 const MIN_FORMAL_PAIRED_RUNS: usize = 5;
 const COMPARISON_BOOTSTRAP_RESAMPLES: usize = 10_000;
 static PROCESS_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -41,6 +46,8 @@ pub enum CliSurface {
     PiAgent,
     CodexCli,
     Structure,
+    OpenCode,
+    Aider,
     StructureFullReplay,
     StructureShortMemory,
     StructureFileBackedGc,
@@ -52,6 +59,8 @@ impl CliSurface {
             Self::PiAgent => "piagent",
             Self::CodexCli => "codex-cli",
             Self::Structure => "structure",
+            Self::OpenCode => "opencode",
+            Self::Aider => "aider",
             Self::StructureFullReplay => "structure-full-replay",
             Self::StructureShortMemory => "structure-short-memory",
             Self::StructureFileBackedGc => "structure-file-backed-gc",
@@ -73,11 +82,13 @@ impl CliSurface {
             "piagent" => Ok(Self::PiAgent),
             "codex-cli" => Ok(Self::CodexCli),
             "structure" => Ok(Self::Structure),
+            "opencode" => Ok(Self::OpenCode),
+            "aider" => Ok(Self::Aider),
             "structure-full-replay" => Ok(Self::StructureFullReplay),
             "structure-short-memory" => Ok(Self::StructureShortMemory),
             "structure-file-backed-gc" => Ok(Self::StructureFileBackedGc),
             _ => Err(format!(
-                "unknown comparison surface {value}; expected piagent, codex-cli, structure, structure-full-replay, structure-short-memory, or structure-file-backed-gc"
+                "unknown comparison surface {value}; expected piagent, codex-cli, opencode, aider, structure, structure-full-replay, structure-short-memory, or structure-file-backed-gc"
             )),
         }
     }
@@ -193,6 +204,8 @@ pub struct CliComparisonManifest {
     pub seed: u64,
     pub codex_program: String,
     pub pi_program: String,
+    pub opencode_program: String,
+    pub aider_program: String,
     pub piagent_package_root: String,
     #[serde(default)]
     pub provider_base_url: Option<String>,
@@ -211,6 +224,8 @@ pub struct CliComparisonPlan {
     pub seed: u64,
     pub codex_program: String,
     pub pi_program: String,
+    pub opencode_program: String,
+    pub aider_program: String,
     pub piagent_package_root: String,
     pub provider_base_url: Option<String>,
     pub provider_api_key_env: Option<String>,
@@ -236,8 +251,16 @@ pub fn create_cli_comparison_manifest(
     .map_err(|error| format!("invalid suite JSON: {error}"))?;
     suite.validate(suite_root)?;
     let suite_digest = digest_tree(suite_root)?;
-    if plan.surfaces.len() != 2 || plan.surfaces[0] == plan.surfaces[1] {
-        return Err("exactly two distinct comparison surfaces are required".to_owned());
+    let unique_surfaces: BTreeSet<_> = plan.surfaces.iter().copied().collect();
+    let required_count = match plan.benchmark_mode {
+        CliComparisonMode::AgentStack => 5,
+        CliComparisonMode::ContextPolicy => 2,
+    };
+    if plan.surfaces.len() != required_count || unique_surfaces.len() != required_count {
+        return Err(format!(
+            "{} distinct comparison surfaces are required",
+            required_count
+        ));
     }
     validate_mode_surfaces(plan.benchmark_mode, &plan.surfaces)?;
     if plan.surfaces.iter().any(|surface| surface.is_structure())
@@ -251,13 +274,10 @@ pub fn create_cli_comparison_manifest(
     let mut sequence = 0usize;
     for repeat in 1..=plan.repetitions {
         for scenario in &suite.scenarios {
-            let reverse = stable_seed(plan.seed, &scenario.id, repeat) & 1 == 1;
-            let surfaces = if reverse {
-                [plan.surfaces[1], plan.surfaces[0]]
-            } else {
-                [plan.surfaces[0], plan.surfaces[1]]
-            };
-            for surface in surfaces {
+            let rotation = (stable_seed(plan.seed, &scenario.id, 0) as usize + repeat - 1)
+                % plan.surfaces.len();
+            for offset in 0..plan.surfaces.len() {
+                let surface = plan.surfaces[(rotation + offset) % plan.surfaces.len()];
                 sequence += 1;
                 let trial_id = format!("{}-r{repeat:02}-{}", scenario.id, surface.name());
                 trials.push(CliTrial {
@@ -284,6 +304,8 @@ pub fn create_cli_comparison_manifest(
         seed: plan.seed,
         codex_program: plan.codex_program,
         pi_program: plan.pi_program,
+        opencode_program: plan.opencode_program,
+        aider_program: plan.aider_program,
         piagent_package_root: plan.piagent_package_root,
         provider_base_url: plan.provider_base_url,
         provider_api_key_env: plan.provider_api_key_env,
@@ -341,18 +363,25 @@ fn validate_mode_surfaces(mode: CliComparisonMode, surfaces: &[CliSurface]) -> R
     let actual: BTreeSet<_> = surfaces.iter().copied().collect();
     match mode {
         CliComparisonMode::AgentStack => {
-            if actual.len() != 2
-                || actual.iter().any(|surface| {
+            let expected = BTreeSet::from([
+                CliSurface::Structure,
+                CliSurface::CodexCli,
+                CliSurface::PiAgent,
+                CliSurface::OpenCode,
+                CliSurface::Aider,
+            ]);
+            let legacy_pair = actual.len() == 2
+                && !actual.iter().any(|surface| {
                     matches!(
                         surface,
                         CliSurface::StructureFullReplay
                             | CliSurface::StructureShortMemory
                             | CliSurface::StructureFileBackedGc
                     )
-                })
-            {
+                });
+            if actual != expected && !legacy_pair {
                 return Err(
-                    "agent-stack mode requires exactly two distinct native agent surfaces"
+                    "agent-stack mode requires Structure, Codex CLI, PiAgent, OpenCode, and Aider"
                         .to_owned(),
                 );
             }
@@ -389,7 +418,10 @@ pub struct CliPreflightReport {
     pub suite_digest_matches: bool,
     pub codex: ExecutableProbe,
     pub pi: ExecutableProbe,
+    pub opencode: ExecutableProbe,
+    pub aider: ExecutableProbe,
     pub piagent_package_ready: bool,
+    pub piagent_declared_version: Option<String>,
     pub piagent_git_revision: Option<String>,
     pub piagent_git_clean: bool,
     pub piagent_dirty_digest: Option<String>,
@@ -409,6 +441,8 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
         .is_some_and(|digest| digest == manifest.suite_digest);
     let codex = probe(&manifest.codex_program).await;
     let pi = probe(&manifest.pi_program).await;
+    let opencode = probe(&manifest.opencode_program).await;
+    let aider = probe(&manifest.aider_program).await;
     let package_root = Path::new(&manifest.piagent_package_root);
     let piagent_package_ready = [
         "scripts/init-project.sh",
@@ -417,6 +451,15 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
     ]
     .iter()
     .all(|path| package_root.join(path).exists());
+    let piagent_declared_version = std::fs::read(package_root.join("package.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
     let (piagent_git_revision, piagent_git_clean, piagent_dirty_digest) =
         probe_git_checkout(package_root).await;
     let structure_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -440,11 +483,53 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
     if surfaces.contains(&CliSurface::PiAgent) && !pi.available {
         blockers.push("pi-unavailable".to_owned());
     }
+    if surfaces.contains(&CliSurface::PiAgent)
+        && piagent_declared_version.as_deref() != Some(PINNED_PIAGENT_VERSION)
+    {
+        blockers.push("piagent-version-mismatch".to_owned());
+    }
+    if surfaces.contains(&CliSurface::OpenCode) && !opencode.available {
+        blockers.push("opencode-unavailable".to_owned());
+    }
+    if surfaces.contains(&CliSurface::Aider) && !aider.available {
+        blockers.push("aider-unavailable".to_owned());
+    }
+    if surfaces.contains(&CliSurface::CodexCli)
+        && !codex
+            .version
+            .as_deref()
+            .is_some_and(|value| version_matches(value, PINNED_CODEX_VERSION))
+    {
+        blockers.push("codex-cli-version-mismatch".to_owned());
+    }
+    if surfaces.contains(&CliSurface::OpenCode)
+        && !opencode
+            .version
+            .as_deref()
+            .is_some_and(|value| version_matches(value, PINNED_OPENCODE_VERSION))
+    {
+        blockers.push("opencode-version-mismatch".to_owned());
+    }
+    if surfaces.contains(&CliSurface::Aider)
+        && !aider
+            .version
+            .as_deref()
+            .is_some_and(|value| version_matches(value, PINNED_AIDER_VERSION))
+    {
+        blockers.push("aider-version-mismatch".to_owned());
+    }
     if surfaces.contains(&CliSurface::PiAgent) && !piagent_package_ready {
         blockers.push("piagent-package-root-not-ready".to_owned());
     }
     if surfaces.contains(&CliSurface::PiAgent) && !piagent_git_clean {
         blockers.push("piagent-package-root-not-clean".to_owned());
+    }
+    if surfaces.contains(&CliSurface::PiAgent)
+        && !piagent_git_revision
+            .as_deref()
+            .is_some_and(|value| value.starts_with(PINNED_PIAGENT_REVISION_PREFIX))
+    {
+        blockers.push("piagent-revision-mismatch".to_owned());
     }
     if surfaces.iter().any(|surface| surface.is_structure())
         && (manifest.provider_base_url.is_none() || manifest.provider_api_key_env.is_none())
@@ -461,7 +546,10 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
         suite_digest_matches,
         codex,
         pi,
+        opencode,
+        aider,
         piagent_package_ready,
+        piagent_declared_version,
         piagent_git_revision,
         piagent_git_clean,
         piagent_dirty_digest,
@@ -472,6 +560,12 @@ pub async fn preflight_cli_comparison(manifest: &CliComparisonManifest) -> CliPr
         ready: blockers.is_empty(),
         blockers,
     }
+}
+
+fn version_matches(observed: &str, pinned: &str) -> bool {
+    observed
+        .split(|character: char| character.is_whitespace() || character == ',')
+        .any(|token| token == pinned || token == format!("v{pinned}"))
 }
 
 async fn probe(program: &str) -> ExecutableProbe {
@@ -766,6 +860,30 @@ pub async fn run_cli_trial(
             )
             .await?
         }
+        CliSurface::OpenCode => {
+            let env = prepare_external_runtime(manifest, &workspace_root, "opencode")?;
+            run_process(
+                &manifest.opencode_program,
+                &opencode_args(manifest, &prompt),
+                &workspace,
+                None,
+                &env,
+                manifest.timeout_seconds,
+            )
+            .await?
+        }
+        CliSurface::Aider => {
+            let env = prepare_external_runtime(manifest, &workspace_root, "aider")?;
+            run_process(
+                &manifest.aider_program,
+                &aider_args(manifest, &workspace_root, &prompt),
+                &workspace,
+                None,
+                &env,
+                manifest.timeout_seconds,
+            )
+            .await?
+        }
         CliSurface::Structure
         | CliSurface::StructureFullReplay
         | CliSurface::StructureShortMemory
@@ -834,6 +952,8 @@ pub async fn run_cli_trial(
     let usage = match trial.surface {
         CliSurface::CodexCli => parse_codex_usage(&process.stdout),
         CliSurface::PiAgent => parse_pi_usage(&process.stdout),
+        CliSurface::OpenCode => parse_openai_compatible_usage(&process.stdout, "opencode-json"),
+        CliSurface::Aider => parse_aider_usage(&process.stdout, &process.stderr),
         CliSurface::Structure
         | CliSurface::StructureFullReplay
         | CliSurface::StructureShortMemory
@@ -842,6 +962,7 @@ pub async fn run_cli_trial(
     let progress = match trial.surface {
         CliSurface::PiAgent => parse_pi_progress(&process.stdout),
         CliSurface::CodexCli => CliProgressDiagnostics::default(),
+        CliSurface::OpenCode | CliSurface::Aider => CliProgressDiagnostics::default(),
         CliSurface::Structure
         | CliSurface::StructureFullReplay
         | CliSurface::StructureShortMemory
@@ -896,6 +1017,84 @@ fn prepare_codex_runtime(workspace_root: &Path) -> Result<Vec<(String, String)>,
         "CODEX_HOME".to_owned(),
         codex_home.to_string_lossy().into_owned(),
     )])
+}
+
+fn prepare_external_runtime(
+    manifest: &CliComparisonManifest,
+    workspace_root: &Path,
+    agent: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let config_root = workspace_root.join(format!("{agent}-config"));
+    let data_root = workspace_root.join(format!("{agent}-data"));
+    let cache_root = workspace_root.join(format!("{agent}-cache"));
+    for path in [&config_root, &data_root, &cache_root] {
+        std::fs::create_dir(path)
+            .map_err(|error| format!("cannot create isolated {agent} directory: {error}"))?;
+    }
+    let mut environment = vec![
+        (
+            "XDG_CONFIG_HOME".to_owned(),
+            config_root.to_string_lossy().into_owned(),
+        ),
+        (
+            "XDG_DATA_HOME".to_owned(),
+            data_root.to_string_lossy().into_owned(),
+        ),
+        (
+            "XDG_CACHE_HOME".to_owned(),
+            cache_root.to_string_lossy().into_owned(),
+        ),
+        ("NO_COLOR".to_owned(), "1".to_owned()),
+    ];
+    if let (Some(base_url), Some(api_key_env)) =
+        (&manifest.provider_base_url, &manifest.provider_api_key_env)
+    {
+        let api_key = std::env::var(api_key_env)
+            .map_err(|_| format!("provider key environment {api_key_env} is unavailable"))?;
+        environment.push(("OPENAI_BASE_URL".to_owned(), base_url.clone()));
+        environment.push(("OPENAI_API_KEY".to_owned(), api_key));
+    }
+    Ok(environment)
+}
+
+fn opencode_args(manifest: &CliComparisonManifest, prompt: &str) -> Vec<String> {
+    vec![
+        "run".to_owned(),
+        "--format".to_owned(),
+        "json".to_owned(),
+        "--model".to_owned(),
+        manifest.model.clone(),
+        prompt.to_owned(),
+    ]
+}
+
+fn aider_args(
+    manifest: &CliComparisonManifest,
+    workspace_root: &Path,
+    prompt: &str,
+) -> Vec<String> {
+    let model = manifest
+        .model
+        .split_once('/')
+        .map_or(manifest.model.as_str(), |(_, model)| model);
+    vec![
+        "--model".to_owned(),
+        format!("openai/{model}"),
+        "--message".to_owned(),
+        prompt.to_owned(),
+        "--yes-always".to_owned(),
+        "--no-auto-commits".to_owned(),
+        "--no-gitignore".to_owned(),
+        "--no-check-update".to_owned(),
+        "--analytics-disable".to_owned(),
+        "--map-tokens".to_owned(),
+        "0".to_owned(),
+        "--chat-history-file".to_owned(),
+        workspace_root
+            .join("aider-chat-history.md")
+            .to_string_lossy()
+            .into_owned(),
+    ]
 }
 
 fn codex_args(manifest: &CliComparisonManifest, workspace: &Path) -> Vec<String> {
@@ -1127,7 +1326,7 @@ async fn run_structure_trial(
             ShortMemoryPolicy::default(),
             RuntimeCompactionStrategy::Disabled,
         ),
-        CliSurface::PiAgent | CliSurface::CodexCli => {
+        CliSurface::PiAgent | CliSurface::CodexCli | CliSurface::OpenCode | CliSurface::Aider => {
             return Err("non-Structure surface reached Structure runtime".to_owned());
         }
     };
@@ -1496,6 +1695,41 @@ fn parse_pi_usage(bytes: &[u8]) -> CliUsage {
     usage
 }
 
+fn parse_openai_compatible_usage(bytes: &[u8], source: &str) -> CliUsage {
+    let mut usage = CliUsage {
+        source: source.to_owned(),
+        ..CliUsage::default()
+    };
+    for value in json_lines(bytes) {
+        usage.event_count += 1;
+        let observed = value
+            .get("usage")
+            .or_else(|| value.pointer("/part/usage"))
+            .or_else(|| value.pointer("/message/usage"));
+        let Some(observed) = observed else { continue };
+        usage.input_tokens += field(observed, "input_tokens").max(field(observed, "input"));
+        usage.cached_input_tokens +=
+            field(observed, "cached_input_tokens").max(field(observed, "cache_read_input_tokens"));
+        usage.output_tokens += field(observed, "output_tokens").max(field(observed, "output"));
+        usage.reasoning_output_tokens +=
+            field(observed, "reasoning_output_tokens").max(field(observed, "reasoning_tokens"));
+    }
+    usage.cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
+    usage.fresh_input_tokens = usage.input_tokens.saturating_sub(usage.cached_input_tokens);
+    usage.fresh_tokens = usage.fresh_input_tokens.saturating_add(usage.output_tokens);
+    usage
+}
+
+fn parse_aider_usage(stdout: &[u8], stderr: &[u8]) -> CliUsage {
+    let mut combined = stdout.to_vec();
+    combined.extend_from_slice(stderr);
+    let mut usage = parse_openai_compatible_usage(&combined, "aider-output");
+    if usage.event_count == 0 {
+        usage.event_count = combined.split(|byte| *byte == b'\n').count() as u64;
+    }
+    usage
+}
+
 fn parse_pi_progress(bytes: &[u8]) -> CliProgressDiagnostics {
     let mut diagnostics = CliProgressDiagnostics::default();
     let mut consecutive_empty_tool_use = 0u64;
@@ -1599,6 +1833,130 @@ pub struct CliComparisonSummary {
     pub mean_duration_ratio: Option<f64>,
     pub quality_non_inferior: bool,
     pub token_improvement: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct StructureOpponentSummary {
+    pub opponent: CliSurface,
+    pub paired_runs: usize,
+    pub comparable_success_pairs: usize,
+    pub structure_resolved: usize,
+    pub opponent_resolved: usize,
+    pub structure_quality_non_inferior: bool,
+    pub structure_fresh_token_wins: usize,
+    pub opponent_fresh_token_wins: usize,
+    pub geometric_mean_fresh_token_ratio_structure_over_opponent: Option<f64>,
+    pub fresh_token_ratio_ci95_lower_structure_over_opponent: Option<f64>,
+    pub fresh_token_ratio_ci95_upper_structure_over_opponent: Option<f64>,
+    pub structure_token_improvement: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CliMultiAgentSummary {
+    pub benchmark_mode: CliComparisonMode,
+    pub claim_tier: String,
+    pub cost_metric: String,
+    pub comparisons: Vec<StructureOpponentSummary>,
+}
+
+pub fn summarize_cli_multi_agent(
+    manifest: &CliComparisonManifest,
+    reports: &[CliTrialReport],
+) -> Result<CliMultiAgentSummary, String> {
+    manifest.validate()?;
+    let expected = BTreeSet::from([
+        CliSurface::Structure,
+        CliSurface::CodexCli,
+        CliSurface::PiAgent,
+        CliSurface::OpenCode,
+        CliSurface::Aider,
+    ]);
+    let observed_surfaces = manifest
+        .trials
+        .iter()
+        .map(|trial| trial.surface)
+        .collect::<BTreeSet<_>>();
+    if manifest.benchmark_mode != CliComparisonMode::AgentStack || observed_surfaces != expected {
+        return Err("multi-agent summary requires the frozen five-agent manifest".to_owned());
+    }
+    let mut comparisons = Vec::new();
+    for opponent in [
+        CliSurface::CodexCli,
+        CliSurface::PiAgent,
+        CliSurface::OpenCode,
+        CliSurface::Aider,
+    ] {
+        let mut pair_manifest = manifest.clone();
+        pair_manifest.trials.retain(|trial| {
+            matches!(trial.surface, CliSurface::Structure) || trial.surface == opponent
+        });
+        let pair_reports = reports
+            .iter()
+            .filter(|report| {
+                matches!(report.surface, CliSurface::Structure) || report.surface == opponent
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let pair = summarize_cli_comparison(&pair_manifest, &pair_reports)?;
+        let structure_is_a = pair.surface_a == CliSurface::Structure;
+        let ratio = pair
+            .geometric_mean_fresh_token_ratio_a_over_b
+            .map(|value| if structure_is_a { value } else { 1.0 / value });
+        let (ci_lower, ci_upper) = if structure_is_a {
+            (
+                pair.fresh_token_ratio_ci95_lower_a_over_b,
+                pair.fresh_token_ratio_ci95_upper_a_over_b,
+            )
+        } else {
+            (
+                pair.fresh_token_ratio_ci95_upper_a_over_b
+                    .map(|value| 1.0 / value),
+                pair.fresh_token_ratio_ci95_lower_a_over_b
+                    .map(|value| 1.0 / value),
+            )
+        };
+        let structure_resolved = if structure_is_a {
+            pair.surface_a_resolved
+        } else {
+            pair.surface_b_resolved
+        };
+        let opponent_resolved = if structure_is_a {
+            pair.surface_b_resolved
+        } else {
+            pair.surface_a_resolved
+        };
+        let structure_quality_non_inferior = structure_resolved >= opponent_resolved;
+        comparisons.push(StructureOpponentSummary {
+            opponent,
+            paired_runs: pair.paired_runs,
+            comparable_success_pairs: pair.comparable_success_pairs,
+            structure_resolved,
+            opponent_resolved,
+            structure_quality_non_inferior,
+            structure_fresh_token_wins: if structure_is_a {
+                pair.surface_a_fresh_token_wins
+            } else {
+                pair.surface_b_fresh_token_wins
+            },
+            opponent_fresh_token_wins: if structure_is_a {
+                pair.surface_b_fresh_token_wins
+            } else {
+                pair.surface_a_fresh_token_wins
+            },
+            geometric_mean_fresh_token_ratio_structure_over_opponent: ratio,
+            fresh_token_ratio_ci95_lower_structure_over_opponent: ci_lower,
+            fresh_token_ratio_ci95_upper_structure_over_opponent: ci_upper,
+            structure_token_improvement: structure_quality_non_inferior
+                && pair.comparable_success_pairs >= MIN_FORMAL_PAIRED_RUNS
+                && ci_upper.is_some_and(|upper| upper < 1.0),
+        });
+    }
+    Ok(CliMultiAgentSummary {
+        benchmark_mode: manifest.benchmark_mode,
+        claim_tier: manifest.claim_tier.clone(),
+        cost_metric: "fresh_input_plus_output_tokens".to_owned(),
+        comparisons,
+    })
 }
 
 pub fn summarize_cli_comparison(
@@ -2055,6 +2413,8 @@ mod tests {
             seed: 1,
             codex_program: "codex".to_owned(),
             pi_program: "pi".to_owned(),
+            opencode_program: "opencode".to_owned(),
+            aider_program: "aider".to_owned(),
             piagent_package_root: "/tmp/piagent".to_owned(),
             provider_base_url: None,
             provider_api_key_env: None,

@@ -34,17 +34,21 @@ class StructureAgent(BaseAgent):
         pgc_effort: int | None = None,
         pgc_continuation_probability_bps: int | None = None,
         pgc_cached_input_cost_bps: int = 0,
+        pointer_gc_admission_policy: str = "profitability",
         thinking: bool | str | None = None,
         binary_path: str | None = None,
         provider_base_url: str | None = None,
         provider_client_token: str | None = None,
+        provider_client_token_env: str | None = None,
         provider_api_type: str | None = None,
+        terminal_controller: str = "advisory_v18",
+        public_validation_profile: str | None = None,
         **kwargs,
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
         normalized = strategy.upper()
-        if normalized not in {"B0", "PGC", "FBGC"}:
-            raise ValueError("strategy must be B0, PGC, or FBGC")
+        if normalized not in {"B0", "B2", "PGC", "FBGC"}:
+            raise ValueError("strategy must be B0, B2, PGC, or FBGC")
         self.strategy = normalized
         self.max_steps = max_steps
         self.max_tokens = max_tokens
@@ -72,6 +76,15 @@ class StructureAgent(BaseAgent):
         if not 0 <= pgc_cached_input_cost_bps <= 10_000:
             raise ValueError("pgc_cached_input_cost_bps must be between 0 and 10000")
         self.pgc_cached_input_cost_bps = pgc_cached_input_cost_bps
+        if pointer_gc_admission_policy not in {
+            "profitability",
+            "mechanism_qualification",
+        }:
+            raise ValueError(
+                "pointer_gc_admission_policy must be profitability or "
+                "mechanism_qualification"
+            )
+        self.pointer_gc_admission_policy = pointer_gc_admission_policy
         if thinking is None:
             thinking_env = os.environ.get("STRUCTURE_THINKING", "true")
             self.thinking = str(thinking_env).strip().lower() in {
@@ -95,7 +108,29 @@ class StructureAgent(BaseAgent):
         )
         self.provider_base_url = provider_base_url
         self.provider_client_token = provider_client_token
+        self.provider_client_token_env = provider_client_token_env
         self.provider_api_type = provider_api_type
+        if terminal_controller not in {
+            "advisory_v18",
+            "typed_completion_v1",
+            "typed_completion_auto_v1",
+            "typed_completion_auto_v2",
+        }:
+            raise ValueError(
+                "terminal_controller must be advisory_v18, typed_completion_v1, "
+                "typed_completion_auto_v1, or typed_completion_auto_v2"
+            )
+        self.terminal_controller = terminal_controller
+        if public_validation_profile not in {
+            None,
+            "build-cython-ext",
+            "db-wal-recovery",
+        }:
+            raise ValueError(
+                "public_validation_profile must be build-cython-ext, "
+                "db-wal-recovery, or omitted"
+            )
+        self.public_validation_profile = public_validation_profile
 
     def version(self) -> str:
         return "0.1.0"
@@ -138,17 +173,34 @@ class StructureAgent(BaseAgent):
             str(self.pgc_continuation_probability_bps),
             "--pgc-cached-input-cost-bps",
             str(self.pgc_cached_input_cost_bps),
+            "--pointer-gc-admission-policy",
+            self.pointer_gc_admission_policy,
             "--thinking",
             "true" if self.thinking else "false",
+            "--terminal-controller",
+            self.terminal_controller,
         ]
+        if self.public_validation_profile is not None:
+            command.extend(
+                ["--public-validation-profile", self.public_validation_profile]
+            )
         if model:
             command.extend(["--model", model])
 
         process_environment = os.environ.copy()
         if self.provider_base_url is not None:
             process_environment["OPENAI_BASE_URL"] = self.provider_base_url
-        if self.provider_client_token is not None:
-            process_environment["OPENAI_API_KEY"] = self.provider_client_token
+        provider_client_token = self.provider_client_token
+        if self.provider_client_token_env is not None:
+            provider_client_token = process_environment.get(
+                self.provider_client_token_env
+            )
+            if not provider_client_token:
+                raise ValueError(
+                    "configured provider credential environment is missing"
+                )
+        if provider_client_token is not None:
+            process_environment["OPENAI_API_KEY"] = provider_client_token
         if self.provider_api_type is not None:
             process_environment["STRUCTURE_API_TYPE"] = self.provider_api_type
         process = await asyncio.create_subprocess_exec(

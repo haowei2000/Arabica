@@ -7,7 +7,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Baseline, BenchmarkRun, ProjectionMetrics, SyntheticTraceConfig, SyntheticTraceGenerator,
+    Baseline, BenchmarkRun, CompactionProjectionMetrics, ProjectionMetrics, SyntheticTraceConfig,
+    SyntheticTraceGenerator,
 };
 
 /// Configuration for projector-only scaling measurements.
@@ -18,6 +19,10 @@ pub struct ScalingConfig {
     pub measured_iterations: usize,
     pub synthetic: SyntheticTraceConfig,
     pub baselines: Vec<Baseline>,
+    /// Freeze a target-dependent trace shape that keeps at least several
+    /// closed tool batches at small N without causing an inode storm at 100k.
+    #[serde(default = "default_adaptive_chunking")]
+    pub adaptive_chunking: bool,
 }
 
 impl Default for ScalingConfig {
@@ -26,8 +31,12 @@ impl Default for ScalingConfig {
             target_event_counts: vec![100, 1_000, 10_000, 100_000],
             warmup_iterations: 5,
             measured_iterations: 20,
-            synthetic: SyntheticTraceConfig::default(),
+            synthetic: SyntheticTraceConfig {
+                single_run: true,
+                ..SyntheticTraceConfig::default()
+            },
             baselines: Baseline::default_suite(128).expect("default Tail-K is valid"),
+            adaptive_chunking: true,
         }
     }
 }
@@ -47,6 +56,15 @@ impl ScalingReport {
             .iter()
             .all(|sample| sample.correctness_gates_passed)
     }
+
+    /// B1 is an intentionally lossy control. Its window loss is reported but
+    /// does not fail the preregistered deterministic campaign gate.
+    pub fn required_correctness_gates_passed(&self) -> bool {
+        self.samples
+            .iter()
+            .filter(|sample| sample.baseline.id() != "B1")
+            .all(|sample| sample.correctness_gates_passed && sample.mechanism_gate_passed)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -65,12 +83,21 @@ pub struct ScalingSample {
     pub target_event_count: usize,
     pub actual_event_count: usize,
     pub generated_turn_count: usize,
+    pub generated_command_output_chunks_per_tool: usize,
     pub correctness_gates_passed: bool,
+    pub mechanism_gate_passed: bool,
     pub metrics: ProjectionMetrics,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionProjectionMetrics>,
     pub median_projection_ns: u64,
     pub p95_projection_ns: u64,
     pub p99_projection_ns: u64,
     pub median_ns_per_source_event: u64,
+    pub peak_serialized_projection_bytes: usize,
+    /// Maximum resident-set observation while a measured projection was
+    /// alive. This is process-wide and intentionally reported separately
+    /// from the exact serialized projection size.
+    pub peak_observed_process_rss_bytes: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -84,6 +111,17 @@ impl ScalingRunner {
 
         for target_event_count in &config.target_event_counts {
             let mut trace_config = config.synthetic.clone();
+            if config.baselines.iter().any(|baseline| {
+                matches!(
+                    baseline,
+                    Baseline::PointerGc { .. } | Baseline::FileBackedGc { .. }
+                )
+            }) {
+                trace_config.single_run = true;
+            }
+            if config.adaptive_chunking {
+                trace_config.command_output_chunks_per_tool = adaptive_chunks(*target_event_count);
+            }
             trace_config.turn_count = turns_for_target(*target_event_count, &trace_config);
             trace_config.trace_id = format!(
                 "{}-target-{}",
@@ -98,6 +136,21 @@ impl ScalingRunner {
             for baseline in &config.baselines {
                 let gate_run = BenchmarkRun::execute(&trace, baseline.clone())
                     .map_err(|error| ScalingError::new(error.to_string()))?;
+                let mechanism_gate_passed =
+                    gate_run
+                        .projection
+                        .compaction
+                        .as_ref()
+                        .is_none_or(|compaction| {
+                            compaction
+                                .admission
+                                .as_ref()
+                                .is_some_and(|item| item.admitted)
+                                && compaction.archive_count > 0
+                                && compaction.archive_idempotent
+                                && compaction.archive_reopen_verified
+                                && compaction.substitutive_transition
+                        });
                 for _ in 0..config.warmup_iterations {
                     black_box(
                         baseline
@@ -107,12 +160,21 @@ impl ScalingRunner {
                 }
 
                 let mut elapsed_ns = Vec::with_capacity(config.measured_iterations);
+                let mut peak_serialized_projection_bytes = 0usize;
+                let mut peak_observed_process_rss_bytes = None;
                 for _ in 0..config.measured_iterations {
                     let started = Instant::now();
                     let projection = baseline
                         .project_prevalidated(black_box(&trace))
                         .map_err(|error| ScalingError::new(error.to_string()))?;
                     let elapsed = started.elapsed().as_nanos();
+                    peak_serialized_projection_bytes = peak_serialized_projection_bytes
+                        .max(serde_json::to_vec(&projection).map_or(0, |bytes| bytes.len()));
+                    if let Some(rss) = current_process_rss_bytes() {
+                        peak_observed_process_rss_bytes = Some(
+                            peak_observed_process_rss_bytes.map_or(rss, |peak: u64| peak.max(rss)),
+                        );
+                    }
                     black_box(projection);
                     elapsed_ns.push(saturating_u64(elapsed));
                 }
@@ -124,19 +186,25 @@ impl ScalingRunner {
                     target_event_count: *target_event_count,
                     actual_event_count: trace.events.len(),
                     generated_turn_count: trace_config.turn_count,
+                    generated_command_output_chunks_per_tool: trace_config
+                        .command_output_chunks_per_tool,
                     correctness_gates_passed: gate_run.correctness.passed(),
+                    mechanism_gate_passed,
                     metrics: gate_run.metrics,
+                    compaction: gate_run.projection.compaction,
                     median_projection_ns,
                     p95_projection_ns: percentile(&elapsed_ns, 95),
                     p99_projection_ns: percentile(&elapsed_ns, 99),
                     median_ns_per_source_event: median_projection_ns
                         / trace.events.len().max(1) as u64,
+                    peak_serialized_projection_bytes,
+                    peak_observed_process_rss_bytes,
                 });
             }
         }
 
         Ok(ScalingReport {
-            schema_version: "structure.short-memory.scaling/v2".to_owned(),
+            schema_version: "structure.short-memory.scaling/v4".to_owned(),
             environment: ScalingEnvironment {
                 release_mode: !cfg!(debug_assertions),
                 target_arch: std::env::consts::ARCH.to_owned(),
@@ -150,6 +218,19 @@ impl ScalingRunner {
             measured_iterations: config.measured_iterations,
             samples,
         })
+    }
+}
+
+const fn default_adaptive_chunking() -> bool {
+    true
+}
+
+const fn adaptive_chunks(target_event_count: usize) -> usize {
+    match target_event_count {
+        0..=999 => 1,
+        1_000..=9_999 => 8,
+        10_000..=99_999 => 32,
+        _ => 128,
     }
 }
 
@@ -176,12 +257,19 @@ fn validate(config: &ScalingConfig) -> Result<(), ScalingError> {
 }
 
 fn turns_for_target(target_event_count: usize, config: &SyntheticTraceConfig) -> usize {
-    let events_per_turn =
-        4 + config.tool_calls_per_turn * (2 + config.command_output_chunks_per_tool);
-    target_event_count
-        .saturating_sub(1)
-        .div_ceil(events_per_turn)
-        .max(1)
+    let tool_events =
+        (config.tool_calls_per_turn * (2 + config.command_output_chunks_per_tool)).max(1);
+    if config.single_run {
+        target_event_count
+            .saturating_sub(4)
+            .div_ceil(tool_events)
+            .max(1)
+    } else {
+        target_event_count
+            .saturating_sub(1)
+            .div_ceil(4 + tool_events)
+            .max(1)
+    }
 }
 
 fn percentile(sorted: &[u64], percentile: usize) -> u64 {
@@ -202,6 +290,20 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn current_process_rss_bytes() -> Option<u64> {
+    let process_id = std::process::id().to_string();
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &process_id])
+        .output()
+        .ok()?;
+    output.status.success().then_some(())?;
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|kibibytes| kibibytes.saturating_mul(1_024))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -242,10 +344,11 @@ mod tests {
                 ..SyntheticTraceConfig::default()
             },
             baselines: Baseline::default_suite(8).expect("suite is valid"),
+            adaptive_chunking: false,
         })
         .expect("scaling runs");
 
-        assert_eq!(report.samples.len(), 10);
+        assert_eq!(report.samples.len(), 22);
         assert!(
             report
                 .samples
@@ -265,12 +368,13 @@ mod tests {
                 .filter(|sample| sample.baseline.id() == "S")
                 .all(|sample| sample.correctness_gates_passed)
         );
-        assert!(
+        assert_eq!(
             report
                 .samples
                 .iter()
                 .filter(|sample| sample.baseline.id() == "B1")
-                .any(|sample| !sample.correctness_gates_passed)
+                .count(),
+            2
         );
     }
 

@@ -137,6 +137,9 @@ pub enum RunStatus {
 pub enum ToolInteractionKind {
     Inspection,
     Mutation,
+    /// A single ordered runner action that changes state and then validates
+    /// the resulting state before returning successfully.
+    MutationWithValidation,
     Build,
     Dependency,
     Validation,
@@ -152,6 +155,7 @@ pub enum ModelResponseRejectionReason {
     ToolCallsWithoutItem,
     StopWithToolCall,
     EmptyOutput,
+    TerminalControllerViolation,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -159,6 +163,54 @@ pub enum ModelResponseRejectionReason {
 pub enum AgentLoopTerminationReason {
     NoStateProgress,
     ModelStepLimit,
+}
+
+/// Runtime-owned terminal control policy, recorded in canonical Events so
+/// experiments can prove that memory arms used identical control.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalControllerPolicy {
+    #[default]
+    AdvisoryV18,
+    TypedCompletionV1,
+    /// Strict typed completion for Providers that only guarantee
+    /// `tool_choice=auto`. Runtime exposes only `runtime_complete` and adds a
+    /// fixed control message, but never treats the call as Provider-forced.
+    TypedCompletionAutoV1,
+    /// Completion for Providers that only support `tool_choice=auto` and may
+    /// emit assistant text beside one valid function call. The tool call is
+    /// authoritative; co-emitted text is retained as evidence and ignored.
+    TypedCompletionAutoV2,
+}
+
+impl TerminalControllerPolicy {
+    pub const fn is_typed(self) -> bool {
+        matches!(
+            self,
+            Self::TypedCompletionV1 | Self::TypedCompletionAutoV1 | Self::TypedCompletionAutoV2
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalControllerState {
+    Working,
+    CompletionRequired,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalControllerTransitionReason {
+    ValidationSucceeded,
+    StateProgress,
+    ToolError,
+    ProviderError,
+    DeterministicHardStop,
+    CompletionAccepted,
+    CompletionViolation,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -214,6 +266,15 @@ pub enum Event {
         tool_call_count: usize,
         final_output_present: bool,
     },
+    /// Additive audit evidence for the narrow normalization permitted by
+    /// `TypedCompletionAutoV2`. The structured completion call remains the
+    /// only source of terminal success.
+    #[serde(rename = "model.response.normalized")]
+    ModelResponseNormalized {
+        model_step: usize,
+        policy: TerminalControllerPolicy,
+        ignored_assistant_text: bool,
+    },
     #[serde(rename = "tool.call.requested")]
     ToolCallRequested {
         call_id: String,
@@ -259,6 +320,16 @@ pub enum Event {
         reason: AgentLoopTerminationReason,
         consecutive_no_progress_steps: usize,
     },
+    /// Auditable Runtime terminal-controller state. This event is derived only
+    /// from typed Provider and Runner outcomes, never an external verifier.
+    #[serde(rename = "terminal.control.transition")]
+    TerminalControlTransition {
+        model_step: usize,
+        policy: TerminalControllerPolicy,
+        from: TerminalControllerState,
+        to: TerminalControllerState,
+        reason: TerminalControllerTransitionReason,
+    },
     #[serde(rename = "command.output")]
     CommandOutput { stream: OutputStream, chunk: String },
     #[serde(rename = "run.completed")]
@@ -292,6 +363,7 @@ impl Event {
                 | Self::ModelResponseItem { .. }
                 | Self::ModelResponseCompleted { .. }
                 | Self::ModelResponseRejected { .. }
+                | Self::ModelResponseNormalized { .. }
         )
     }
 }

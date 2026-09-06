@@ -8,16 +8,16 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use structure_model::{ContentBlock, ToolCallItem, ToolDefinition, ToolResultItem};
 use structure_protocol::{
-    Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, ToolInteractionKind,
-    WorkspaceId,
+    Command, CommandEnvelope, CommandId, Event, EventEnvelope, RunId, TerminalControllerPolicy,
+    TerminalControllerTransitionReason, ToolInteractionKind, WorkspaceId,
 };
 use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
 use structure_runner::{
     RunnerEnvironment, RunnerError, RunnerOutput, ToolExecutionRequest, ToolExecutionResult,
 };
 use structure_runtime::{
-    AutoHydrationObservation, CoreRuntime, PointerGcAdmissionObservation, PointerGcObservationSink,
-    RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+    AutoHydrationObservation, CoreRuntime, PointerGcAdmissionObservation, PointerGcAdmissionPolicy,
+    PointerGcObservationSink, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
     runtime_complete_tool_definition,
 };
 use structure_session::SessionManager;
@@ -25,7 +25,7 @@ use structure_short_memory_benchmark::{
     ProviderCallObservation, ProviderRecorder, RecordingProvider,
 };
 
-const REPORT_SCHEMA: &str = "structure.harbor-agent/v11";
+const REPORT_SCHEMA: &str = "structure.harbor-agent/v13";
 const DEFAULT_MAX_STEPS: usize = 128;
 const DEFAULT_MAX_TOKENS: u32 = 8_192;
 const DEFAULT_CHECKPOINT_BATCHES: usize = 8;
@@ -35,6 +35,7 @@ const DEFAULT_PGC_CACHED_INPUT_COST_BPS: u32 = 0;
 const GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS: u32 = 6_000;
 const GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS: usize = 4;
 const MAX_TOOL_OUTPUT_CHARS: usize = 8_000;
+const PUBLIC_VALIDATE_TOOL_NAME: &str = "runtime_validate";
 const INPUT_SNAPSHOT_PATH: &str = "/tmp/structure-input-snapshot";
 const INPUT_SNAPSHOT_COMMAND: &str = "set -eu; snapshot=/tmp/structure-input-snapshot; mkdir -p \"$snapshot\"; find /app -maxdepth 1 -type f \\( -name '*.db' -o -name '*.db-*' -o -name '*.sqlite' -o -name '*.sqlite-*' -o -name '*.wal' \\) -exec cp -p {} \"$snapshot\"/ \\;";
 
@@ -42,19 +43,85 @@ const INPUT_SNAPSHOT_COMMAND: &str = "set -eu; snapshot=/tmp/structure-input-sna
 #[serde(rename_all = "UPPERCASE")]
 enum Strategy {
     B0,
+    B2,
     Pgc,
     Fbgc,
     Capc,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum PublicValidationProfile {
+    BuildCythonExt,
+    DbWalRecovery,
+}
+
+impl PublicValidationProfile {
+    fn parse(raw: &str) -> Result<Self, Box<dyn Error>> {
+        match raw {
+            "build-cython-ext" => Ok(Self::BuildCythonExt),
+            "db-wal-recovery" => Ok(Self::DbWalRecovery),
+            _ => Err(format!(
+                "invalid public validation profile {raw}; expected build-cython-ext or db-wal-recovery"
+            )
+            .into()),
+        }
+    }
+
+    fn command(self) -> &'static str {
+        match self {
+            Self::BuildCythonExt => {
+                r#"set -eu
+cd /app/pyknotid
+python3 -B - <<'PY'
+import importlib.machinery
+import numpy
+import re
+from pathlib import Path
+assert numpy.__version__ == '2.3.0', numpy.__version__
+from pyknotid.spacecurves import chelpers, ccomplexity
+from pyknotid import cinvariants
+suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+for module in (chelpers, ccomplexity, cinvariants):
+    assert module.__file__.endswith(suffixes), module.__file__
+deprecated = re.compile(r'\b(?:np|n)\.(?:bool|complex|float|int|object|str)\b')
+for path in Path('pyknotid').rglob('*'):
+    if path.suffix in {'.py', '.pyx', '.pxd'}:
+        assert not deprecated.search(path.read_text(errors='replace')), path
+import pyknotid.make as mk
+import pyknotid.spacecurves as sp
+k = sp.Knot(mk.three_twist(num_points=100))
+k.alexander_polynomial(-1)
+PY
+python3 -m pytest -q tests --ignore=tests/test_random_curves.py --ignore=tests/test_catalogue.py"#
+            }
+            Self::DbWalRecovery => {
+                r#"set -eu
+python3 -B - <<'PY'
+import json
+from pathlib import Path
+path = Path('/app/recovered.json')
+assert path.is_file(), 'missing /app/recovered.json'
+rows = json.loads(path.read_text())
+assert isinstance(rows, list) and len(rows) == 11, len(rows) if isinstance(rows, list) else type(rows)
+assert [row.get('id') for row in rows] == list(range(1, 12))
+assert all(set(row) == {'id', 'name', 'value'} for row in rows)
+assert all(isinstance(row['name'], str) and row['name'] for row in rows)
+PY"#
+            }
+        }
+    }
 }
 
 impl Strategy {
     fn parse(raw: &str) -> Result<Self, Box<dyn Error>> {
         match raw.to_ascii_uppercase().as_str() {
             "B0" => Ok(Self::B0),
+            "B2" => Ok(Self::B2),
             "PGC" => Ok(Self::Pgc),
             "FBGC" | "FILE_BACKED_GC" => Ok(Self::Fbgc),
             "CAPC" => Ok(Self::Capc),
-            _ => Err(format!("invalid strategy {raw}; expected B0, PGC, FBGC, or CAPC").into()),
+            _ => Err(format!("invalid strategy {raw}; expected B0, B2, PGC, FBGC, or CAPC").into()),
         }
     }
 }
@@ -73,7 +140,10 @@ struct Config {
     pgc_effort: usize,
     pgc_continuation_probability_bps: u32,
     pgc_cached_input_cost_bps: u32,
+    pointer_gc_admission_policy: PointerGcAdmissionPolicy,
     thinking_enabled: bool,
+    terminal_controller_policy: TerminalControllerPolicy,
+    public_validation_profile: Option<PublicValidationProfile>,
 }
 
 #[derive(Deserialize)]
@@ -109,6 +179,8 @@ enum BridgeOutput<'a> {
 #[derive(Debug, Default)]
 struct HarborBridgeRunner {
     input_snapshot_initialized: bool,
+    public_validation_profile: Option<PublicValidationProfile>,
+    require_public_validation: bool,
 }
 
 #[derive(Debug)]
@@ -159,6 +231,9 @@ impl HarborBridgeRunner {
 
 impl RunnerEnvironment for HarborBridgeRunner {
     fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
+        if call.name == PUBLIC_VALIDATE_TOOL_NAME && self.public_validation_profile.is_some() {
+            return ToolInteractionKind::Validation;
+        }
         let Some(command) = call
             .arguments
             .get("command")
@@ -173,7 +248,7 @@ impl RunnerEnvironment for HarborBridgeRunner {
         &mut self,
         request: ToolExecutionRequest,
     ) -> Result<ToolExecutionResult, RunnerError> {
-        if request.call.name != "shell" {
+        if request.call.name != "shell" && request.call.name != PUBLIC_VALIDATE_TOOL_NAME {
             return Err(RunnerError::new(format!(
                 "unknown Harbor tool: {}",
                 request.call.name
@@ -212,24 +287,32 @@ impl RunnerEnvironment for HarborBridgeRunner {
             }
             self.input_snapshot_initialized = true;
         }
-        let command = request
-            .call
-            .arguments
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| RunnerError::new("shell.command must be a string"))?;
-        let cwd = request
-            .call
-            .arguments
-            .get("cwd")
-            .and_then(serde_json::Value::as_str);
-        let timeout_sec = request
-            .call
-            .arguments
-            .get("timeout_sec")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(120)
-            .clamp(1, 900);
+        let (command, cwd, timeout_sec) = if request.call.name == PUBLIC_VALIDATE_TOOL_NAME {
+            let profile = self.public_validation_profile.ok_or_else(|| {
+                RunnerError::new("runtime_validate has no configured public validation profile")
+            })?;
+            (profile.command(), Some("/app"), 900)
+        } else {
+            let command = request
+                .call
+                .arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| RunnerError::new("shell.command must be a string"))?;
+            let cwd = request
+                .call
+                .arguments
+                .get("cwd")
+                .and_then(serde_json::Value::as_str);
+            let timeout_sec = request
+                .call
+                .arguments
+                .get("timeout_sec")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(120)
+                .clamp(1, 900);
+            (command, cwd, timeout_sec)
+        };
         let id = request.call.call_id.clone();
         let response = self.exchange(&BridgeOutput::Exec {
             id: &id,
@@ -240,9 +323,9 @@ impl RunnerEnvironment for HarborBridgeRunner {
         })?;
         let BridgeInput::ExecResult {
             id: response_id,
-            stdout,
-            stderr,
-            return_code,
+            mut stdout,
+            mut stderr,
+            mut return_code,
         } = response
         else {
             return Err(RunnerError::new(
@@ -253,6 +336,44 @@ impl RunnerEnvironment for HarborBridgeRunner {
             return Err(RunnerError::new(format!(
                 "bridge result id {response_id} does not match {id}"
             )));
+        }
+
+        let shell_kind =
+            (request.call.name == "shell").then(|| classify_shell_interaction(command));
+        if self.require_public_validation
+            && return_code == 0
+            && shell_kind.is_some_and(tool_interaction_requests_validation)
+        {
+            let profile = self.public_validation_profile.ok_or_else(|| {
+                RunnerError::new("public validation is required but no profile is configured")
+            })?;
+            let public_id = format!("{id}-public-validation");
+            let public = self.exchange(&BridgeOutput::Exec {
+                id: &public_id,
+                command: profile.command(),
+                cwd: Some("/app"),
+                timeout_sec: 900,
+                strict_pipeline: true,
+            })?;
+            let BridgeInput::ExecResult {
+                id: public_response_id,
+                stdout: public_stdout,
+                stderr: public_stderr,
+                return_code: public_return_code,
+            } = public
+            else {
+                return Err(RunnerError::new(
+                    "bridge returned start instead of public validation result",
+                ));
+            };
+            if public_response_id != public_id {
+                return Err(RunnerError::new(format!(
+                    "public validation result id {public_response_id} does not match {public_id}"
+                )));
+            }
+            append_public_validation_output(&mut stdout, public_stdout, "stdout");
+            append_public_validation_output(&mut stderr, public_stderr, "stderr");
+            return_code = public_return_code;
         }
 
         let stdout = truncate_output(stdout.unwrap_or_default());
@@ -282,26 +403,44 @@ impl RunnerEnvironment for HarborBridgeRunner {
     }
 }
 
+fn tool_interaction_requests_validation(kind: ToolInteractionKind) -> bool {
+    matches!(
+        kind,
+        ToolInteractionKind::Validation | ToolInteractionKind::MutationWithValidation
+    )
+}
+
+fn append_public_validation_output(
+    destination: &mut Option<String>,
+    source: Option<String>,
+    stream: &str,
+) {
+    let source = source.unwrap_or_default();
+    let marker = format!("\n[public validation {stream}]\n");
+    destination
+        .get_or_insert_with(String::new)
+        .push_str(&format!("{marker}{source}"));
+}
+
 fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     let command = command.to_ascii_lowercase();
-    if [
-        "pip install",
-        "uv pip",
-        "apt-get install",
-        "npm install",
-        "cargo add",
-    ]
-    .iter()
-    .any(|pattern| command.contains(pattern))
-    {
-        ToolInteractionKind::Dependency
-    } else if has_shell_output_redirection(&command)
-        || looks_like_inline_mutation(&command)
-        || [
+    let dependency_position = last_pattern_position(
+        &command,
+        &[
+            "pip install",
+            "uv pip",
+            "apt-get install",
+            "npm install",
+            "cargo add",
+        ],
+    );
+    let mutation_position = last_command_position(
+        &command,
+        &[
             "sed -i",
             "perl -pi",
             "apply_patch",
-            " tee ",
+            "tee ",
             "touch ",
             "mkdir ",
             "git clone",
@@ -311,27 +450,45 @@ fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
             "chmod ",
             "chown ",
             "ln ",
-        ]
-        .iter()
-        .any(|pattern| command.contains(pattern))
+        ],
+    )
+    .into_iter()
+    .chain(shell_output_redirection_position(&command))
+    .chain(inline_mutation_position(&command))
+    .max();
+    let build_position = (!invokes_inline_program(&command))
+        .then(|| last_pattern_position(&command, &["build_ext", "cargo build", "cmake ", "make "]))
+        .flatten();
+    let validation_position =
+        last_command_position(&command, &["pytest", "cargo test", "npm test", "unittest"])
+            .into_iter()
+            .chain(inline_validation_position(&command))
+            .max();
+    let last_state_change = dependency_position
+        .into_iter()
+        .chain(mutation_position)
+        .chain(build_position)
+        .max();
+
+    // A successful runner result validates the final state only when its last
+    // recognized semantic operation is validation. This covers safe patterns
+    // such as `rm stale && pytest`, while `pytest && rm stale` remains a
+    // mutation that revokes completion eligibility.
+    if matches!((last_state_change, validation_position), (Some(change), Some(check)) if check > change)
     {
+        ToolInteractionKind::MutationWithValidation
+    } else if dependency_position.is_some() {
+        ToolInteractionKind::Dependency
+    } else if mutation_position.is_some() {
         ToolInteractionKind::Mutation
-    } else if looks_like_inline_validation(&command) {
+    } else if validation_position.is_some() {
         // Inspect the executable shape before scanning the embedded program.
         // Inline validation source can legitimately contain strings such as
         // `import package.make as make`, which must not turn a read-only probe
         // into a state-changing build event.
         ToolInteractionKind::Validation
-    } else if ["build_ext", "cargo build", "cmake ", "make "]
-        .iter()
-        .any(|pattern| command.contains(pattern))
-    {
+    } else if build_position.is_some() {
         ToolInteractionKind::Build
-    } else if ["pytest", "cargo test", "npm test", "unittest"]
-        .iter()
-        .any(|pattern| command.contains(pattern))
-    {
-        ToolInteractionKind::Validation
     } else if [
         "cat ",
         "grep ",
@@ -353,7 +510,37 @@ fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
     }
 }
 
+fn last_command_position(command: &str, patterns: &[&str]) -> Option<usize> {
+    patterns
+        .iter()
+        .flat_map(|pattern| command.match_indices(pattern))
+        .filter_map(|(position, pattern)| {
+            let prefix = &command[..position];
+            let trimmed = prefix.trim_end();
+            let command_boundary = trimmed.is_empty()
+                || trimmed.ends_with("&&")
+                || trimmed.ends_with("||")
+                || trimmed.ends_with(';')
+                || trimmed.ends_with('|')
+                || trimmed.ends_with("-m");
+            command_boundary.then_some(position + pattern.len())
+        })
+        .max()
+}
+
+fn last_pattern_position(command: &str, patterns: &[&str]) -> Option<usize> {
+    patterns
+        .iter()
+        .filter_map(|pattern| command.rfind(pattern))
+        .max()
+}
+
+#[cfg(test)]
 fn has_shell_output_redirection(command: &str) -> bool {
+    shell_output_redirection_position(command).is_some()
+}
+
+fn shell_output_redirection_position(command: &str) -> Option<usize> {
     let mut single_quoted = false;
     let mut double_quoted = false;
     let mut escaped = false;
@@ -383,51 +570,73 @@ fn has_shell_output_redirection(command: &str) -> bool {
         // output redirects can write a file and invalidate reusable results.
         let target = chars[index + 1..].iter().collect::<String>();
         if chars.get(index + 1) != Some(&'&') && !target.trim_start().starts_with("/dev/null") {
-            return true;
+            return Some(index);
         }
     }
-    false
+    None
 }
 
-fn looks_like_inline_validation(command: &str) -> bool {
+fn inline_validation_position(command: &str) -> Option<usize> {
     invokes_inline_program(command)
-        && (command.contains("print(") || command.contains("assert "))
-        && !inline_program_may_mutate(command)
-}
-
-fn looks_like_inline_mutation(command: &str) -> bool {
-    invokes_inline_program(command) && inline_program_may_mutate(command)
+        .then(|| {
+            last_pattern_position(
+                command,
+                &[
+                    "assert ",
+                    "raise assertionerror",
+                    "sys.exit(1)",
+                    "sys.exit(false)",
+                ],
+            )
+        })
+        .flatten()
 }
 
 fn invokes_inline_program(command: &str) -> bool {
-    [
-        "python -c",
-        "python3 -c",
-        "python - <<",
-        "python3 - <<",
-        "python <<",
-        "python3 <<",
-    ]
-    .iter()
-    .any(|pattern| command.contains(pattern))
+    (command.contains("python ") || command.contains("python3 "))
+        && (command.contains(" -c") || command.contains("<<"))
 }
 
-fn inline_program_may_mutate(command: &str) -> bool {
-    [
-        "open(",
-        ".write(",
-        "write_text(",
-        "write_bytes(",
-        "unlink(",
-        "remove(",
-        "rename(",
-        "mkdir(",
-        "subprocess",
-        "os.system",
-        "shutil",
-    ]
-    .iter()
-    .any(|pattern| command.contains(pattern))
+fn inline_mutation_position(command: &str) -> Option<usize> {
+    if !invokes_inline_program(command) {
+        return None;
+    }
+    let mut position = last_pattern_position(
+        command,
+        &[
+            ".write(",
+            "write_text(",
+            "write_bytes(",
+            "unlink(",
+            "remove(",
+            "rename(",
+            "mkdir(",
+            "subprocess",
+            "os.system",
+            "shutil",
+        ],
+    );
+    // `open(path)` and `open(path, 'rb')` are read-only. Only an explicit
+    // write-capable mode makes open itself a mutation marker.
+    let mut search_from = 0;
+    while let Some(relative) = command[search_from..].find("open(") {
+        let start = search_from + relative;
+        let end = command[start..]
+            .find(')')
+            .map_or(command.len(), |offset| start + offset);
+        let call = &command[start..end];
+        if ["'w", "\"w", "'a", "\"a", "'x", "\"x", "'r+", "\"r+"]
+            .iter()
+            .any(|mode| call.contains(mode))
+        {
+            position = Some(position.map_or(start, |current| current.max(start)));
+        }
+        search_from = end.saturating_add(1);
+        if search_from >= command.len() {
+            break;
+        }
+    }
+    position
 }
 
 fn shell_requires_strict_pipeline(command: &str) -> bool {
@@ -449,7 +658,7 @@ fn shell_requires_strict_pipeline(command: &str) -> bool {
     ]
     .iter()
     .any(|pattern| command.contains(pattern))
-        || looks_like_inline_validation(&command)
+        || inline_validation_position(&command).is_some()
 }
 
 fn truncate_output(value: String) -> String {
@@ -493,11 +702,14 @@ struct GcQualityGate {
 struct HarborAgentReport {
     schema_version: &'static str,
     strategy: Strategy,
+    terminal_controller_policy: TerminalControllerPolicy,
+    public_validation_profile: Option<PublicValidationProfile>,
     model: String,
     api_type: ApiType,
     compaction_strategy: RuntimeCompactionStrategy,
     pointer_gc_enabled: bool,
     pointer_gc_checkpoint_batches: usize,
+    pointer_gc_admission_policy: PointerGcAdmissionPolicy,
     pgc_effort: usize,
     pgc_continuation_probability_bps: u32,
     pgc_cached_input_cost_bps: u32,
@@ -511,6 +723,7 @@ struct HarborAgentReport {
     max_model_steps: usize,
     elapsed_ms: u64,
     terminal_success: bool,
+    terminal_event_valid: bool,
     final_output: Option<String>,
     provider_calls: Vec<ProviderCallObservation>,
     input_tokens: u64,
@@ -573,6 +786,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             ShortMemoryPolicy::full_replay(),
             RuntimeCompactionStrategy::Disabled,
         ),
+        Strategy::B2 => (
+            ShortMemoryPolicy::ttl_only(),
+            RuntimeCompactionStrategy::Disabled,
+        ),
         Strategy::Pgc => (
             ShortMemoryPolicy::ttl_only(),
             RuntimeCompactionStrategy::PointerGc,
@@ -593,7 +810,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .join("runtime-memory");
     let mut runtime = CoreRuntime::with_memory_configuration(
         RecordingProvider::new(provider, recorder.clone()),
-        HarborBridgeRunner::default(),
+        HarborBridgeRunner {
+            input_snapshot_initialized: false,
+            public_validation_profile: config.public_validation_profile,
+            require_public_validation: config.terminal_controller_policy.is_typed()
+                && config.public_validation_profile.is_some(),
+        },
         policy,
         false,
         RuntimeArchiveStore::File { root: archive_root },
@@ -603,18 +825,24 @@ async fn run() -> Result<(), Box<dyn Error>> {
     runtime.set_pointer_gc_effort(config.pgc_effort);
     runtime.set_pointer_gc_continuation_probability_bps(config.pgc_continuation_probability_bps);
     runtime.set_pointer_gc_cached_input_cost_bps(config.pgc_cached_input_cost_bps);
+    runtime.set_pointer_gc_admission_policy(config.pointer_gc_admission_policy);
     runtime.set_pointer_gc_observation_sink(PointerGcPartialRecorder::new(
         config
             .report
             .with_file_name("pointer-gc-admissions.partial.json"),
     ));
     runtime.set_max_model_steps_per_run(config.max_steps);
-    runtime.set_tools(vec![
+    runtime.set_terminal_controller_policy(config.terminal_controller_policy);
+    let mut tools = vec![
         shell_definition(),
         memory_search_definition(),
         memory_read_definition(),
         runtime_complete_tool_definition(),
-    ]);
+    ];
+    if config.terminal_controller_policy.is_typed() && config.public_validation_profile.is_some() {
+        tools.push(public_validation_definition());
+    }
+    runtime.set_tools(tools);
 
     let started = Instant::now();
     let mut manager = SessionManager::new(runtime);
@@ -639,7 +867,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 CommandId::new("harbor-task"),
                 Some(session_id),
                 Command::MessageSend {
-                    content: terminal_instruction(&instruction),
+                    content: terminal_instruction(
+                        &instruction,
+                        config.terminal_controller_policy.is_typed()
+                            && config.public_validation_profile.is_some(),
+                    ),
                 },
             ))
             .await?,
@@ -687,6 +919,18 @@ fn build_report(
     }) && !events
         .iter()
         .any(|event| matches!(event.event, Event::RunFailed { .. }));
+    let typed_completion_accepted = events.iter().any(|event| {
+        matches!(
+            event.event,
+            Event::TerminalControlTransition {
+                reason: TerminalControllerTransitionReason::CompletionAccepted,
+                ..
+            }
+        )
+    });
+    let terminal_event_valid = terminal_success
+        && (config.terminal_controller_policy == TerminalControllerPolicy::AdvisoryV18
+            || typed_completion_accepted);
     let tool_calls = events
         .iter()
         .filter(|event| matches!(event.event, Event::ToolCallRequested { .. }))
@@ -729,16 +973,19 @@ fn build_report(
     HarborAgentReport {
         schema_version: REPORT_SCHEMA,
         strategy: config.strategy,
+        terminal_controller_policy: config.terminal_controller_policy,
+        public_validation_profile: config.public_validation_profile,
         model: config.model.clone(),
         api_type: config.api_type,
         compaction_strategy: match config.strategy {
-            Strategy::B0 => RuntimeCompactionStrategy::Disabled,
+            Strategy::B0 | Strategy::B2 => RuntimeCompactionStrategy::Disabled,
             Strategy::Pgc => RuntimeCompactionStrategy::PointerGc,
             Strategy::Fbgc => RuntimeCompactionStrategy::FileBackedGc,
             Strategy::Capc => RuntimeCompactionStrategy::Disabled,
         },
         pointer_gc_enabled: matches!(config.strategy, Strategy::Pgc | Strategy::Fbgc),
         pointer_gc_checkpoint_batches: config.checkpoint_batches,
+        pointer_gc_admission_policy: config.pointer_gc_admission_policy,
         pgc_effort: config.pgc_effort,
         pgc_continuation_probability_bps: config.pgc_continuation_probability_bps,
         pgc_cached_input_cost_bps: config.pgc_cached_input_cost_bps,
@@ -758,6 +1005,7 @@ fn build_report(
         max_model_steps: config.max_steps,
         elapsed_ms: saturating_u64(started.elapsed().as_millis()),
         terminal_success,
+        terminal_event_valid,
         final_output,
         input_tokens,
         uncached_input_tokens: input_tokens.saturating_sub(cached_input_tokens),
@@ -920,6 +1168,20 @@ fn shell_definition() -> ToolDefinition {
     }
 }
 
+fn public_validation_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: PUBLIC_VALIDATE_TOOL_NAME.to_owned(),
+        description: "Run the frozen public validation for this benchmark task. This is the only validation that grants typed completion eligibility. Fix any reported failure, then invoke this tool again."
+            .to_owned(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        strict: Some(true),
+    }
+}
+
 fn memory_search_definition() -> ToolDefinition {
     ToolDefinition {
         name: "memory_search".to_owned(),
@@ -952,9 +1214,14 @@ fn memory_read_definition() -> ToolDefinition {
     }
 }
 
-fn terminal_instruction(instruction: &str) -> String {
+fn terminal_instruction(instruction: &str, require_public_validation: bool) -> String {
+    let validation_instruction = if require_public_validation {
+        " Run your own focused checks while working. Every successful validation shell command is automatically followed by the same frozen public validation, so a successful validation result grants completion eligibility only when that public check also passes. You may also call runtime_validate with no arguments to run it directly."
+    } else {
+        ""
+    };
     format!(
-        "You are operating inside an isolated Linux task environment. Complete the task using the shell tool. Inspect existing files before editing, preserve task constraints, and run relevant validation. Before invoking any program that might mutate, normalize, checkpoint, or delete an input, make a byte-for-byte backup of the input and all related sidecar files; database clients are not guaranteed to be read-only even for SELECT queries. The shell boundary also creates an automatic safety copy of database inputs at {INPUT_SNAPSHOT_PATH} before the first command; if an original sidecar disappears, immediately restore or analyze its copy there instead of searching the filesystem. Keep commands and output bounded: inspect binary data with targeted byte ranges, metadata, or short scripts instead of dumping whole files. Treat investigation as a budget: after at most twelve read-only shell calls, make the best justified change or create the required deliverable, then test it and iterate from concrete failures. Do not merely explain a solution or spend the whole run investigating: make the required changes in the environment. After the task requirements and validation are complete, call runtime_complete by itself with a concise final status; do not continue optional investigation.\n\n{instruction}"
+        "You are operating inside an isolated Linux task environment. Complete the task using the shell tool. Inspect existing files before editing, preserve task constraints, and run relevant validation. Before invoking any program that might mutate, normalize, checkpoint, or delete an input, make a byte-for-byte backup of the input and all related sidecar files; database clients are not guaranteed to be read-only even for SELECT queries. The shell boundary also creates an automatic safety copy of database inputs at {INPUT_SNAPSHOT_PATH} before the first command; if an original sidecar disappears, immediately restore or analyze its copy there instead of searching the filesystem. Keep commands and output bounded: inspect binary data with targeted byte ranges, metadata, or short scripts instead of dumping whole files. Treat investigation as a budget: after at most twelve read-only shell calls, make the best justified change or create the required deliverable, then test it and iterate from concrete failures. Do not merely explain a solution or spend the whole run investigating: make the required changes in the environment.{validation_instruction} After the task requirements and validation are complete, call runtime_complete by itself with a concise final status; do not continue optional investigation.\n\n{instruction}"
     )
 }
 
@@ -999,10 +1266,13 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         .map(|value| parse(&value, "PGC_CACHED_INPUT_COST_BPS"))
         .transpose()?
         .unwrap_or(DEFAULT_PGC_CACHED_INPUT_COST_BPS);
+    let mut pointer_gc_admission_policy = PointerGcAdmissionPolicy::Profitability;
     let mut thinking_enabled = public_env(["STRUCTURE_THINKING", "THINKING"])
         .map(|value| parse_bool(&value, "STRUCTURE_THINKING"))
         .transpose()?
         .unwrap_or(true);
+    let mut terminal_controller_policy = TerminalControllerPolicy::AdvisoryV18;
+    let mut public_validation_profile = None;
     let mut index = 0;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -1027,8 +1297,39 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
             "--pgc-cached-input-cost-bps" => {
                 pgc_cached_input_cost_bps = parse(value(&arguments, &mut index, option)?, option)?
             }
+            "--pointer-gc-admission-policy" => {
+                pointer_gc_admission_policy = match value(&arguments, &mut index, option)? {
+                    "profitability" => PointerGcAdmissionPolicy::Profitability,
+                    "mechanism_qualification" => PointerGcAdmissionPolicy::MechanismQualification,
+                    value => {
+                        return Err(format!(
+                            "invalid PointerGC admission policy {value}; expected profitability or mechanism_qualification"
+                        )
+                        .into());
+                    }
+                }
+            }
             "--thinking" => {
                 thinking_enabled = parse_bool(value(&arguments, &mut index, option)?, option)?
+            }
+            "--terminal-controller" => {
+                terminal_controller_policy = match value(&arguments, &mut index, option)? {
+                    "advisory_v18" => TerminalControllerPolicy::AdvisoryV18,
+                    "typed_completion_v1" => TerminalControllerPolicy::TypedCompletionV1,
+                    "typed_completion_auto_v1" => TerminalControllerPolicy::TypedCompletionAutoV1,
+                    "typed_completion_auto_v2" => TerminalControllerPolicy::TypedCompletionAutoV2,
+                    value => {
+                        return Err(format!(
+                            "invalid terminal controller {value}; expected advisory_v18, typed_completion_v1, typed_completion_auto_v1, or typed_completion_auto_v2"
+                        )
+                        .into());
+                    }
+                }
+            }
+            "--public-validation-profile" => {
+                public_validation_profile = Some(PublicValidationProfile::parse(value(
+                    &arguments, &mut index, option,
+                )?)?)
             }
             "--no-thinking" => thinking_enabled = false,
             _ => return Err(format!("unknown option {option}").into()),
@@ -1078,7 +1379,10 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         pgc_effort,
         pgc_continuation_probability_bps,
         pgc_cached_input_cost_bps,
+        pointer_gc_admission_policy,
         thinking_enabled,
+        terminal_controller_policy,
+        public_validation_profile,
     })
 }
 
@@ -1143,7 +1447,10 @@ mod tests {
             pgc_effort: 1,
             pgc_continuation_probability_bps: 7_500,
             pgc_cached_input_cost_bps: 0,
+            pointer_gc_admission_policy: PointerGcAdmissionPolicy::Profitability,
             thinking_enabled: false,
+            terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
+            public_validation_profile: None,
         };
         build_report(
             &config,
@@ -1190,7 +1497,7 @@ mod tests {
             ),
             ("pytest -q", ToolInteractionKind::Validation),
             (
-                "python3 -c \"import package; print('Result:', package.check())\"",
+                "python3 -c \"import package; assert package.check()\"",
                 ToolInteractionKind::Validation,
             ),
             (
@@ -1202,6 +1509,87 @@ mod tests {
         ] {
             assert_eq!(classify_shell_interaction(command), expected, "{command}");
         }
+    }
+
+    #[test]
+    fn shell_classification_uses_command_boundaries_not_argument_substrings() {
+        assert_eq!(
+            classify_shell_interaction(
+                "pip install --no-cache-dir setuptools wheel 'cython<3.1' pytest"
+            ),
+            ToolInteractionKind::Dependency
+        );
+        assert_eq!(
+            classify_shell_interaction("grep -rln TODO /app"),
+            ToolInteractionKind::Inspection
+        );
+        assert_eq!(
+            classify_shell_interaction("pip install pytest && python -m pytest -q"),
+            ToolInteractionKind::MutationWithValidation
+        );
+    }
+
+    #[test]
+    fn typed_harbor_runner_routes_validation_through_the_public_hook() {
+        let runner = HarborBridgeRunner {
+            input_snapshot_initialized: false,
+            public_validation_profile: Some(PublicValidationProfile::BuildCythonExt),
+            require_public_validation: true,
+        };
+        let call = |name: &str, arguments| ToolCallItem {
+            id: None,
+            call_id: "call-1".to_owned(),
+            name: name.to_owned(),
+            arguments,
+            provider_state: None,
+        };
+        assert_eq!(
+            runner.classify(&call("shell", serde_json::json!({"command": "pytest -q"}))),
+            ToolInteractionKind::Validation
+        );
+        assert_eq!(
+            runner.classify(&call(PUBLIC_VALIDATE_TOOL_NAME, serde_json::json!({}))),
+            ToolInteractionKind::Validation
+        );
+        assert!(tool_interaction_requests_validation(
+            ToolInteractionKind::MutationWithValidation
+        ));
+        assert!(!tool_interaction_requests_validation(
+            ToolInteractionKind::Dependency
+        ));
+    }
+
+    #[test]
+    fn read_only_inline_validation_and_ordered_pipelines_preserve_final_semantics() {
+        let read_only = r#"python3 -B - <<'EOF'
+import json
+data = json.load(open('/app/recovered.json'))
+blob = open('/app/main.db', 'rb').read()
+assert len(data) == 11 and blob
+EOF"#;
+        assert_eq!(
+            classify_shell_interaction(read_only),
+            ToolInteractionKind::Validation
+        );
+
+        let sandbox_copy = r#"python3 -c "
+import json, sqlite3, shutil
+shutil.copytree('/app', '/tmp/validation', dirs_exist_ok=True)
+rows = sqlite3.connect('/tmp/validation/main.db').execute('select 1').fetchall()
+assert json.load(open('/app/recovered.json')) and rows
+""#;
+        assert_eq!(
+            classify_shell_interaction(sandbox_copy),
+            ToolInteractionKind::MutationWithValidation
+        );
+        assert_eq!(
+            classify_shell_interaction("rm -f stale && pytest -q"),
+            ToolInteractionKind::MutationWithValidation
+        );
+        assert_eq!(
+            classify_shell_interaction("pytest -q && rm -f stale"),
+            ToolInteractionKind::Mutation
+        );
     }
 
     #[test]
@@ -1221,7 +1609,8 @@ mod tests {
     fn inline_validation_source_does_not_match_build_substrings() {
         let command = r#"cd /app/pyknotid && python3 -c "
 import pyknotid.make as mk
-print(mk.three_twist(num_points=100))
+result = mk.three_twist(num_points=100)
+assert result is not None
 " 2>&1"#;
 
         assert_eq!(
@@ -1234,7 +1623,7 @@ print(mk.three_twist(num_points=100))
     fn python_heredoc_without_dash_is_classified_as_validation() {
         let command = r#"cd /app/pyknotid && python3 << 'EOF'
 import planarity
-print(planarity.PGraph())
+assert planarity.PGraph() is not None
 EOF"#;
 
         assert_eq!(
@@ -1264,7 +1653,7 @@ EOF"#;
             classify_shell_interaction(
                 "which sqlite3; sqlite3 --version 2>/dev/null; python3 -c \"import sqlite3; print(sqlite3.sqlite_version)\""
             ),
-            ToolInteractionKind::Validation
+            ToolInteractionKind::Generic
         );
         assert_eq!(
             classify_shell_interaction("cp -a /app/main.db /tmp/main.db.bak && ls -la /tmp"),
@@ -1280,8 +1669,21 @@ EOF"#;
     }
 
     #[test]
+    fn inline_version_probe_does_not_arm_typed_completion() {
+        assert_eq!(
+            classify_shell_interaction("python3 -c \"import numpy; print(numpy.__version__)\""),
+            ToolInteractionKind::Generic
+        );
+        assert_eq!(
+            classify_shell_interaction("python3 -c \"import numpy; assert numpy.__version__\""),
+            ToolInteractionKind::Validation
+        );
+    }
+
+    #[test]
     fn strategy_parser_accepts_only_the_experiment_arms() {
         assert_eq!(Strategy::parse("b0").expect("B0 is valid"), Strategy::B0);
+        assert_eq!(Strategy::parse("b2").expect("B2 is valid"), Strategy::B2);
         assert_eq!(Strategy::parse("pgc").expect("PGC is valid"), Strategy::Pgc);
         assert_eq!(
             Strategy::parse("fbgc").expect("FBGC is valid"),
@@ -1353,7 +1755,7 @@ EOF"#;
         });
         assert!(completed.terminal_success);
         assert_eq!(completed.final_output.as_deref(), Some("done"));
-        assert_eq!(completed.schema_version, "structure.harbor-agent/v11");
+        assert_eq!(completed.schema_version, "structure.harbor-agent/v13");
         assert_eq!(completed.reasoning_output_tokens, 0);
     }
 }

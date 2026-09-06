@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 
-use structure_short_memory_benchmark::{LongHorizonManifest, TrialLedgerEntry, summarize_primary};
+use structure_short_memory_benchmark::{
+    ExperimentPhase, LongHorizonArm, LongHorizonManifest, TrialLedgerEntry,
+    summarize_core_ablation, summarize_primary, summarize_qualification,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -20,8 +23,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             let model = required(&args, "--model")?.to_owned();
             let mut manifest = match required(&args, "--phase")? {
                 "qualification" => LongHorizonManifest::qualification(seed, provider, model),
-                "primary" => LongHorizonManifest::paired_primary(tasks, seed, provider, model),
-                "replication" => LongHorizonManifest::anthropic_replication(tasks, seed, model),
+                "primary" => LongHorizonManifest::core_primary(tasks, seed, provider, model),
+                "replication" => LongHorizonManifest::cross_model_confirmation(
+                    tasks, seed, provider, model,
+                ),
                 _ => return Err("--phase must be qualification, primary, or replication".into()),
             };
             manifest.thinking_enabled = optional(&args, "--thinking-enabled")
@@ -51,15 +56,56 @@ fn main() -> Result<(), Box<dyn Error>> {
             manifest.cached_input_cost_bps = optional(&args, "--cached-input-cost-bps")
                 .unwrap_or("0")
                 .parse()?;
+            manifest.price_weighting_auditable = optional(
+                &args,
+                "--price-weighting-auditable",
+            )
+            .unwrap_or("false")
+            .parse()?;
+            manifest.price_weighting_source = optional(&args, "--price-weighting-source")
+                .map(str::to_owned);
             manifest.validate()?;
+            if output.exists() {
+                return Err(format!("refusing to overwrite {}", output.display()).into());
+            }
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(output, serde_json::to_vec_pretty(&manifest)?)?;
         }
         Some("summarize") => {
             let manifest: LongHorizonManifest = serde_json::from_slice(&fs::read(required(&args, "--manifest")?)?)?;
             let ledger: Vec<TrialLedgerEntry> = serde_json::from_slice(&fs::read(required(&args, "--ledger")?)?)?;
-            println!("{}", serde_json::to_string_pretty(&summarize_primary(&manifest, &ledger)?)?);
+            let qualification = manifest
+                .trials
+                .iter()
+                .any(|trial| trial.phase == ExperimentPhase::Qualification);
+            let summary = if qualification {
+                serde_json::to_value(summarize_qualification(&manifest, &ledger)?)?
+            } else if manifest
+                .trials
+                .iter()
+                .any(|trial| trial.arm == LongHorizonArm::B2)
+            {
+                serde_json::to_value(summarize_core_ablation(&manifest, &ledger)?)?
+            } else {
+                serde_json::to_value(summarize_primary(&manifest, &ledger)?)?
+            };
+            let encoded = serde_json::to_vec_pretty(&summary)?;
+            if let Some(output) = optional(&args, "--output") {
+                let output = PathBuf::from(output);
+                if output.exists() {
+                    return Err(format!("refusing to overwrite {}", output.display()).into());
+                }
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(output, encoded)?;
+            } else {
+                println!("{}", String::from_utf8(encoded)?);
+            }
         }
-        _ => return Err("usage: long_horizon_experiment plan --phase qualification|primary|replication --output FILE [--tasks A,B,C] --seed N --provider NAME --model NAME [--thinking-enabled true|false] [--max-output-tokens N] [--max-model-steps N] [--timeout-seconds N] [--checkpoint-batches N] [--compaction-effort N] [--continuation-probability-bps N] [--cached-input-cost-bps N] | summarize --manifest FILE --ledger FILE".into()),
+        _ => return Err("usage: long_horizon_experiment plan --phase qualification|primary|replication --output FILE [--tasks A,B,C] --seed N --provider NAME --model NAME [--thinking-enabled true|false] [--max-output-tokens N] [--max-model-steps N] [--timeout-seconds N] [--checkpoint-batches N] [--compaction-effort N] [--continuation-probability-bps N] [--cached-input-cost-bps N] [--price-weighting-auditable true|false] [--price-weighting-source TEXT] | summarize --manifest FILE --ledger FILE [--output FILE]".into()),
     }
     Ok(())
 }

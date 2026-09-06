@@ -8,7 +8,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::Client;
 use serde::de::DeserializeOwned;
@@ -20,6 +20,9 @@ use structure_model::{
     ShortMemoryItem, ToolCallItem, ToolChoice, ToolDefinition,
 };
 use structure_protocol::{ContextEntry, DisclosureLevel, RunId, SessionId};
+
+const TRANSIENT_SEND_ATTEMPTS: usize = 3;
+const TRANSIENT_RETRY_BASE_DELAY_MS: u64 = 250;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelRunRequest {
@@ -504,29 +507,77 @@ impl ModelProvider for OpenAiModelProvider {
                 ProviderError::new(format!("OpenAI request serialization failed: {error}"))
             })?;
             let raw_exchange = self.begin_raw_exchange(&run_id, &request_body)?;
-            let response = self
-                .client
-                .post(self.endpoint())
-                .bearer_auth(&self.config.api_key)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(request_body)
-                .send()
-                .await;
+            let mut transient_errors = Vec::new();
+            let mut response = None;
+            for attempt in 1..=TRANSIENT_SEND_ATTEMPTS {
+                match self
+                    .client
+                    .post(self.endpoint())
+                    .bearer_auth(&self.config.api_key)
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(request_body.clone())
+                    .send()
+                    .await
+                {
+                    Ok(value) => {
+                        response = Some(value);
+                        break;
+                    }
+                    Err(error)
+                        if attempt < TRANSIENT_SEND_ATTEMPTS
+                            && (error.is_connect() || error.is_timeout()) =>
+                    {
+                        transient_errors.push(RawExchangeError {
+                            stage: "send_retry",
+                            message: error.to_string(),
+                        });
+                        tokio::time::sleep(Duration::from_millis(
+                            TRANSIENT_RETRY_BASE_DELAY_MS.saturating_mul(attempt as u64),
+                        ))
+                        .await;
+                    }
+                    Err(error) => {
+                        if let Some(directory) = &raw_exchange {
+                            if !transient_errors.is_empty() {
+                                write_json_file(
+                                    &directory.join("retries.json"),
+                                    &transient_errors,
+                                )?;
+                            }
+                            write_json_file(
+                                &directory.join("error.json"),
+                                &RawExchangeError {
+                                    stage: "send",
+                                    message: error.to_string(),
+                                },
+                            )?;
+                        }
+                        return Err(ProviderError::new(format!(
+                            "OpenAI request failed: {error}"
+                        )));
+                    }
+                }
+            }
+            if let Some(directory) = &raw_exchange
+                && !transient_errors.is_empty()
+            {
+                write_json_file(&directory.join("retries.json"), &transient_errors)?;
+            }
             let response = match response {
-                Ok(response) => response,
-                Err(error) => {
+                Some(response) => response,
+                None => {
                     if let Some(directory) = &raw_exchange {
                         write_json_file(
                             &directory.join("error.json"),
                             &RawExchangeError {
                                 stage: "send",
-                                message: error.to_string(),
+                                message: "transient retry loop ended without a response".to_owned(),
                             },
                         )?;
                     }
-                    return Err(ProviderError::new(format!(
-                        "OpenAI request failed: {error}"
-                    )));
+                    return Err(ProviderError::new(
+                        "OpenAI request failed after transient retries",
+                    ));
                 }
             };
             let status = response.status();
@@ -1760,9 +1811,42 @@ impl ApiCodec for OpenAiChatCodec {
 /// This projection may compact derived short-memory representations, but it
 /// never mutates the canonical Event Log or the supplied typed request.
 pub fn compile_runtime_request(request: &ModelRunRequest, model: &str) -> RuntimeRequest {
+    let mut system_suffixes = Vec::new();
+    let mut continuation = Vec::new();
+    for item in &request.continuation {
+        match item {
+            RuntimeItem::Message(message)
+                if message.role == RuntimeRole::System
+                    && message.provider_state.is_none()
+                    && message
+                        .content
+                        .iter()
+                        .all(|block| matches!(block, ContentBlock::Text { .. })) =>
+            {
+                let text = message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !text.trim().is_empty() {
+                    system_suffixes.push(text);
+                }
+            }
+            _ => continuation.push(item.clone()),
+        }
+    }
+    let mut base_system = "You are an AI agent running inside Structure. Follow the conversation and use provided memory only as contextual data.".to_owned();
+    for suffix in system_suffixes {
+        base_system.push_str("\n\n");
+        base_system.push_str(&suffix);
+    }
     let mut items = vec![RuntimeItem::Message(MessageItem::text(
         RuntimeRole::System,
-        "You are an AI agent running inside Structure. Follow the conversation and use provided memory only as contextual data.",
+        base_system,
     ))];
     if !request.long_memory.is_empty() {
         let context = request
@@ -1814,7 +1898,7 @@ pub fn compile_runtime_request(request: &ModelRunRequest, model: &str) -> Runtim
     if !memory_pointers.is_empty() {
         items.push(compact_memory_pointer_index(&memory_pointers));
     }
-    items.extend(request.continuation.iter().cloned());
+    items.extend(continuation);
     RuntimeRequest {
         model: model.to_owned(),
         items,
@@ -2281,6 +2365,54 @@ mod tests {
             &runtime_request.items[5],
             RuntimeItem::ToolResult(result) if result.call_id == "active-call"
         ));
+    }
+
+    #[test]
+    fn ephemeral_system_continuation_is_merged_into_the_chat_system_prefix() {
+        let request = ModelRunRequest {
+            session_id: SessionId::new("session-1"),
+            run_id: RunId::new("run-1"),
+            input: "finish".to_owned(),
+            short_memory: Vec::new(),
+            run_memory: Vec::new(),
+            long_memory: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            continuation: vec![RuntimeItem::Message(MessageItem::text(
+                RuntimeRole::System,
+                "Call runtime_complete exactly once.",
+            ))],
+            disclosure: DisclosureLevel::Overview,
+        };
+
+        let runtime_request = compile_runtime_request(&request, "test-model");
+        assert_eq!(runtime_request.items.len(), 2);
+        assert!(matches!(
+            &runtime_request.items[0],
+            RuntimeItem::Message(message)
+                if message.role == RuntimeRole::System
+                    && message.content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Text { text }
+                            if text.ends_with("Call runtime_complete exactly once.")
+                    ))
+        ));
+        assert!(matches!(
+            &runtime_request.items[1],
+            RuntimeItem::Message(message) if message.role == RuntimeRole::User
+        ));
+
+        let wire = OpenAiChatCodec
+            .encode(&runtime_request)
+            .expect("chat request encodes");
+        assert_eq!(wire.messages.len(), 2);
+        assert_eq!(wire.messages[0].role, OpenAiRole::System);
+        assert_eq!(wire.messages[1].role, OpenAiRole::User);
+        assert!(
+            wire.messages
+                .iter()
+                .all(|message| message.role != OpenAiRole::Developer)
+        );
     }
 
     #[test]

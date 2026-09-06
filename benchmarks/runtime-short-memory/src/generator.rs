@@ -28,6 +28,11 @@ pub struct SyntheticTraceConfig {
     /// Only tool results in the most recent N turns are gold evidence for the
     /// next model decision. Older results remain relation or compression data.
     pub evidence_horizon_turns: usize,
+    /// Emit all logical turns as tool batches in one active run. This is used
+    /// by the compaction scaling experiment because PGC and FBGC compact
+    /// closed batches within the current run, not completed historical runs.
+    #[serde(default)]
+    pub single_run: bool,
 }
 
 impl Default for SyntheticTraceConfig {
@@ -42,6 +47,7 @@ impl Default for SyntheticTraceConfig {
             failure_every: Some(5),
             fork_after_turn: None,
             evidence_horizon_turns: 2,
+            single_run: false,
         }
     }
 }
@@ -78,31 +84,51 @@ impl SyntheticTraceGenerator {
 
         for turn in 0..config.turn_count {
             let turn_number = turn + 1;
-            let run_id = RunId::new(format!("run-{turn_number:04}"));
+            let run_id = if config.single_run {
+                RunId::new("run-long")
+            } else {
+                RunId::new(format!("run-{turn_number:04}"))
+            };
             let command_id = CommandId::new(format!("command-{turn_number:04}"));
             current_run_id = Some(run_id.clone());
 
-            events.push(factory.next(command_id.clone(), Some(&run_id), Event::RunScheduled));
-            events.push(factory.next(command_id.clone(), Some(&run_id), Event::RunStarted));
-            let message = factory.next(
-                command_id.clone(),
-                Some(&run_id),
-                Event::MessageAccepted {
-                    content: format!(
-                        "Turn {turn_number}: inspect the requested workspace state and report the result."
-                    ),
-                },
-            );
-            required_anchor_event_ids.push(message.event_id.clone());
-            events.push(message);
+            if !config.single_run || turn == 0 {
+                events.push(factory.next(command_id.clone(), Some(&run_id), Event::RunScheduled));
+                events.push(factory.next(command_id.clone(), Some(&run_id), Event::RunStarted));
+                let message = factory.next(
+                    command_id.clone(),
+                    Some(&run_id),
+                    Event::MessageAccepted {
+                        content: if config.single_run {
+                            "Inspect the requested workspace state across all tool batches and report the result."
+                                .to_owned()
+                        } else {
+                            format!(
+                                "Turn {turn_number}: inspect the requested workspace state and report the result."
+                            )
+                        },
+                    },
+                );
+                if !config.single_run {
+                    required_anchor_event_ids.push(message.event_id.clone());
+                }
+                events.push(message);
+            }
 
             for tool_index in 0..config.tool_calls_per_turn {
                 tool_ordinal += 1;
                 let call_id = format!("call-{turn_number:04}-{tool_index:03}");
-                let path = format!(
-                    "src/generated_{:04}.rs",
-                    factory.rng.next_u64() % (config.turn_count.max(1) as u64 * 2)
-                );
+                let path = if config.single_run {
+                    format!(
+                        "src/generated_{tool_ordinal:06}_{:04}.rs",
+                        factory.rng.next_u64() % (config.turn_count.max(1) as u64 * 2)
+                    )
+                } else {
+                    format!(
+                        "src/generated_{:04}.rs",
+                        factory.rng.next_u64() % (config.turn_count.max(1) as u64 * 2)
+                    )
+                };
                 let call = factory.next(
                     command_id.clone(),
                     Some(&run_id),
@@ -173,15 +199,17 @@ impl SyntheticTraceGenerator {
                 events.push(result);
             }
 
-            let completion = factory.next(
-                command_id,
-                Some(&run_id),
-                Event::RunCompleted {
-                    output: Some(format!("Completed synthetic turn {turn_number}.")),
-                },
-            );
-            required_anchor_event_ids.push(completion.event_id.clone());
-            events.push(completion);
+            if !config.single_run {
+                let completion = factory.next(
+                    command_id,
+                    Some(&run_id),
+                    Event::RunCompleted {
+                        output: Some(format!("Completed synthetic turn {turn_number}.")),
+                    },
+                );
+                required_anchor_event_ids.push(completion.event_id.clone());
+                events.push(completion);
+            }
 
             if config.fork_after_turn == Some(turn_number) {
                 let source_session_id = factory.session_id.clone();
@@ -233,7 +261,11 @@ impl SyntheticTraceGenerator {
             trace_id: config.trace_id.clone(),
             seed: config.seed,
             origin: crate::TraceOrigin::Synthetic {
-                generator_version: "lcg-v1".to_owned(),
+                generator_version: if config.single_run {
+                    "lcg-v2-single-run".to_owned()
+                } else {
+                    "lcg-v1".to_owned()
+                },
                 turn_count: config.turn_count,
                 tool_calls_per_turn: config.tool_calls_per_turn,
                 command_output_chunks_per_tool: config.command_output_chunks_per_tool,
@@ -241,6 +273,7 @@ impl SyntheticTraceGenerator {
                 failure_every: config.failure_every,
                 fork_after_turn: config.fork_after_turn,
                 evidence_horizon_turns: config.evidence_horizon_turns,
+                single_run: config.single_run,
             },
             current_run_id,
             events,
@@ -288,6 +321,11 @@ fn validate_config(config: &SyntheticTraceConfig) -> Result<(), GeneratorError> 
     {
         return Err(GeneratorError::new(
             "fork_after_turn must be between 1 and turn_count - 1",
+        ));
+    }
+    if config.single_run && config.fork_after_turn.is_some() {
+        return Err(GeneratorError::new(
+            "single_run traces do not support fork_after_turn",
         ));
     }
     if config.evidence_horizon_turns == 0 {

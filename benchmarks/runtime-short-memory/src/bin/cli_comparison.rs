@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use structure_short_memory_benchmark::{
     CliComparisonManifest, CliComparisonMode, CliComparisonPlan, CliSurface, CliTrialReport,
     create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
-    summarize_cli_comparison,
+    summarize_cli_comparison, summarize_cli_multi_agent,
 };
 
 const USAGE: &str = "usage:
-  cli_comparison plan --mode agent-stack --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL [--piagent-package-root DIR] [--surfaces piagent,codex-cli|piagent,structure|codex-cli,structure] [--provider-base-url URL --provider-api-key-env NAME] [--repeats N] [--timeout-seconds N] [--seed N] [--codex-program PATH] [--pi-program PATH]
+  cli_comparison plan --mode agent-stack --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL [--piagent-package-root DIR] [--surfaces structure,codex-cli,piagent,opencode,aider] [--provider-base-url URL --provider-api-key-env NAME] [--repeats N] [--timeout-seconds N] [--seed N] [--codex-program PATH] [--pi-program PATH] [--opencode-program PATH] [--aider-program PATH]
   cli_comparison plan --mode context-policy --suite FILE --output FILE --model PROVIDER/MODEL --thinking LEVEL --provider-base-url URL --provider-api-key-env NAME [--repeats N] [--timeout-seconds N] [--seed N]
   cli_comparison preflight --manifest FILE
   cli_comparison run --manifest FILE --trial-id ID --output-root DIR --yes
@@ -65,10 +65,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
             {
                 reports.push(serde_json::from_slice(&fs::read(path)?)?);
             }
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&summarize_cli_comparison(&manifest, &reports)?)?
-            );
+            let surface_count = manifest
+                .trials
+                .iter()
+                .map(|trial| trial.surface)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            if manifest.benchmark_mode == CliComparisonMode::AgentStack && surface_count == 5 {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summarize_cli_multi_agent(&manifest, &reports)?)?
+                );
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summarize_cli_comparison(&manifest, &reports)?)?
+                );
+            }
         }
         _ => return Err(USAGE.into()),
     }
@@ -84,7 +97,7 @@ fn plan(args: &[String]) -> Result<(), Box<dyn Error>> {
     let benchmark_mode =
         CliComparisonMode::parse(optional(args, "--mode").unwrap_or("agent-stack"))?;
     let default_surfaces = match benchmark_mode {
-        CliComparisonMode::AgentStack => "piagent,codex-cli",
+        CliComparisonMode::AgentStack => "structure,codex-cli,piagent,opencode,aider",
         CliComparisonMode::ContextPolicy => "structure-full-replay,structure-file-backed-gc",
     };
     let surfaces = optional(args, "--surfaces")
@@ -107,6 +120,12 @@ fn plan(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .unwrap_or("codex")
                 .to_owned(),
             pi_program: optional(args, "--pi-program").unwrap_or("pi").to_owned(),
+            opencode_program: optional(args, "--opencode-program")
+                .unwrap_or("opencode")
+                .to_owned(),
+            aider_program: optional(args, "--aider-program")
+                .unwrap_or("aider")
+                .to_owned(),
             piagent_package_root: optional(args, "--piagent-package-root")
                 .unwrap_or(".")
                 .to_owned(),

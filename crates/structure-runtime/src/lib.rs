@@ -26,13 +26,15 @@ pub use short_memory::{
     ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
 };
 use structure_model::{
-    ContentBlock, FinishReason, MemoryBatchKind, MemoryLoadState, MemoryPointer, RuntimeItem,
-    ShortMemoryEntry, ShortMemoryItem, ToolCallItem, ToolChoice, ToolDefinition, ToolResultItem,
+    ContentBlock, FinishReason, MemoryBatchKind, MemoryLoadState, MemoryPointer, MessageItem,
+    RuntimeItem, RuntimeRole, ShortMemoryEntry, ShortMemoryItem, ToolCallItem, ToolChoice,
+    ToolDefinition, ToolResultItem,
 };
 use structure_protocol::{
     AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, Event, EventEnvelope,
-    EventId, ModelResponseRejectionReason, OutputStream, RunId, SessionId, ToolInteractionKind,
-    WorkspaceId,
+    EventId, ModelResponseRejectionReason, OutputStream, RunId, SessionId,
+    TerminalControllerPolicy, TerminalControllerState, TerminalControllerTransitionReason,
+    ToolInteractionKind, WorkspaceId,
 };
 use structure_provider::{ModelProvider, ModelRunRequest};
 use structure_runner::{RunnerEnvironment, RunnerOutput, ToolExecutionRequest};
@@ -41,6 +43,7 @@ const DEFAULT_MAX_MODEL_STEPS_PER_RUN: usize = 32;
 const MEMORY_READ_TOOL_NAME: &str = "memory_read";
 const MEMORY_SEARCH_TOOL_NAME: &str = "memory_search";
 pub const RUNTIME_COMPLETE_TOOL_NAME: &str = "runtime_complete";
+pub const AUTO_COMPLETION_REQUIRED_MESSAGE: &str = "Structure terminal control: validation succeeded. The only valid next action is exactly one runtime_complete tool call with a non-empty summary. Emit no text and call no other tool.";
 const DEFAULT_POINTER_GC_CHECKPOINT_BATCHES: usize = 8;
 const DEFAULT_POINTER_GC_EFFORT: usize = 1;
 const DEFAULT_POINTER_GC_CONTINUATION_BPS: u32 = 7_500;
@@ -154,6 +157,18 @@ pub enum RuntimeCompactionStrategy {
     FileBackedGc,
 }
 
+/// Selects whether PointerGC is admitted by the production profitability gate
+/// or by the preregistered mechanism-qualification gate. The qualification
+/// mode is explicit evidence-generation configuration; it must not be used
+/// for economic-effect estimates.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerGcAdmissionPolicy {
+    #[default]
+    Profitability,
+    MechanismQualification,
+}
+
 impl RuntimeCompactionStrategy {
     fn enabled(self) -> bool {
         self != Self::Disabled
@@ -168,11 +183,13 @@ impl RuntimeCompactionStrategy {
 /// the effective probability incorporates continuations already observed in
 /// this run. `weighted_remaining_steps_bps` uses 10,000 units per expected
 /// call so the decision stays deterministic and float-free.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PointerGcAdmissionObservation {
     pub run_id: RunId,
     pub model_step: usize,
     pub strategy: RuntimeCompactionStrategy,
+    #[serde(default)]
+    pub admission_policy: PointerGcAdmissionPolicy,
     pub eligible_batches: usize,
     pub checkpointed_batches: usize,
     pub committed_batches: usize,
@@ -264,11 +281,13 @@ pub struct CoreRuntime<M, R> {
     pointer_gc_continuation_probability_bps: u32,
     pointer_gc_cached_input_cost_bps: u32,
     pointer_gc_min_reuse_steps: usize,
+    pointer_gc_admission_policy: PointerGcAdmissionPolicy,
     pointer_gc_admission_observations: Vec<PointerGcAdmissionObservation>,
     auto_hydration_observations: Vec<AutoHydrationObservation>,
     pointer_gc_observation_sink: Option<Box<dyn PointerGcObservationSink>>,
     max_model_steps_per_run: usize,
     max_model_steps_without_progress: usize,
+    terminal_controller_policy: TerminalControllerPolicy,
     tools: Vec<ToolDefinition>,
     archive_store: RuntimeArchiveStore,
     model: M,
@@ -287,11 +306,13 @@ impl<M, R> CoreRuntime<M, R> {
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
             pointer_gc_cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             pointer_gc_min_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
+            pointer_gc_admission_policy: PointerGcAdmissionPolicy::Profitability,
             pointer_gc_admission_observations: Vec::new(),
             auto_hydration_observations: Vec::new(),
             pointer_gc_observation_sink: None,
             max_model_steps_per_run: DEFAULT_MAX_MODEL_STEPS_PER_RUN,
             max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
+            terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
             archive_store: RuntimeArchiveStore::Memory,
             model,
@@ -314,11 +335,13 @@ impl<M, R> CoreRuntime<M, R> {
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
             pointer_gc_cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             pointer_gc_min_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
+            pointer_gc_admission_policy: PointerGcAdmissionPolicy::Profitability,
             pointer_gc_admission_observations: Vec::new(),
             auto_hydration_observations: Vec::new(),
             pointer_gc_observation_sink: None,
             max_model_steps_per_run: DEFAULT_MAX_MODEL_STEPS_PER_RUN,
             max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
+            terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
             archive_store: RuntimeArchiveStore::Memory,
             model,
@@ -347,11 +370,13 @@ impl<M, R> CoreRuntime<M, R> {
             pointer_gc_continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
             pointer_gc_cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
             pointer_gc_min_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
+            pointer_gc_admission_policy: PointerGcAdmissionPolicy::Profitability,
             pointer_gc_admission_observations: Vec::new(),
             auto_hydration_observations: Vec::new(),
             pointer_gc_observation_sink: None,
             max_model_steps_per_run: DEFAULT_MAX_MODEL_STEPS_PER_RUN,
             max_model_steps_without_progress: DEFAULT_MAX_MODEL_STEPS_WITHOUT_PROGRESS,
+            terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
             archive_store,
             model,
@@ -411,6 +436,14 @@ impl<M, R> CoreRuntime<M, R> {
         self.pointer_gc_min_reuse_steps = steps.max(1);
     }
 
+    pub fn pointer_gc_admission_policy(&self) -> PointerGcAdmissionPolicy {
+        self.pointer_gc_admission_policy
+    }
+
+    pub fn set_pointer_gc_admission_policy(&mut self, policy: PointerGcAdmissionPolicy) {
+        self.pointer_gc_admission_policy = policy;
+    }
+
     pub fn pointer_gc_admission_observations(&self) -> &[PointerGcAdmissionObservation] {
         &self.pointer_gc_admission_observations
     }
@@ -432,6 +465,14 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_max_model_steps_without_progress(&mut self, steps: usize) {
         self.max_model_steps_without_progress = steps.max(1);
+    }
+
+    pub fn terminal_controller_policy(&self) -> TerminalControllerPolicy {
+        self.terminal_controller_policy
+    }
+
+    pub fn set_terminal_controller_policy(&mut self, policy: TerminalControllerPolicy) {
+        self.terminal_controller_policy = policy;
     }
 
     pub fn set_tools(&mut self, tools: Vec<ToolDefinition>) {
@@ -610,6 +651,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 let mut no_progress_window_steps = 0usize;
                 let mut no_progress_window_tool_errors = 0usize;
                 let mut last_no_progress_advisory_had_errors = None;
+                let mut terminal_controller_state = TerminalControllerState::Working;
                 for model_step in 0..self.max_model_steps_per_run {
                     let history = event_log.snapshot();
                     let projection = {
@@ -628,6 +670,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             &self.short_memory_policy,
                             PointerGcProjectionPolicy {
                                 strategy: self.compaction_strategy,
+                                admission_policy: self.pointer_gc_admission_policy,
                                 checkpoint_batches: self.pointer_gc_checkpoint_batches,
                                 effort: self.pointer_gc_effort,
                                 model_step,
@@ -677,6 +720,21 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 )
                         })
                         .collect();
+                    let completion_required = self.terminal_controller_policy.is_typed()
+                        && terminal_controller_state == TerminalControllerState::CompletionRequired;
+                    let mut continuation = continuation;
+                    if completion_required
+                        && matches!(
+                            self.terminal_controller_policy,
+                            TerminalControllerPolicy::TypedCompletionAutoV1
+                                | TerminalControllerPolicy::TypedCompletionAutoV2
+                        )
+                    {
+                        continuation.push(RuntimeItem::Message(MessageItem::text(
+                            RuntimeRole::System,
+                            AUTO_COMPLETION_REQUIRED_MESSAGE,
+                        )));
+                    }
                     let request = ModelRunRequest {
                         session_id: session_id.clone(),
                         run_id: run_id.clone(),
@@ -684,8 +742,21 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         short_memory: projection.short_memory,
                         run_memory,
                         long_memory,
-                        tools: tools.clone(),
-                        tool_choice: ToolChoice::Auto,
+                        tools: if completion_required {
+                            vec![runtime_complete_tool_definition()]
+                        } else {
+                            tools.clone()
+                        },
+                        tool_choice: if completion_required
+                            && self.terminal_controller_policy
+                                == TerminalControllerPolicy::TypedCompletionV1
+                        {
+                            ToolChoice::Specific {
+                                name: RUNTIME_COMPLETE_TOOL_NAME.to_owned(),
+                            }
+                        } else {
+                            ToolChoice::Auto
+                        },
                         continuation,
                         disclosure,
                     };
@@ -698,6 +769,15 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 event_log.append(Event::ModelRequestPrepared {
                                     model_step,
                                     request: request.clone(),
+                                });
+                            }
+                            if self.terminal_controller_policy.is_typed() {
+                                event_log.append(Event::TerminalControlTransition {
+                                    model_step,
+                                    policy: self.terminal_controller_policy,
+                                    from: terminal_controller_state,
+                                    to: TerminalControllerState::Failed,
+                                    reason: TerminalControllerTransitionReason::ProviderError,
                                 });
                             }
                             event_log.append(Event::RunFailed {
@@ -751,6 +831,55 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         .collect();
                     let sole_runtime_completion_call =
                         tool_calls.len() == 1 && tool_calls[0].name == RUNTIME_COMPLETE_TOOL_NAME;
+                    let mixed_assistant_text = result
+                        .final_output
+                        .as_deref()
+                        .is_some_and(|output| !output.trim().is_empty())
+                        || response_has_nonempty_assistant_text(&response_items);
+                    let permits_mixed_assistant_text = self.terminal_controller_policy
+                        == TerminalControllerPolicy::TypedCompletionAutoV2;
+                    let completion_shape_valid = sole_runtime_completion_call
+                        && (!mixed_assistant_text || permits_mixed_assistant_text)
+                        && runtime_completion_output(&tool_calls[0]).is_ok();
+                    if completion_required && !completion_shape_valid {
+                        event_log.append(Event::TerminalControlTransition {
+                            model_step,
+                            policy: self.terminal_controller_policy,
+                            from: terminal_controller_state,
+                            to: TerminalControllerState::Failed,
+                            reason: TerminalControllerTransitionReason::CompletionViolation,
+                        });
+                        event_log.append(Event::ModelResponseRejected {
+                            model_step,
+                            reason: ModelResponseRejectionReason::TerminalControllerViolation,
+                            finish_reason: result
+                                .response
+                                .as_ref()
+                                .and_then(|response| response.finish_reason.clone()),
+                            tool_call_count: tool_calls.len(),
+                            final_output_present: result
+                                .final_output
+                                .as_deref()
+                                .is_some_and(|output| !output.trim().is_empty()),
+                        });
+                        event_log.append(Event::RunFailed {
+                            message:
+                                "typed terminal controller required a sole runtime_complete call"
+                                    .to_owned(),
+                        });
+                        return Ok(());
+                    }
+                    if completion_required
+                        && completion_shape_valid
+                        && mixed_assistant_text
+                        && permits_mixed_assistant_text
+                    {
+                        event_log.append(Event::ModelResponseNormalized {
+                            model_step,
+                            policy: self.terminal_controller_policy,
+                            ignored_assistant_text: true,
+                        });
+                    }
                     if let Some(rejection) = invalid_terminal_response(
                         result
                             .response
@@ -778,6 +907,32 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         return Ok(());
                     }
                     if tool_calls.is_empty() {
+                        if self.terminal_controller_policy.is_typed() {
+                            event_log.append(Event::TerminalControlTransition {
+                                model_step,
+                                policy: self.terminal_controller_policy,
+                                from: terminal_controller_state,
+                                to: TerminalControllerState::Failed,
+                                reason: TerminalControllerTransitionReason::CompletionViolation,
+                            });
+                            event_log.append(Event::ModelResponseRejected {
+                                model_step,
+                                reason: ModelResponseRejectionReason::TerminalControllerViolation,
+                                finish_reason: result
+                                    .response
+                                    .as_ref()
+                                    .and_then(|response| response.finish_reason.clone()),
+                                tool_call_count: 0,
+                                final_output_present: result
+                                    .final_output
+                                    .as_deref()
+                                    .is_some_and(|output| !output.trim().is_empty()),
+                            });
+                            event_log.append(Event::RunFailed {
+                                message: "typed terminal controller requires successful validation followed by runtime_complete".to_owned(),
+                            });
+                            return Ok(());
+                        }
                         event_log.append(Event::RunCompleted {
                             output: result.final_output,
                         });
@@ -790,6 +945,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     }
                     let mut made_state_progress = false;
                     let mut step_tool_errors = 0usize;
+                    let mut step_successful_validation = false;
                     for call in tool_calls {
                         let interaction_kind = if call.name == RUNTIME_COMPLETE_TOOL_NAME {
                             ToolInteractionKind::Inspection
@@ -809,8 +965,14 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         });
                         next_protected_event_ids.insert(classified.event_id);
                         if call.name == RUNTIME_COMPLETE_TOOL_NAME {
-                            let completion = if sole_runtime_completion_call {
+                            let completion_eligible = self.terminal_controller_policy
+                                == TerminalControllerPolicy::AdvisoryV18
+                                || completion_required;
+                            let completion = if sole_runtime_completion_call && completion_eligible
+                            {
                                 runtime_completion_output(&call)
+                            } else if !completion_eligible {
+                                Err("runtime_complete is not eligible until successful validation enters completion-required state".to_owned())
                             } else {
                                 Err("runtime_complete must be the only tool call in a model response; finish any other tool calls first, then submit completion on the next turn".to_owned())
                             };
@@ -828,6 +990,16 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             });
                             next_protected_event_ids.insert(completed.event_id);
                             if let Some(output) = completion_output {
+                                if completion_required {
+                                    event_log.append(Event::TerminalControlTransition {
+                                        model_step,
+                                        policy: self.terminal_controller_policy,
+                                        from: terminal_controller_state,
+                                        to: TerminalControllerState::Completed,
+                                        reason:
+                                            TerminalControllerTransitionReason::CompletionAccepted,
+                                    });
+                                }
                                 event_log.append(Event::RunCompleted {
                                     output: Some(output),
                                 });
@@ -891,6 +1063,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     is_error: false,
                                 });
                                 next_protected_event_ids.insert(completed.event_id);
+                                if tool_interaction_validates_state(interaction_kind) {
+                                    step_successful_validation = true;
+                                }
                                 continue;
                             }
                             ToolLoopDecision::Block {
@@ -960,10 +1135,16 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         if tool_result.is_error {
                             step_tool_errors = step_tool_errors.saturating_add(1);
                         }
-                        if !tool_result.is_error
-                            && tool_interaction_may_change_state(interaction_kind)
-                        {
+                        if tool_execution_made_state_progress(
+                            interaction_kind,
+                            tool_result.is_error,
+                        ) {
                             made_state_progress = true;
+                        }
+                        if !tool_result.is_error
+                            && tool_interaction_validates_state(interaction_kind)
+                        {
+                            step_successful_validation = true;
                         }
                         tool_loop_guard.observe_execution(&call, interaction_kind, &tool_result);
                         let result_text = tool_result_text(&tool_result);
@@ -974,6 +1155,38 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             is_error: tool_result.is_error,
                         });
                         next_protected_event_ids.insert(completed.event_id);
+                    }
+                    if self.terminal_controller_policy.is_typed() {
+                        let transition = if step_tool_errors > 0 {
+                            Some((
+                                TerminalControllerState::Working,
+                                TerminalControllerTransitionReason::ToolError,
+                            ))
+                        } else if step_successful_validation {
+                            Some((
+                                TerminalControllerState::CompletionRequired,
+                                TerminalControllerTransitionReason::ValidationSucceeded,
+                            ))
+                        } else if made_state_progress {
+                            Some((
+                                TerminalControllerState::Working,
+                                TerminalControllerTransitionReason::StateProgress,
+                            ))
+                        } else {
+                            None
+                        };
+                        if let Some((next_state, reason)) = transition {
+                            if terminal_controller_state != next_state {
+                                event_log.append(Event::TerminalControlTransition {
+                                    model_step,
+                                    policy: self.terminal_controller_policy,
+                                    from: terminal_controller_state,
+                                    to: next_state,
+                                    reason,
+                                });
+                                terminal_controller_state = next_state;
+                            }
+                        }
                     }
                     if made_state_progress {
                         consecutive_no_progress_steps = 0;
@@ -1016,6 +1229,15 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                             reason: AgentLoopTerminationReason::NoStateProgress,
                             consecutive_no_progress_steps,
                         });
+                        if self.terminal_controller_policy.is_typed() {
+                            event_log.append(Event::TerminalControlTransition {
+                                model_step,
+                                policy: self.terminal_controller_policy,
+                                from: terminal_controller_state,
+                                to: TerminalControllerState::Failed,
+                                reason: TerminalControllerTransitionReason::DeterministicHardStop,
+                            });
+                        }
                         event_log.append(Event::RunFailed {
                             message: format!(
                                 "agent_no_progress: no successful state-changing tool completed in {consecutive_no_progress_steps} consecutive model steps"
@@ -1030,6 +1252,15 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     reason: AgentLoopTerminationReason::ModelStepLimit,
                     consecutive_no_progress_steps,
                 });
+                if self.terminal_controller_policy.is_typed() {
+                    event_log.append(Event::TerminalControlTransition {
+                        model_step: self.max_model_steps_per_run,
+                        policy: self.terminal_controller_policy,
+                        from: terminal_controller_state,
+                        to: TerminalControllerState::Failed,
+                        reason: TerminalControllerTransitionReason::DeterministicHardStop,
+                    });
+                }
                 event_log.append(Event::RunFailed {
                     message: format!(
                         "agent loop exceeded {} model steps",
@@ -1229,6 +1460,9 @@ const fn model_response_rejection_message(reason: ModelResponseRejectionReason) 
         ModelResponseRejectionReason::EmptyOutput => {
             "model_output_empty: provider ended without a usable final output"
         }
+        ModelResponseRejectionReason::TerminalControllerViolation => {
+            "model_protocol_error: typed terminal controller required a sole runtime_complete call"
+        }
     }
 }
 
@@ -1326,14 +1560,31 @@ fn tool_result_is_reusable(kind: ToolInteractionKind) -> bool {
     )
 }
 
+fn tool_interaction_validates_state(kind: ToolInteractionKind) -> bool {
+    matches!(
+        kind,
+        ToolInteractionKind::Validation | ToolInteractionKind::MutationWithValidation
+    )
+}
+
 fn tool_interaction_may_change_state(kind: ToolInteractionKind) -> bool {
     matches!(
         kind,
         ToolInteractionKind::Mutation
+            | ToolInteractionKind::MutationWithValidation
             | ToolInteractionKind::Build
             | ToolInteractionKind::Dependency
             | ToolInteractionKind::Generic
     )
+}
+
+fn tool_execution_made_state_progress(kind: ToolInteractionKind, is_error: bool) -> bool {
+    tool_interaction_may_change_state(kind)
+        && (!is_error
+            || matches!(
+                kind,
+                ToolInteractionKind::Mutation | ToolInteractionKind::MutationWithValidation
+            ))
 }
 
 fn semantic_tool_fingerprint(name: &str, arguments: &serde_json::Value) -> String {
@@ -1480,6 +1731,7 @@ impl PointerGcRunEconomics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PointerGcProjectionPolicy {
     strategy: RuntimeCompactionStrategy,
+    admission_policy: PointerGcAdmissionPolicy,
     checkpoint_batches: usize,
     effort: usize,
     model_step: usize,
@@ -1488,6 +1740,114 @@ struct PointerGcProjectionPolicy {
     cached_input_cost_bps: u32,
     minimum_reuse_steps: usize,
     economics: PointerGcRunEconomics,
+}
+
+/// Deterministic, provider-free evidence used by the Tier-A PGC/FBGC
+/// benchmark. Production projection code is reused directly; this wrapper
+/// only supplies a frozen fallback economic envelope and exposes diagnostics.
+#[derive(Clone, Debug)]
+pub struct DeterministicCompactionProjection {
+    pub entries: Vec<ShortMemoryEntry>,
+    pub visibility: Vec<EventVisibilityDecision>,
+    pub batches: Vec<EventBatch>,
+    pub admission: Option<PointerGcAdmissionObservation>,
+    pub archive_count: usize,
+    pub archive_idempotent: bool,
+    pub exact_continuation_bytes: usize,
+    pub projected_continuation_bytes: usize,
+}
+
+pub fn project_compaction_for_benchmark(
+    history: &[EventEnvelope],
+    run_id: &RunId,
+    policy: &ShortMemoryPolicy,
+    strategy: RuntimeCompactionStrategy,
+    checkpoint_batches: usize,
+    memory: &mut LongMemoryManager,
+) -> Result<DeterministicCompactionProjection, RuntimeError> {
+    if !strategy.enabled() {
+        return Err(RuntimeError::new(
+            RuntimeErrorKind::InvalidInput,
+            "deterministic compaction projection requires PGC or FBGC",
+        ));
+    }
+    let request_bytes = serde_json::to_vec(history).map_or(0, |bytes| bytes.len());
+    let measured_input_tokens = estimate_tokens_for_bytes(request_bytes, 0, 0);
+    let projection_policy = PointerGcProjectionPolicy {
+        strategy,
+        admission_policy: PointerGcAdmissionPolicy::Profitability,
+        checkpoint_batches: checkpoint_batches.max(1),
+        effort: DEFAULT_POINTER_GC_EFFORT,
+        model_step: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
+        max_model_steps: DEFAULT_MAX_MODEL_STEPS_PER_RUN * 4,
+        continuation_probability_bps: DEFAULT_POINTER_GC_CONTINUATION_BPS,
+        cached_input_cost_bps: DEFAULT_POINTER_GC_CACHED_INPUT_COST_BPS,
+        minimum_reuse_steps: DEFAULT_POINTER_GC_MIN_REUSE_STEPS,
+        // The deterministic harness has no Provider cache. Supplying an
+        // explicit uncached observation prevents the production admission
+        // policy from conservatively charging an unknown cache reset while
+        // preserving the same profitability calculation used at runtime.
+        economics: PointerGcRunEconomics {
+            previous_request_bytes: request_bytes,
+            previous_input_tokens: measured_input_tokens,
+            observed_input_tokens: measured_input_tokens,
+            ..PointerGcRunEconomics::default()
+        },
+    };
+    let protected = HashSet::new();
+    let first = project_model_step(
+        history,
+        run_id,
+        &protected,
+        policy,
+        projection_policy,
+        memory,
+    )?;
+    let second = project_model_step(
+        history,
+        run_id,
+        &protected,
+        policy,
+        projection_policy,
+        memory,
+    )?;
+    let mut entries = first.short_memory;
+    entries.extend(first.run_memory);
+    entries.sort_by_key(|entry| entry.sequence);
+    let mut repeated_entries = second.short_memory;
+    repeated_entries.extend(second.run_memory);
+    repeated_entries.sort_by_key(|entry| entry.sequence);
+    let archive_idempotent = entries == repeated_entries;
+
+    let effective_policy = if strategy == RuntimeCompactionStrategy::FileBackedGc {
+        let mut effective = policy.clone();
+        effective.batch_compaction_enabled = false;
+        effective
+    } else {
+        policy.clone()
+    };
+    let materialization = ShortMemoryProjector::materialize_for_model_step(
+        history,
+        run_id,
+        &protected,
+        &effective_policy,
+    );
+    let exact_continuation =
+        exact_run_continuation(history, run_id, &ContinuationSubstitution::default());
+    let projected_continuation =
+        exact_run_continuation(history, run_id, &first.continuation_substitution);
+    Ok(DeterministicCompactionProjection {
+        entries,
+        visibility: materialization.visibility,
+        batches: materialization.batches,
+        admission: first.pointer_gc_admission,
+        archive_count: memory.archive_count().map_err(long_memory_error)?,
+        archive_idempotent,
+        exact_continuation_bytes: serde_json::to_vec(&exact_continuation)
+            .map_or(0, |bytes| bytes.len()),
+        projected_continuation_bytes: serde_json::to_vec(&projected_continuation)
+            .map_or(0, |bytes| bytes.len()),
+    })
 }
 
 fn project_model_step(
@@ -1982,19 +2342,31 @@ fn replace_archivable_batches_with_pointers(
     let effective_effort = cumulative_pointer_gc_effort(policy.effort, prior_admissions);
     let (blocked_by_reset_debt, blocked_by_cooldown) =
         pointer_gc_epoch_blockers(policy.economics, minimum_reuse_steps);
-    let checkpoint_is_profitable = new_checkpoint_count > 0
-        && !blocked_by_reset_debt
-        && !blocked_by_cooldown
-        && pointer_gc_is_profitable(
-            estimated_cache_reset_tokens,
-            estimated_economic_saved_tokens_per_call,
-            weighted_remaining_steps_bps,
-            effective_effort,
-        );
+    let checkpoint_is_profitable = match policy.admission_policy {
+        PointerGcAdmissionPolicy::Profitability => {
+            new_checkpoint_count > 0
+                && !blocked_by_reset_debt
+                && !blocked_by_cooldown
+                && pointer_gc_is_profitable(
+                    estimated_cache_reset_tokens,
+                    estimated_economic_saved_tokens_per_call,
+                    weighted_remaining_steps_bps,
+                    effective_effort,
+                )
+        }
+        PointerGcAdmissionPolicy::MechanismQualification => {
+            // Phase-0 asks whether the lossless archive/pointer mechanism is
+            // exercised under live Provider traffic, not whether a particular
+            // cache-price model predicts profit. Preserve the ordinary epoch
+            // cooldown while guaranteeing the first eligible checkpoint.
+            new_checkpoint_count > 0 && !blocked_by_cooldown
+        }
+    };
     let observation = (candidate_count > 0).then(|| PointerGcAdmissionObservation {
         run_id: run_id.clone(),
         model_step: policy.model_step + 1,
         strategy: policy.strategy,
+        admission_policy: policy.admission_policy,
         eligible_batches: candidate_count,
         checkpointed_batches: checkpointed_count,
         committed_batches: committed_count,
@@ -2480,13 +2852,35 @@ pub fn runtime_complete_tool_definition() -> ToolDefinition {
 }
 
 fn runtime_completion_output(call: &ToolCallItem) -> Result<String, String> {
-    call.arguments
+    let summary = call
+        .arguments
         .get("summary")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| "runtime_complete requires a non-empty string summary".to_owned())
+        .ok_or_else(|| "runtime_complete requires a non-empty string summary".to_owned())?;
+    let normalized = summary.to_ascii_lowercase();
+    if matches!(normalized.as_str(), "placeholder" | "incomplete" | "todo")
+        || normalized.contains("not complete")
+        || normalized.contains("not completed")
+    {
+        return Err("runtime_complete summary must affirm completed work".to_owned());
+    }
+    Ok(summary.to_owned())
+}
+
+fn response_has_nonempty_assistant_text(items: &[RuntimeItem]) -> bool {
+    items.iter().any(|item| {
+        matches!(
+            item,
+            RuntimeItem::Message(message)
+                if message.role == RuntimeRole::Assistant
+                    && message.content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Text { text } if !text.trim().is_empty()
+                    ))
+        )
+    })
 }
 
 fn memory_read_definition() -> ToolDefinition {
@@ -2621,6 +3015,7 @@ fn tool_result_text(result: &ToolResultItem) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use structure_model::{ShortMemoryEntry, ShortMemoryItem};
     use structure_protocol::{CommandId, DisclosureLevel, EventId, EventMetadata};
     use structure_provider::{
@@ -2666,6 +3061,92 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct SequencedModel {
+        requests: Vec<ModelRunRequest>,
+        results: VecDeque<ModelRunResult>,
+    }
+
+    impl ModelProvider for SequencedModel {
+        async fn complete(
+            &mut self,
+            request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            self.requests.push(request);
+            self.results
+                .pop_front()
+                .ok_or_else(|| ProviderError::new("test model has no response"))
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            Ok(false)
+        }
+    }
+
+    #[derive(Debug)]
+    struct SuccessfulValidationRunner;
+
+    impl RunnerEnvironment for SuccessfulValidationRunner {
+        fn classify(&self, _call: &ToolCallItem) -> ToolInteractionKind {
+            ToolInteractionKind::Validation
+        }
+
+        async fn execute(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            Ok(ToolExecutionResult {
+                result: ToolResultItem {
+                    id: None,
+                    call_id: request.call.call_id,
+                    name: Some(request.call.name),
+                    content: vec![ContentBlock::text("validation passed")],
+                    is_error: false,
+                },
+                output: Vec::new(),
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+            Ok(false)
+        }
+    }
+
+    fn tool_response(call_id: &str, name: &str, arguments: serde_json::Value) -> ModelRunResult {
+        ModelRunResult {
+            final_output: None,
+            prepared_request: None,
+            response: Some(structure_model::RuntimeResponse {
+                items: vec![RuntimeItem::ToolCall(ToolCallItem {
+                    id: None,
+                    call_id: call_id.to_owned(),
+                    name: name.to_owned(),
+                    arguments,
+                    provider_state: None,
+                })],
+                finish_reason: Some(FinishReason::ToolCalls),
+                usage: structure_model::RuntimeUsage::default(),
+                provider_state: None,
+            }),
+        }
+    }
+
+    fn text_response(output: &str) -> ModelRunResult {
+        ModelRunResult {
+            final_output: Some(output.to_owned()),
+            prepared_request: None,
+            response: Some(structure_model::RuntimeResponse {
+                items: vec![RuntimeItem::Message(structure_model::MessageItem::text(
+                    structure_model::RuntimeRole::Assistant,
+                    output,
+                ))],
+                finish_reason: Some(FinishReason::Stop),
+                usage: structure_model::RuntimeUsage::default(),
+                provider_state: None,
+            }),
+        }
+    }
+
     fn history_event(sequence: u64, event: Event) -> EventEnvelope {
         EventEnvelope::new(
             EventMetadata {
@@ -2684,6 +3165,7 @@ mod tests {
     fn pointer_gc_policy(checkpoint_batches: usize, effort: usize) -> PointerGcProjectionPolicy {
         PointerGcProjectionPolicy {
             strategy: RuntimeCompactionStrategy::PointerGc,
+            admission_policy: PointerGcAdmissionPolicy::Profitability,
             checkpoint_batches,
             effort,
             model_step: 0,
@@ -2900,6 +3382,411 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn typed_terminal_controller_forces_one_specific_completion_turn() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                tool_response(
+                    "complete-1",
+                    RUNTIME_COMPLETE_TOOL_NAME,
+                    serde_json::json!({"summary": "validated"}),
+                ),
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionV1);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "validate and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("typed completion succeeds");
+
+        assert_eq!(runtime.model().requests.len(), 2);
+        let forced = &runtime.model().requests[1];
+        assert_eq!(forced.tools, vec![runtime_complete_tool_definition()]);
+        assert_eq!(
+            forced.tool_choice,
+            ToolChoice::Specific {
+                name: RUNTIME_COMPLETE_TOOL_NAME.to_owned()
+            }
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TerminalControlTransition {
+                from: TerminalControllerState::Working,
+                to: TerminalControllerState::CompletionRequired,
+                reason: TerminalControllerTransitionReason::ValidationSucceeded,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TerminalControlTransition {
+                from: TerminalControllerState::CompletionRequired,
+                to: TerminalControllerState::Completed,
+                reason: TerminalControllerTransitionReason::CompletionAccepted,
+                ..
+            }
+        )));
+        assert_eq!(
+            events.last(),
+            Some(&Event::RunCompleted {
+                output: Some("validated".to_owned())
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_auto_terminal_controller_uses_one_tool_and_auto_choice() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                tool_response(
+                    "complete-1",
+                    RUNTIME_COMPLETE_TOOL_NAME,
+                    serde_json::json!({"summary": "validated with auto"}),
+                ),
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionAutoV1);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "validate and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("typed auto completion succeeds");
+
+        assert_eq!(runtime.model().requests.len(), 2);
+        let completion = &runtime.model().requests[1];
+        assert_eq!(completion.tools, vec![runtime_complete_tool_definition()]);
+        assert_eq!(completion.tool_choice, ToolChoice::Auto);
+        assert_eq!(
+            completion.continuation.last(),
+            Some(&RuntimeItem::Message(MessageItem::text(
+                RuntimeRole::System,
+                AUTO_COMPLETION_REQUIRED_MESSAGE,
+            )))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::TerminalControlTransition {
+                policy: TerminalControllerPolicy::TypedCompletionAutoV1,
+                from: TerminalControllerState::CompletionRequired,
+                to: TerminalControllerState::Completed,
+                reason: TerminalControllerTransitionReason::CompletionAccepted,
+                ..
+            }
+        )));
+        assert_eq!(
+            events.last(),
+            Some(&Event::RunCompleted {
+                output: Some("validated with auto".to_owned())
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_auto_terminal_controller_rejects_mixed_text_and_completion() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let mut mixed_completion = tool_response(
+            "complete-1",
+            RUNTIME_COMPLETE_TOOL_NAME,
+            serde_json::json!({"summary": "validated"}),
+        );
+        mixed_completion
+            .response
+            .as_mut()
+            .expect("tool response exists")
+            .items
+            .insert(
+                0,
+                RuntimeItem::Message(MessageItem::text(RuntimeRole::Assistant, "I am done.")),
+            );
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                mixed_completion,
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionAutoV1);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "validate and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("mixed output becomes canonical failure events");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseRejected {
+                reason: ModelResponseRejectionReason::TerminalControllerViolation,
+                ..
+            }
+        )));
+        assert!(matches!(events.last(), Some(Event::RunFailed { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::RunCompleted { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_auto_v2_normalizes_mixed_text_but_uses_only_completion_arguments() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let mut mixed_completion = tool_response(
+            "complete-1",
+            RUNTIME_COMPLETE_TOOL_NAME,
+            serde_json::json!({"summary": "authoritative summary"}),
+        );
+        mixed_completion
+            .response
+            .as_mut()
+            .expect("tool response exists")
+            .items
+            .insert(
+                0,
+                RuntimeItem::Message(MessageItem::text(
+                    RuntimeRole::Assistant,
+                    "ignored provider text",
+                )),
+            );
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                mixed_completion,
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionAutoV2);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "validate and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("v2 normalization succeeds");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseNormalized {
+                policy: TerminalControllerPolicy::TypedCompletionAutoV2,
+                ignored_assistant_text: true,
+                ..
+            }
+        )));
+        assert_eq!(
+            events.last(),
+            Some(&Event::RunCompleted {
+                output: Some("authoritative summary".to_owned())
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_terminal_controller_rejects_text_in_the_forced_turn() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                ModelRunResult {
+                    final_output: Some("done".to_owned()),
+                    prepared_request: None,
+                    response: Some(structure_model::RuntimeResponse {
+                        items: vec![RuntimeItem::Message(structure_model::MessageItem::text(
+                            structure_model::RuntimeRole::Assistant,
+                            "done",
+                        ))],
+                        finish_reason: Some(FinishReason::Stop),
+                        usage: structure_model::RuntimeUsage::default(),
+                        provider_state: None,
+                    }),
+                },
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionV1);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "validate and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("violation becomes canonical events");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseRejected {
+                reason: ModelResponseRejectionReason::TerminalControllerViolation,
+                ..
+            }
+        )));
+        assert!(matches!(events.last(), Some(Event::RunFailed { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::RunCompleted { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_terminal_controller_rejects_invalid_completion_arguments() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                tool_response(
+                    "complete-1",
+                    RUNTIME_COMPLETE_TOOL_NAME,
+                    serde_json::json!({}),
+                ),
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionV1);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "validate and finish".to_owned(),
+            },
+        )
+        .await
+        .expect("invalid arguments become canonical events");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ModelResponseRejected {
+                reason: ModelResponseRejectionReason::TerminalControllerViolation,
+                ..
+            }
+        )));
+        assert!(matches!(events.last(), Some(Event::RunFailed { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::RunCompleted { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_terminal_controller_rejects_completion_before_validation() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response(
+                    "complete-early",
+                    RUNTIME_COMPLETE_TOOL_NAME,
+                    serde_json::json!({"summary": "not validated"}),
+                ),
+                text_response("stopped"),
+            ]),
+        };
+        let mut runtime = CoreRuntime::new(model, SuccessfulValidationRunner);
+        runtime.set_terminal_controller_policy(TerminalControllerPolicy::TypedCompletionV1);
+        runtime
+            .open_session(&session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+
+        let events = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "finish without validation".to_owned(),
+            },
+        )
+        .await
+        .expect("premature completion remains an internal tool error");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallCompleted {
+                name,
+                is_error: true,
+                ..
+            } if name == RUNTIME_COMPLETE_TOOL_NAME
+        )));
+        assert!(matches!(events.last(), Some(Event::RunFailed { .. })));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::TerminalControlTransition {
+                to: TerminalControllerState::Completed,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
     async fn runtime_fails_a_length_truncated_model_turn() {
         let session_id = SessionId::new("session-1");
         let run_id = RunId::new("run-1");
@@ -3029,6 +3916,33 @@ mod tests {
         );
         assert!(runtime_completion_output(&call(serde_json::json!({"summary": "  "}))).is_err());
         assert!(runtime_completion_output(&call(serde_json::json!({}))).is_err());
+        for summary in [
+            "placeholder",
+            "Placeholder - not complete",
+            "incomplete",
+            "TODO",
+        ] {
+            assert!(
+                runtime_completion_output(&call(serde_json::json!({"summary": summary}))).is_err(),
+                "{summary}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_composite_mutation_and_validation_still_counts_as_progress() {
+        assert!(tool_execution_made_state_progress(
+            ToolInteractionKind::MutationWithValidation,
+            true
+        ));
+        assert!(!tool_execution_made_state_progress(
+            ToolInteractionKind::Validation,
+            true
+        ));
+        assert!(tool_execution_made_state_progress(
+            ToolInteractionKind::Mutation,
+            true
+        ));
     }
 
     #[tokio::test]
@@ -4154,6 +5068,38 @@ mod tests {
                 .archived_count()
                 .expect("archive count succeeds"),
             0
+        );
+
+        let mut qualification_memory = LongMemoryManager::default();
+        let mut qualification_policy = measured_cache_policy;
+        qualification_policy.admission_policy = PointerGcAdmissionPolicy::MechanismQualification;
+        let (qualified, qualification_observation) = replace_archivable_batches_with_pointers(
+            &history,
+            ShortMemoryProjector::project_full(&history),
+            &batches,
+            &[],
+            &RunId::new("run-1"),
+            qualification_policy,
+            &mut qualification_memory,
+        )
+        .expect("mechanism qualification projection succeeds");
+        let qualification_observation =
+            qualification_observation.expect("qualification decision is observed");
+        assert_eq!(
+            qualification_observation.admission_policy,
+            PointerGcAdmissionPolicy::MechanismQualification
+        );
+        assert!(qualification_observation.admitted);
+        assert!(
+            qualified
+                .iter()
+                .any(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
+        );
+        assert_eq!(
+            qualification_memory
+                .archived_count()
+                .expect("archive count succeeds"),
+            4
         );
     }
 

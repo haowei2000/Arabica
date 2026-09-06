@@ -2,6 +2,7 @@ use std::env;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 use structure_runtime::{KeyAdmissionPolicy, ShortMemoryPolicy};
 use structure_short_memory_benchmark::{
@@ -26,8 +27,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut scale_event_counts = None;
     let mut warmup_iterations = 5_usize;
     let mut measured_iterations = 20_usize;
+    let mut chunks_per_tool_was_set = false;
     let mut max_key_batches = None;
     let mut max_key_content_bytes = None;
+    let mut output_path = None;
     let arguments: Vec<String> = env::args().skip(1).collect();
     let mut index = 0_usize;
 
@@ -49,6 +52,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "--chunks-per-tool" => {
                 config.command_output_chunks_per_tool =
                     parse(value(&arguments, &mut index, argument)?, argument)?;
+                chunks_per_tool_was_set = true;
             }
             "--payload-chars" => {
                 config.payload_chars = parse(value(&arguments, &mut index, argument)?, argument)?;
@@ -75,6 +79,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 config.evidence_horizon_turns =
                     parse(value(&arguments, &mut index, argument)?, argument)?;
             }
+            "--single-run" => config.single_run = true,
             "--scale-events" => {
                 scale_event_counts = Some(parse_csv(value(&arguments, &mut index, argument)?)?);
             }
@@ -92,6 +97,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     Some(parse(value(&arguments, &mut index, argument)?, argument)?);
             }
             "--pretty" => pretty = true,
+            "--output" => {
+                output_path = Some(PathBuf::from(value(&arguments, &mut index, argument)?));
+            }
             "--fail-on-gate" => fail_on_gate = true,
             "--help" | "-h" => {
                 print_help();
@@ -108,6 +116,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "scaling requires a release build; use cargo run --release -p structure-short-memory-benchmark"
                     .into(),
             );
+        }
+        config.single_run = true;
+        if !chunks_per_tool_was_set {
+            // Keep Event counts exact while avoiding a filesystem benchmark
+            // dominated by tens of thousands of tiny archive files per cell.
+            config.command_output_chunks_per_tool = 64;
         }
         let key_admission = KeyAdmissionPolicy {
             max_key_batches,
@@ -127,9 +141,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             measured_iterations,
             synthetic: config,
             baselines,
+            adaptive_chunking: true,
         })?;
-        print_json(&report, pretty)?;
-        if fail_on_gate && !report.all_correctness_gates_passed() {
+        emit_json(&report, pretty, output_path.as_deref())?;
+        if fail_on_gate && !report.required_correctness_gates_passed() {
             return Err("one or more scaling correctness gates failed".into());
         }
         return Ok(());
@@ -148,7 +163,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     )?;
     let trace = SyntheticTraceGenerator::generate(&config)?;
     let report = BenchmarkRun::execute(&trace, baseline)?;
-    print_json(&report, pretty)?;
+    emit_json(&report, pretty, output_path.as_deref())?;
 
     if fail_on_gate && !report.correctness.passed() {
         return Err("one or more correctness gates failed".into());
@@ -180,7 +195,16 @@ fn baseline_from_name(
             };
             Ok(Baseline::Structure { policy })
         }
-        _ => Err(format!("unknown baseline {name}; expected b0, b1, b2, b3, s, or all").into()),
+        "pgc" => Ok(Baseline::PointerGc {
+            checkpoint_batches: 8,
+        }),
+        "fbgc" => Ok(Baseline::FileBackedGc {
+            checkpoint_batches: 8,
+        }),
+        _ => Err(
+            format!("unknown baseline {name}; expected b0, b1, b2, b3, s, pgc, fbgc, or all")
+                .into(),
+        ),
     }
 }
 
@@ -191,6 +215,30 @@ fn print_json(value: &impl serde::Serialize, pretty: bool) -> Result<(), Box<dyn
         serde_json::to_string(value)?
     };
     writeln!(io::stdout().lock(), "{output}")?;
+    Ok(())
+}
+
+fn emit_json(
+    value: &impl serde::Serialize,
+    pretty: bool,
+    output: Option<&std::path::Path>,
+) -> Result<(), Box<dyn Error>> {
+    let Some(output) = output else {
+        return print_json(value, pretty);
+    };
+    if output.exists() {
+        return Err(format!("output already exists: {}", output.display()).into());
+    }
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut encoded = if pretty {
+        serde_json::to_vec_pretty(value)?
+    } else {
+        serde_json::to_vec(value)?
+    };
+    encoded.push(b'\n');
+    std::fs::write(output, encoded)?;
     Ok(())
 }
 
@@ -234,7 +282,7 @@ fn print_help() {
            cargo run -p structure-short-memory-benchmark -- [options]\n\
          \n\
          Options:\n\
-           --baseline <METHOD>      b0, b1, b2, b3, s, or all for scaling\n\
+           --baseline <METHOD>      b0, b1, b2, b3, s, pgc, fbgc, or all for scaling\n\
            --tail-k <N>             B1 entry limit (default: 128)\n\
            --turns <N>              Synthetic turn count\n\
            --tools-per-turn <N>     Tool calls per turn\n\
@@ -245,12 +293,14 @@ fn print_help() {
            --failure-every <N|none> Make every Nth tool result an error\n\
            --fork-after-turn <N|none> Continue in a child Session after turn N\n\
            --evidence-horizon-turns <N> Gold evidence recency horizon\n\
+           --single-run             Emit one active run across all tool batches\n\
            --scale-events <CSV>     Release-mode target event counts\n\
            --warmup <N>             Scaling warm-up iterations\n\
            --iterations <N>         Scaling measured iterations\n\
            --max-key-batches <N>    Maximum admitted historical key batches\n\
            --max-key-bytes <N>      Maximum total admitted key-content bytes\n\
            --pretty                 Pretty-print the JSON report\n\
+           --output <FILE>          Write to a new JSON artifact instead of stdout\n\
            --fail-on-gate           Exit non-zero if a correctness gate fails\n\
            --help                    Show this help"
     );

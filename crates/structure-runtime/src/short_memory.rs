@@ -677,6 +677,7 @@ fn batch_identity(
         | Event::RunFailed { .. }
         | Event::AgentProgressAdvisory { .. }
         | Event::AgentLoopTerminated { .. }
+        | Event::TerminalControlTransition { .. }
         | Event::RunCancelled => (format!("run:{run}:turn:1"), MemoryBatchKind::Turn),
         Event::ModelResponseItem {
             model_step,
@@ -700,6 +701,10 @@ fn batch_identity(
         ),
         Event::ModelResponseRejected { model_step, .. } => (
             format!("run:{run}:model-response:{model_step}:rejected"),
+            MemoryBatchKind::Transient,
+        ),
+        Event::ModelResponseNormalized { model_step, .. } => (
+            format!("run:{run}:model-response:{model_step}:normalized"),
             MemoryBatchKind::Transient,
         ),
         Event::ModelRequestPrepared { model_step, .. } => (
@@ -960,10 +965,12 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::ModelResponseItem { .. }
         | Event::ModelResponseCompleted { .. }
         | Event::ModelResponseRejected { .. }
+        | Event::ModelResponseNormalized { .. }
         | Event::ToolCallClassified { .. }
         | Event::ToolCallReused { .. }
         | Event::ToolCallLoopBlocked { .. }
         | Event::AgentLoopTerminated { .. }
+        | Event::TerminalControlTransition { .. }
         | Event::RunCompleted { output: None } => return None,
     };
     Some(ShortMemoryEntry {
@@ -976,7 +983,9 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
 fn tool_interaction_memory_class(kind: ToolInteractionKind) -> MemoryClass {
     match kind {
         ToolInteractionKind::Inspection => MemoryClass::ToolInspection,
-        ToolInteractionKind::Mutation => MemoryClass::ToolMutation,
+        ToolInteractionKind::Mutation | ToolInteractionKind::MutationWithValidation => {
+            MemoryClass::ToolMutation
+        }
         ToolInteractionKind::Build => MemoryClass::ToolBuild,
         ToolInteractionKind::Dependency => MemoryClass::ToolDependency,
         ToolInteractionKind::Validation => MemoryClass::ToolValidation,
@@ -1001,7 +1010,8 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         } => (MemoryClass::Working, None, false),
         Event::ModelResponseItem { .. }
         | Event::ModelResponseCompleted { .. }
-        | Event::ModelResponseRejected { .. } => (MemoryClass::Control, None, false),
+        | Event::ModelResponseRejected { .. }
+        | Event::ModelResponseNormalized { .. } => (MemoryClass::Control, None, false),
         Event::ModelRequestPrepared { .. } => (MemoryClass::Control, None, false),
         Event::ToolCallRequested { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
@@ -1028,6 +1038,7 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         Event::RunCompleted { output: Some(_) } => (MemoryClass::Anchor, None, false),
         Event::RunCompleted { output: None } => (MemoryClass::Control, None, false),
         Event::AgentProgressAdvisory { .. } => (MemoryClass::Control, None, false),
+        Event::TerminalControlTransition { .. } => (MemoryClass::Control, None, false),
         Event::RunFailed { .. } | Event::AgentLoopTerminated { .. } | Event::Error { .. } => {
             (MemoryClass::Recovery, None, false)
         }
@@ -1068,6 +1079,7 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::ModelResponseItem { .. } => "model.response.item",
         Event::ModelResponseCompleted { .. } => "model.response.completed",
         Event::ModelResponseRejected { .. } => "model.response.rejected",
+        Event::ModelResponseNormalized { .. } => "model.response.normalized",
         Event::ToolCallRequested { .. } => "tool.call.requested",
         Event::ToolCallClassified { .. } => "tool.call.classified",
         Event::ToolCallReused { .. } => "tool.call.reused",
@@ -1078,6 +1090,7 @@ fn event_type_name(event: &Event) -> &'static str {
         } => "tool.call.completed",
         Event::AgentProgressAdvisory { .. } => "agent.progress.advisory",
         Event::AgentLoopTerminated { .. } => "agent.loop.terminated",
+        Event::TerminalControlTransition { .. } => "terminal.control.transition",
         Event::CommandOutput { .. } => "command.output",
         Event::RunCompleted { .. } => "run.completed",
         Event::RunFailed { .. } => "run.failed",
@@ -1216,6 +1229,16 @@ fn event_semantic_key(event: &Event) -> Option<String> {
             )
             .to_lowercase(),
         ),
+        Event::ModelResponseNormalized {
+            model_step,
+            policy,
+            ignored_assistant_text,
+        } => Some(
+            format!(
+                "model_response_normalized step={model_step} policy={policy:?} ignored_assistant_text={ignored_assistant_text}"
+            )
+            .to_lowercase(),
+        ),
         Event::ModelRequestPrepared {
             model_step,
             request,
@@ -1285,6 +1308,18 @@ fn event_semantic_key(event: &Event) -> Option<String> {
         } => Some(
             format!(
                 "agent_loop_terminated step={model_step} reason={reason:?} consecutive_no_progress_steps={consecutive_no_progress_steps}"
+            )
+            .to_lowercase(),
+        ),
+        Event::TerminalControlTransition {
+            model_step,
+            policy,
+            from,
+            to,
+            reason,
+        } => Some(
+            format!(
+                "terminal_control_transition step={model_step} policy={policy:?} from={from:?} to={to:?} reason={reason:?}"
             )
             .to_lowercase(),
         ),

@@ -1,12 +1,15 @@
 use std::collections::{BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use structure_model::{MemoryBatchKind, MemoryLoadState, ShortMemoryEntry, ShortMemoryItem};
 use structure_runtime::{
-    EventVisibilityDecision, KeyAdmissionDecision, KeyAdmissionPolicy, MemoryClass,
+    EventVisibilityDecision, KeyAdmissionDecision, KeyAdmissionPolicy, LongMemoryManager,
+    MemoryClass, PointerGcAdmissionObservation, RuntimeCompactionStrategy,
     ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
+    project_compaction_for_benchmark,
 };
 
 use crate::ShortMemoryTrace;
@@ -30,6 +33,10 @@ pub enum Baseline {
     },
     /// S: production TTL, relation decay, and batch disclosure together.
     Structure { policy: ShortMemoryPolicy },
+    /// PGC: recoverable pointer substitution without durable file semantics.
+    PointerGc { checkpoint_batches: usize },
+    /// FBGC: exact durable file-backed archive plus substitutive pointers.
+    FileBackedGc { checkpoint_batches: usize },
 }
 
 impl Baseline {
@@ -40,6 +47,8 @@ impl Baseline {
             Self::TtlOnly { .. } => "B2",
             Self::BatchOnly { .. } => "B3",
             Self::Structure { .. } => "S",
+            Self::PointerGc { .. } => "PGC",
+            Self::FileBackedGc { .. } => "FBGC",
         }
     }
 
@@ -64,6 +73,24 @@ impl Baseline {
             Self::Structure {
                 policy: ShortMemoryPolicy::default(),
             },
+            Self::PointerGc {
+                checkpoint_batches: 2,
+            },
+            Self::PointerGc {
+                checkpoint_batches: 4,
+            },
+            Self::PointerGc {
+                checkpoint_batches: 8,
+            },
+            Self::FileBackedGc {
+                checkpoint_batches: 2,
+            },
+            Self::FileBackedGc {
+                checkpoint_batches: 4,
+            },
+            Self::FileBackedGc {
+                checkpoint_batches: 8,
+            },
         ])
     }
 
@@ -74,7 +101,11 @@ impl Baseline {
                 ..
             } => *configured = key_admission,
             Self::Structure { policy } => policy.key_admission = key_admission,
-            Self::FullReplay | Self::TailK { .. } | Self::TtlOnly { .. } => {}
+            Self::FullReplay
+            | Self::TailK { .. }
+            | Self::TtlOnly { .. }
+            | Self::PointerGc { .. }
+            | Self::FileBackedGc { .. } => {}
         }
         self
     }
@@ -93,6 +124,7 @@ impl Baseline {
         &self,
         trace: &ShortMemoryTrace,
     ) -> Result<BenchmarkProjection, BaselineError> {
+        let mut compaction = None;
         let (entries, visibility, batches) = match self {
             Self::FullReplay => (
                 ShortMemoryProjector::project_full(&trace.events),
@@ -149,12 +181,75 @@ impl Baseline {
                 trace.current_run_id.as_ref(),
                 policy,
             )),
+            Self::PointerGc { checkpoint_batches } => {
+                let run_id = trace.current_run_id.as_ref().ok_or_else(|| {
+                    BaselineError::new("PGC requires a trace with current_run_id")
+                })?;
+                let mut memory = LongMemoryManager::default();
+                let projection = project_compaction_for_benchmark(
+                    &trace.events,
+                    run_id,
+                    &ShortMemoryPolicy::ttl_only(),
+                    RuntimeCompactionStrategy::PointerGc,
+                    *checkpoint_batches,
+                    &mut memory,
+                )
+                .map_err(|error| BaselineError::new(error.to_string()))?;
+                let metadata = projection_metadata(&projection.visibility, &projection.batches);
+                compaction = Some(CompactionProjectionMetrics::from_projection(
+                    RuntimeCompactionStrategy::PointerGc,
+                    *checkpoint_batches,
+                    &projection,
+                ));
+                (projection.entries, metadata.0, metadata.1)
+            }
+            Self::FileBackedGc { checkpoint_batches } => {
+                let run_id = trace.current_run_id.as_ref().ok_or_else(|| {
+                    BaselineError::new("FBGC requires a trace with current_run_id")
+                })?;
+                let root = deterministic_archive_root();
+                let mut memory = LongMemoryManager::with_file_archive(&root)
+                    .map_err(|error| BaselineError::new(error.to_string()))?;
+                let projection = project_compaction_for_benchmark(
+                    &trace.events,
+                    run_id,
+                    &ShortMemoryPolicy::ttl_only(),
+                    RuntimeCompactionStrategy::FileBackedGc,
+                    *checkpoint_batches,
+                    &mut memory,
+                )
+                .map_err(|error| BaselineError::new(error.to_string()))?;
+                let metadata = projection_metadata(&projection.visibility, &projection.batches);
+                compaction = Some(CompactionProjectionMetrics::from_projection(
+                    RuntimeCompactionStrategy::FileBackedGc,
+                    *checkpoint_batches,
+                    &projection,
+                ));
+                drop(memory);
+                let reopened = LongMemoryManager::with_file_archive(&root)
+                    .map_err(|error| BaselineError::new(error.to_string()))?;
+                let reopened_count = reopened
+                    .archived_count()
+                    .map_err(|error| BaselineError::new(error.to_string()))?;
+                if let Some(compaction) = &mut compaction {
+                    compaction.archive_reopen_verified = reopened_count == compaction.archive_count;
+                }
+                drop(reopened);
+                std::fs::remove_dir_all(&root).map_err(|error| {
+                    BaselineError::new(format!(
+                        "failed to remove benchmark archive {}: {error}",
+                        root.display()
+                    ))
+                })?;
+                (projection.entries, metadata.0, metadata.1)
+            }
         };
         Ok(BenchmarkProjection {
             baseline: self.clone(),
             entries,
             visibility,
             batches,
+            compaction,
         })
     }
 }
@@ -165,6 +260,46 @@ pub struct BenchmarkProjection {
     pub entries: Vec<ShortMemoryEntry>,
     pub visibility: Vec<ProjectionVisibility>,
     pub batches: Vec<ProjectionBatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionProjectionMetrics>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompactionProjectionMetrics {
+    pub strategy: RuntimeCompactionStrategy,
+    pub checkpoint_batches: usize,
+    pub admission: Option<PointerGcAdmissionObservation>,
+    pub archive_count: usize,
+    pub archive_idempotent: bool,
+    pub archive_reopen_verified: bool,
+    pub exact_continuation_bytes: usize,
+    pub projected_continuation_bytes: usize,
+    pub substitutive_transition: bool,
+}
+
+impl CompactionProjectionMetrics {
+    fn from_projection(
+        strategy: RuntimeCompactionStrategy,
+        checkpoint_batches: usize,
+        projection: &structure_runtime::DeterministicCompactionProjection,
+    ) -> Self {
+        Self {
+            strategy,
+            checkpoint_batches,
+            admission: projection.admission.clone(),
+            archive_count: projection.archive_count,
+            archive_idempotent: projection.archive_idempotent,
+            archive_reopen_verified: strategy != RuntimeCompactionStrategy::FileBackedGc,
+            exact_continuation_bytes: projection.exact_continuation_bytes,
+            projected_continuation_bytes: projection.projected_continuation_bytes,
+            substitutive_transition: projection.archive_count > 0
+                && (projection.projected_continuation_bytes < projection.exact_continuation_bytes
+                    || projection
+                        .entries
+                        .iter()
+                        .any(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -239,6 +374,43 @@ fn projection_parts(
         })
         .collect();
     (materialization.entries, visibility, batches)
+}
+
+fn projection_metadata(
+    visibility: &[EventVisibilityDecision],
+    batches: &[structure_runtime::EventBatch],
+) -> (Vec<ProjectionVisibility>, Vec<ProjectionBatch>) {
+    let visibility = visibility.iter().map(ProjectionVisibility::from).collect();
+    let batches = batches
+        .iter()
+        .map(|batch| ProjectionBatch {
+            context_key: batch.context_key.clone(),
+            context_kind: batch.context_kind,
+            source_event_ids: batch
+                .events
+                .iter()
+                .map(|event| event.event_id.to_string())
+                .collect(),
+            estimated_tokens: batch.estimated_tokens,
+            raw_item_bytes: batch.raw_item_bytes,
+            key_content_budget_bytes: batch.key_content_budget_bytes,
+            key_content_bytes: batch.key_content_bytes,
+            materialized_key_bytes: batch.materialized_key_bytes,
+            key_admission_rank: batch.key_admission_rank,
+            key_admission: batch.key_admission,
+            load_state: batch.load_state,
+        })
+        .collect();
+    (visibility, batches)
+}
+
+fn deterministic_archive_root() -> std::path::PathBuf {
+    static NEXT_ARCHIVE: AtomicU64 = AtomicU64::new(1);
+    std::env::temp_dir().join(format!(
+        "structure-fbgc-tier-a-{}-{}",
+        std::process::id(),
+        NEXT_ARCHIVE.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 fn structurally_closed_tail(
@@ -410,12 +582,14 @@ mod tests {
     }
 
     #[test]
-    fn default_suite_contains_all_five_methods() {
+    fn default_suite_contains_all_preregistered_methods() {
         let suite = Baseline::default_suite(128).expect("suite is valid");
 
         assert_eq!(
             suite.iter().map(Baseline::id).collect::<Vec<_>>(),
-            ["B0", "B1", "B2", "B3", "S"]
+            [
+                "B0", "B1", "B2", "B3", "S", "PGC", "PGC", "PGC", "FBGC", "FBGC", "FBGC"
+            ]
         );
     }
 
@@ -433,5 +607,45 @@ mod tests {
 
         assert!(structure.correctness.passed());
         assert!(structure.metrics.materialised_bytes < full.metrics.materialised_bytes);
+    }
+
+    #[test]
+    fn pgc_and_fbgc_activate_and_replay_idempotently_on_a_long_run() {
+        let trace = SyntheticTraceGenerator::generate(&SyntheticTraceConfig {
+            single_run: true,
+            turn_count: 40,
+            tool_calls_per_turn: 2,
+            payload_chars: 64,
+            failure_every: None,
+            ..SyntheticTraceConfig::default()
+        })
+        .expect("long-run trace generates");
+
+        for baseline in [
+            Baseline::PointerGc {
+                checkpoint_batches: 8,
+            },
+            Baseline::FileBackedGc {
+                checkpoint_batches: 8,
+            },
+        ] {
+            let run = BenchmarkRun::execute(&trace, baseline).expect("compaction benchmark runs");
+            let compaction = run
+                .projection
+                .compaction
+                .as_ref()
+                .expect("compaction diagnostics exist");
+            assert!(run.correctness.passed());
+            assert!(
+                compaction
+                    .admission
+                    .as_ref()
+                    .is_some_and(|item| item.admitted)
+            );
+            assert!(compaction.archive_count > 0);
+            assert!(compaction.archive_idempotent);
+            assert!(compaction.substitutive_transition);
+            assert!(compaction.archive_reopen_verified);
+        }
     }
 }

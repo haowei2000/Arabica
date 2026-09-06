@@ -32,6 +32,8 @@ pub enum TraceOrigin {
         failure_every: Option<usize>,
         fork_after_turn: Option<usize>,
         evidence_horizon_turns: usize,
+        #[serde(default)]
+        single_run: bool,
     },
     Captured {
         source_schema_version: String,

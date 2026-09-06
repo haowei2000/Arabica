@@ -14,14 +14,16 @@ mod schema;
 mod tier_b;
 
 pub use baseline::{
-    Baseline, BaselineError, BenchmarkProjection, ProjectionBatch, ProjectionVisibility,
+    Baseline, BaselineError, BenchmarkProjection, CompactionProjectionMetrics, ProjectionBatch,
+    ProjectionVisibility,
 };
 pub use cli_comparison::{
     CLI_COMPARISON_MANIFEST_SCHEMA, CLI_COMPARISON_REPORT_SCHEMA, CLI_COMPARISON_SUITE_SCHEMA,
     CliComparisonManifest, CliComparisonMode, CliComparisonPlan, CliComparisonSummary,
-    CliPreflightReport, CliProgressDiagnostics, CliScenario, CliSuite, CliSurface, CliTrial,
-    CliTrialReport, CliUsage, CliVerifierResult, create_cli_comparison_manifest,
-    preflight_cli_comparison, run_cli_trial, summarize_cli_comparison,
+    CliMultiAgentSummary, CliPreflightReport, CliProgressDiagnostics, CliScenario, CliSuite,
+    CliSurface, CliTrial, CliTrialReport, CliUsage, CliVerifierResult, StructureOpponentSummary,
+    create_cli_comparison_manifest, preflight_cli_comparison, run_cli_trial,
+    summarize_cli_comparison, summarize_cli_multi_agent,
 };
 pub use gates::{
     BenchmarkRun, BenchmarkRunError, CorrectnessGates, EvidenceRecallGate, GateCheck,
@@ -29,9 +31,10 @@ pub use gates::{
 };
 pub use generator::{GeneratorError, SyntheticTraceConfig, SyntheticTraceGenerator};
 pub use long_horizon::{
-    ExperimentPhase, LONG_HORIZON_MANIFEST_SCHEMA, LongHorizonArm, LongHorizonManifest,
-    PairedPrimarySummary, QUALIFICATION_CANDIDATES, ScheduledTrial, TrialLedgerEntry,
-    summarize_primary,
+    ArmComparisonSummary, CoreAblationSummary, ExperimentPhase, LONG_HORIZON_MANIFEST_SCHEMA,
+    LongHorizonArm, LongHorizonManifest, PairedPrimarySummary, QUALIFICATION_CANDIDATES,
+    QualificationSummary, ScheduledTrial, TrialLedgerEntry, summarize_core_ablation,
+    summarize_primary, summarize_qualification,
 };
 pub use scaling::{
     ScalingConfig, ScalingEnvironment, ScalingError, ScalingReport, ScalingRunner, ScalingSample,
