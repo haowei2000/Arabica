@@ -100,14 +100,6 @@ def job_config(
                     "terminal_controller": trial.get(
                         "terminal_controller_policy", "advisory_v18"
                     ),
-                    "public_validation_profile": (
-                        trial["task"]
-                        if trial.get("terminal_controller_policy", "advisory_v18")
-                        != "advisory_v18"
-                        and trial["task"]
-                        in {"build-cython-ext", "db-wal-recovery"}
-                        else None
-                    ),
                 },
             }
         ],
@@ -286,6 +278,17 @@ def provider_preflight(base_url: str, client_token: str) -> None:
         raise RuntimeError(f"provider preflight returned an invalid response: {payload}")
 
 
+def require_finished_job(job_root: Path) -> None:
+    """Never convert an interrupted or concurrently running job into a trial."""
+    result_path = job_root / "result.json"
+    try:
+        result = json.loads(result_path.read_text())
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"incomplete Harbor job; preserve and inspect {job_root}") from error
+    if not result.get("finished_at"):
+        raise RuntimeError(f"unfinished Harbor job; preserve and inspect {job_root}")
+
+
 def main() -> int:
     args = parse_args()
     manifest_path = args.manifest.resolve()
@@ -376,6 +379,7 @@ def main() -> int:
             continue
         job_root = jobs_root / trial["trial_id"]
         if job_root.exists():
+            require_finished_job(job_root)
             entry = ledger_entry(manifest, trial, job_root)
         else:
             completed = subprocess.run(

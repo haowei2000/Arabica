@@ -35,10 +35,6 @@ const DEFAULT_PGC_CACHED_INPUT_COST_BPS: u32 = 0;
 const GC_GATE_MAX_FIRST_ADMISSION_FRACTION_BPS: u32 = 6_000;
 const GC_GATE_MIN_POST_ADMISSION_PROVIDER_CALLS: usize = 4;
 const MAX_TOOL_OUTPUT_CHARS: usize = 8_000;
-const PUBLIC_VALIDATE_TOOL_NAME: &str = "runtime_validate";
-const INPUT_SNAPSHOT_PATH: &str = "/tmp/structure-input-snapshot";
-const INPUT_SNAPSHOT_COMMAND: &str = "set -eu; snapshot=/tmp/structure-input-snapshot; mkdir -p \"$snapshot\"; find /app -maxdepth 1 -type f \\( -name '*.db' -o -name '*.db-*' -o -name '*.sqlite' -o -name '*.sqlite-*' -o -name '*.wal' \\) -exec cp -p {} \"$snapshot\"/ \\;";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 enum Strategy {
@@ -47,70 +43,6 @@ enum Strategy {
     Pgc,
     Fbgc,
     Capc,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum PublicValidationProfile {
-    BuildCythonExt,
-    DbWalRecovery,
-}
-
-impl PublicValidationProfile {
-    fn parse(raw: &str) -> Result<Self, Box<dyn Error>> {
-        match raw {
-            "build-cython-ext" => Ok(Self::BuildCythonExt),
-            "db-wal-recovery" => Ok(Self::DbWalRecovery),
-            _ => Err(format!(
-                "invalid public validation profile {raw}; expected build-cython-ext or db-wal-recovery"
-            )
-            .into()),
-        }
-    }
-
-    fn command(self) -> &'static str {
-        match self {
-            Self::BuildCythonExt => {
-                r#"set -eu
-cd /app/pyknotid
-python3 -B - <<'PY'
-import importlib.machinery
-import numpy
-import re
-from pathlib import Path
-assert numpy.__version__ == '2.3.0', numpy.__version__
-from pyknotid.spacecurves import chelpers, ccomplexity
-from pyknotid import cinvariants
-suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
-for module in (chelpers, ccomplexity, cinvariants):
-    assert module.__file__.endswith(suffixes), module.__file__
-deprecated = re.compile(r'\b(?:np|n)\.(?:bool|complex|float|int|object|str)\b')
-for path in Path('pyknotid').rglob('*'):
-    if path.suffix in {'.py', '.pyx', '.pxd'}:
-        assert not deprecated.search(path.read_text(errors='replace')), path
-import pyknotid.make as mk
-import pyknotid.spacecurves as sp
-k = sp.Knot(mk.three_twist(num_points=100))
-k.alexander_polynomial(-1)
-PY
-python3 -m pytest -q tests --ignore=tests/test_random_curves.py --ignore=tests/test_catalogue.py"#
-            }
-            Self::DbWalRecovery => {
-                r#"set -eu
-python3 -B - <<'PY'
-import json
-from pathlib import Path
-path = Path('/app/recovered.json')
-assert path.is_file(), 'missing /app/recovered.json'
-rows = json.loads(path.read_text())
-assert isinstance(rows, list) and len(rows) == 11, len(rows) if isinstance(rows, list) else type(rows)
-assert [row.get('id') for row in rows] == list(range(1, 12))
-assert all(set(row) == {'id', 'name', 'value'} for row in rows)
-assert all(isinstance(row['name'], str) and row['name'] for row in rows)
-PY"#
-            }
-        }
-    }
 }
 
 impl Strategy {
@@ -143,7 +75,6 @@ struct Config {
     pointer_gc_admission_policy: PointerGcAdmissionPolicy,
     thinking_enabled: bool,
     terminal_controller_policy: TerminalControllerPolicy,
-    public_validation_profile: Option<PublicValidationProfile>,
 }
 
 #[derive(Deserialize)]
@@ -177,11 +108,7 @@ enum BridgeOutput<'a> {
 }
 
 #[derive(Debug, Default)]
-struct HarborBridgeRunner {
-    input_snapshot_initialized: bool,
-    public_validation_profile: Option<PublicValidationProfile>,
-    require_public_validation: bool,
-}
+struct HarborBridgeRunner;
 
 #[derive(Debug)]
 struct PointerGcPartialRecorder {
@@ -231,9 +158,6 @@ impl HarborBridgeRunner {
 
 impl RunnerEnvironment for HarborBridgeRunner {
     fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
-        if call.name == PUBLIC_VALIDATE_TOOL_NAME && self.public_validation_profile.is_some() {
-            return ToolInteractionKind::Validation;
-        }
         let Some(command) = call
             .arguments
             .get("command")
@@ -248,71 +172,31 @@ impl RunnerEnvironment for HarborBridgeRunner {
         &mut self,
         request: ToolExecutionRequest,
     ) -> Result<ToolExecutionResult, RunnerError> {
-        if request.call.name != "shell" && request.call.name != PUBLIC_VALIDATE_TOOL_NAME {
+        if request.call.name != "shell" {
             return Err(RunnerError::new(format!(
                 "unknown Harbor tool: {}",
                 request.call.name
             )));
         }
-        if !self.input_snapshot_initialized {
-            let snapshot_id = "structure-input-snapshot";
-            let snapshot = self.exchange(&BridgeOutput::Exec {
-                id: snapshot_id,
-                command: INPUT_SNAPSHOT_COMMAND,
-                cwd: Some("/app"),
-                timeout_sec: 120,
-                strict_pipeline: false,
-            })?;
-            let BridgeInput::ExecResult {
-                id,
-                return_code,
-                stderr,
-                ..
-            } = snapshot
-            else {
-                return Err(RunnerError::new(
-                    "bridge returned start instead of snapshot result",
-                ));
-            };
-            if id != snapshot_id {
-                return Err(RunnerError::new(format!(
-                    "snapshot result id {id} does not match {snapshot_id}"
-                )));
-            }
-            if return_code != 0 {
-                return Err(RunnerError::new(format!(
-                    "input snapshot failed with exit code {return_code}: {}",
-                    stderr.unwrap_or_default()
-                )));
-            }
-            self.input_snapshot_initialized = true;
-        }
-        let (command, cwd, timeout_sec) = if request.call.name == PUBLIC_VALIDATE_TOOL_NAME {
-            let profile = self.public_validation_profile.ok_or_else(|| {
-                RunnerError::new("runtime_validate has no configured public validation profile")
-            })?;
-            (profile.command(), Some("/app"), 900)
-        } else {
-            let command = request
-                .call
-                .arguments
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| RunnerError::new("shell.command must be a string"))?;
-            let cwd = request
-                .call
-                .arguments
-                .get("cwd")
-                .and_then(serde_json::Value::as_str);
-            let timeout_sec = request
-                .call
-                .arguments
-                .get("timeout_sec")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(120)
-                .clamp(1, 900);
-            (command, cwd, timeout_sec)
-        };
+        let command = request
+            .call
+            .arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RunnerError::new("shell.command must be a string"))?;
+        let cwd = request
+            .call
+            .arguments
+            .get("cwd")
+            .and_then(serde_json::Value::as_str);
+        let timeout_sec = request
+            .call
+            .arguments
+            .get("timeout_sec")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(120)
+            .clamp(1, 900);
+
         let id = request.call.call_id.clone();
         let response = self.exchange(&BridgeOutput::Exec {
             id: &id,
@@ -323,9 +207,9 @@ impl RunnerEnvironment for HarborBridgeRunner {
         })?;
         let BridgeInput::ExecResult {
             id: response_id,
-            mut stdout,
-            mut stderr,
-            mut return_code,
+            stdout,
+            stderr,
+            return_code,
         } = response
         else {
             return Err(RunnerError::new(
@@ -336,44 +220,6 @@ impl RunnerEnvironment for HarborBridgeRunner {
             return Err(RunnerError::new(format!(
                 "bridge result id {response_id} does not match {id}"
             )));
-        }
-
-        let shell_kind =
-            (request.call.name == "shell").then(|| classify_shell_interaction(command));
-        if self.require_public_validation
-            && return_code == 0
-            && shell_kind.is_some_and(tool_interaction_requests_validation)
-        {
-            let profile = self.public_validation_profile.ok_or_else(|| {
-                RunnerError::new("public validation is required but no profile is configured")
-            })?;
-            let public_id = format!("{id}-public-validation");
-            let public = self.exchange(&BridgeOutput::Exec {
-                id: &public_id,
-                command: profile.command(),
-                cwd: Some("/app"),
-                timeout_sec: 900,
-                strict_pipeline: true,
-            })?;
-            let BridgeInput::ExecResult {
-                id: public_response_id,
-                stdout: public_stdout,
-                stderr: public_stderr,
-                return_code: public_return_code,
-            } = public
-            else {
-                return Err(RunnerError::new(
-                    "bridge returned start instead of public validation result",
-                ));
-            };
-            if public_response_id != public_id {
-                return Err(RunnerError::new(format!(
-                    "public validation result id {public_response_id} does not match {public_id}"
-                )));
-            }
-            append_public_validation_output(&mut stdout, public_stdout, "stdout");
-            append_public_validation_output(&mut stderr, public_stderr, "stderr");
-            return_code = public_return_code;
         }
 
         let stdout = truncate_output(stdout.unwrap_or_default());
@@ -401,25 +247,6 @@ impl RunnerEnvironment for HarborBridgeRunner {
     async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
         Ok(false)
     }
-}
-
-fn tool_interaction_requests_validation(kind: ToolInteractionKind) -> bool {
-    matches!(
-        kind,
-        ToolInteractionKind::Validation | ToolInteractionKind::MutationWithValidation
-    )
-}
-
-fn append_public_validation_output(
-    destination: &mut Option<String>,
-    source: Option<String>,
-    stream: &str,
-) {
-    let source = source.unwrap_or_default();
-    let marker = format!("\n[public validation {stream}]\n");
-    destination
-        .get_or_insert_with(String::new)
-        .push_str(&format!("{marker}{source}"));
 }
 
 fn classify_shell_interaction(command: &str) -> ToolInteractionKind {
@@ -703,7 +530,6 @@ struct HarborAgentReport {
     schema_version: &'static str,
     strategy: Strategy,
     terminal_controller_policy: TerminalControllerPolicy,
-    public_validation_profile: Option<PublicValidationProfile>,
     model: String,
     api_type: ApiType,
     compaction_strategy: RuntimeCompactionStrategy,
@@ -810,12 +636,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .join("runtime-memory");
     let mut runtime = CoreRuntime::with_memory_configuration(
         RecordingProvider::new(provider, recorder.clone()),
-        HarborBridgeRunner {
-            input_snapshot_initialized: false,
-            public_validation_profile: config.public_validation_profile,
-            require_public_validation: config.terminal_controller_policy.is_typed()
-                && config.public_validation_profile.is_some(),
-        },
+        HarborBridgeRunner,
         policy,
         false,
         RuntimeArchiveStore::File { root: archive_root },
@@ -833,15 +654,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
     ));
     runtime.set_max_model_steps_per_run(config.max_steps);
     runtime.set_terminal_controller_policy(config.terminal_controller_policy);
-    let mut tools = vec![
+    let tools = vec![
         shell_definition(),
         memory_search_definition(),
         memory_read_definition(),
         runtime_complete_tool_definition(),
     ];
-    if config.terminal_controller_policy.is_typed() && config.public_validation_profile.is_some() {
-        tools.push(public_validation_definition());
-    }
     runtime.set_tools(tools);
 
     let started = Instant::now();
@@ -867,11 +685,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 CommandId::new("harbor-task"),
                 Some(session_id),
                 Command::MessageSend {
-                    content: terminal_instruction(
-                        &instruction,
-                        config.terminal_controller_policy.is_typed()
-                            && config.public_validation_profile.is_some(),
-                    ),
+                    content: terminal_instruction(&instruction),
                 },
             ))
             .await?,
@@ -974,7 +788,6 @@ fn build_report(
         schema_version: REPORT_SCHEMA,
         strategy: config.strategy,
         terminal_controller_policy: config.terminal_controller_policy,
-        public_validation_profile: config.public_validation_profile,
         model: config.model.clone(),
         api_type: config.api_type,
         compaction_strategy: match config.strategy {
@@ -1168,20 +981,6 @@ fn shell_definition() -> ToolDefinition {
     }
 }
 
-fn public_validation_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: PUBLIC_VALIDATE_TOOL_NAME.to_owned(),
-        description: "Run the frozen public validation for this benchmark task. This is the only validation that grants typed completion eligibility. Fix any reported failure, then invoke this tool again."
-            .to_owned(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
-        strict: Some(true),
-    }
-}
-
 fn memory_search_definition() -> ToolDefinition {
     ToolDefinition {
         name: "memory_search".to_owned(),
@@ -1214,14 +1013,9 @@ fn memory_read_definition() -> ToolDefinition {
     }
 }
 
-fn terminal_instruction(instruction: &str, require_public_validation: bool) -> String {
-    let validation_instruction = if require_public_validation {
-        " Run your own focused checks while working. Every successful validation shell command is automatically followed by the same frozen public validation, so a successful validation result grants completion eligibility only when that public check also passes. You may also call runtime_validate with no arguments to run it directly."
-    } else {
-        ""
-    };
+fn terminal_instruction(instruction: &str) -> String {
     format!(
-        "You are operating inside an isolated Linux task environment. Complete the task using the shell tool. Inspect existing files before editing, preserve task constraints, and run relevant validation. Before invoking any program that might mutate, normalize, checkpoint, or delete an input, make a byte-for-byte backup of the input and all related sidecar files; database clients are not guaranteed to be read-only even for SELECT queries. The shell boundary also creates an automatic safety copy of database inputs at {INPUT_SNAPSHOT_PATH} before the first command; if an original sidecar disappears, immediately restore or analyze its copy there instead of searching the filesystem. Keep commands and output bounded: inspect binary data with targeted byte ranges, metadata, or short scripts instead of dumping whole files. Treat investigation as a budget: after at most twelve read-only shell calls, make the best justified change or create the required deliverable, then test it and iterate from concrete failures. Do not merely explain a solution or spend the whole run investigating: make the required changes in the environment.{validation_instruction} After the task requirements and validation are complete, call runtime_complete by itself with a concise final status; do not continue optional investigation.\n\n{instruction}"
+        "You are operating inside an isolated Linux task environment. Complete the task using the shell tool. Inspect existing files before editing, preserve task constraints, and run relevant validation. Keep commands and output bounded. After the task requirements and validation are complete, call runtime_complete by itself with a concise final status.\n\n{instruction}"
     )
 }
 
@@ -1272,7 +1066,6 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         .transpose()?
         .unwrap_or(true);
     let mut terminal_controller_policy = TerminalControllerPolicy::AdvisoryV18;
-    let mut public_validation_profile = None;
     let mut index = 0;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -1300,10 +1093,9 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
             "--pointer-gc-admission-policy" => {
                 pointer_gc_admission_policy = match value(&arguments, &mut index, option)? {
                     "profitability" => PointerGcAdmissionPolicy::Profitability,
-                    "mechanism_qualification" => PointerGcAdmissionPolicy::MechanismQualification,
                     value => {
                         return Err(format!(
-                            "invalid PointerGC admission policy {value}; expected profitability or mechanism_qualification"
+                            "invalid PointerGC admission policy {value}; expected profitability"
                         )
                         .into());
                     }
@@ -1325,11 +1117,6 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
                         .into());
                     }
                 }
-            }
-            "--public-validation-profile" => {
-                public_validation_profile = Some(PublicValidationProfile::parse(value(
-                    &arguments, &mut index, option,
-                )?)?)
             }
             "--no-thinking" => thinking_enabled = false,
             _ => return Err(format!("unknown option {option}").into()),
@@ -1382,7 +1169,6 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
         pointer_gc_admission_policy,
         thinking_enabled,
         terminal_controller_policy,
-        public_validation_profile,
     })
 }
 
@@ -1450,7 +1236,6 @@ mod tests {
             pointer_gc_admission_policy: PointerGcAdmissionPolicy::Profitability,
             thinking_enabled: false,
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
-            public_validation_profile: None,
         };
         build_report(
             &config,
@@ -1530,42 +1315,12 @@ mod tests {
     }
 
     #[test]
-    fn typed_harbor_runner_routes_validation_through_the_public_hook() {
-        let runner = HarborBridgeRunner {
-            input_snapshot_initialized: false,
-            public_validation_profile: Some(PublicValidationProfile::BuildCythonExt),
-            require_public_validation: true,
-        };
-        let call = |name: &str, arguments| ToolCallItem {
-            id: None,
-            call_id: "call-1".to_owned(),
-            name: name.to_owned(),
-            arguments,
-            provider_state: None,
-        };
-        assert_eq!(
-            runner.classify(&call("shell", serde_json::json!({"command": "pytest -q"}))),
-            ToolInteractionKind::Validation
-        );
-        assert_eq!(
-            runner.classify(&call(PUBLIC_VALIDATE_TOOL_NAME, serde_json::json!({}))),
-            ToolInteractionKind::Validation
-        );
-        assert!(tool_interaction_requests_validation(
-            ToolInteractionKind::MutationWithValidation
-        ));
-        assert!(!tool_interaction_requests_validation(
-            ToolInteractionKind::Dependency
-        ));
-    }
-
-    #[test]
     fn read_only_inline_validation_and_ordered_pipelines_preserve_final_semantics() {
         let read_only = r#"python3 -B - <<'EOF'
 import json
-data = json.load(open('/app/recovered.json'))
+data = json.load(open('/app/output.json'))
 blob = open('/app/main.db', 'rb').read()
-assert len(data) == 11 and blob
+assert data and blob
 EOF"#;
         assert_eq!(
             classify_shell_interaction(read_only),
@@ -1576,7 +1331,7 @@ EOF"#;
 import json, sqlite3, shutil
 shutil.copytree('/app', '/tmp/validation', dirs_exist_ok=True)
 rows = sqlite3.connect('/tmp/validation/main.db').execute('select 1').fetchall()
-assert json.load(open('/app/recovered.json')) and rows
+assert json.load(open('/app/output.json')) and rows
 ""#;
         assert_eq!(
             classify_shell_interaction(sandbox_copy),
@@ -1607,9 +1362,9 @@ assert json.load(open('/app/recovered.json')) and rows
 
     #[test]
     fn inline_validation_source_does_not_match_build_substrings() {
-        let command = r#"cd /app/pyknotid && python3 -c "
-import pyknotid.make as mk
-result = mk.three_twist(num_points=100)
+        let command = r#"cd /app/sample-project && python3 -c "
+import sample_package.make as mk
+result = mk.example()
 assert result is not None
 " 2>&1"#;
 
@@ -1621,9 +1376,9 @@ assert result is not None
 
     #[test]
     fn python_heredoc_without_dash_is_classified_as_validation() {
-        let command = r#"cd /app/pyknotid && python3 << 'EOF'
-import planarity
-assert planarity.PGraph() is not None
+        let command = r#"cd /app/sample-project && python3 << 'EOF'
+import sample_package
+assert sample_package.example() is not None
 EOF"#;
 
         assert_eq!(

@@ -132,9 +132,7 @@ impl LongHorizonManifest {
                 }
             }
         }
-        let mut manifest = Self::base(provider, model, tasks, trials);
-        manifest.pointer_gc_admission_policy = PointerGcAdmissionPolicy::MechanismQualification;
-        manifest
+        Self::base(provider, model, tasks, trials)
     }
 
     pub fn paired_primary(tasks: Vec<String>, seed: u64, provider: String, model: String) -> Self {
@@ -1140,6 +1138,10 @@ mod tests {
             "glm-5.3-flash".into(),
         );
         assert_eq!(qualification.trials.len(), 16);
+        assert_eq!(
+            qualification.pointer_gc_admission_policy,
+            PointerGcAdmissionPolicy::Profitability
+        );
         assert!(qualification.trials.iter().any(|trial| {
             trial.terminal_controller_policy == TerminalControllerPolicy::TypedCompletionAutoV2
         }));

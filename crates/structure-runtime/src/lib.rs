@@ -166,7 +166,6 @@ pub enum RuntimeCompactionStrategy {
 pub enum PointerGcAdmissionPolicy {
     #[default]
     Profitability,
-    MechanismQualification,
 }
 
 impl RuntimeCompactionStrategy {
@@ -2353,13 +2352,6 @@ fn replace_archivable_batches_with_pointers(
                     weighted_remaining_steps_bps,
                     effective_effort,
                 )
-        }
-        PointerGcAdmissionPolicy::MechanismQualification => {
-            // Phase-0 asks whether the lossless archive/pointer mechanism is
-            // exercised under live Provider traffic, not whether a particular
-            // cache-price model predicts profit. Preserve the ordinary epoch
-            // cooldown while guaranteeing the first eligible checkpoint.
-            new_checkpoint_count > 0 && !blocked_by_cooldown
         }
     };
     let observation = (candidate_count > 0).then(|| PointerGcAdmissionObservation {
@@ -5068,38 +5060,6 @@ mod tests {
                 .archived_count()
                 .expect("archive count succeeds"),
             0
-        );
-
-        let mut qualification_memory = LongMemoryManager::default();
-        let mut qualification_policy = measured_cache_policy;
-        qualification_policy.admission_policy = PointerGcAdmissionPolicy::MechanismQualification;
-        let (qualified, qualification_observation) = replace_archivable_batches_with_pointers(
-            &history,
-            ShortMemoryProjector::project_full(&history),
-            &batches,
-            &[],
-            &RunId::new("run-1"),
-            qualification_policy,
-            &mut qualification_memory,
-        )
-        .expect("mechanism qualification projection succeeds");
-        let qualification_observation =
-            qualification_observation.expect("qualification decision is observed");
-        assert_eq!(
-            qualification_observation.admission_policy,
-            PointerGcAdmissionPolicy::MechanismQualification
-        );
-        assert!(qualification_observation.admitted);
-        assert!(
-            qualified
-                .iter()
-                .any(|entry| matches!(entry.item, ShortMemoryItem::MemoryPointer(_)))
-        );
-        assert_eq!(
-            qualification_memory
-                .archived_count()
-                .expect("archive count succeeds"),
-            4
         );
     }
 

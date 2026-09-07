@@ -42,7 +42,6 @@ class StructureAgent(BaseAgent):
         provider_client_token_env: str | None = None,
         provider_api_type: str | None = None,
         terminal_controller: str = "advisory_v18",
-        public_validation_profile: str | None = None,
         **kwargs,
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
@@ -78,11 +77,9 @@ class StructureAgent(BaseAgent):
         self.pgc_cached_input_cost_bps = pgc_cached_input_cost_bps
         if pointer_gc_admission_policy not in {
             "profitability",
-            "mechanism_qualification",
         }:
             raise ValueError(
-                "pointer_gc_admission_policy must be profitability or "
-                "mechanism_qualification"
+                "pointer_gc_admission_policy must be profitability"
             )
         self.pointer_gc_admission_policy = pointer_gc_admission_policy
         if thinking is None:
@@ -121,16 +118,6 @@ class StructureAgent(BaseAgent):
                 "typed_completion_auto_v1, or typed_completion_auto_v2"
             )
         self.terminal_controller = terminal_controller
-        if public_validation_profile not in {
-            None,
-            "build-cython-ext",
-            "db-wal-recovery",
-        }:
-            raise ValueError(
-                "public_validation_profile must be build-cython-ext, "
-                "db-wal-recovery, or omitted"
-            )
-        self.public_validation_profile = public_validation_profile
 
     def version(self) -> str:
         return "0.1.0"
@@ -180,10 +167,6 @@ class StructureAgent(BaseAgent):
             "--terminal-controller",
             self.terminal_controller,
         ]
-        if self.public_validation_profile is not None:
-            command.extend(
-                ["--public-validation-profile", self.public_validation_profile]
-            )
         if model:
             command.extend(["--model", model])
 
