@@ -227,42 +227,19 @@ line ending.
 Committed live artifacts and their evidence limitations are indexed under
 [`results/`](results/README.md).
 
-## Harbor / Terminal-Bench
+## Rust external-agent binary
 
-The `harbor_agent` binary runs the Rust Runtime as a Harbor external agent. A
-thin adapter at `benchmarks/harbor/structure_agent.py` forwards only shell
-requests to Harbor's isolated environment; it does not implement the agent loop
-or memory policy in Python.
-
-Build the host binary first:
+The `harbor_agent` binary and its transport protocol remain part of this Rust
+package. The Python Harbor bridge, campaign controller and preflight tools
+were removed at the Rust-only cutover. This repository no longer provides a
+runnable `harbor run` integration; an external host must implement the transport.
 
 ```bash
 cargo build --release -p structure-short-memory-benchmark --bin harbor_agent
 ```
 
-Then make the repository and binary visible to the Harbor process and select
-one policy arm:
-
-```bash
-PYTHONPATH="$PWD" \
-STRUCTURE_HARBOR_AGENT_BIN="$PWD/target/release/harbor_agent" \
-harbor run --dataset terminal-bench@2.0 \
-  --include-task-name db-wal-recovery \
-  --agent benchmarks.harbor.structure_agent:StructureAgent \
-  --model longcat/LongCat-2.0 \
-  --agent-kwarg strategy=FBGC \
-  --agent-kwarg max_tokens=8192 \
-  --agent-kwarg checkpoint_batches=8 \
-  --agent-kwarg pgc_effort=1 \
-  --agent-kwarg pgc_continuation_probability_bps=7500 \
-  --n-attempts 3 --n-concurrent 1
-```
-
-`COMPACTION_EFFORT` (or legacy `PGC_EFFORT`) and
-`PGC_CONTINUATION_PROBABILITY_BPS` can also be supplied
-through the Harbor host environment. Explicit agent kwargs take precedence;
-effort must be positive and probability must be between 0 and 10,000 basis
-points.
+The following Harbor report and campaign notes describe historical runs and
+the retained Rust reporting contract, not a currently supplied orchestrator.
 
 Credentials must be injected into the Harbor host process. Do not place them in
 the job configuration. The agent writes `structure-report.json` on normal

@@ -1,5 +1,10 @@
 # Short Memory 设计：三原则平衡
 
+> Historical document: Python services, memory benchmark runners and Harbor
+> orchestration were removed at the Rust-only cutover. References to those
+> components describe the original design or campaign, not current runnable
+> interfaces. See the repository benchmark guide for maintained entry points.
+
 **Status:** Draft — 2026-07-20
 **Owner:** haowei
 **Related:** `docs/runtime_core_architecture.md` (v2 Rust core), `benchmarks/short_memory/` (回归验证)

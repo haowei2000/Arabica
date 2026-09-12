@@ -1,1 +1,0 @@
-WORKSPACE_HISTORY_SUFFIX = "workspace_suffix"

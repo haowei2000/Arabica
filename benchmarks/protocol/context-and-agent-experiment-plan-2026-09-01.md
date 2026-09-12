@@ -1,5 +1,10 @@
 # Structure Context and Agent Experiment Plan — 2026-09-01
 
+> Historical document: Python services, memory benchmark runners and Harbor
+> orchestration were removed at the Rust-only cutover. References to those
+> components describe the original design or campaign, not current runnable
+> interfaces. See the repository benchmark guide for maintained entry points.
+
 Status: prospective plan. No result obtained before this document may be
 silently pooled into a campaign governed by this plan.
 

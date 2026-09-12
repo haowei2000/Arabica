@@ -1,5 +1,10 @@
 # Benchmark Protocol (Pre-Registered)
 
+> Historical document: Python services, memory benchmark runners and Harbor
+> orchestration were removed at the Rust-only cutover. References to those
+> components describe the original design or campaign, not current runnable
+> interfaces. See the repository benchmark guide for maintained entry points.
+
 **Status:** FROZEN as of 2026-07-10. Any change after the first live run
 must be recorded in the Amendments section with a date and a reason.
 Results produced under a modified protocol must say so in the paper.

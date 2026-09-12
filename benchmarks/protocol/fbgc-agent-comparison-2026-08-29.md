@@ -1,5 +1,10 @@
 # FBGC and agent comparison protocol — 2026-08-29
 
+> Historical document: Python services, memory benchmark runners and Harbor
+> orchestration were removed at the Rust-only cutover. References to those
+> components describe the original design or campaign, not current runnable
+> interfaces. See the repository benchmark guide for maintained entry points.
+
 Status: frozen before the first formal run. Earlier pilots are mechanism and
 infrastructure evidence only and are excluded from the formal estimates.
 

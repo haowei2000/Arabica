@@ -1,8 +1,9 @@
 # Structure Development Guide
 
 Structure is a backend-only, headless AI-agent runtime written in Rust. There
-is currently no frontend. The legacy Python implementation is retired and must
-not be used as the basis for new production work.
+is currently no frontend. The legacy Python implementation and experiment
+frameworks have been removed. Maintain the Rust workspace and its single
+experiment package; do not reintroduce a parallel implementation.
 
 ## Active Workspace
 
@@ -49,7 +50,7 @@ The server requires `OPENAI__API_KEY`, `OPENAI__BASE_URL`, and
 - Preserve deterministic event ordering and per-session sequencing.
 - Keep model providers and tool runners behind their existing traits.
 - Do not add UI or frontend dependencies unless the product scope changes.
-- Do not extend the retired Python implementation.
+- Keep experiments in the existing Rust benchmark package.
 - Add focused unit or conformance tests for behavior changes.
 - Run formatting, Clippy, and relevant tests before handoff.
 

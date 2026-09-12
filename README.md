@@ -100,9 +100,19 @@ Benchmark inputs, policies, and evidence gates live under
 
 ## Repository Status
 
-The repository still contains legacy implementation material while migration
-cleanup is in progress. It is not part of the current architecture or product
-contract. New production work should target the Rust crates above.
+The Python service, memory benchmark framework, and Harbor Python orchestration
+have been removed. The Rust workspace is the single maintained implementation;
+`structure-short-memory-benchmark` is the single experiment package. JavaScript
+fixtures and the CLI proxy remain supporting tools for that package.
+
+Run `make check` for Rust checks and offline benchmark/proxy tests (Node.js is
+required for proxy tests). See `benchmarks/README.md` for available entry points.
+The old Python CLI and import interfaces are no longer available. The former
+Python container deployment workflow was removed; tags do not deploy a service.
+
+The paper, reports and frozen protocols preserve historical evidence and may
+refer to removed runners. They do not establish reproducibility on this commit.
+Local datasets, experiment outputs and archived binaries remain untouched.
 
 No browser UI, React application, or other frontend is currently maintained.
 

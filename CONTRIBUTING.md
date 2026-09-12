@@ -1,7 +1,8 @@
 # Contributing to Structure
 
 Structure is currently a backend-only Rust workspace. There is no frontend, and
-the retired Python implementation is outside the scope of new development.
+the former Python implementation and benchmark frameworks have been removed.
+Maintain one experiment package: `structure-short-memory-benchmark`.
 
 ## Development setup
 

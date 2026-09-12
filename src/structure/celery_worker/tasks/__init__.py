@@ -1,1 +1,0 @@
-"""Celery background tasks module."""

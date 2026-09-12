@@ -3,8 +3,9 @@
 Structure is a backend-only AI-agent runtime implemented in Rust. Its active
 architecture is the Cargo workspace documented in `README.md` and `AGENTS.md`.
 
-There is no frontend in the repository. The previous Python service is retired;
-new implementation work belongs in the Rust crates.
+There is no frontend in the repository. The previous Python service and
+experiment runners have been removed; implementation work belongs in the Rust
+crates and the existing Rust benchmark package.
 
 Use these checks for normal development:
 

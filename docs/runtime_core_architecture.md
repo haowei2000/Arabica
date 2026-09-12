@@ -1,5 +1,10 @@
 # Runtime Core Architecture (v2 — Rust Core)
 
+> Historical document: Python services, memory benchmark runners and Harbor
+> orchestration were removed at the Rust-only cutover. References to those
+> components describe the original design or campaign, not current runnable
+> interfaces. See the repository benchmark guide for maintained entry points.
+
 **Status:** Accepted — Option A (full Rust implementation) chosen 2026-07-20;
 modular implementation started 2026-07-25.
 **Decision:** CLI, desktop app, and web all use **one Command/Event Protocol**

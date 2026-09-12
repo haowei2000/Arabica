@@ -71,7 +71,8 @@ scripts/open_source_audit.sh
 make lint
 make format-check
 make test
-cd frontend && npm run lint && npm run build
+make benchmark-smoke
+make test-proxy
 ```
 
 ## 4. GitHub Repository Settings
@@ -82,7 +83,7 @@ Before switching visibility to public:
 - Enable Dependabot alerts and security updates.
 - Require pull-request review on `main`.
 - Require the CI workflow to pass before merge.
-- Add repository topics: `ai-agents`, `fastapi`, `event-sourcing`, `llm`,
+- Add repository topics: `ai-agents`, `rust`, `event-sourcing`, `llm`,
   `orchestration`.
 - Confirm `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, and issue templates render
   correctly on GitHub.
@@ -92,6 +93,6 @@ Before switching visibility to public:
 Tag public releases with semantic versions:
 
 ```bash
-git tag -a v5.5.0 -m "v5.5.0"
-git push origin v5.5.0
+git tag -a v0.1.0-rust-only -m "Rust-only implementation and experiment baseline"
+git push origin v0.1.0-rust-only
 ```
