@@ -6,6 +6,7 @@
 
 mod baseline;
 mod cli_comparison;
+pub mod experiment;
 mod gates;
 mod generator;
 mod long_horizon;

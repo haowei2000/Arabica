@@ -7,7 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+use structure_provider::{OpenAiModelProvider, OpenAiProviderConfig};
 use structure_runtime::{KeyAdmissionPolicy, RuntimeCompactionStrategy, ShortMemoryPolicy};
+use structure_short_memory_benchmark::experiment::{
+    AuditedProvider, ExperimentConfig, PairedFirstTurns, sha256, write_new,
+};
 use structure_short_memory_benchmark::{
     ExpectedFile, FixtureFileProvider, TierBEvidenceLevel, TierBProviderMetadata, TierBSuiteConfig,
     TierBTask, run_tier_b_suite,
@@ -23,6 +27,7 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let mut fixture = false;
+    let mut experiment_config = None;
     let mut compare = false;
     let mut strategies = None;
     let mut suite_id = "tier-b-write-file".to_owned();
@@ -47,6 +52,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
     while index < arguments.len() {
         let argument = &arguments[index];
         match argument.as_str() {
+            "--experiment-config" => {
+                let path = value(&arguments, &mut index, argument)?;
+                experiment_config = Some(serde_json::from_slice::<ExperimentConfig>(
+                    &std::fs::read(path)?,
+                )?);
+            }
             "--fixture" => fixture = true,
             "--compare" => compare = true,
             "--strategies" => {
@@ -101,6 +112,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if repetitions == 0 {
         return Err("--repetitions must be greater than zero".into());
     }
+    if let Some(config) = &experiment_config {
+        config.sampling.validate()?;
+        if fixture || !compare || api_type != ApiType::OpenAiChatCompletions {
+            return Err("--experiment-config requires live --compare with Chat Completions".into());
+        }
+        if runner_root.is_none() {
+            return Err("--experiment-config requires a fresh --runner-root".into());
+        }
+    }
     if strategies.is_some() && !compare {
         return Err("--strategies requires --compare".into());
     }
@@ -130,6 +150,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         PathBuf::from("target/tier-b-runs").join(format!("{suite_id}-{run_stamp}"))
     });
     let output = output.unwrap_or_else(|| runner_root.join("report.json"));
+    if experiment_config.is_some() && output.exists() {
+        return Err("experiment output already exists".into());
+    }
     let key_admission = KeyAdmissionPolicy {
         max_key_batches,
         max_key_content_bytes,
@@ -167,6 +190,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 &model,
                 &base_url,
                 strategies.as_deref(),
+                experiment_config.as_ref(),
             )
             .await?
         };
@@ -521,7 +545,24 @@ async fn run_live_comparison(
     model: &str,
     base_url: &str,
     selected: Option<&[String]>,
+    experiment: Option<&ExperimentConfig>,
 ) -> Result<StrategyComparisonReport, Box<dyn Error>> {
+    if let Some(config) = experiment {
+        return run_controlled_comparison(
+            suite_id,
+            runner_root,
+            repetitions,
+            content,
+            workload,
+            key_admission,
+            api_key,
+            model,
+            base_url,
+            selected,
+            config,
+        )
+        .await;
+    }
     let mut strategies = Vec::new();
     for (strategy, description, policy, compaction_strategy) in
         comparison_policies(key_admission, selected)
@@ -552,6 +593,132 @@ async fn run_live_comparison(
         )
         .await?;
         strategies.push(StrategyResult::new(strategy, description, report));
+    }
+    Ok(StrategyComparisonReport {
+        schema_version: "structure.short-memory.tier-b-comparison/v5",
+        suite_id: suite_id.to_owned(),
+        evidence_level: TierBEvidenceLevel::LiveApi,
+        workload: workload.id(),
+        strategies,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_controlled_comparison(
+    suite_id: &str,
+    root: &std::path::Path,
+    repetitions: usize,
+    content: &str,
+    workload: TierBWorkload,
+    key_admission: KeyAdmissionPolicy,
+    api_key: &str,
+    model: &str,
+    base_url: &str,
+    selected: Option<&[String]>,
+    config: &ExperimentConfig,
+) -> Result<StrategyComparisonReport, Box<dyn Error>> {
+    // Reserve the entire campaign before constructing a network client.
+    if let Some(parent) = root.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::create_dir(root)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let executable = std::fs::read(std::env::current_exe()?)?;
+    write_new(&root.join("tier_b.bin"), &executable)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.join("tier_b.bin"),
+            std::fs::Permissions::from_mode(0o700),
+        )?;
+    }
+    let git = |args: &[&str]| -> Result<String, Box<dyn Error>> {
+        let out = std::process::Command::new("git").args(args).output()?;
+        if !out.status.success() {
+            return Err("git provenance capture failed".into());
+        }
+        Ok(String::from_utf8(out.stdout)?)
+    };
+    let mut sources = std::collections::BTreeMap::new();
+    for file in git(&["ls-files", "--cached", "--others", "--exclude-standard"])?.lines() {
+        if !(file.ends_with(".rs") || file.ends_with("Cargo.toml") || file == "Cargo.lock") {
+            continue;
+        }
+        let bytes = std::fs::read(file)?;
+        let dest = root.join("source").join(file);
+        std::fs::create_dir_all(dest.parent().ok_or("invalid source path")?)?;
+        write_new(&dest, &bytes)?;
+        sources.insert(file.to_owned(), sha256(&bytes));
+    }
+    let policies = comparison_policies(key_admission, selected);
+    let manifest = serde_json::json!({
+        "schema": "structure.controlled-experiment/v1", "config": config,
+        "model": model, "endpoint_sha256": sha256(base_url.as_bytes()),
+        "git_revision": git(&["rev-parse", "HEAD"])?.trim(),
+        "git_diff": git(&["diff", "HEAD", "--"] )?,
+        "binary_sha256": sha256(&executable), "sources": sources,
+        "rustc": std::process::Command::new("rustc").arg("--version").output().map(|o| String::from_utf8_lossy(&o.stdout).to_string())?,
+        "tasks": build_workload_tasks(repetitions, content, workload)?,
+        "strategy_order": policies.iter().map(|p| p.0).collect::<Vec<_>>(),
+        "cache_metric": "independent token-prefix simulation requires supplied tokenizer output; vendor telemetry is not a cache estimate",
+        "shared_first_usage": "legacy totals include copied first response usage; exclude calls whose origin.json has replayed=true for actual API totals",
+        "send_attempts": 1, "timeout_seconds_per_request": 300,
+        "determinism": "seed is a requested control, not a guarantee of endpoint determinism"
+    });
+    write_new(
+        &root.join("manifest.json"),
+        &serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    let first = PairedFirstTurns::default();
+    let mut strategies = Vec::new();
+    for (strategy, description, policy, compaction_strategy) in policies {
+        let arm = root.join(strategy.to_ascii_lowercase());
+        std::fs::create_dir(&arm)?;
+        let mut provider_config = OpenAiProviderConfig::new(api_key, base_url, model)?;
+        provider_config.experiment_controls = Some(Box::new(config.sampling.clone()));
+        provider_config.max_tokens = Some(config.sampling.max_tokens);
+        provider_config.thinking_enabled = config.sampling.thinking_enabled;
+        provider_config.raw_exchange_dir = Some(arm.join("wire"));
+        let provider = AuditedProvider::new(
+            OpenAiModelProvider::new(provider_config),
+            first.clone(),
+            config.shared_first_response,
+            arm.join("calls"),
+        );
+        let report = run_tier_b_suite(
+            TierBSuiteConfig {
+                suite_id: format!("{suite_id}-{strategy}"),
+                evidence_level: TierBEvidenceLevel::LiveApi,
+                provider: TierBProviderMetadata {
+                    api_type: ApiType::OpenAiChatCompletions.to_string(),
+                    model: model.to_owned(),
+                    base_url: base_url.to_owned(),
+                },
+                runner_root: arm.join("workspace"),
+                short_memory_policy: policy,
+                compaction_strategy,
+                pointer_gc_checkpoint_batches: 4,
+                max_model_steps_per_run: workload.max_model_steps(),
+                tasks: build_workload_tasks(repetitions, content, workload)?,
+            },
+            provider,
+        )
+        .await?;
+        write_new(
+            &arm.join("report.json"),
+            &serde_json::to_vec_pretty(&report)?,
+        )?;
+        let failed = report.aggregate.passed_run_count != report.aggregate.run_count;
+        strategies.push(StrategyResult::new(strategy, description, report));
+        // Retain partial results and stop after failure; never silently retry.
+        if failed {
+            break;
+        }
     }
     Ok(StrategyComparisonReport {
         schema_version: "structure.short-memory.tier-b-comparison/v5",
@@ -651,6 +818,7 @@ fn print_help() {
            cargo run -p structure-short-memory-benchmark --bin tier_b -- [options]\n\
          \n\
          Options:\n\
+           --experiment-config <JSON> Explicit sampling, request archive and paired first-turn checks (live compare only)\n\
            --fixture                 Use the deterministic provider; no API call\n\
            --compare                 Run B0, B2, B3, S, PGC, and FBGC through Runtime\n\
            --strategies <CSV>        With --compare, run only this subset (for example B0,FBGC)\n\

@@ -24,6 +24,29 @@ use structure_protocol::{ContextEntry, DisclosureLevel, RunId, SessionId};
 const TRANSIENT_SEND_ATTEMPTS: usize = 3;
 const TRANSIENT_RETRY_BASE_DELAY_MS: u64 = 250;
 
+/// Explicit Chat Completions experiment settings. Unsupported endpoint
+/// parameters must produce an error; callers must not silently remove them.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentControls {
+    pub seed: Option<i64>,
+    pub temperature: serde_json::Number,
+    pub top_p: serde_json::Number,
+    pub thinking_enabled: bool,
+    pub max_tokens: u32,
+}
+
+impl ExperimentControls {
+    pub fn validate(&self) -> Result<(), ProviderError> {
+        let t = self.temperature.as_f64().unwrap_or(f64::NAN);
+        let p = self.top_p.as_f64().unwrap_or(f64::NAN);
+        if !((0.0..=2.0).contains(&t) && 0.0 < p && p <= 1.0 && self.max_tokens > 0) {
+            return Err(ProviderError::new("invalid experiment sampling controls"));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelRunRequest {
     pub session_id: SessionId,
@@ -321,6 +344,7 @@ impl ModelProvider for ApiModelProvider {
 /// outside the model-provider boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenAiProviderConfig {
+    pub experiment_controls: Option<Box<ExperimentControls>>,
     pub api_key: String,
     pub base_url: String,
     pub model: String,
@@ -340,6 +364,7 @@ impl OpenAiProviderConfig {
         model: impl Into<String>,
     ) -> Result<Self, ProviderError> {
         let config = Self {
+            experiment_controls: None,
             api_key: api_key.into(),
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             model: model.into(),
@@ -413,6 +438,17 @@ pub struct OpenAiModelProvider {
 }
 
 impl OpenAiModelProvider {
+    /// Exact bytes that complete() will send, excluding authorization headers.
+    pub fn experiment_request_bytes(
+        &self,
+        request: &ModelRunRequest,
+    ) -> Result<Vec<u8>, ProviderError> {
+        let mut prepared = compile_runtime_request(request, &self.config.model);
+        prepared.generation.max_output_tokens = self.config.max_tokens;
+        prepared.generation.thinking_enabled = self.config.thinking_enabled;
+        serde_json::to_vec(&self.map_prepared_request(&prepared)?)
+            .map_err(|e| ProviderError::new(e.to_string()))
+    }
     pub fn new(config: OpenAiProviderConfig) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
@@ -456,6 +492,20 @@ impl OpenAiModelProvider {
             .config
             .thinking_enabled
             .then_some(OpenAiThinking { kind: "enabled" });
+        if let Some(controls) = &self.config.experiment_controls {
+            controls.validate()?;
+            wire.seed = controls.seed;
+            wire.temperature = Some(controls.temperature.clone());
+            wire.top_p = Some(controls.top_p.clone());
+            wire.max_tokens = Some(controls.max_tokens);
+            wire.thinking = Some(OpenAiThinking {
+                kind: if controls.thinking_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+            });
+        }
         Ok(wire)
     }
 
@@ -509,7 +559,12 @@ impl ModelProvider for OpenAiModelProvider {
             let raw_exchange = self.begin_raw_exchange(&run_id, &request_body)?;
             let mut transient_errors = Vec::new();
             let mut response = None;
-            for attempt in 1..=TRANSIENT_SEND_ATTEMPTS {
+            let attempts = if self.config.experiment_controls.is_some() {
+                1
+            } else {
+                TRANSIENT_SEND_ATTEMPTS
+            };
+            for attempt in 1..=attempts {
                 match self
                     .client
                     .post(self.endpoint())
@@ -524,8 +579,7 @@ impl ModelProvider for OpenAiModelProvider {
                         break;
                     }
                     Err(error)
-                        if attempt < TRANSIENT_SEND_ATTEMPTS
-                            && (error.is_connect() || error.is_timeout()) =>
+                        if attempt < attempts && (error.is_connect() || error.is_timeout()) =>
                     {
                         transient_errors.push(RawExchangeError {
                             stage: "send_retry",
@@ -1500,6 +1554,12 @@ pub struct OpenAiChatCodec;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OpenAiChatRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<serde_json::Number>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<serde_json::Number>,
     model: String,
     messages: Vec<OpenAiMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1743,6 +1803,9 @@ impl ApiCodec for OpenAiChatCodec {
         });
 
         Ok(OpenAiChatRequest {
+            seed: None,
+            temperature: None,
+            top_p: None,
             model: request.model.clone(),
             messages,
             tools,
@@ -2049,6 +2112,52 @@ impl ModelProvider for EchoModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn experiment_controls_are_explicit_and_validated() {
+        let request = ModelRunRequest {
+            session_id: SessionId::new("s"),
+            run_id: RunId::new("r"),
+            input: "test".into(),
+            short_memory: vec![],
+            run_memory: vec![],
+            long_memory: vec![],
+            tools: vec![],
+            tool_choice: ToolChoice::Auto,
+            continuation: vec![],
+            disclosure: DisclosureLevel::Detail,
+        };
+        let mut config =
+            OpenAiProviderConfig::new("test-only", "http://localhost/v1", "test-model").unwrap();
+        let legacy = OpenAiModelProvider::new(config.clone())
+            .experiment_request_bytes(&request)
+            .unwrap();
+        let legacy: Value = serde_json::from_slice(&legacy).unwrap();
+        assert!(legacy.get("seed").is_none());
+        assert!(legacy.get("thinking").is_none());
+        config.experiment_controls = Some(Box::new(ExperimentControls {
+            seed: Some(42),
+            temperature: 0.into(),
+            top_p: 1.into(),
+            thinking_enabled: false,
+            max_tokens: 8192,
+        }));
+        let bytes = OpenAiModelProvider::new(config.clone())
+            .experiment_request_bytes(&request)
+            .unwrap();
+        let wire: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(wire["seed"], 42);
+        assert_eq!(wire["temperature"], 0);
+        assert_eq!(wire["top_p"], 1);
+        assert_eq!(wire["thinking"]["type"], "disabled");
+        assert_eq!(wire["max_tokens"], 8192);
+        assert!(!String::from_utf8(bytes).unwrap().contains("test-only"));
+        config.experiment_controls.as_mut().unwrap().top_p = 0.into();
+        assert!(
+            OpenAiModelProvider::new(config)
+                .experiment_request_bytes(&request)
+                .is_err()
+        );
+    }
     use axum::Json;
     use axum::body::Bytes;
     use axum::extract::State;

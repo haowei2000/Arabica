@@ -1,5 +1,55 @@
 # Runtime Short-Memory Benchmark
 
+## Controlled live comparisons
+
+Use `tier_b --experiment-config experiment.json --compare --strategies B0,FBGC`
+with an explicit, **new** `--runner-root`. Copy `experiment.example.json` to
+a local configuration and confirm parameter support for the selected endpoint.
+The example requests seed 20260912, temperature 0, top_p 1, explicit thinking
+disabled and max_tokens 8192. This is an opt-in Chat Completions mode; endpoint
+errors are retained, never worked around by dropping parameters. A null seed
+explicitly means the endpoint does not provide a seed control. A seed does not
+guarantee deterministic generation. Existing unconfigured commands retain their
+old provider behavior and are not controlled experiments.
+
+Each campaign captures its executable, source snapshots and SHA-256 digests,
+Cargo lockfile, source revision and diff, workload, parameters and arm order
+before model calls. Source snapshots include untracked Rust files. On Unix the
+campaign directory is private (0700). Keep it outside Git: raw bodies may contain
+private prompts, provider reasoning and responses. Authorization headers are
+never archived. Each request and decoded response has a SHA-256; original wire
+request/response bodies are retained under each arm's `wire/` directory.
+
+`shared_first_response: true` samples the first response from the first arm once
+per repetition and replays it for corresponding later arms. Before any replay,
+the exact serialized request bytes must match. Independent mode also checks
+first-request equality but samples separately. A mismatch aborts that call.
+Every call has an `origin.json` indicating whether an API request was made.
+Replayed responses preserve the original usage for identical Runtime behavior;
+legacy report totals therefore include copied usage. They are **not billed-call
+totals**: exclude replayed calls when analyzing actual API usage. Shared-first
+runs are mechanism experiments, not independent end-to-end trials. Subsequent
+model outputs can still diverge. Failed arms retain their report and stop the
+campaign; no automatic network retries occur in controlled mode.
+
+### Independent KV prefix accounting
+
+`prefix_cache TOKENIZED_INPUT.json NEW_REPORT.json` computes a cold, independent
+cache for each arm from token-ID sequences. Input has `tokenizer_sha256`,
+`chat_template_sha256` and `arms: [{"name":"B0","requests":[[1,2],[1,2,3]]}]`.
+Supply real tokenizer/template hashes and token IDs for the complete model input,
+including special tokens, tools and system text. Do not tokenize raw HTTP JSON
+as a substitute for the model's chat template. This tool intentionally does not
+guess a GLM tokenizer from character counts or provider usage.
+
+Each hit is the longest contiguous prefix present among previous input sequences
+in that arm. A mismatch ends the hit even if later tokens match. The policy has
+no eviction, no block rounding and no caching of generated outputs before they
+appear in a subsequent input. Results are ideal prefix simulation, not actual
+server cache telemetry or billing. The model tokenizer/template must be supplied
+before precise token-based cache results can be produced; older byte-only
+reports cannot be reconstructed accurately.
+
 This Rust package implements the Tier-A and Tier-B benchmark harness described in
 [`docs/short_memory_benchmark_v2.md`](../../docs/short_memory_benchmark_v2.md).
 
