@@ -3,7 +3,8 @@
 **Status:** Draft v1.0 foundation
 **Source of truth:** `crates/structure-protocol`
 **Transport bindings:** in-process Rust types and HTTP + SSE
-**Surface status:** CLI, web, and desktop implementations are intentionally absent
+**Surface status:** headless composition hosts only; web and desktop UI
+implementations are intentionally absent
 
 ## 1. Purpose
 
@@ -13,9 +14,16 @@ scheduled work, calls the Model Provider, dispatches typed tool calls, and
 normalizes Runner output into Events. Runner Environment executes work without
 owning session or presentation state.
 
-No module may add a private command/event vocabulary at its boundary. No UI
-implementation may be introduced until this contract is versioned, exported,
-and covered by compatibility fixtures.
+No module may add a private command/event vocabulary at its boundary.
+
+A *composition host* wires the existing modules in one process and exposes this
+contract without adding vocabulary of its own. `structure-server` binds it to
+HTTP + SSE; `structure-cli` binds it to stdio and one-shot execution. Hosts are
+not surfaces and are not blocked by the §9 checklist.
+
+A *UI surface* renders state for a human: web, desktop, or a terminal UI. None
+may be introduced until this contract is versioned, exported, and covered by
+compatibility fixtures. See Appendix B of `runtime_core_architecture.md`.
 
 ## 2. Ownership
 
@@ -157,17 +165,25 @@ Rules:
 | Session | `session.created`, `session.forked`, `session.suspended`, `session.resumed`, `session.closed` |
 | Run | `run.scheduled`, `run.started`, `run.completed`, `run.failed`, `run.cancelled` |
 | Message/output | `message.accepted`, `command.output` |
+| Model exchange | `model.request.prepared`, `model.response.item`, `model.response.completed`, `model.response.rejected`, `model.response.normalized` |
+| Tool call | `tool.call.requested`, `tool.call.classified`, `tool.call.reused`, `tool.call.loop_blocked`, `tool.call.completed` |
+| Agent control | `agent.progress.advisory`, `agent.loop.terminated`, `terminal.control.transition` |
 | Context | `context.read`, `context.search.result`, `context.updated`, `context.deleted`, `context.disclosure.set` |
 | Failure | `error` |
+
+Not every family reaches clients. `Event::is_client_visible()` decides what a
+host may forward; model-exchange Events are retained as replay evidence and are
+kept off client and SSE output.
 
 Runner-specific failures are normalized by Runtime into terminal `run.failed`
 Events. Ordered Runner stdout/stderr chunks are mapped one-for-one to
 `command.output`; Runtime must not regroup them by stream.
 
-Tool approval, user-input requests, task/artifact changes, token usage, and
-model/tool trace Events are deliberately not frozen yet. They must be added as
-typed variants after reconciliation with the Python event taxonomy; generic
-untyped event escape hatches are forbidden.
+Tool approval, user-input requests, task/artifact changes, and token usage
+Events are deliberately not frozen yet. They must be added as typed variants;
+generic untyped event escape hatches are forbidden. The Python event taxonomy
+that earlier drafts planned to reconcile against was removed with the Python
+implementation in `a3823ee`, so the Rust vocabulary is now the only source.
 
 ## 5. Lifecycle Rules
 
@@ -232,10 +248,14 @@ operators and may change.
 - [ ] Durable command deduplication and event replay
 - [ ] Asynchronous `CommandReceipt` acceptance and background run dispatch
 - [ ] Reconnect cursor semantics
-- [ ] Python event-taxonomy reconciliation
+- [x] ~~Python event-taxonomy reconciliation~~ — dropped; the Python
+      implementation was removed in `a3823ee`
 - [ ] Typed tool approval and user-input flow
 - [ ] OpenAPI transport document
 - [ ] Golden cross-language fixtures
 - [ ] Load/backpressure and multi-session scheduling tests
 
-CLI, web, and desktop work remains blocked by this checklist by design.
+Web and desktop UI surfaces remain blocked by this checklist by design.
+Headless composition hosts are not blocked: they add no vocabulary and bind the
+same contract the checklist protects. See §1 and Appendix B of
+`runtime_core_architecture.md`.

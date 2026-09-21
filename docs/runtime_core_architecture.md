@@ -140,7 +140,7 @@ checklist are maintained in [`docs/protocol.md`](protocol.md).
 | `session.create` / `session.fork` / `session.resume` | workspace + run lifecycle |
 | `message.send` | user input into a session |
 | `run.cancel` | state machine transition |
-| `tool.approval.response` | §9 |
+| `tool.approval.response` | §9 — deferred; approvals resolve through a Runtime approver channel and are recorded as `tool.call.permission_*` Events |
 | `context.read` / `context.search` / `context.update` | context ops as first-class protocol |
 | `context.set_disclosure` (glance/overview/detail) | the paper's disclosure levels |
 | `config.get` / `config.set` | |
@@ -373,16 +373,25 @@ One binary for both server profiles is the structural advantage neither
 reference has: their hosted products do not run the same code as their local
 ones. Ours does by construction.
 
-`structure-exec` doubles as the **benchmark adapter** target:
-`benchmarks/adapters/structure.py` speaks the protocol, so it can drive the
-Python serve today and Rust `exec` the day it exists — the paper pipeline is
-decoupled from the rewrite schedule.
+`structure-exec` lands as the print mode of `structure-cli` (Appendix B). The
+Python benchmark adapter this section used to pair it with was removed with the
+Python implementation in `a3823ee`; the maintained experiment package
+(`benchmarks/runtime-short-memory`) links the production crates directly
+instead of speaking the protocol over a transport.
 
 ## 7. Surfaces (Deferred)
 
 All CLI, web, and desktop implementation code was removed on 2026-07-25 so
-surface behavior cannot drive or prematurely freeze the protocol. No surface
-crate may be reintroduced until the protocol checklist in §11 is complete.
+surface behavior cannot drive or prematurely freeze the protocol. No *UI
+surface* crate may be reintroduced until the protocol checklist in §11 is
+complete.
+
+Amended 2026-09-21 (Appendix B): this rule governs UI surfaces, not composition
+hosts. A host wires the existing modules in one process and binds the canonical
+contract to a transport without adding vocabulary. `structure-server` does this
+for HTTP + SSE; `structure-cli` does it for stdio (ACP) and one-shot execution.
+Hosts may depend on Runtime, Session Management and Runner Environment, exactly
+as `structure-server` already does.
 
 Future surfaces remain thin clients: they may construct commands, subscribe
 to events, and render state, but may not import Runtime, Session Management,
@@ -404,11 +413,24 @@ Both references route permission through the protocol (opencode
 `/permission`; codex approval Ops). Required the moment local tools execute on
 user machines:
 
-1. Core emits `tool.approval.request` (tool, args, risk class) and parks the
-   run in `waiting_for_tool`.
-2. Surface renders the prompt; sends `tool.approval.response`.
-3. Policy levels (`auto` / `ask-destructive` / `ask-all`) per workspace;
-   decisions are events → audit trail is free.
+Design agreed 2026-09-21 (Appendix B); implementation pending:
+
+1. Runtime emits `tool.call.permission_requested` (call id, interaction kind)
+   after `tool.call.classified` and before the Runner executes.
+2. The host supplies the decision through a Runtime-owned approver channel, not
+   a protocol Command: a Command reply cannot be delivered while the Session
+   Manager holds its borrow for the whole run. The ACP host forwards the request
+   to the editor as `session/request_permission`; the print host answers from a
+   static policy.
+3. Runtime emits `tool.call.permission_resolved` (outcome, scope, source), so
+   the decision is in the audit trail either way.
+4. Policy is keyed by **tool name**, never by the shell interaction classifier:
+   that classifier is a memory-retention heuristic and mislabels commands such
+   as `cat x | sh` as inspection.
+5. With no approver configured the gate fails closed.
+
+The Command side (`tool.approval.response`) stays deferred until asynchronous
+`CommandReceipt` acceptance exists; see the §11 checklist.
 
 Native sandboxing for local tool exec (seatbelt on macOS, Landlock on Linux)
 is a post-cutover milestone — it is one of the reasons Rust was chosen.
@@ -443,11 +465,15 @@ production until phase 6.
   calls, and confined LocalRunner file execution are implemented. Durable
   sessions, streaming deltas, background dispatch/event sinks, MCP routing,
   approvals, SQLite EventStore, and the in-process bus remain.
-- [ ] **`structure-exec`** — headless one-shot over the local profile; wire
-   `benchmarks/adapters/structure.py` to it (paper unblocked end-to-end on
-   Rust; until then the adapter drives Python serve).
-- [ ] **Surfaces after protocol freeze** — generate clients from the frozen
-   schema, then introduce CLI/TUI, web, and desktop shells as separate thin
+- [ ] **`structure-exec`** — headless one-shot over the local profile. Lands as
+   the print mode of `structure-cli` (`structure -p`), emitting canonical event
+   envelopes as JSONL. The Python benchmark adapter this entry used to feed was
+   removed with the Python implementation in `a3823ee`.
+- [ ] **ACP host** — `structure acp` binds the contract to Agent Client
+   Protocol v1 over stdio so editors can drive Structure directly. v2 stays
+   behind a feature flag while it is draft. See Appendix B.
+- [ ] **UI surfaces after protocol freeze** — generate clients from the frozen
+   schema, then introduce TUI, web, and desktop shells as separate thin
    clients. No surface-specific command or event variants.
 - [ ] **Service profile + cutover** — Postgres/Redis/S3 adapters, sqlx
    migrations, authn/z port from Python, web frontend on the generated SDK;
@@ -499,3 +525,48 @@ survive as FastMCP servers) and the protocol conformance suite as the cutover
 gate.
 
 **Rule: Rust may replace the core; it may never duplicate it.**
+
+## Appendix B — Decision Record: ACP-First Composition Host
+
+**Status:** Accepted 2026-09-21.
+**Decision:** add `crates/structure-cli`, a composition host with two bindings —
+`structure acp` (Agent Client Protocol v1 over stdio) and `structure -p`
+(one-shot execution, the `structure-exec` role from §11). ACP is the default
+integration surface, so editors can drive Structure without a separate adapter.
+
+### Why this is not the surface reintroduction §7 forbids
+
+The host adds no Command or Event vocabulary and renders nothing. It wires the
+same modules `structure-server` already wires and binds the canonical contract
+to a different transport. §7 protects the protocol from being shaped by UI
+behavior; a host that only translates cannot do that. TUI, web and desktop
+remain blocked by the §9 checklist in `protocol.md`.
+
+### Why ACP v1, not v2
+
+v2 is labelled draft, and the upstream migration guide tells implementers to
+negotiate per connection, keep v1 working, and gate v2 behind feature flags.
+v1-only clients will remain common. v2 also **removed** the client `fs/*` and
+`terminal/*` methods in favour of agent-side execution, which is already how
+Structure works: tools run in the Runner Environment. Building on the v1 client
+filesystem and terminal APIs would therefore have to be undone for v2.
+
+### Consequences accepted with this decision
+
+| Consequence | Why it is unavoidable |
+|---|---|
+| Cooperative in-flight cancellation in Runtime | ACP `session/cancel` must stop a run that `SessionManager::handle` is executing under one borrow |
+| A Session-level event observer | ACP streams progress; today events are returned only after the whole run finishes |
+| A permission gate recorded as typed Events | ACP delegates approval to the client; the decision must still reach the audit trail |
+| An exact-transcript history projection | the memory projection targets single-turn agent runs; multi-turn chat needs a provider-valid transcript |
+| MSRV 1.85 → 1.88, `serde_json/preserve_order` unified workspace-wide | required by `agent-client-protocol`; the feature must be explicit so serialized bytes do not depend on the build invocation |
+
+### Alternatives rejected
+
+- **A separate adapter process** (the `claude-code-acp` shape) — rejected:
+  "ACP by default" means built in, and an external adapter would duplicate the
+  event-to-update mapping outside the repository that owns the vocabulary.
+- **Hand-rolled JSON-RPC** — rejected: the official `agent-client-protocol`
+  crate is Apache-2.0, is what Zed itself uses, and tracks a moving spec.
+
+**Rule: a host may bind the contract; it may never extend it.**
