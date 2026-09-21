@@ -116,6 +116,68 @@ pub fn find_files_definition() -> ToolDefinition {
     }
 }
 
+pub fn edit_files_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "edit_files".to_owned(),
+        description: "Replace exact strings in one or more files inside the confined workspace root. Every edit is checked before anything is written, so a batch that fails changes nothing. old_string must match the file exactly and must be unique unless replace_all is set. Several edits may target the same file and apply in order.".to_owned(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Edits applied in order",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Relative file path inside the workspace root"
+                            },
+                            "old_string": {
+                                "type": "string",
+                                "description": "Exact text to replace, copied from the file including indentation"
+                            },
+                            "new_string": {
+                                "type": "string",
+                                "description": "Replacement text"
+                            },
+                            "replace_all": {
+                                "type": "boolean",
+                                "description": "Replace every occurrence instead of requiring a unique match"
+                            }
+                        },
+                        "required": ["path", "old_string", "new_string"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["edits"],
+            "additionalProperties": false
+        }),
+        strict: None,
+    }
+}
+
+pub fn delete_file_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "delete_file".to_owned(),
+        description: "Delete one regular file inside the confined workspace root. Symbolic links are refused.".to_owned(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative file path inside the workspace root"
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+        strict: Some(true),
+    }
+}
+
 /// The definition for one tool the local runner can execute.
 pub fn definition(tool: LocalTool) -> ToolDefinition {
     match tool {
@@ -124,6 +186,8 @@ pub fn definition(tool: LocalTool) -> ToolDefinition {
         LocalTool::Grep => grep_definition(),
         LocalTool::FindFiles => find_files_definition(),
         LocalTool::WriteFile => write_file_definition(),
+        LocalTool::EditFiles => edit_files_definition(),
+        LocalTool::DeleteFile => delete_file_definition(),
     }
 }
 

@@ -9,8 +9,9 @@ pub mod output;
 pub mod shell_classifier;
 
 pub use definitions::{
-    definition, find_files_definition, grep_definition, list_dir_definition, read_file_definition,
-    tool_definitions, write_file_definition,
+    definition, delete_file_definition, edit_files_definition, find_files_definition,
+    grep_definition, list_dir_definition, read_file_definition, tool_definitions,
+    write_file_definition,
 };
 pub use output::{MAX_TOOL_OUTPUT_CHARS, truncate_output};
 pub use shell_classifier::classify_shell_interaction;
@@ -107,6 +108,8 @@ pub enum LocalTool {
     Grep,
     FindFiles,
     WriteFile,
+    EditFiles,
+    DeleteFile,
 }
 
 impl LocalTool {
@@ -117,6 +120,8 @@ impl LocalTool {
             Self::Grep => "grep",
             Self::FindFiles => "find_files",
             Self::WriteFile => "write_file",
+            Self::EditFiles => "edit_files",
+            Self::DeleteFile => "delete_file",
         }
     }
 
@@ -125,8 +130,18 @@ impl LocalTool {
             Self::ReadFile | Self::ListDir | Self::Grep | Self::FindFiles => {
                 ToolInteractionKind::Inspection
             }
-            Self::WriteFile => ToolInteractionKind::Mutation,
+            Self::WriteFile | Self::EditFiles | Self::DeleteFile => ToolInteractionKind::Mutation,
         }
+    }
+
+    /// Whether this tool is one of the mutually exclusive edit formats.
+    ///
+    /// Exactly one may be enabled at a time: offering a model two ways to
+    /// modify a file makes it choose before it edits, and that choice is one
+    /// more thing to get wrong. A second format (an `apply_patch` style whole
+    /// diff) is meant to be compared against this one, not offered beside it.
+    pub const fn is_edit_format(self) -> bool {
+        matches!(self, Self::EditFiles)
     }
 
     fn from_name(name: &str) -> Option<Self> {
@@ -136,6 +151,8 @@ impl LocalTool {
             Self::Grep,
             Self::FindFiles,
             Self::WriteFile,
+            Self::EditFiles,
+            Self::DeleteFile,
         ]
         .into_iter()
         .find(|tool| tool.name() == name)
@@ -185,6 +202,35 @@ impl LocalRunnerPolicy {
             read_line_numbers: true,
             ..Self::legacy()
         }
+    }
+
+    /// Read-only exploration plus the mutation tools a coding agent needs.
+    ///
+    /// Shell is deliberately absent: it cannot be confined to the root, so a
+    /// host adds it only when it can ask the user first.
+    pub fn coding() -> Self {
+        Self {
+            tools: BTreeSet::from([
+                LocalTool::ReadFile,
+                LocalTool::ListDir,
+                LocalTool::Grep,
+                LocalTool::FindFiles,
+                LocalTool::WriteFile,
+                LocalTool::EditFiles,
+                LocalTool::DeleteFile,
+            ]),
+            ..Self::read_only()
+        }
+    }
+
+    /// Enabled edit formats. More than one is a configuration error; see
+    /// [`LocalTool::is_edit_format`].
+    pub fn edit_formats(&self) -> Vec<LocalTool> {
+        self.tools
+            .iter()
+            .copied()
+            .filter(|tool| tool.is_edit_format())
+            .collect()
     }
 
     #[must_use]
@@ -237,7 +283,13 @@ impl LocalRunner {
         LocalTool::from_name(name).filter(|tool| self.policy.allows(*tool))
     }
 
-    async fn resolve_existing_file(&self, path: &str) -> Result<PathBuf, RunnerError> {
+    /// Resolve a regular file inside the root, refusing symbolic links and any
+    /// path that escapes. Returns the canonical path and its size.
+    async fn resolve_regular_file(
+        &self,
+        path: &str,
+        tool: &str,
+    ) -> Result<(PathBuf, u64), RunnerError> {
         let relative = validate_local_path(path)?;
         let root = tokio::fs::canonicalize(&self.root)
             .await
@@ -247,7 +299,7 @@ impl LocalRunner {
             .await
             .map_err(|error| RunnerError::new(format!("local file unavailable: {error}")))?;
         if unresolved_metadata.file_type().is_symlink() {
-            return Err(RunnerError::new("read_file refuses symbolic links"));
+            return Err(RunnerError::new(format!("{tool} refuses symbolic links")));
         }
         let target = tokio::fs::canonicalize(unresolved_target)
             .await
@@ -261,13 +313,26 @@ impl LocalRunner {
         if !metadata.is_file() {
             return Err(RunnerError::new("local path is not a regular file"));
         }
+        Ok((target, metadata.len()))
+    }
+
+    /// Resolve a file this runner may read whole, enforcing the size cap.
+    ///
+    /// `tool` names the caller so a refusal says which tool refused. `read_file`
+    /// keeps its original wording because recorded campaigns contain it.
+    async fn resolve_readable_file(&self, path: &str, tool: &str) -> Result<PathBuf, RunnerError> {
+        let (target, size) = self.resolve_regular_file(path, tool).await?;
         let limit = self.policy.max_read_bytes;
-        if metadata.len() > limit {
+        if size > limit {
             return Err(RunnerError::new(format!(
-                "read_file exceeds the {limit}-byte limit"
+                "{tool} exceeds the {limit}-byte limit"
             )));
         }
         Ok(target)
+    }
+
+    async fn resolve_existing_file(&self, path: &str) -> Result<PathBuf, RunnerError> {
+        self.resolve_readable_file(path, "read_file").await
     }
 
     async fn read_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
@@ -451,6 +516,137 @@ impl LocalRunner {
         .await
         .map_err(|error| RunnerError::new(format!("find_files failed: {error}")))?
     }
+
+    /// Apply a batch of exact string replacements across one or more files.
+    ///
+    /// Every edit is validated and applied in memory before anything is
+    /// written, so a batch that fails validation changes nothing on disk. Two
+    /// edits to the same file apply in order, and the second sees the result of
+    /// the first. Writing is still per file, so an I/O failure part way through
+    /// can leave earlier files written; the result reports what was applied.
+    async fn edit_files(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
+        let edits = arguments
+            .get("edits")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| RunnerError::new("edit_files.edits must be an array"))?;
+        if edits.is_empty() {
+            return Err(RunnerError::new("edit_files.edits must not be empty"));
+        }
+        let mut pending: Vec<(PathBuf, String)> = Vec::new();
+        let mut applied: Vec<String> = Vec::new();
+        for (index, edit) in edits.iter().enumerate() {
+            let at = index + 1;
+            let field = |name: &str| -> Result<String, RunnerError> {
+                edit.get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        RunnerError::new(format!("edit_files.edits[{at}].{name} must be a string"))
+                    })
+            };
+            let path = field("path")?;
+            let old_string = field("old_string")?;
+            let new_string = field("new_string")?;
+            let replace_all = edit
+                .get("replace_all")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if old_string.is_empty() {
+                return Err(RunnerError::new(format!(
+                    "edit_files.edits[{at}].old_string must not be empty; use write_file to create or replace a whole file"
+                )));
+            }
+            if old_string == new_string {
+                return Err(RunnerError::new(format!(
+                    "edit_files.edits[{at}] leaves {path} unchanged"
+                )));
+            }
+            let target = self.resolve_readable_file(&path, "edit_files").await?;
+            let current = match pending.iter().find(|(known, _)| known == &target) {
+                Some((_, content)) => content.clone(),
+                None => tokio::fs::read_to_string(&target)
+                    .await
+                    .map_err(|error| RunnerError::new(format!("edit_files failed: {error}")))?,
+            };
+            let matches = current.matches(old_string.as_str()).count();
+            if matches == 0 {
+                return Err(RunnerError::new(format!(
+                    "edit_files.edits[{at}] found no match in {path}{}",
+                    near_miss_hint(&current, &old_string)
+                )));
+            }
+            if matches > 1 && !replace_all {
+                return Err(RunnerError::new(format!(
+                    "edit_files.edits[{at}] matched {matches} times in {path}; extend old_string until it is unique, or set replace_all"
+                )));
+            }
+            let updated = if replace_all {
+                current.replace(old_string.as_str(), &new_string)
+            } else {
+                current.replacen(old_string.as_str(), &new_string, 1)
+            };
+            let count = if replace_all { matches } else { 1 };
+            match pending.iter_mut().find(|(known, _)| known == &target) {
+                Some((_, content)) => *content = updated,
+                None => pending.push((target, updated)),
+            }
+            applied.push(format!(
+                "{path}: {count} replacement{}",
+                if count == 1 { "" } else { "s" }
+            ));
+        }
+        for (target, content) in &pending {
+            tokio::fs::write(target, content).await.map_err(|error| {
+                RunnerError::new(format!(
+                    "edit_files failed while writing {}: {error}",
+                    target.display()
+                ))
+            })?;
+        }
+        Ok(applied.join("\n"))
+    }
+
+    async fn delete_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
+        let path = arguments
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RunnerError::new("delete_file.path must be a string"))?;
+        // Deleting does not read the file, so the read size cap must not apply.
+        let (target, _) = self.resolve_regular_file(path, "delete_file").await?;
+        tokio::fs::remove_file(&target)
+            .await
+            .map_err(|error| RunnerError::new(format!("delete_file failed: {error}")))?;
+        Ok(format!("deleted {path}"))
+    }
+}
+
+/// Point at the likely intended region when an exact match fails.
+///
+/// The usual cause is that the model reproduced the surrounding text from
+/// memory rather than from the file, so the first line is usually right even
+/// when the rest drifted.
+fn near_miss_hint(content: &str, old_string: &str) -> String {
+    let Some(first) = old_string.lines().next().map(str::trim) else {
+        return String::new();
+    };
+    if first.is_empty() {
+        return String::new();
+    }
+    let lines = content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == first)
+        .map(|(index, _)| (index + 1).to_string())
+        .take(5)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!(
+        "; its first line appears at line{} {}, so check the surrounding context and whitespace",
+        if lines.len() == 1 { "" } else { "s" },
+        lines.join(", ")
+    )
 }
 
 fn grep_blocking(
@@ -564,6 +760,8 @@ impl RunnerEnvironment for LocalRunner {
             Some(LocalTool::ListDir) => self.list_dir(&request.call.arguments).await,
             Some(LocalTool::Grep) => self.grep(&request.call.arguments).await,
             Some(LocalTool::FindFiles) => self.find_files(&request.call.arguments).await,
+            Some(LocalTool::EditFiles) => self.edit_files(&request.call.arguments).await,
+            Some(LocalTool::DeleteFile) => self.delete_file(&request.call.arguments).await,
             // A disabled tool is reported exactly like one that does not exist:
             // the model was never told about it, and the reply must not reveal
             // that the capability could be switched on.
@@ -819,6 +1017,155 @@ mod tests {
             "src/lib.rs\ntop.rs"
         );
         tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn edit_files_applies_a_batch_in_order_across_files() {
+        let root = temp_root("edit-batch").await;
+        tokio::fs::write(root.join("a.txt"), "alpha one\n")
+            .await
+            .expect("fixture is written");
+        tokio::fs::write(root.join("b.txt"), "beta\n")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::coding());
+        let report = call(
+            &mut runner,
+            "edit_files",
+            serde_json::json!({"edits": [
+                {"path": "a.txt", "old_string": "alpha", "new_string": "ALPHA"},
+                {"path": "b.txt", "old_string": "beta", "new_string": "BETA"},
+                {"path": "a.txt", "old_string": "ALPHA one", "new_string": "done"}
+            ]}),
+        )
+        .await;
+        assert_eq!(
+            report,
+            "a.txt: 1 replacement\nb.txt: 1 replacement\na.txt: 1 replacement"
+        );
+        // The third edit matched text the first one produced, so edits to one
+        // file must see each other before anything is written.
+        assert_eq!(
+            tokio::fs::read_to_string(root.join("a.txt"))
+                .await
+                .expect("file is readable"),
+            "done\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(root.join("b.txt"))
+                .await
+                .expect("file is readable"),
+            "BETA\n"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn a_failed_edit_leaves_every_file_untouched() {
+        let root = temp_root("edit-atomic").await;
+        tokio::fs::write(root.join("a.txt"), "alpha\n")
+            .await
+            .expect("fixture is written");
+        tokio::fs::write(root.join("b.txt"), "beta beta\n")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::coding());
+        // The first edit is valid and the second is ambiguous. Neither may land.
+        let report = call(
+            &mut runner,
+            "edit_files",
+            serde_json::json!({"edits": [
+                {"path": "a.txt", "old_string": "alpha", "new_string": "ALPHA"},
+                {"path": "b.txt", "old_string": "beta", "new_string": "BETA"}
+            ]}),
+        )
+        .await;
+        assert!(
+            report.contains("matched 2 times in b.txt"),
+            "unexpected report: {report}"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(root.join("a.txt"))
+                .await
+                .expect("file is readable"),
+            "alpha\n"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn a_missing_match_points_at_the_intended_line() {
+        let root = temp_root("edit-near-miss").await;
+        tokio::fs::write(root.join("a.txt"), "fn main() {\n    body();\n}\n")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::coding());
+        let report = call(
+            &mut runner,
+            "edit_files",
+            serde_json::json!({"edits": [{
+                "path": "a.txt",
+                "old_string": "fn main() {\n  body();\n}",
+                "new_string": "fn main() {}"
+            }]}),
+        )
+        .await;
+        assert!(
+            report.contains("found no match in a.txt")
+                && report.contains("first line appears at line 1"),
+            "unexpected report: {report}"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn delete_file_is_confined_and_refuses_links() {
+        let root = temp_root("delete").await;
+        tokio::fs::write(root.join("gone.txt"), "bye")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::coding());
+        assert_eq!(
+            call(
+                &mut runner,
+                "delete_file",
+                serde_json::json!({"path": "gone.txt"})
+            )
+            .await,
+            "deleted gone.txt"
+        );
+        assert!(!root.join("gone.txt").exists());
+        assert_eq!(
+            call(
+                &mut runner,
+                "delete_file",
+                serde_json::json!({"path": "../outside.txt"})
+            )
+            .await,
+            "error: local path must not contain '.', '..', or root components"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[test]
+    fn the_coding_policy_offers_exactly_one_edit_format() {
+        let policy = LocalRunnerPolicy::coding();
+        assert_eq!(policy.edit_formats(), vec![LocalTool::EditFiles]);
+        assert_eq!(
+            tool_definitions(&policy)
+                .iter()
+                .map(|definition| definition.name.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                "read_file",
+                "list_dir",
+                "grep",
+                "find_files",
+                "write_file",
+                "edit_files",
+                "delete_file"
+            ]
+        );
     }
 
     #[tokio::test]
