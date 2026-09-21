@@ -147,6 +147,40 @@ pub enum ToolInteractionKind {
     Generic,
 }
 
+/// Whether a tool call was allowed to run.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPermissionOutcome {
+    Allowed,
+    Denied,
+    /// The run was cancelled while the decision was pending.
+    Cancelled,
+}
+
+/// How long a permission decision applies.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPermissionScope {
+    /// This call only.
+    Once,
+    /// Every later call to the same tool in this Session.
+    Session,
+}
+
+/// Who or what produced a permission decision.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPermissionSource {
+    /// The host's configured policy, without asking anyone.
+    Policy,
+    /// A person, through the host's approver.
+    User,
+    /// An earlier `Session`-scoped decision for the same tool.
+    SessionRule,
+    /// No approver was configured or reachable, so the gate failed closed.
+    ApproverUnavailable,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelResponseRejectionReason {
@@ -287,6 +321,20 @@ pub enum Event {
     ToolCallClassified {
         call_id: String,
         kind: ToolInteractionKind,
+    },
+    /// Runtime is asking the host's approver whether this call may run. The
+    /// tool name and arguments are in the matching `tool.call.requested`.
+    #[serde(rename = "tool.call.permission_requested")]
+    ToolCallPermissionRequested { call_id: String },
+    /// The decision for one call. It follows `tool.call.permission_requested`
+    /// when someone was asked, and stands alone when policy decided directly.
+    /// Policy is keyed by tool name, never by `tool.call.classified`.
+    #[serde(rename = "tool.call.permission_resolved")]
+    ToolCallPermissionResolved {
+        call_id: String,
+        outcome: ToolPermissionOutcome,
+        scope: ToolPermissionScope,
+        source: ToolPermissionSource,
     },
     #[serde(rename = "tool.call.reused")]
     ToolCallReused {

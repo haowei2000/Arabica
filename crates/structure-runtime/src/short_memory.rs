@@ -716,6 +716,8 @@ fn batch_identity(
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
         }
         Event::ToolCallClassified { call_id, .. }
+        | Event::ToolCallPermissionRequested { call_id }
+        | Event::ToolCallPermissionResolved { call_id, .. }
         | Event::ToolCallReused { call_id, .. }
         | Event::ToolCallLoopBlocked { call_id, .. } => {
             (format!("run:{run}:tool:{call_id}"), MemoryBatchKind::Tool)
@@ -967,6 +969,8 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         | Event::ModelResponseRejected { .. }
         | Event::ModelResponseNormalized { .. }
         | Event::ToolCallClassified { .. }
+        | Event::ToolCallPermissionRequested { .. }
+        | Event::ToolCallPermissionResolved { .. }
         | Event::ToolCallReused { .. }
         | Event::ToolCallLoopBlocked { .. }
         | Event::AgentLoopTerminated { .. }
@@ -1023,6 +1027,10 @@ fn event_memory_traits(event: &Event) -> EventMemoryTraits {
         ),
         Event::ToolCallReused { call_id, .. } | Event::ToolCallLoopBlocked { call_id, .. } => {
             (MemoryClass::Working, Some(format!("tool:{call_id}")), false)
+        }
+        Event::ToolCallPermissionRequested { call_id }
+        | Event::ToolCallPermissionResolved { call_id, .. } => {
+            (MemoryClass::Control, Some(format!("tool:{call_id}")), false)
         }
         Event::ToolCallCompleted {
             call_id,
@@ -1082,6 +1090,8 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::ModelResponseNormalized { .. } => "model.response.normalized",
         Event::ToolCallRequested { .. } => "tool.call.requested",
         Event::ToolCallClassified { .. } => "tool.call.classified",
+        Event::ToolCallPermissionRequested { .. } => "tool.call.permission_requested",
+        Event::ToolCallPermissionResolved { .. } => "tool.call.permission_resolved",
         Event::ToolCallReused { .. } => "tool.call.reused",
         Event::ToolCallLoopBlocked { .. } => "tool.call.loop_blocked",
         Event::ToolCallCompleted { is_error: true, .. } => "tool.call.error",
@@ -1267,6 +1277,20 @@ fn event_semantic_key(event: &Event) -> Option<String> {
         Event::ToolCallClassified { call_id, kind } => {
             Some(format!("tool_class call_id={call_id} kind={kind:?}").to_lowercase())
         }
+        Event::ToolCallPermissionRequested { call_id } => {
+            Some(format!("tool_permission call_id={call_id} state=requested"))
+        }
+        Event::ToolCallPermissionResolved {
+            call_id,
+            outcome,
+            scope,
+            source,
+        } => Some(
+            format!(
+                "tool_permission call_id={call_id} outcome={outcome:?} scope={scope:?} source={source:?}"
+            )
+            .to_lowercase(),
+        ),
         Event::ToolCallReused {
             call_id,
             source_call_id,
@@ -1753,6 +1777,83 @@ mod tests {
         assert!(first.visibility[1].protected_by_recency_floor);
         assert_eq!(first, second);
         assert_eq!(events, original);
+    }
+
+    #[test]
+    fn permission_events_join_the_tool_batch_without_reaching_the_model() {
+        use structure_protocol::{
+            ToolPermissionOutcome, ToolPermissionScope, ToolPermissionSource,
+        };
+
+        let requested = Event::ToolCallRequested {
+            call_id: "call-9".to_owned(),
+            name: "edit_files".to_owned(),
+            arguments: serde_json::json!({"edits": []}),
+            provider_state: None,
+        };
+        let completed = Event::ToolCallCompleted {
+            call_id: "call-9".to_owned(),
+            name: "edit_files".to_owned(),
+            result: "a.txt: 1 replacement".to_owned(),
+            is_error: false,
+        };
+        let ungated = vec![
+            envelope(1, requested.clone()),
+            envelope(2, completed.clone()),
+        ];
+        let gated = vec![
+            envelope(1, requested),
+            envelope(
+                2,
+                Event::ToolCallPermissionRequested {
+                    call_id: "call-9".to_owned(),
+                },
+            ),
+            envelope(
+                3,
+                Event::ToolCallPermissionResolved {
+                    call_id: "call-9".to_owned(),
+                    outcome: ToolPermissionOutcome::Allowed,
+                    scope: ToolPermissionScope::Once,
+                    source: ToolPermissionSource::User,
+                },
+            ),
+            envelope(4, completed),
+        ];
+        let project = |events: &[EventEnvelope]| {
+            ShortMemoryProjector::materialize(
+                events,
+                Some(&RunId::new("run-1")),
+                &ShortMemoryPolicy::default(),
+            )
+        };
+        // Item ids are source Event ids, which encode log position. The gate's
+        // two Events shift the completion from sequence 2 to 4, so ids differ
+        // by construction; the invariant is about content, not position.
+        let content = |result: &ShortMemoryMaterialization| {
+            result
+                .entries
+                .iter()
+                .map(|entry| {
+                    let mut item = entry.item.clone();
+                    match &mut item {
+                        ShortMemoryItem::ToolCall(call) => call.id = None,
+                        ShortMemoryItem::ToolResult(result) => result.id = None,
+                        _ => {}
+                    }
+                    item
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let with_gate = project(&gated);
+        // The permission exchange is part of the call it gates, so the batch
+        // still closes on tool.call.completed.
+        assert_eq!(with_gate.batches.len(), 1);
+        assert_eq!(with_gate.batches[0].context_key, "run:run-1:tool:call-9");
+        assert_eq!(with_gate.batches[0].event_count, 4);
+        // A gate the user approved leaves what the model reads unchanged.
+        assert_eq!(content(&with_gate), content(&project(&ungated)));
     }
 
     #[test]

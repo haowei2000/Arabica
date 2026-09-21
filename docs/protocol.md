@@ -166,7 +166,7 @@ Rules:
 | Run | `run.scheduled`, `run.started`, `run.completed`, `run.failed`, `run.cancelled` |
 | Message/output | `message.accepted`, `command.output` |
 | Model exchange | `model.request.prepared`, `model.response.item`, `model.response.completed`, `model.response.rejected`, `model.response.normalized` |
-| Tool call | `tool.call.requested`, `tool.call.classified`, `tool.call.reused`, `tool.call.loop_blocked`, `tool.call.completed` |
+| Tool call | `tool.call.requested`, `tool.call.classified`, `tool.call.permission_requested`, `tool.call.permission_resolved`, `tool.call.reused`, `tool.call.loop_blocked`, `tool.call.completed` |
 | Agent control | `agent.progress.advisory`, `agent.loop.terminated`, `terminal.control.transition` |
 | Context | `context.read`, `context.search.result`, `context.updated`, `context.deleted`, `context.disclosure.set` |
 | Failure | `error` |
@@ -250,7 +250,8 @@ operators and may change.
 - [ ] Reconnect cursor semantics
 - [x] ~~Python event-taxonomy reconciliation~~ — dropped; the Python
       implementation was removed in `a3823ee`
-- [ ] Typed tool approval and user-input flow
+- [ ] Typed tool approval and user-input flow — approval Events landed
+      (`tool.call.permission_*`); the Runtime gate and user-input flow remain
 - [ ] OpenAPI transport document
 - [ ] Golden cross-language fixtures
 - [ ] Load/backpressure and multi-session scheduling tests

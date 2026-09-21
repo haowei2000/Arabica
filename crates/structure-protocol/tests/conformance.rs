@@ -4,7 +4,8 @@ use structure_model::{
 };
 use structure_protocol::{
     AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, ErrorCode, Event,
-    ModelResponseRejectionReason, OutputStream, RunId, SessionId, ToolInteractionKind, WorkspaceId,
+    ModelResponseRejectionReason, OutputStream, RunId, SessionId, ToolInteractionKind,
+    ToolPermissionOutcome, ToolPermissionScope, ToolPermissionSource, WorkspaceId,
 };
 
 #[test]
@@ -175,6 +176,21 @@ fn every_event_has_a_stable_dotted_wire_name() {
             "tool.call.classified",
         ),
         (
+            Event::ToolCallPermissionRequested {
+                call_id: "call-1".to_owned(),
+            },
+            "tool.call.permission_requested",
+        ),
+        (
+            Event::ToolCallPermissionResolved {
+                call_id: "call-1".to_owned(),
+                outcome: ToolPermissionOutcome::Denied,
+                scope: ToolPermissionScope::Once,
+                source: ToolPermissionSource::User,
+            },
+            "tool.call.permission_resolved",
+        ),
+        (
             Event::ToolCallReused {
                 call_id: "call-2".to_owned(),
                 source_call_id: "call-1".to_owned(),
@@ -281,4 +297,27 @@ fn model_exchange_events_are_internal_to_the_canonical_log() {
     };
     assert!(!event.is_client_visible());
     assert!(Event::RunCompleted { output: None }.is_client_visible());
+}
+
+#[test]
+fn permission_decisions_reach_clients_with_stable_wire_values() {
+    // Hosts forward these so a client can render the pending request and its
+    // outcome; unlike model-exchange Events they are not internal evidence.
+    assert!(
+        Event::ToolCallPermissionRequested {
+            call_id: "call-1".to_owned()
+        }
+        .is_client_visible()
+    );
+    let resolved = Event::ToolCallPermissionResolved {
+        call_id: "call-1".to_owned(),
+        outcome: ToolPermissionOutcome::Cancelled,
+        scope: ToolPermissionScope::Session,
+        source: ToolPermissionSource::ApproverUnavailable,
+    };
+    assert!(resolved.is_client_visible());
+    let value = serde_json::to_value(&resolved).expect("event serializes");
+    assert_eq!(value["payload"]["outcome"], "cancelled");
+    assert_eq!(value["payload"]["scope"], "session");
+    assert_eq!(value["payload"]["source"], "approver_unavailable");
 }
