@@ -37,7 +37,10 @@ use structure_protocol::{
     ToolInteractionKind, WorkspaceId,
 };
 use structure_provider::{ModelProvider, ModelRunRequest};
-use structure_runner::{RunnerEnvironment, RunnerOutput, ToolExecutionRequest};
+use structure_runner::{
+    RunnerEnvironment, RunnerOutput, ToolExecutionRequest, read_file_definition,
+    write_file_definition,
+};
 
 const DEFAULT_MAX_MODEL_STEPS_PER_RUN: usize = 32;
 const MEMORY_READ_TOOL_NAME: &str = "memory_read";
@@ -2769,48 +2772,6 @@ fn session_not_open(session_id: &SessionId) -> RuntimeError {
 
 fn long_memory_error(error: LongMemoryError) -> RuntimeError {
     RuntimeError::new(RuntimeErrorKind::InvalidLongMemory, error.to_string())
-}
-
-fn write_file_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "write_file".to_owned(),
-        description: "Write UTF-8 text to a relative path inside the configured workspace root. Parent directories must already exist.".to_owned(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative file path inside the workspace root"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Complete UTF-8 file content"
-                }
-            },
-            "required": ["path", "content"],
-            "additionalProperties": false
-        }),
-        strict: None,
-    }
-}
-
-fn read_file_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "read_file".to_owned(),
-        description: "Read one UTF-8 file relative to the confined workspace root.".to_owned(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative file path inside the workspace root"
-                }
-            },
-            "required": ["path"],
-            "additionalProperties": false
-        }),
-        strict: Some(true),
-    }
 }
 
 fn default_tool_definitions() -> Vec<ToolDefinition> {
@@ -6265,5 +6226,20 @@ mod tests {
             .kind(),
             RuntimeErrorKind::RunNotActive
         );
+    }
+}
+
+#[cfg(test)]
+mod default_tool_golden {
+    /// The benchmark campaigns advertise these exact definitions to the model,
+    /// and their bytes are part of every frozen campaign's provider request.
+    /// Changing them changes recorded wire bytes, so the drift must be
+    /// deliberate: update the golden file in the same commit and say why.
+    #[test]
+    fn default_tool_definitions_match_the_golden_file() {
+        let actual = serde_json::to_string_pretty(&super::default_tool_definitions())
+            .expect("definitions serialize");
+        let expected = include_str!("default_tools.golden.json");
+        assert_eq!(format!("{actual}\n"), expected);
     }
 }

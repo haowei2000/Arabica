@@ -4,6 +4,14 @@
 //! filesystem confinement, and future process/container/remote runners. It
 //! does not call model APIs or own sessions, memory, or UI concerns.
 
+pub mod definitions;
+pub mod output;
+pub mod shell_classifier;
+
+pub use definitions::{read_file_definition, write_file_definition};
+pub use output::{MAX_TOOL_OUTPUT_CHARS, truncate_output};
+pub use shell_classifier::classify_shell_interaction;
+
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
