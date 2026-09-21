@@ -8,11 +8,14 @@ pub mod definitions;
 pub mod output;
 pub mod shell_classifier;
 
-pub use definitions::{read_file_definition, write_file_definition};
+pub use definitions::{
+    definition, find_files_definition, grep_definition, list_dir_definition, read_file_definition,
+    tool_definitions, write_file_definition,
+};
 pub use output::{MAX_TOOL_OUTPUT_CHARS, truncate_output};
 pub use shell_classifier::classify_shell_interaction;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Component, Path, PathBuf};
@@ -90,23 +93,148 @@ impl RunnerEnvironment for NoopRunner {
     }
 }
 
+/// One tool the local runner can execute.
+///
+/// A tool absent from the active [`LocalRunnerPolicy`] is treated as unknown:
+/// it is neither advertised nor executable, and a model that names it anyway
+/// gets the same error as for a tool that does not exist. Enabling execution is
+/// therefore an explicit decision by the host, not a consequence of the model
+/// guessing a name.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LocalTool {
+    ReadFile,
+    ListDir,
+    Grep,
+    FindFiles,
+    WriteFile,
+}
+
+impl LocalTool {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ReadFile => "read_file",
+            Self::ListDir => "list_dir",
+            Self::Grep => "grep",
+            Self::FindFiles => "find_files",
+            Self::WriteFile => "write_file",
+        }
+    }
+
+    pub const fn interaction(self) -> ToolInteractionKind {
+        match self {
+            Self::ReadFile | Self::ListDir | Self::Grep | Self::FindFiles => {
+                ToolInteractionKind::Inspection
+            }
+            Self::WriteFile => ToolInteractionKind::Mutation,
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::ReadFile,
+            Self::ListDir,
+            Self::Grep,
+            Self::FindFiles,
+            Self::WriteFile,
+        ]
+        .into_iter()
+        .find(|tool| tool.name() == name)
+    }
+}
+
+/// Which tools a [`LocalRunner`] advertises and will execute, plus the output
+/// bounds that keep a single tool result from exhausting the context window.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalRunnerPolicy {
+    pub tools: BTreeSet<LocalTool>,
+    /// Prefix each `read_file` line with its 1-based number. Off in the legacy
+    /// policy because the benchmark campaigns recorded output without it.
+    pub read_line_numbers: bool,
+    pub max_read_bytes: u64,
+    pub max_list_entries: usize,
+    pub max_grep_matches: usize,
+    pub max_find_results: usize,
+    pub max_match_line_chars: usize,
+}
+
+impl LocalRunnerPolicy {
+    /// The pre-existing surface: read and write, no line numbers. Keeping this
+    /// the default preserves the behavior every recorded campaign depends on.
+    pub fn legacy() -> Self {
+        Self {
+            tools: BTreeSet::from([LocalTool::ReadFile, LocalTool::WriteFile]),
+            read_line_numbers: false,
+            max_read_bytes: MAX_LOCAL_READ_BYTES,
+            max_list_entries: 1_000,
+            max_grep_matches: 200,
+            max_find_results: 500,
+            max_match_line_chars: 300,
+        }
+    }
+
+    /// Inspection only: nothing in this set can change the workspace, so a host
+    /// may run it without asking the user.
+    pub fn read_only() -> Self {
+        Self {
+            tools: BTreeSet::from([
+                LocalTool::ReadFile,
+                LocalTool::ListDir,
+                LocalTool::Grep,
+                LocalTool::FindFiles,
+            ]),
+            read_line_numbers: true,
+            ..Self::legacy()
+        }
+    }
+
+    #[must_use]
+    pub fn with_tool(mut self, tool: LocalTool) -> Self {
+        self.tools.insert(tool);
+        self
+    }
+
+    pub fn allows(&self, tool: LocalTool) -> bool {
+        self.tools.contains(&tool)
+    }
+}
+
+impl Default for LocalRunnerPolicy {
+    fn default() -> Self {
+        Self::legacy()
+    }
+}
+
 /// Real local execution environment confined to one existing filesystem root.
 #[derive(Debug)]
 pub struct LocalRunner {
     root: PathBuf,
+    policy: LocalRunnerPolicy,
     active_runs: HashSet<RunId>,
 }
 
 impl LocalRunner {
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self::with_policy(root, LocalRunnerPolicy::legacy())
+    }
+
+    pub fn with_policy(root: impl Into<PathBuf>, policy: LocalRunnerPolicy) -> Self {
         Self {
             root: root.into(),
+            policy,
             active_runs: HashSet::new(),
         }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn policy(&self) -> &LocalRunnerPolicy {
+        &self.policy
+    }
+
+    fn enabled_tool(&self, name: &str) -> Option<LocalTool> {
+        LocalTool::from_name(name).filter(|tool| self.policy.allows(*tool))
     }
 
     async fn resolve_existing_file(&self, path: &str) -> Result<PathBuf, RunnerError> {
@@ -133,9 +261,10 @@ impl LocalRunner {
         if !metadata.is_file() {
             return Err(RunnerError::new("local path is not a regular file"));
         }
-        if metadata.len() > MAX_LOCAL_READ_BYTES {
+        let limit = self.policy.max_read_bytes;
+        if metadata.len() > limit {
             return Err(RunnerError::new(format!(
-                "read_file exceeds the {MAX_LOCAL_READ_BYTES}-byte limit"
+                "read_file exceeds the {limit}-byte limit"
             )));
         }
         Ok(target)
@@ -147,9 +276,20 @@ impl LocalRunner {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| RunnerError::new("read_file.path must be a string"))?;
         let target = self.resolve_existing_file(path).await?;
-        tokio::fs::read_to_string(&target)
+        let content = tokio::fs::read_to_string(&target)
             .await
-            .map_err(|error| RunnerError::new(format!("read_file failed: {error}")))
+            .map_err(|error| RunnerError::new(format!("read_file failed: {error}")))?;
+        if !self.policy.read_line_numbers {
+            return Ok(content);
+        }
+        // Line numbers let an edit tool report a near-miss by location and give
+        // the model a stable way to talk about a region it has not copied.
+        Ok(content
+            .lines()
+            .enumerate()
+            .map(|(index, line)| format!("{:>6}\t{line}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 
     async fn write_file(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
@@ -190,15 +330,227 @@ impl LocalRunner {
             target.display()
         ))
     }
+
+    async fn canonical_root(&self) -> Result<PathBuf, RunnerError> {
+        tokio::fs::canonicalize(&self.root)
+            .await
+            .map_err(|error| RunnerError::new(format!("local runner root unavailable: {error}")))
+    }
+
+    /// Resolve an optional relative `path` argument against the root. A missing
+    /// argument means the root itself, because `validate_local_path` rejects
+    /// `.` and an agent should not have to spell the root differently.
+    async fn resolve_directory(
+        &self,
+        arguments: &serde_json::Value,
+    ) -> Result<PathBuf, RunnerError> {
+        let root = self.canonical_root().await?;
+        let Some(path) = arguments.get("path").and_then(serde_json::Value::as_str) else {
+            return Ok(root);
+        };
+        let relative = validate_local_path(path)?;
+        let target = tokio::fs::canonicalize(root.join(relative))
+            .await
+            .map_err(|error| RunnerError::new(format!("local directory unavailable: {error}")))?;
+        if !target.starts_with(&root) {
+            return Err(RunnerError::new("local path escapes runner root"));
+        }
+        Ok(target)
+    }
+
+    async fn list_dir(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
+        let target = self.resolve_directory(arguments).await?;
+        let mut reader = tokio::fs::read_dir(&target)
+            .await
+            .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?;
+        let mut names = Vec::new();
+        while let Some(entry) = reader
+            .next_entry()
+            .await
+            .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|error| RunnerError::new(format!("list_dir failed: {error}")))?;
+            // Symbolic links are marked and never followed, matching read_file
+            // and write_file.
+            names.push(if file_type.is_symlink() {
+                format!("{name}@")
+            } else if file_type.is_dir() {
+                format!("{name}/")
+            } else {
+                name
+            });
+        }
+        if names.is_empty() {
+            return Ok("(empty directory)".to_owned());
+        }
+        names.sort();
+        let total = names.len();
+        names.truncate(self.policy.max_list_entries);
+        if total > names.len() {
+            names.push(format!(
+                "...[{} more entries; narrow the path]...",
+                total - names.len() + 1
+            ));
+        }
+        Ok(names.join("\n"))
+    }
+
+    async fn grep(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
+        let pattern = arguments
+            .get("pattern")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RunnerError::new("grep.pattern must be a string"))?;
+        let regex = regex::Regex::new(pattern).map_err(|error| {
+            RunnerError::new(format!(
+                "grep.pattern is not a valid regular expression: {error}"
+            ))
+        })?;
+        let root = self.canonical_root().await?;
+        let target = self.resolve_directory(arguments).await?;
+        let max_matches = self.policy.max_grep_matches;
+        let max_line_chars = self.policy.max_match_line_chars;
+        let max_bytes = self.policy.max_read_bytes;
+        // The walker and its file reads are blocking, so they must not run on a
+        // runtime worker that also drives the model request.
+        tokio::task::spawn_blocking(move || {
+            grep_blocking(
+                &root,
+                &target,
+                &regex,
+                max_matches,
+                max_line_chars,
+                max_bytes,
+            )
+        })
+        .await
+        .map_err(|error| RunnerError::new(format!("grep failed: {error}")))?
+    }
+
+    async fn find_files(&self, arguments: &serde_json::Value) -> Result<String, RunnerError> {
+        let glob = arguments
+            .get("glob")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| RunnerError::new("find_files.glob must be a string"))?;
+        let matcher = globset::GlobBuilder::new(glob)
+            .literal_separator(true)
+            .build()
+            .map_err(|error| {
+                RunnerError::new(format!("find_files.glob is not a valid glob: {error}"))
+            })?
+            .compile_matcher();
+        let root = self.canonical_root().await?;
+        let target = self.resolve_directory(arguments).await?;
+        let max_results = self.policy.max_find_results;
+        tokio::task::spawn_blocking(move || {
+            find_files_blocking(&root, &target, &matcher, max_results)
+        })
+        .await
+        .map_err(|error| RunnerError::new(format!("find_files failed: {error}")))?
+    }
+}
+
+fn grep_blocking(
+    root: &Path,
+    target: &Path,
+    regex: &regex::Regex,
+    max_matches: usize,
+    max_line_chars: usize,
+    max_bytes: u64,
+) -> Result<String, RunnerError> {
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    for entry in ignore::WalkBuilder::new(target).build().flatten() {
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.len() > max_bytes {
+            continue;
+        }
+        // A file that is not UTF-8 is binary for this purpose; skipping it is
+        // cheaper and safer than scanning for NUL bytes.
+        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let display = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .display()
+            .to_string();
+        for (index, line) in content.lines().enumerate() {
+            if !regex.is_match(line) {
+                continue;
+            }
+            if matches.len() >= max_matches {
+                truncated = true;
+                break;
+            }
+            let mut text = line.trim_end().to_owned();
+            if text.chars().count() > max_line_chars {
+                text = text.chars().take(max_line_chars).collect::<String>() + "...";
+            }
+            matches.push(format!("{display}:{}:{text}", index + 1));
+        }
+        if truncated {
+            break;
+        }
+    }
+    if matches.is_empty() {
+        return Ok("(no matches)".to_owned());
+    }
+    if truncated {
+        matches.push(format!(
+            "...[stopped at {max_matches} matches; narrow the pattern or path]..."
+        ));
+    }
+    Ok(matches.join("\n"))
+}
+
+fn find_files_blocking(
+    root: &Path,
+    target: &Path,
+    matcher: &globset::GlobMatcher,
+    max_results: usize,
+) -> Result<String, RunnerError> {
+    let mut paths = Vec::new();
+    let mut truncated = false;
+    for entry in ignore::WalkBuilder::new(target).build().flatten() {
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(root).unwrap_or(entry.path());
+        if !matcher.is_match(relative) {
+            continue;
+        }
+        if paths.len() >= max_results {
+            truncated = true;
+            break;
+        }
+        paths.push(relative.display().to_string());
+    }
+    if paths.is_empty() {
+        return Ok("(no files matched)".to_owned());
+    }
+    paths.sort();
+    if truncated {
+        paths.push(format!(
+            "...[stopped at {max_results} files; narrow the glob]..."
+        ));
+    }
+    Ok(paths.join("\n"))
 }
 
 impl RunnerEnvironment for LocalRunner {
     fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
-        match call.name.as_str() {
-            "read_file" => ToolInteractionKind::Inspection,
-            "write_file" => ToolInteractionKind::Mutation,
-            _ => ToolInteractionKind::Generic,
-        }
+        self.enabled_tool(&call.name)
+            .map_or(ToolInteractionKind::Generic, LocalTool::interaction)
     }
 
     async fn execute(
@@ -206,10 +558,19 @@ impl RunnerEnvironment for LocalRunner {
         request: ToolExecutionRequest,
     ) -> Result<ToolExecutionResult, RunnerError> {
         self.active_runs.insert(request.run_id.clone());
-        let execution = match request.call.name.as_str() {
-            "read_file" => self.read_file(&request.call.arguments).await,
-            "write_file" => self.write_file(&request.call.arguments).await,
-            name => Err(RunnerError::new(format!("unknown local tool: {name}"))),
+        let execution = match self.enabled_tool(&request.call.name) {
+            Some(LocalTool::ReadFile) => self.read_file(&request.call.arguments).await,
+            Some(LocalTool::WriteFile) => self.write_file(&request.call.arguments).await,
+            Some(LocalTool::ListDir) => self.list_dir(&request.call.arguments).await,
+            Some(LocalTool::Grep) => self.grep(&request.call.arguments).await,
+            Some(LocalTool::FindFiles) => self.find_files(&request.call.arguments).await,
+            // A disabled tool is reported exactly like one that does not exist:
+            // the model was never told about it, and the reply must not reveal
+            // that the capability could be switched on.
+            None => Err(RunnerError::new(format!(
+                "unknown local tool: {}",
+                request.call.name
+            ))),
         };
         self.active_runs.remove(&request.run_id);
         let (content, is_error, output) = match execution {
@@ -261,6 +622,204 @@ fn validate_local_path(path: &str) -> Result<&Path, RunnerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Create an empty directory unique to one test.
+    async fn temp_root(label: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("structure-runner-{label}-{unique}"));
+        tokio::fs::create_dir(&root)
+            .await
+            .expect("test root is created");
+        root
+    }
+
+    async fn call(runner: &mut LocalRunner, name: &str, arguments: serde_json::Value) -> String {
+        let result = runner
+            .execute(ToolExecutionRequest {
+                run_id: RunId::new("run-1"),
+                call: ToolCallItem {
+                    id: None,
+                    call_id: "call-1".to_owned(),
+                    name: name.to_owned(),
+                    arguments,
+                    provider_state: None,
+                },
+            })
+            .await
+            .expect("execution is reported");
+        match result.result.content.first() {
+            Some(ContentBlock::Text { text }) => text.clone(),
+            other => panic!("unexpected tool content: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_legacy_policy_hides_the_tools_it_does_not_enable() {
+        let root = temp_root("legacy").await;
+        let mut runner = LocalRunner::new(&root);
+        // A disabled tool must be indistinguishable from one that never
+        // existed, so a model cannot discover switched-off capabilities.
+        for name in ["list_dir", "grep", "find_files", "no_such_tool"] {
+            assert_eq!(
+                call(&mut runner, name, serde_json::json!({})).await,
+                format!("error: unknown local tool: {name}")
+            );
+        }
+        assert_eq!(
+            tool_definitions(&LocalRunnerPolicy::legacy())
+                .iter()
+                .map(|definition| definition.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["read_file".to_owned(), "write_file".to_owned()]
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn the_read_only_policy_cannot_change_the_workspace() {
+        let root = temp_root("read-only").await;
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::read_only());
+        assert_eq!(
+            call(
+                &mut runner,
+                "write_file",
+                serde_json::json!({"path": "new.txt", "content": "blocked"})
+            )
+            .await,
+            "error: unknown local tool: write_file"
+        );
+        assert!(!root.join("new.txt").exists());
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn read_file_numbers_lines_only_when_the_policy_asks() {
+        let root = temp_root("line-numbers").await;
+        tokio::fs::write(root.join("two.txt"), "alpha\nbeta\n")
+            .await
+            .expect("fixture is written");
+
+        let mut legacy = LocalRunner::new(&root);
+        assert_eq!(
+            call(
+                &mut legacy,
+                "read_file",
+                serde_json::json!({"path": "two.txt"})
+            )
+            .await,
+            "alpha\nbeta\n"
+        );
+
+        let mut numbered = LocalRunner::with_policy(&root, LocalRunnerPolicy::read_only());
+        assert_eq!(
+            call(
+                &mut numbered,
+                "read_file",
+                serde_json::json!({"path": "two.txt"})
+            )
+            .await,
+            "     1\talpha\n     2\tbeta"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn list_dir_marks_directories_and_defaults_to_the_root() {
+        let root = temp_root("list").await;
+        tokio::fs::create_dir(root.join("src"))
+            .await
+            .expect("directory is created");
+        tokio::fs::write(root.join("Cargo.toml"), "[package]")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::read_only());
+        assert_eq!(
+            call(&mut runner, "list_dir", serde_json::json!({})).await,
+            "Cargo.toml\nsrc/"
+        );
+        assert_eq!(
+            call(&mut runner, "list_dir", serde_json::json!({"path": "src"})).await,
+            "(empty directory)"
+        );
+        assert_eq!(
+            call(&mut runner, "list_dir", serde_json::json!({"path": "../"})).await,
+            "error: local path must not contain '.', '..', or root components"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn grep_reports_matches_by_path_and_line() {
+        let root = temp_root("grep").await;
+        tokio::fs::write(root.join("a.txt"), "first\nneedle here\n")
+            .await
+            .expect("fixture is written");
+        tokio::fs::write(root.join("b.txt"), "nothing\n")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::read_only());
+        assert_eq!(
+            call(
+                &mut runner,
+                "grep",
+                serde_json::json!({"pattern": "need.e"})
+            )
+            .await,
+            "a.txt:2:needle here"
+        );
+        assert_eq!(
+            call(
+                &mut runner,
+                "grep",
+                serde_json::json!({"pattern": "absent"})
+            )
+            .await,
+            "(no matches)"
+        );
+        assert!(
+            call(&mut runner, "grep", serde_json::json!({"pattern": "("}))
+                .await
+                .starts_with("error: grep.pattern is not a valid regular expression")
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn find_files_matches_globs_without_crossing_separators() {
+        let root = temp_root("find").await;
+        tokio::fs::create_dir(root.join("src"))
+            .await
+            .expect("directory is created");
+        tokio::fs::write(root.join("src/lib.rs"), "")
+            .await
+            .expect("fixture is written");
+        tokio::fs::write(root.join("top.rs"), "")
+            .await
+            .expect("fixture is written");
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::read_only());
+        assert_eq!(
+            call(
+                &mut runner,
+                "find_files",
+                serde_json::json!({"glob": "*.rs"})
+            )
+            .await,
+            "top.rs"
+        );
+        assert_eq!(
+            call(
+                &mut runner,
+                "find_files",
+                serde_json::json!({"glob": "**/*.rs"})
+            )
+            .await,
+            "src/lib.rs\ntop.rs"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
 
     #[tokio::test]
     async fn local_runner_writes_only_inside_its_root() {
