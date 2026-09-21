@@ -11,10 +11,17 @@ repository.workspace = true
 globset.workspace = true
 ignore.workspace = true
 regex.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 structure-model = { path = "../structure-model" }
 structure-protocol = { path = "../structure-protocol" }
 tokio.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
 
 [lints]
 workspace = true

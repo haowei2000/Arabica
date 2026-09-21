@@ -6,14 +6,16 @@
 
 pub mod definitions;
 pub mod output;
+pub mod shell;
 pub mod shell_classifier;
 
 pub use definitions::{
     definition, delete_file_definition, edit_files_definition, find_files_definition,
-    grep_definition, list_dir_definition, read_file_definition, tool_definitions,
+    grep_definition, list_dir_definition, read_file_definition, shell_definition, tool_definitions,
     write_file_definition,
 };
 pub use output::{MAX_TOOL_OUTPUT_CHARS, truncate_output};
+pub use shell::ShellPolicy;
 pub use shell_classifier::classify_shell_interaction;
 
 use std::collections::{BTreeSet, HashSet};
@@ -21,6 +23,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use structure_model::{ContentBlock, ToolCallItem, ToolResultItem};
 use structure_protocol::{RunId, ToolInteractionKind};
 
@@ -101,7 +104,8 @@ impl RunnerEnvironment for NoopRunner {
 /// gets the same error as for a tool that does not exist. Enabling execution is
 /// therefore an explicit decision by the host, not a consequence of the model
 /// guessing a name.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LocalTool {
     ReadFile,
     ListDir,
@@ -110,6 +114,7 @@ pub enum LocalTool {
     WriteFile,
     EditFiles,
     DeleteFile,
+    Shell,
 }
 
 impl LocalTool {
@@ -122,6 +127,7 @@ impl LocalTool {
             Self::WriteFile => "write_file",
             Self::EditFiles => "edit_files",
             Self::DeleteFile => "delete_file",
+            Self::Shell => "shell",
         }
     }
 
@@ -131,6 +137,9 @@ impl LocalTool {
                 ToolInteractionKind::Inspection
             }
             Self::WriteFile | Self::EditFiles | Self::DeleteFile => ToolInteractionKind::Mutation,
+            // A command's effect depends on its text; the runner classifies
+            // each call from the command instead of from the tool name.
+            Self::Shell => ToolInteractionKind::Generic,
         }
     }
 
@@ -153,6 +162,7 @@ impl LocalTool {
             Self::WriteFile,
             Self::EditFiles,
             Self::DeleteFile,
+            Self::Shell,
         ]
         .into_iter()
         .find(|tool| tool.name() == name)
@@ -161,7 +171,14 @@ impl LocalTool {
 
 /// Which tools a [`LocalRunner`] advertises and will execute, plus the output
 /// bounds that keep a single tool result from exhausting the context window.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The policy deserializes from a config file (`[runner]` in TOML, say), so a
+/// host can load it; loading and merging files is the host's job. A host that
+/// layers project configuration over user configuration must only let the
+/// project tighten it: a repository that could enable `shell` or empty
+/// `shell.scrub_env` could run code or read the user's credentials.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct LocalRunnerPolicy {
     pub tools: BTreeSet<LocalTool>,
     /// Prefix each `read_file` line with its 1-based number. Off in the legacy
@@ -172,6 +189,7 @@ pub struct LocalRunnerPolicy {
     pub max_grep_matches: usize,
     pub max_find_results: usize,
     pub max_match_line_chars: usize,
+    pub shell: ShellPolicy,
 }
 
 impl LocalRunnerPolicy {
@@ -186,6 +204,7 @@ impl LocalRunnerPolicy {
             max_grep_matches: 200,
             max_find_results: 500,
             max_match_line_chars: 300,
+            shell: ShellPolicy::default(),
         }
     }
 
@@ -231,6 +250,38 @@ impl LocalRunnerPolicy {
             .copied()
             .filter(|tool| tool.is_edit_format())
             .collect()
+    }
+
+    /// Reject a policy that is internally inconsistent.
+    ///
+    /// A host must call this after loading a policy from a file: serde checks
+    /// shape, not meaning.
+    pub fn validate(&self) -> Result<(), RunnerError> {
+        let formats = self.edit_formats();
+        if formats.len() > 1 {
+            return Err(RunnerError::new(format!(
+                "at most one edit format may be enabled, found {}",
+                formats
+                    .iter()
+                    .map(|tool| tool.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        for (name, value) in [
+            ("max_list_entries", self.max_list_entries),
+            ("max_grep_matches", self.max_grep_matches),
+            ("max_find_results", self.max_find_results),
+            ("max_match_line_chars", self.max_match_line_chars),
+        ] {
+            if value == 0 {
+                return Err(RunnerError::new(format!("{name} must be positive")));
+            }
+        }
+        if self.max_read_bytes == 0 {
+            return Err(RunnerError::new("max_read_bytes must be positive"));
+        }
+        self.shell.validate()
     }
 
     #[must_use]
@@ -743,10 +794,64 @@ fn find_files_blocking(
     Ok(paths.join("\n"))
 }
 
+/// One tool call's result before it is wrapped for the Runtime.
+struct ToolRun {
+    content: String,
+    is_error: bool,
+    output: Vec<RunnerOutput>,
+}
+
+impl ToolRun {
+    /// A successful non-shell tool: its text is both the result and the one
+    /// stdout chunk, exactly as before this type existed.
+    fn text(content: String) -> Self {
+        Self {
+            output: vec![RunnerOutput::Stdout(content.clone())],
+            content,
+            is_error: false,
+        }
+    }
+
+    /// A shell call keeps its streams separate, so the Runtime can map them
+    /// one-for-one to `command.output` Events, and fails on a non-zero exit.
+    fn shell(outcome: shell::ShellOutcome) -> Self {
+        let mut output = Vec::new();
+        if !outcome.stdout.is_empty() {
+            output.push(RunnerOutput::Stdout(outcome.stdout));
+        }
+        if !outcome.stderr.is_empty() {
+            output.push(RunnerOutput::Stderr(outcome.stderr));
+        }
+        Self {
+            content: outcome.content,
+            is_error: outcome.is_error,
+            output,
+        }
+    }
+
+    fn failure(error: RunnerError) -> Self {
+        let message = error.to_string();
+        Self {
+            content: format!("error: {message}"),
+            is_error: true,
+            output: vec![RunnerOutput::Stderr(message)],
+        }
+    }
+}
+
 impl RunnerEnvironment for LocalRunner {
     fn classify(&self, call: &ToolCallItem) -> ToolInteractionKind {
-        self.enabled_tool(&call.name)
-            .map_or(ToolInteractionKind::Generic, LocalTool::interaction)
+        match self.enabled_tool(&call.name) {
+            // Memory retention only: this classification must never decide
+            // whether a command may run.
+            Some(LocalTool::Shell) => call
+                .arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .map_or(ToolInteractionKind::Generic, classify_shell_interaction),
+            Some(tool) => tool.interaction(),
+            None => ToolInteractionKind::Generic,
+        }
     }
 
     async fn execute(
@@ -754,14 +859,21 @@ impl RunnerEnvironment for LocalRunner {
         request: ToolExecutionRequest,
     ) -> Result<ToolExecutionResult, RunnerError> {
         self.active_runs.insert(request.run_id.clone());
+        let arguments = &request.call.arguments;
         let execution = match self.enabled_tool(&request.call.name) {
-            Some(LocalTool::ReadFile) => self.read_file(&request.call.arguments).await,
-            Some(LocalTool::WriteFile) => self.write_file(&request.call.arguments).await,
-            Some(LocalTool::ListDir) => self.list_dir(&request.call.arguments).await,
-            Some(LocalTool::Grep) => self.grep(&request.call.arguments).await,
-            Some(LocalTool::FindFiles) => self.find_files(&request.call.arguments).await,
-            Some(LocalTool::EditFiles) => self.edit_files(&request.call.arguments).await,
-            Some(LocalTool::DeleteFile) => self.delete_file(&request.call.arguments).await,
+            Some(LocalTool::ReadFile) => self.read_file(arguments).await.map(ToolRun::text),
+            Some(LocalTool::WriteFile) => self.write_file(arguments).await.map(ToolRun::text),
+            Some(LocalTool::ListDir) => self.list_dir(arguments).await.map(ToolRun::text),
+            Some(LocalTool::Grep) => self.grep(arguments).await.map(ToolRun::text),
+            Some(LocalTool::FindFiles) => self.find_files(arguments).await.map(ToolRun::text),
+            Some(LocalTool::EditFiles) => self.edit_files(arguments).await.map(ToolRun::text),
+            Some(LocalTool::DeleteFile) => self.delete_file(arguments).await.map(ToolRun::text),
+            Some(LocalTool::Shell) => match self.canonical_root().await {
+                Ok(root) => shell::run(&root, &self.policy.shell, arguments)
+                    .await
+                    .map(ToolRun::shell),
+                Err(error) => Err(error),
+            },
             // A disabled tool is reported exactly like one that does not exist:
             // the model was never told about it, and the reply must not reveal
             // that the capability could be switched on.
@@ -771,17 +883,11 @@ impl RunnerEnvironment for LocalRunner {
             ))),
         };
         self.active_runs.remove(&request.run_id);
-        let (content, is_error, output) = match execution {
-            Ok(content) => (content.clone(), false, vec![RunnerOutput::Stdout(content)]),
-            Err(error) => {
-                let message = error.to_string();
-                (
-                    format!("error: {message}"),
-                    true,
-                    vec![RunnerOutput::Stderr(message)],
-                )
-            }
-        };
+        let ToolRun {
+            content,
+            is_error,
+            output,
+        } = execution.unwrap_or_else(ToolRun::failure);
         Ok(ToolExecutionResult {
             result: ToolResultItem {
                 id: None,
@@ -1166,6 +1272,213 @@ mod tests {
                 "delete_file"
             ]
         );
+    }
+
+    fn shell_policy() -> LocalRunnerPolicy {
+        LocalRunnerPolicy::coding().with_tool(LocalTool::Shell)
+    }
+
+    async fn run_tool(
+        runner: &mut LocalRunner,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> ToolExecutionResult {
+        runner
+            .execute(ToolExecutionRequest {
+                run_id: RunId::new("run-1"),
+                call: ToolCallItem {
+                    id: None,
+                    call_id: "call-1".to_owned(),
+                    name: name.to_owned(),
+                    arguments,
+                    provider_state: None,
+                },
+            })
+            .await
+            .expect("execution is reported")
+    }
+
+    #[tokio::test]
+    async fn shell_is_unavailable_unless_the_host_adds_it() {
+        let root = temp_root("shell-off").await;
+        let mut runner = LocalRunner::with_policy(&root, LocalRunnerPolicy::coding());
+        assert_eq!(
+            call(&mut runner, "shell", serde_json::json!({"command": "true"})).await,
+            "error: unknown local tool: shell"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_reports_status_and_keeps_streams_separate() {
+        let root = temp_root("shell-status").await;
+        let mut runner = LocalRunner::with_policy(&root, shell_policy());
+        let failed = run_tool(
+            &mut runner,
+            "shell",
+            serde_json::json!({"command": "echo out; echo err >&2; exit 3"}),
+        )
+        .await;
+        assert!(failed.result.is_error, "a non-zero exit is a tool error");
+        assert_eq!(
+            failed.result.content,
+            vec![ContentBlock::text(
+                "exit code 3\nstdout:\nout\n\nstderr:\nerr\n"
+            )]
+        );
+        assert_eq!(
+            failed.output,
+            vec![
+                RunnerOutput::Stdout("out\n".to_owned()),
+                RunnerOutput::Stderr("err\n".to_owned())
+            ]
+        );
+
+        let succeeded = run_tool(
+            &mut runner,
+            "shell",
+            serde_json::json!({"command": "printf ok"}),
+        )
+        .await;
+        assert!(!succeeded.result.is_error);
+        assert_eq!(
+            succeeded.result.content,
+            vec![ContentBlock::text("exit code 0\nstdout:\nok")]
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_timeout_kills_every_process_the_command_started() {
+        let root = temp_root("shell-timeout").await;
+        let mut runner = LocalRunner::with_policy(&root, shell_policy());
+        // `sleep` runs as a grandchild in the background; killing only `sh`
+        // would leave it running for 30 seconds.
+        let started = std::time::Instant::now();
+        let result = run_tool(
+            &mut runner,
+            "shell",
+            serde_json::json!({
+                "command": "sleep 30 & echo $! > grandchild.pid; wait",
+                "timeout_sec": 1
+            }),
+        )
+        .await;
+        // Without this bound a broken kill only makes the test slow: waiting
+        // for `sh` would outlast the sleep, and the grandchild would then be
+        // gone for the wrong reason.
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the timeout did not stop the call: took {:?}",
+            started.elapsed()
+        );
+        assert!(result.result.is_error);
+        let pid = tokio::fs::read_to_string(root.join("grandchild.pid"))
+            .await
+            .expect("the command recorded its background pid");
+        let mut alive = true;
+        for _ in 0..20 {
+            alive = std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .status()
+                .expect("kill runs")
+                .success();
+            if !alive {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(!alive, "the background grandchild {} survived", pid.trim());
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_runs_non_interactively() {
+        let root = temp_root("shell-env").await;
+        let mut runner = LocalRunner::with_policy(&root, shell_policy());
+        assert_eq!(
+            call(
+                &mut runner,
+                "shell",
+                serde_json::json!({"command": "printf '%s %s %s' \"$PAGER\" \"$GIT_PAGER\" \"$GIT_TERMINAL_PROMPT\""})
+            )
+            .await,
+            "exit code 0\nstdout:\ncat cat 0"
+        );
+        tokio::fs::remove_dir_all(root).await.expect("cleanup");
+    }
+
+    #[test]
+    fn credentials_are_scrubbed_by_name_segment() {
+        let policy = ShellPolicy {
+            scrub_env: vec!["PROVIDER_SPECIAL".to_owned()],
+            allow_env: vec!["GITHUB_TOKEN".to_owned()],
+            ..ShellPolicy::default()
+        };
+        for scrubbed in [
+            "OPENAI__API_KEY",
+            "GLM_APIKEY",
+            "DEEPSEEK_APIKEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "CODEX_GITHUB_PERSONAL_ACCESS_TOKEN",
+            "DB_PASSWORD",
+            "PROVIDER_SPECIAL",
+        ] {
+            assert!(policy.scrubs(scrubbed), "{scrubbed} must be removed");
+        }
+        for kept in [
+            "PATH",
+            "HOME",
+            "MONKEY",
+            "KEYCHAIN_PATH",
+            "SSH_AUTH_SOCK",
+            "GITHUB_TOKEN",
+        ] {
+            assert!(!policy.scrubs(kept), "{kept} must be kept");
+        }
+    }
+
+    #[test]
+    fn the_policy_loads_from_toml_and_is_validated() {
+        let policy: LocalRunnerPolicy = toml::from_str(
+            r#"
+            tools = ["read_file", "grep", "edit_files", "shell"]
+            read_line_numbers = true
+            max_grep_matches = 50
+
+            [shell]
+            default_timeout_secs = 30
+            max_timeout_secs = 120
+            scrub_env = ["MY_PROVIDER_KEY_VAR"]
+            "#,
+        )
+        .expect("the example parses");
+        policy.validate().expect("the example is consistent");
+        assert!(policy.allows(LocalTool::Shell));
+        assert_eq!(policy.max_grep_matches, 50);
+        assert_eq!(policy.shell.default_timeout_secs, 30);
+        // Unset fields keep their defaults.
+        assert_eq!(policy.max_find_results, 500);
+
+        let unknown = toml::from_str::<LocalRunnerPolicy>("tools = [\"read_file\"]\nshel = {}");
+        assert!(
+            unknown.is_err(),
+            "a misspelled key must not be silently ignored"
+        );
+
+        let unknown_tool = toml::from_str::<LocalRunnerPolicy>("tools = [\"rm_rf\"]");
+        assert!(
+            unknown_tool.is_err(),
+            "an unknown tool name must be rejected"
+        );
+
+        let inconsistent: LocalRunnerPolicy =
+            toml::from_str("[shell]\ndefault_timeout_secs = 300\nmax_timeout_secs = 60")
+                .expect("shape is valid");
+        assert!(inconsistent.validate().is_err());
     }
 
     #[tokio::test]

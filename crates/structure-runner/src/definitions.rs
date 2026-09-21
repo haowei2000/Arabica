@@ -178,6 +178,31 @@ pub fn delete_file_definition() -> ToolDefinition {
     }
 }
 
+pub fn shell_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "shell".to_owned(),
+        description: "Run one command with `sh -c` in the workspace root, for building, testing and version control. Prefer read_file, list_dir, grep, find_files and edit_files for reading and changing files. Every process the command starts is killed when the call ends, so do not start servers or background jobs. Credentials are removed from the environment. Output keeps its beginning and end when it is long.".to_owned(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to run"
+                },
+                "timeout_sec": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 600,
+                    "description": "Seconds before the command is killed; the host may lower the maximum"
+                }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+        }),
+        strict: None,
+    }
+}
+
 /// The definition for one tool the local runner can execute.
 pub fn definition(tool: LocalTool) -> ToolDefinition {
     match tool {
@@ -188,6 +213,7 @@ pub fn definition(tool: LocalTool) -> ToolDefinition {
         LocalTool::WriteFile => write_file_definition(),
         LocalTool::EditFiles => edit_files_definition(),
         LocalTool::DeleteFile => delete_file_definition(),
+        LocalTool::Shell => shell_definition(),
     }
 }
 
