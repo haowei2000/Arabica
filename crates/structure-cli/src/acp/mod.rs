@@ -22,10 +22,12 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, Implementation, InitializeRequest, InitializeResponse,
-    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities,
-    SessionId as AcpSessionId, SessionInfo, SessionListCapabilities, SessionNotification,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
+    Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
+    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+    NewSessionResponse, PromptRequest, PromptResponse, ResumeSessionRequest, ResumeSessionResponse,
+    SessionCapabilities, SessionCloseCapabilities, SessionId as AcpSessionId, SessionInfo,
+    SessionListCapabilities, SessionNotification, SessionResumeCapabilities,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
@@ -273,6 +275,75 @@ impl AcpState {
         Ok(LoadSessionResponse::new())
     }
 
+    /// `session/resume`: only reachable once `initialize` has advertised
+    /// `agentCapabilities.sessionCapabilities.resume`. The restore half of
+    /// `load_session`, without the replay half -- "resume without returning
+    /// previous messages" is the method's own documented contract, not a
+    /// shortcut taken here. Deliberately a near-twin of `load_session`
+    /// rather than a shared helper: the two methods differ in exactly one
+    /// self-contained slice (the replay loop and its `connection` parameter)
+    /// bracketed by identical restore logic on both sides, and factoring
+    /// that out would cost more in indirection than it would save in lines.
+    async fn resume_session(
+        &self,
+        request: ResumeSessionRequest,
+    ) -> AcpResult<ResumeSessionResponse> {
+        if !request.cwd.is_absolute() {
+            return Err(AcpError::invalid_params()
+                .data(format!("cwd must be absolute: {}", request.cwd.display())));
+        }
+        let workspace_id = crate::host::workspace_id_for(&request.cwd);
+        let structure_session_id = StructureSessionId::new(request.session_id.to_string());
+
+        let stored = FileSessionStore::read_session(
+            &self.structure_home,
+            &workspace_id,
+            &structure_session_id,
+        )
+        .map_err(|error| {
+            AcpError::invalid_params().data(format!(
+                "cannot resume session {}: {error}",
+                request.session_id
+            ))
+        })?;
+
+        let path = FileSessionStore::session_path(
+            &self.structure_home,
+            &workspace_id,
+            &structure_session_id,
+        );
+        let store = FileSessionStore::open_existing(&path)
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+
+        let model = (self.model_factory)()?;
+        let runtime = build_host_runtime(model, &request.cwd, self.tool_policy.clone());
+        let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
+        manager
+            .restore_session(
+                stored.into_snapshot(),
+                CommandId::new(uuid::Uuid::now_v7().to_string()),
+                Some(&store as &dyn SessionEventObserver),
+            )
+            .map_err(session_error)?;
+
+        let acp_session_id = AcpSessionId::new(structure_session_id.to_string());
+        self.sessions
+            .lock()
+            .expect("session map lock poisoned")
+            .insert(
+                acp_session_id,
+                Arc::new(SessionEntry {
+                    manager: Arc::new(tokio::sync::Mutex::new(manager)),
+                    structure_session_id,
+                    cwd: request.cwd,
+                    current_run: Mutex::new(None),
+                    store: Arc::new(store),
+                }),
+            );
+
+        Ok(ResumeSessionResponse::new())
+    }
+
     /// `session/list`: only reachable once `initialize` has advertised
     /// `agentCapabilities.sessionCapabilities.list` (set unconditionally in
     /// `serve` below, since this handler exists). Synchronous: unlike
@@ -324,6 +395,51 @@ impl AcpState {
         {
             cancellation.cancel();
         }
+    }
+
+    /// `session/close`: only reachable once `initialize` has advertised
+    /// `agentCapabilities.sessionCapabilities.close`. Maps to
+    /// `Command::SessionSuspend`, not `Command::SessionClose` -- Structure's
+    /// own `session.close` is a terminal state no further Command can move a
+    /// session out of, but ACP's `session/close` only means "this
+    /// connection is done with the session for now," and the same session
+    /// can still come back later through `session/load`/`session/resume`.
+    /// Any in-flight run is cancelled first (the same non-blocking signal
+    /// `session/cancel` sends) before waiting on the session's own lock, so
+    /// this does not hang waiting for a run that would otherwise keep going
+    /// on its own; removed from `self.sessions` only once the suspend
+    /// itself has actually succeeded, so a rejected suspend leaves the
+    /// session exactly as promptable as it was before this call.
+    async fn close_session(&self, request: CloseSessionRequest) -> AcpResult<CloseSessionResponse> {
+        let Some(entry) = self.entry(&request.session_id) else {
+            return Err(
+                AcpError::invalid_params().data(format!("unknown session {}", request.session_id))
+            );
+        };
+        self.cancel(&request.session_id);
+
+        let envelope = CommandEnvelope::new(
+            CommandId::new(uuid::Uuid::now_v7().to_string()),
+            Some(entry.structure_session_id.clone()),
+            Command::SessionSuspend,
+        );
+        let control = DispatchControl {
+            run: RunControl::default(),
+            observer: Some(Arc::clone(&entry.store) as Arc<dyn SessionEventObserver>),
+        };
+        let mut guard = entry.manager.lock().await;
+        guard
+            .dispatch(envelope, control)
+            .await
+            .map_err(session_error)?;
+        drop(guard);
+
+        self.sessions
+            .lock()
+            .expect("session map lock poisoned")
+            .remove(&request.session_id);
+
+        Ok(CloseSessionResponse::new())
     }
 }
 
@@ -386,7 +502,10 @@ async fn serve(
                             AgentCapabilities::new()
                                 .load_session(true)
                                 .session_capabilities(
-                                    SessionCapabilities::new().list(SessionListCapabilities::new()),
+                                    SessionCapabilities::new()
+                                        .list(SessionListCapabilities::new())
+                                        .resume(SessionResumeCapabilities::new())
+                                        .close(SessionCloseCapabilities::new()),
                                 ),
                         )
                         .agent_info(Implementation::new("structure", env!("CARGO_PKG_VERSION"))),
@@ -440,6 +559,34 @@ async fn serve(
                             responder: Responder<ListSessionsResponse>,
                             _connection: ConnectionTo<Client>| {
                     match state.list_sessions(request) {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: ResumeSessionRequest,
+                            responder: Responder<ResumeSessionResponse>,
+                            _connection: ConnectionTo<Client>| {
+                    match state.resume_session(request).await {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: CloseSessionRequest,
+                            responder: Responder<CloseSessionResponse>,
+                            _connection: ConnectionTo<Client>| {
+                    match state.close_session(request).await {
                         Ok(response) => responder.respond(response),
                         Err(error) => responder.respond_with_error(error),
                     }
@@ -560,12 +707,13 @@ mod round_trip {
     use std::time::Duration;
 
     use agent_client_protocol::schema::v1::{
-        ContentBlock as AcpContentBlock, InitializeRequest as AcpInitializeRequest,
-        ListSessionsRequest as AcpListSessionsRequest, LoadSessionRequest as AcpLoadSessionRequest,
-        NewSessionRequest as AcpNewSessionRequest, PermissionOptionKind,
-        PromptRequest as AcpPromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-        RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
-        StopReason, ToolCallStatus,
+        CloseSessionRequest as AcpCloseSessionRequest, ContentBlock as AcpContentBlock,
+        InitializeRequest as AcpInitializeRequest, ListSessionsRequest as AcpListSessionsRequest,
+        LoadSessionRequest as AcpLoadSessionRequest, NewSessionRequest as AcpNewSessionRequest,
+        PermissionOptionKind, PromptRequest as AcpPromptRequest, RequestPermissionOutcome,
+        RequestPermissionRequest, RequestPermissionResponse,
+        ResumeSessionRequest as AcpResumeSessionRequest, SelectedPermissionOutcome,
+        SessionNotification, SessionUpdate, StopReason, ToolCallStatus,
     };
     use agent_client_protocol::{Channel, Client as ClientRole, Responder};
     use structure_model::{
@@ -929,6 +1077,241 @@ mod round_trip {
             .await
             .expect("server task did not panic")
             .expect("second connection's server run completed cleanly");
+
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
+    }
+
+    #[tokio::test]
+    async fn session_resume_does_not_replay_history_but_does_accept_a_new_prompt() {
+        let root = temp_root("resume");
+        let structure_home = temp_root("resume-home");
+
+        // Connection 1: same as session/load's own test -- create a
+        // session, send one prompt, let the connection end.
+        let state1 = scripted_state(
+            vec![text_result("hello from turn one")],
+            LocalRunnerPolicy::coding(),
+            &structure_home,
+        );
+        let (server1, client_channel1) = spawn_agent(state1);
+        let session_id = tokio::time::timeout(Duration::from_secs(10), {
+            let root = root.clone();
+            ClientRole.builder().name("test-client-1").connect_with(
+                client_channel1,
+                async move |cx| {
+                    cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    let new_session = cx
+                        .send_request(AcpNewSessionRequest::new(root))
+                        .block_task()
+                        .await?;
+                    cx.send_request(AcpPromptRequest::new(
+                        new_session.session_id.clone(),
+                        vec![AcpContentBlock::from("say hello")],
+                    ))
+                    .block_task()
+                    .await?;
+                    Ok(new_session.session_id)
+                },
+            )
+        })
+        .await
+        .expect("first client round trip did not time out")
+        .expect("first client round trip succeeded");
+
+        server1
+            .await
+            .expect("server task did not panic")
+            .expect("first connection's server run completed cleanly");
+
+        // Connection 2: an independent AcpState (same reasoning as
+        // session/load's test -- avoids the first connection's still-locked
+        // FileSessionStore causing spurious lock contention) resumes the
+        // session and sends a new prompt. Unlike session/load, no
+        // session/update notifications should arrive before the prompt: the
+        // whole point of session/resume is skipping that replay.
+        let state2 = scripted_state(
+            vec![text_result("hello again after resuming")],
+            LocalRunnerPolicy::coding(),
+            &structure_home,
+        );
+        let (server2, client_channel2) = spawn_agent(state2);
+        let updates: Arc<StdMutex<Vec<SessionUpdate>>> = Arc::new(StdMutex::new(Vec::new()));
+
+        let second_stop_reason = tokio::time::timeout(Duration::from_secs(10), {
+            let updates = updates.clone();
+            let root = root.clone();
+            let session_id = session_id.clone();
+            ClientRole
+                .builder()
+                .name("test-client-2")
+                .on_receive_notification(
+                    {
+                        let updates = updates.clone();
+                        async move |notification: SessionNotification, _connection| {
+                            updates
+                                .lock()
+                                .expect("updates lock poisoned")
+                                .push(notification.update);
+                            Ok(())
+                        }
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                )
+                .connect_with(client_channel2, async move |cx| {
+                    cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    cx.send_request(AcpResumeSessionRequest::new(session_id.clone(), root))
+                        .block_task()
+                        .await?;
+                    let prompt = cx
+                        .send_request(AcpPromptRequest::new(
+                            session_id,
+                            vec![AcpContentBlock::from("what did you say before?")],
+                        ))
+                        .block_task()
+                        .await?;
+                    Ok(prompt.stop_reason)
+                })
+        })
+        .await
+        .expect("second client round trip did not time out")
+        .expect("second client round trip succeeded");
+
+        assert_eq!(second_stop_reason, StopReason::EndTurn);
+        {
+            let seen = updates.lock().expect("updates lock poisoned");
+            assert!(
+                !seen
+                    .iter()
+                    .any(|update| chunk_text(update) == Some("hello from turn one")),
+                "session/resume must NOT replay the first turn's message, got {seen:?}"
+            );
+            assert!(
+                seen.iter()
+                    .any(|update| chunk_text(update) == Some("hello again after resuming")),
+                "the post-resume prompt must still stream live, got {seen:?}"
+            );
+        }
+
+        server2
+            .await
+            .expect("server task did not panic")
+            .expect("second connection's server run completed cleanly");
+
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
+    }
+
+    #[tokio::test]
+    async fn session_close_suspends_and_forgets_the_session_in_this_connection() {
+        let root = temp_root("close");
+        let structure_home = temp_root("close-home");
+        let state = scripted_state(
+            vec![text_result("hello before closing")],
+            LocalRunnerPolicy::coding(),
+            &structure_home,
+        );
+        let (server, client_channel) = spawn_agent(state);
+
+        let (session_id, prompt_after_close_was_rejected, load_after_close_succeeded) =
+            tokio::time::timeout(Duration::from_secs(10), {
+                let root = root.clone();
+                ClientRole.builder().name("test-client").connect_with(
+                    client_channel,
+                    async move |cx| {
+                        cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                            .block_task()
+                            .await?;
+                        let new_session = cx
+                            .send_request(AcpNewSessionRequest::new(root.clone()))
+                            .block_task()
+                            .await?;
+                        cx.send_request(AcpPromptRequest::new(
+                            new_session.session_id.clone(),
+                            vec![AcpContentBlock::from("say hello")],
+                        ))
+                        .block_task()
+                        .await?;
+                        cx.send_request(AcpCloseSessionRequest::new(
+                            new_session.session_id.clone(),
+                        ))
+                        .block_task()
+                        .await?;
+                        // The session's own state (now Suspended) rejects a
+                        // further message on its own -- state validation is
+                        // a second, independent layer that would catch this
+                        // even if close_session's own map bookkeeping had a
+                        // bug, so this alone cannot prove that bookkeeping
+                        // is correct.
+                        let prompt_rejected = cx
+                            .send_request(AcpPromptRequest::new(
+                                new_session.session_id.clone(),
+                                vec![AcpContentBlock::from("are you still there?")],
+                            ))
+                            .block_task()
+                            .await
+                            .is_err();
+                        // This probe is the one that actually depends on
+                        // close_session removing its own SessionEntry: a
+                        // stale entry would keep its Arc<FileSessionStore>
+                        // (and the exclusive flock that comes with it) alive
+                        // forever, so session/load's own
+                        // FileSessionStore::open_existing for the SAME
+                        // session id would fail on lock contention with that
+                        // never-released handle. Success here means no
+                        // stale entry survived close.
+                        let load_succeeded = cx
+                            .send_request(AcpLoadSessionRequest::new(
+                                new_session.session_id.clone(),
+                                root,
+                            ))
+                            .block_task()
+                            .await
+                            .is_ok();
+                        Ok((new_session.session_id, prompt_rejected, load_succeeded))
+                    },
+                )
+            })
+            .await
+            .expect("client round trip did not time out")
+            .expect("client round trip succeeded");
+
+        assert!(
+            prompt_after_close_was_rejected,
+            "a session/prompt for a session already closed in this connection must be rejected"
+        );
+        assert!(
+            load_after_close_succeeded,
+            "session/load for a session already closed in this connection must succeed; a \
+             failure here means close_session left a stale entry (and its locked \
+             FileSessionStore) behind in the session map"
+        );
+
+        server
+            .await
+            .expect("server task did not panic")
+            .expect("server run completed cleanly");
+
+        let workspace_id = crate::host::workspace_id_for(&root);
+        let stored = FileSessionStore::read_session(
+            &structure_home,
+            &workspace_id,
+            &structure_protocol::SessionId::new(session_id.to_string()),
+        )
+        .expect("the session file is still readable after close");
+        assert!(
+            stored.events.iter().any(|envelope| matches!(
+                envelope.event,
+                structure_protocol::Event::SessionSuspended
+            )),
+            "session/close must persist session.suspend, not session.close (a terminal \
+             state session/load or session/resume could never reopen), got {:?}",
+            stored.events
+        );
 
         std::fs::remove_dir_all(root).ok();
         std::fs::remove_dir_all(structure_home).ok();
