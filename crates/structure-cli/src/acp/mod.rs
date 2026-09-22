@@ -14,6 +14,7 @@ mod content;
 mod mapping;
 mod permission;
 mod stop_reason;
+mod time;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,8 +23,9 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, Implementation, InitializeRequest, InitializeResponse,
-    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, SessionId as AcpSessionId, SessionNotification,
+    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
+    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities,
+    SessionId as AcpSessionId, SessionInfo, SessionListCapabilities, SessionNotification,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
@@ -271,6 +273,45 @@ impl AcpState {
         Ok(LoadSessionResponse::new())
     }
 
+    /// `session/list`: only reachable once `initialize` has advertised
+    /// `agentCapabilities.sessionCapabilities.list` (set unconditionally in
+    /// `serve` below, since this handler exists). Synchronous: unlike
+    /// `new_session`/`load_session`, nothing here touches a runtime or a
+    /// model, only `$STRUCTURE_HOME` on disk.
+    fn list_sessions(&self, request: ListSessionsRequest) -> AcpResult<ListSessionsResponse> {
+        if let Some(cwd) = &request.cwd
+            && !cwd.is_absolute()
+        {
+            return Err(
+                AcpError::invalid_params().data(format!("cwd must be absolute: {}", cwd.display()))
+            );
+        }
+        // No cwd filter means every workspace, the same "cwd absent" ->
+        // "no workspace scope" mapping print mode's `structure sessions
+        // list --all` uses (`FileSessionStore::list_sessions`'s own
+        // `workspace_id: Option<&WorkspaceId>` parameter).
+        let workspace_id = request
+            .cwd
+            .as_ref()
+            .map(|cwd| crate::host::workspace_id_for(cwd));
+        let listings = FileSessionStore::list_sessions(&self.structure_home, workspace_id.as_ref())
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+        let sessions = listings
+            .into_iter()
+            .map(|listing| {
+                let mut info = SessionInfo::new(
+                    AcpSessionId::new(listing.header.id.to_string()),
+                    listing.header.cwd,
+                );
+                if let Some(modified_at_ms) = listing.modified_at_ms {
+                    info = info.updated_at(time::to_iso8601(modified_at_ms));
+                }
+                info
+            })
+            .collect();
+        Ok(ListSessionsResponse::new(sessions))
+    }
+
     fn cancel(&self, session_id: &AcpSessionId) {
         let Some(entry) = self.entry(session_id) else {
             return;
@@ -341,7 +382,13 @@ async fn serve(
                 let _ = request.protocol_version;
                 responder.respond(
                     InitializeResponse::new(ProtocolVersion::V1)
-                        .agent_capabilities(AgentCapabilities::new().load_session(true))
+                        .agent_capabilities(
+                            AgentCapabilities::new()
+                                .load_session(true)
+                                .session_capabilities(
+                                    SessionCapabilities::new().list(SessionListCapabilities::new()),
+                                ),
+                        )
                         .agent_info(Implementation::new("structure", env!("CARGO_PKG_VERSION"))),
                 )
             },
@@ -379,6 +426,20 @@ async fn serve(
                             responder: Responder<LoadSessionResponse>,
                             connection: ConnectionTo<Client>| {
                     match state.load_session(request, &connection).await {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: ListSessionsRequest,
+                            responder: Responder<ListSessionsResponse>,
+                            _connection: ConnectionTo<Client>| {
+                    match state.list_sessions(request) {
                         Ok(response) => responder.respond(response),
                         Err(error) => responder.respond_with_error(error),
                     }
@@ -500,10 +561,11 @@ mod round_trip {
 
     use agent_client_protocol::schema::v1::{
         ContentBlock as AcpContentBlock, InitializeRequest as AcpInitializeRequest,
-        LoadSessionRequest as AcpLoadSessionRequest, NewSessionRequest as AcpNewSessionRequest,
-        PermissionOptionKind, PromptRequest as AcpPromptRequest, RequestPermissionOutcome,
-        RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
-        SessionNotification, SessionUpdate, StopReason, ToolCallStatus,
+        ListSessionsRequest as AcpListSessionsRequest, LoadSessionRequest as AcpLoadSessionRequest,
+        NewSessionRequest as AcpNewSessionRequest, PermissionOptionKind,
+        PromptRequest as AcpPromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+        RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
+        StopReason, ToolCallStatus,
     };
     use agent_client_protocol::{Channel, Client as ClientRole, Responder};
     use structure_model::{
@@ -869,6 +931,100 @@ mod round_trip {
             .expect("second connection's server run completed cleanly");
 
         std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
+    }
+
+    #[tokio::test]
+    async fn session_list_scopes_by_cwd_and_lists_across_workspaces_without_it() {
+        let root_a = temp_root("list-a");
+        let root_b = temp_root("list-b");
+        let structure_home = temp_root("list-home");
+
+        // Two independent connections, sharing one structure_home, each
+        // create one session in a different workspace -- session/new never
+        // dispatches MessageSend, so an empty scripted-results queue is
+        // enough; no prompt is needed to produce a session worth listing.
+        for root in [&root_a, &root_b] {
+            let state = scripted_state(vec![], LocalRunnerPolicy::coding(), &structure_home);
+            let (server, client_channel) = spawn_agent(state);
+            let root = root.clone();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                ClientRole
+                    .builder()
+                    .name("test-client-create")
+                    .connect_with(client_channel, async move |cx| {
+                        cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                            .block_task()
+                            .await?;
+                        cx.send_request(AcpNewSessionRequest::new(root))
+                            .block_task()
+                            .await?;
+                        Ok(())
+                    }),
+            )
+            .await
+            .expect("create round trip did not time out")
+            .expect("create round trip succeeded");
+            server
+                .await
+                .expect("server task did not panic")
+                .expect("create connection's server run completed cleanly");
+        }
+
+        // A third, independent connection does the listing.
+        let state = scripted_state(vec![], LocalRunnerPolicy::coding(), &structure_home);
+        let (server, client_channel) = spawn_agent(state);
+        let (scoped, all) = tokio::time::timeout(Duration::from_secs(10), {
+            let root_a = root_a.clone();
+            ClientRole.builder().name("test-client-list").connect_with(
+                client_channel,
+                async move |cx| {
+                    cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    let scoped = cx
+                        .send_request(AcpListSessionsRequest::new().cwd(Some(root_a)))
+                        .block_task()
+                        .await?;
+                    let all = cx
+                        .send_request(AcpListSessionsRequest::new())
+                        .block_task()
+                        .await?;
+                    Ok((scoped, all))
+                },
+            )
+        })
+        .await
+        .expect("list round trip did not time out")
+        .expect("list round trip succeeded");
+
+        server
+            .await
+            .expect("server task did not panic")
+            .expect("list connection's server run completed cleanly");
+
+        assert_eq!(
+            scoped.sessions.len(),
+            1,
+            "a cwd-scoped session/list must return exactly the one session in that \
+             workspace, got {:?}",
+            scoped.sessions
+        );
+        assert_eq!(scoped.sessions[0].cwd, root_a);
+        assert!(
+            scoped.sessions[0].updated_at.is_some(),
+            "a session with a real file on disk must report updated_at"
+        );
+        assert_eq!(
+            all.sessions.len(),
+            2,
+            "an unscoped session/list must return sessions from every workspace, got {:?}",
+            all.sessions
+        );
+
+        std::fs::remove_dir_all(root_a).ok();
+        std::fs::remove_dir_all(root_b).ok();
         std::fs::remove_dir_all(structure_home).ok();
     }
 
