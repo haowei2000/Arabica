@@ -8,6 +8,7 @@ use structure_cli::host::{
     resolve_provider_config,
 };
 use structure_cli::print::{self, OutputFormat, PrintOptions, Resume};
+use structure_cli::sessions::SessionsAction;
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
 use structure_runner::LocalTool;
 
@@ -65,6 +66,11 @@ impl PrintArgs {
 enum Commands {
     /// Run as an Agent Client Protocol v1 agent over stdio (for editors like Zed).
     Acp,
+    /// Inspect sessions stored under $STRUCTURE_HOME.
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
 }
 
 #[tokio::main]
@@ -74,7 +80,27 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> i32 {
-    let provider_config = match resolve_provider_config(&cli.config, process_environment) {
+    let Cli {
+        config,
+        command,
+        print_args,
+    } = cli;
+
+    // `sessions` only reads files under $STRUCTURE_HOME; unlike every other
+    // command it needs no working model provider, so it is dispatched
+    // before resolve_provider_config runs -- otherwise a user who only
+    // wants to see their session history would be blocked by an unrelated
+    // "API key is required" error.
+    if let Some(Commands::Sessions { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the sessions subcommand");
+            2
+        } else {
+            structure_cli::sessions::run(action)
+        };
+    }
+
+    let provider_config = match resolve_provider_config(&config, process_environment) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("error: {error}");
@@ -82,18 +108,15 @@ async fn run(cli: Cli) -> i32 {
         }
     };
 
-    let Cli {
-        command,
-        print_args,
-        ..
-    } = cli;
-
     match (command, &print_args.print) {
         (Some(Commands::Acp), Some(_)) => {
             eprintln!("error: -p cannot be combined with the acp subcommand");
             2
         }
         (Some(Commands::Acp), None) => run_acp(provider_config).await,
+        (Some(Commands::Sessions { .. }), _) => {
+            unreachable!("Commands::Sessions returns early above")
+        }
         (None, Some(task)) => run_print(provider_config, task.clone(), print_args).await,
         (None, None) => match describe_configuration(provider_config) {
             Ok(()) => 0,
