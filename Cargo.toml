@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "benchmarks/runtime-short-memory",
+    "crates/structure-adapters",
     "crates/structure-cli",
     "crates/structure-model",
     "crates/structure-provider",

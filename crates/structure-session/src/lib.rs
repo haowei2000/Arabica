@@ -10,6 +10,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use structure_protocol::{
     Command, CommandEnvelope, CommandId, ErrorCode, Event, EventEnvelope, EventId, EventMetadata,
     PROTOCOL_VERSION, RunId, RunStatus, SessionId, SessionStatus, WorkspaceId,
@@ -21,7 +22,11 @@ use structure_runtime::{RunControl, RuntimeEngine, RuntimeEventLog};
 ///
 /// This is [`Event::is_client_visible`] reified as data, so an observer that
 /// wants only what a client sees does not have to duplicate that rule.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// `Serialize`/`Deserialize` (`"client"`/`"internal"`) so a persistent
+/// observer (`structure-adapters`' file session store) can record it
+/// alongside the Event it was computed for.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventVisibility {
     Client,
     Internal,
@@ -697,6 +702,22 @@ mod tests {
     use structure_runtime::{
         CoreRuntime, RunCancellation, ToolPermissionGate, ToolPermissionPolicy, ToolPermissionRule,
     };
+
+    #[test]
+    fn event_visibility_serializes_as_the_documented_lowercase_strings() {
+        assert_eq!(
+            serde_json::to_string(&EventVisibility::Client).unwrap(),
+            "\"client\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EventVisibility::Internal).unwrap(),
+            "\"internal\""
+        );
+        assert_eq!(
+            serde_json::from_str::<EventVisibility>("\"client\"").unwrap(),
+            EventVisibility::Client
+        );
+    }
 
     #[derive(Debug, Default)]
     struct CapturingModel {

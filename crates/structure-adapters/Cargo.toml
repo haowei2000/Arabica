@@ -1,6 +1,6 @@
 [package]
-name = "structure-session"
-description = "Session lifecycle, scheduling, and canonical event sequencing"
+name = "structure-adapters"
+description = "Persistence adapters implementing structure-session's observer/store ports"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,16 +8,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+rustix = { workspace = true, features = ["fs"] }
 serde = { workspace = true }
+serde_json.workspace = true
 structure-protocol = { path = "../structure-protocol" }
-structure-runtime = { path = "../structure-runtime" }
+structure-session = { path = "../structure-session" }
 
 [dev-dependencies]
-serde_json.workspace = true
 structure-model = { path = "../structure-model" }
-structure-provider = { path = "../structure-provider" }
-structure-runner = { path = "../structure-runner" }
-tokio.workspace = true
 
 [lints]
 workspace = true
