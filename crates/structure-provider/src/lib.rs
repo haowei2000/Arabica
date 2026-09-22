@@ -67,6 +67,11 @@ pub struct ModelRunRequest {
     /// empty because canonical events are the only continuation source.
     pub continuation: Vec<RuntimeItem>,
     pub disclosure: DisclosureLevel,
+    /// Standing instructions distinct from `continuation`'s turn-scoped
+    /// control language: for example a discovered `AGENTS.md`. Rendered as
+    /// one additional system message placed right after the base system
+    /// prompt, before long-term memory.
+    pub system_instructions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1911,6 +1916,12 @@ pub fn compile_runtime_request(request: &ModelRunRequest, model: &str) -> Runtim
         RuntimeRole::System,
         base_system,
     ))];
+    if !request.system_instructions.is_empty() {
+        items.push(RuntimeItem::Message(MessageItem::text(
+            RuntimeRole::System,
+            request.system_instructions.join("\n\n"),
+        )));
+    }
     if !request.long_memory.is_empty() {
         let context = request
             .long_memory
@@ -2115,6 +2126,7 @@ mod tests {
     #[test]
     fn experiment_controls_are_explicit_and_validated() {
         let request = ModelRunRequest {
+            system_instructions: Vec::new(),
             session_id: SessionId::new("s"),
             run_id: RunId::new("r"),
             input: "test".into(),
@@ -2158,6 +2170,86 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn system_instructions_render_as_one_message_after_the_base_system_prompt() {
+        let request = ModelRunRequest {
+            system_instructions: vec![
+                "Project instructions from AGENTS.md.".to_owned(),
+                "A second standing instruction.".to_owned(),
+            ],
+            session_id: SessionId::new("s"),
+            run_id: RunId::new("r"),
+            input: "hello".to_owned(),
+            short_memory: vec![],
+            run_memory: vec![],
+            long_memory: vec![ContextEntry {
+                path: "notes".to_owned(),
+                content: "durable context".to_owned(),
+            }],
+            tools: vec![],
+            tool_choice: ToolChoice::Auto,
+            continuation: vec![],
+            disclosure: DisclosureLevel::Detail,
+        };
+
+        let runtime_request = compile_runtime_request(&request, "test-model");
+
+        let system_texts: Vec<String> = runtime_request
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                RuntimeItem::Message(message) if message.role == RuntimeRole::System => {
+                    message.content.iter().find_map(|block| match block {
+                        ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+
+        // [0] is the base system prompt, [1] is system_instructions joined into
+        // one message, [2] is the long_memory block: instructions sit between
+        // the base prompt and long-term memory, not folded into either.
+        assert!(system_texts.len() >= 3, "{system_texts:?}");
+        assert!(system_texts[0].starts_with("You are an AI agent"));
+        assert_eq!(
+            system_texts[1],
+            "Project instructions from AGENTS.md.\n\nA second standing instruction."
+        );
+        assert!(system_texts[2].contains("long_memory"));
+    }
+
+    #[test]
+    fn empty_system_instructions_add_no_message() {
+        let request = ModelRunRequest {
+            system_instructions: Vec::new(),
+            session_id: SessionId::new("s"),
+            run_id: RunId::new("r"),
+            input: "hello".to_owned(),
+            short_memory: vec![],
+            run_memory: vec![],
+            long_memory: vec![],
+            tools: vec![],
+            tool_choice: ToolChoice::Auto,
+            continuation: vec![],
+            disclosure: DisclosureLevel::Detail,
+        };
+        let runtime_request = compile_runtime_request(&request, "test-model");
+        let system_message_count = runtime_request
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item, RuntimeItem::Message(message) if message.role == RuntimeRole::System)
+            })
+            .count();
+        assert_eq!(
+            system_message_count, 1,
+            "only the base system prompt, no empty instructions message: {:?}",
+            runtime_request.items
+        );
+    }
+
     use axum::Json;
     use axum::body::Bytes;
     use axum::extract::State;
@@ -2173,6 +2265,7 @@ mod tests {
         let mut provider = EchoModel::default();
         let result = provider
             .complete(ModelRunRequest {
+                system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
                 input: "hello".to_owned(),
@@ -2229,6 +2322,7 @@ mod tests {
             }),
         };
         let request = ModelRunRequest {
+            system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-1"),
             input: "current request".to_owned(),
@@ -2286,6 +2380,7 @@ mod tests {
     #[test]
     fn openai_mapping_keeps_short_and_long_memory_separate() {
         let request = ModelRunRequest {
+            system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-2"),
             input: "What should you remember?".to_owned(),
@@ -2349,6 +2444,7 @@ mod tests {
     #[test]
     fn short_memory_tool_batches_remain_typed_until_provider_encoding() {
         let request = ModelRunRequest {
+            system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-2"),
             input: "continue".to_owned(),
@@ -2424,6 +2520,7 @@ mod tests {
             is_error: false,
         };
         let request = ModelRunRequest {
+            system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-1"),
             input: "current request".to_owned(),
@@ -2479,6 +2576,7 @@ mod tests {
     #[test]
     fn ephemeral_system_continuation_is_merged_into_the_chat_system_prefix() {
         let request = ModelRunRequest {
+            system_instructions: Vec::new(),
             session_id: SessionId::new("session-1"),
             run_id: RunId::new("run-1"),
             input: "finish".to_owned(),
@@ -2644,6 +2742,7 @@ mod tests {
         );
         let wire = provider
             .map_request(&ModelRunRequest {
+                system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
                 input: "test".to_owned(),
@@ -2789,6 +2888,7 @@ mod tests {
         .expect("Responses adapter is implemented");
         let result = provider
             .complete(ModelRunRequest {
+                system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
                 input: "hello".to_owned(),
@@ -2859,6 +2959,7 @@ mod tests {
         assert_eq!(provider.api_type(), ApiType::OpenAiChatCompletions);
         let result = provider
             .complete(ModelRunRequest {
+                system_instructions: Vec::new(),
                 session_id: SessionId::new("session-1"),
                 run_id: RunId::new("run-1"),
                 input: "hello".to_owned(),

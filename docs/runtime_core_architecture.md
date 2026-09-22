@@ -572,10 +572,10 @@ filesystem and terminal APIs would therefore have to be undone for v2.
 
 | Consequence | Why it is unavoidable |
 |---|---|
-| Cooperative in-flight cancellation in Runtime | ACP `session/cancel` must stop a run that `SessionManager::handle` is executing under one borrow |
-| A Session-level event observer | ACP streams progress; today events are returned only after the whole run finishes |
-| A permission gate recorded as typed Events | ACP delegates approval to the client; the decision must still reach the audit trail |
-| An exact-transcript history projection | the memory projection targets single-turn agent runs; multi-turn chat needs a provider-valid transcript |
+| Cooperative in-flight cancellation in Runtime (implemented: `RunControl`/`RunCancellation`) | ACP `session/cancel` must stop a run that `SessionManager::handle` is executing under one borrow |
+| A Session-level event observer (pending: T5) | ACP streams progress; today events are returned only after the whole run finishes |
+| A permission gate recorded as typed Events (implemented: `ToolPermissionGate`) | ACP delegates approval to the client; the decision must still reach the audit trail |
+| An exact-transcript history projection (implemented: `HistoryProjection::ExactTranscript`) | the default TTL/batch memory projection targets single-turn agent runs and, under it, a still-fresh past tool call has a `command.output` Event wedged between its `tool_calls` message and its result -- multi-turn chat needs the provider-valid transcript this mode reconstructs instead |
 | MSRV 1.85 → 1.88, `serde_json/preserve_order` unified workspace-wide | required by `agent-client-protocol`; the feature must be explicit so serialized bytes do not depend on the build invocation |
 
 ### Alternatives rejected

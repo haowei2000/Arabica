@@ -28,7 +28,7 @@ use sha2::{Digest, Sha256};
 pub use short_memory::{
     DecayMatch, DecayRule, EventBatch, EventMemoryTraits, EventTtl, EventVisibilityDecision,
     KeyAdmissionDecision, KeyAdmissionPolicy, KeyAdmissionSummary, MemoryClass,
-    ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector,
+    ShortMemoryMaterialization, ShortMemoryPolicy, ShortMemoryProjector, exact_transcript_entries,
 };
 use structure_model::{
     ContentBlock, FinishReason, MemoryBatchKind, MemoryLoadState, MemoryPointer, MessageItem,
@@ -87,6 +87,7 @@ pub enum RuntimeErrorKind {
     RunNotActive,
     Cancellation,
     UnsupportedCommand,
+    InvalidConfiguration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,6 +185,30 @@ pub enum RuntimeCompactionStrategy {
     Disabled,
     PointerGc,
     FileBackedGc,
+}
+
+/// How Runtime represents runs OTHER than the one currently executing.
+///
+/// `Policy` is the existing TTL/batch-projected history every recorded
+/// benchmark campaign depends on: a past run's tool batches decay and
+/// compact under `ShortMemoryPolicy`. `ExactTranscript` instead reconstructs
+/// each past run directly from its own typed model exchange and tool-call
+/// Events. A multi-turn chat host needs this: under `Policy`, a still-fresh
+/// past tool batch is loaded whole with `LoadAll`, which expands every event
+/// in its batch including the `command.output` Event every successful tool
+/// call records. That becomes a `system` message sitting between an
+/// assistant `tool_calls` message and its matching `tool` result, an
+/// ordering most OpenAI-compatible encoders reject outright.
+///
+/// `ExactTranscript` conflicts with compaction: PointerGC and FileBackedGC
+/// both operate on the same TTL/batch projection this mode bypasses for past
+/// runs, so `handle_with_control` rejects the combination before a run
+/// starts rather than silently ignoring one of the two settings.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HistoryProjection {
+    #[default]
+    Policy,
+    ExactTranscript,
 }
 
 /// Selects whether PointerGC is admitted by the production profitability gate
@@ -318,6 +343,8 @@ pub struct CoreRuntime<M, R> {
     terminal_controller_policy: TerminalControllerPolicy,
     tools: Vec<ToolDefinition>,
     archive_store: RuntimeArchiveStore,
+    history_projection: HistoryProjection,
+    system_instructions: Vec<String>,
     model: M,
     runner: R,
 }
@@ -343,6 +370,8 @@ impl<M, R> CoreRuntime<M, R> {
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
             archive_store: RuntimeArchiveStore::Memory,
+            history_projection: HistoryProjection::default(),
+            system_instructions: Vec::new(),
             model,
             runner,
         }
@@ -372,6 +401,8 @@ impl<M, R> CoreRuntime<M, R> {
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
             archive_store: RuntimeArchiveStore::Memory,
+            history_projection: HistoryProjection::default(),
+            system_instructions: Vec::new(),
             model,
             runner,
         }
@@ -407,6 +438,8 @@ impl<M, R> CoreRuntime<M, R> {
             terminal_controller_policy: TerminalControllerPolicy::AdvisoryV18,
             tools: default_tool_definitions(),
             archive_store,
+            history_projection: HistoryProjection::default(),
+            system_instructions: Vec::new(),
             model,
             runner,
         }
@@ -422,6 +455,31 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_compaction_strategy(&mut self, strategy: RuntimeCompactionStrategy) {
         self.compaction_strategy = strategy;
+    }
+
+    pub fn history_projection(&self) -> HistoryProjection {
+        self.history_projection
+    }
+
+    /// Set how past runs are represented to the model. Does not itself
+    /// validate against `compaction_strategy`; the combination is rejected
+    /// when a run actually starts, in `handle_with_control`.
+    pub fn set_history_projection(&mut self, projection: HistoryProjection) {
+        self.history_projection = projection;
+    }
+
+    /// Persistent instructions appended once per turn, after the base system
+    /// prompt, as their own system message: for example project or user
+    /// configuration such as a discovered `AGENTS.md`. Distinct from the
+    /// completion-control text `handle_with_control` places in
+    /// `continuation`, which is turn-scoped Runtime control language, not
+    /// standing configuration.
+    pub fn set_system_instructions(&mut self, instructions: Vec<String>) {
+        self.system_instructions = instructions;
+    }
+
+    pub fn system_instructions(&self) -> &[String] {
+        &self.system_instructions
     }
 
     pub fn archive_store(&self) -> &RuntimeArchiveStore {
@@ -774,6 +832,14 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         "message.send content must not be empty",
                     ));
                 }
+                if self.history_projection == HistoryProjection::ExactTranscript
+                    && self.compaction_strategy != RuntimeCompactionStrategy::Disabled
+                {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorKind::InvalidConfiguration,
+                        "HistoryProjection::ExactTranscript cannot be combined with a compaction strategy other than Disabled",
+                    ));
+                }
                 let (workspace_id, disclosure) = {
                     let session = self.session_ref(session_id)?;
                     (session.workspace_id.clone(), session.disclosure)
@@ -823,6 +889,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 minimum_reuse_steps: self.pointer_gc_min_reuse_steps,
                                 economics: pointer_gc_economics,
                             },
+                            self.history_projection,
                             memory,
                         )?
                     };
@@ -901,6 +968,7 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         },
                         continuation,
                         disclosure,
+                        system_instructions: self.system_instructions.clone(),
                     };
                     let request_bytes = model_run_request_bytes(&request);
                     let result = match control.cancellation.as_ref() {
@@ -2064,6 +2132,7 @@ pub fn project_compaction_for_benchmark(
         &protected,
         policy,
         projection_policy,
+        HistoryProjection::Policy,
         memory,
     )?;
     let second = project_model_step(
@@ -2072,6 +2141,7 @@ pub fn project_compaction_for_benchmark(
         &protected,
         policy,
         projection_policy,
+        HistoryProjection::Policy,
         memory,
     )?;
     let mut entries = first.short_memory;
@@ -2119,6 +2189,7 @@ fn project_model_step(
     protected_event_ids: &HashSet<EventId>,
     policy: &ShortMemoryPolicy,
     pointer_gc: PointerGcProjectionPolicy,
+    history_projection: HistoryProjection,
     memory: &mut LongMemoryManager,
 ) -> Result<ModelStepProjection, RuntimeError> {
     let file_backed_policy =
@@ -2192,6 +2263,13 @@ fn project_model_step(
         ) {
             run_memory.push(entry);
         }
+    }
+    // Past runs are reconstructed from their own typed Events instead of the
+    // TTL/batch projection above; the current run's own exchange is
+    // untouched, since `exact_run_continuation` already reconstructs it
+    // separately from `run_memory`/`continuation`.
+    if history_projection == HistoryProjection::ExactTranscript {
+        short_memory = exact_transcript_entries(history, run_id);
     }
     if let Some((entry, _)) = &auto_hydration {
         run_memory.push(entry.clone());
@@ -5814,6 +5892,210 @@ mod tests {
         );
     }
 
+    /// A model whose scripted responses are consumed one per call, shared
+    /// across multiple separate `handle()` invocations (multiple runs) so a
+    /// second turn's request can be inspected after a first turn completed.
+    #[derive(Debug, Default)]
+    struct MultiTurnModel {
+        requests: Vec<ModelRunRequest>,
+        results: VecDeque<ModelRunResult>,
+    }
+
+    impl ModelProvider for MultiTurnModel {
+        async fn complete(
+            &mut self,
+            request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            self.requests.push(request);
+            self.results
+                .pop_front()
+                .ok_or_else(|| ProviderError::new("test model has no response"))
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            Ok(false)
+        }
+    }
+
+    /// Every tool call succeeds and also reports one line of command output,
+    /// exactly like `structure-runner`'s read_file/write_file/list_dir/grep
+    /// tools do today (each maps its one success value to one
+    /// `RunnerOutput::Stdout`, see `crates/structure-runner/src/lib.rs`'s
+    /// `ToolRun::text`). This is the ordinary case, not a contrived one.
+    #[derive(Debug, Default)]
+    struct ToolWithOutputRunner;
+
+    impl RunnerEnvironment for ToolWithOutputRunner {
+        async fn execute(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            Ok(ToolExecutionResult {
+                result: ToolResultItem {
+                    id: None,
+                    call_id: request.call.call_id,
+                    name: Some(request.call.name),
+                    content: vec![ContentBlock::text("wrote 5 bytes to note.txt")],
+                    is_error: false,
+                },
+                output: vec![RunnerOutput::Stdout("wrote 5 bytes to note.txt".to_owned())],
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+            Ok(false)
+        }
+    }
+
+    /// Run one Command directly against `RuntimeEngine::handle`, returning
+    /// every canonical envelope (not just the client-visible subset `handle()`
+    /// returns) so it can be replayed as prior history for a later run.
+    async fn handle_capturing_history<M: ModelProvider, R: RunnerEnvironment>(
+        runtime: &mut CoreRuntime<M, R>,
+        session_id: &SessionId,
+        run_id: &RunId,
+        history: &[EventEnvelope],
+        command: &Command,
+    ) -> Vec<EventEnvelope> {
+        let mut event_log = TestEventLog::new(history, session_id, Some(run_id));
+        RuntimeEngine::handle(runtime, session_id, Some(run_id), &mut event_log, command)
+            .await
+            .expect("the run is handled");
+        event_log.history
+    }
+
+    /// Whether the first `Message(role)` immediately follows a `ToolCall` and
+    /// immediately precedes the `ToolResult` for the same call, which is what
+    /// every OpenAI-compatible Chat encoder requires: a `tool` message must
+    /// come directly after the assistant message containing its `tool_calls`
+    /// entry, with nothing between them.
+    fn tool_call_and_result_are_adjacent(items: &[RuntimeItem]) -> bool {
+        let Some(call_index) = items
+            .iter()
+            .position(|item| matches!(item, RuntimeItem::ToolCall(_)))
+        else {
+            return true; // nothing to check
+        };
+        matches!(items.get(call_index + 1), Some(RuntimeItem::ToolResult(_)))
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_and_its_result_stay_adjacent_across_turns() {
+        // This pins the fix for B4 from the CLI extension plan. Written
+        // first against the DEFAULT short memory policy, it FAILED: a tool
+        // call from an EARLIER, completed run is still within its TTL on the
+        // very next turn and is therefore materialized with `LoadAll`, which
+        // expands every event in its batch -- including the `command.output`
+        // event every successful tool call records. That becomes a `system`
+        // message sitting between the assistant's `tool_calls` message and the
+        // matching `tool` result message, which an OpenAI-compatible encoder
+        // cannot repair by reordering; the request would very likely be
+        // rejected. `HistoryProjection::ExactTranscript` fixes this by
+        // reconstructing a past run's exchange directly from its typed
+        // `model.response.item` and `tool.call.completed` Events instead of
+        // expanding the batch event-by-event.
+        let session_id = SessionId::new("session-1");
+        let run_1 = RunId::new("run-1");
+        let run_2 = RunId::new("run-2");
+
+        let model = MultiTurnModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response(
+                    "call-1",
+                    "write_file",
+                    serde_json::json!({"path": "note.txt"}),
+                ),
+                text_response("turn one complete"),
+                text_response("turn two complete"),
+            ]),
+        };
+        let mut runtime = opened(model, ToolWithOutputRunner, &session_id);
+        runtime.set_history_projection(HistoryProjection::ExactTranscript);
+
+        let turn_one_history = handle_capturing_history(
+            &mut runtime,
+            &session_id,
+            &run_1,
+            &[],
+            &Command::MessageSend {
+                content: "please update note.txt".to_owned(),
+            },
+        )
+        .await;
+
+        handle_capturing_history(
+            &mut runtime,
+            &session_id,
+            &run_2,
+            &turn_one_history,
+            &Command::MessageSend {
+                content: "thanks, what did you change".to_owned(),
+            },
+        )
+        .await;
+
+        // The third request is the one built for turn two: the first two
+        // requests belong to turn one (a tool-calling step, then the step that
+        // returned the final text).
+        let second_turn_request = &runtime.model().requests[2];
+        let items = second_turn_request
+            .short_memory
+            .iter()
+            .filter_map(|entry| match &entry.item {
+                ShortMemoryItem::ToolCall(call) => Some(RuntimeItem::ToolCall(call.clone())),
+                ShortMemoryItem::ToolResult(result) => {
+                    Some(RuntimeItem::ToolResult(result.clone()))
+                }
+                ShortMemoryItem::Observation { .. } => Some(RuntimeItem::Message(
+                    MessageItem::text(RuntimeRole::System, "observation placeholder"),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            tool_call_and_result_are_adjacent(&items),
+            "a tool.call.completed's ShortMemoryItem::ToolResult must sit immediately after its ShortMemoryItem::ToolCall; nothing may be materialized between them, or an OpenAI-compatible encoder will see an assistant tool_calls message with no immediately following tool message"
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_transcript_is_rejected_alongside_a_compaction_strategy() {
+        // ExactTranscript bypasses the same TTL/batch projection PointerGC
+        // and FileBackedGC operate on for past runs, so the combination is
+        // rejected before a run starts rather than silently favoring one
+        // setting over the other.
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let mut runtime = opened(
+            SequencedModel {
+                requests: Vec::new(),
+                results: VecDeque::new(),
+            },
+            CountingRunner::default(),
+            &session_id,
+        );
+        runtime.set_history_projection(HistoryProjection::ExactTranscript);
+        runtime.set_compaction_strategy(RuntimeCompactionStrategy::PointerGc);
+
+        let error = handle(
+            &mut runtime,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "do the task".to_owned(),
+            },
+        )
+        .await
+        .expect_err("the combination must be rejected");
+
+        assert_eq!(error.kind(), RuntimeErrorKind::InvalidConfiguration);
+        // Nothing may have been appended for a Command that was never valid.
+        assert!(runtime.model().requests.is_empty());
+    }
+
     #[test]
     fn short_closed_batches_stay_full_when_cache_return_is_insufficient() {
         let history = vec![
@@ -5843,6 +6125,7 @@ mod tests {
             &HashSet::new(),
             &ShortMemoryPolicy::batch_only(0),
             pointer_gc_policy(1, 100),
+            HistoryProjection::Policy,
             &mut memory,
         )
         .expect("projection succeeds");
@@ -5896,6 +6179,7 @@ mod tests {
             &HashSet::new(),
             &ShortMemoryPolicy::default(),
             pointer_policy,
+            HistoryProjection::Policy,
             &mut memory,
         )
         .expect("projection succeeds");

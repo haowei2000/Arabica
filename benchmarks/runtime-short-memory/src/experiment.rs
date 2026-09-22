@@ -203,6 +203,7 @@ mod tests {
             tool_choice: structure_model::ToolChoice::Auto,
             continuation: vec![],
             disclosure: structure_protocol::DisclosureLevel::Detail,
+            system_instructions: vec![],
         }
     }
     #[tokio::test]

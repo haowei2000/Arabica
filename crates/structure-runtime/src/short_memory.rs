@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use structure_model::{
-    ContentBlock, MemoryBatchKey, MemoryBatchKind, MemoryLoadState, ShortMemoryEntry,
+    ContentBlock, MemoryBatchKey, MemoryBatchKind, MemoryLoadState, RuntimeItem, ShortMemoryEntry,
     ShortMemoryItem, ToolCallItem, ToolResultItem,
 };
 use structure_protocol::{Event, EventEnvelope, EventId, RunId, ToolInteractionKind};
@@ -982,6 +982,98 @@ fn event_to_short_memory(envelope: &EventEnvelope) -> Option<ShortMemoryEntry> {
         sequence: envelope.sequence,
         item,
     })
+}
+
+/// Reconstruct short memory for every run OTHER than `current_run_id` by
+/// replaying each run's own typed model exchange and tool-call Events,
+/// instead of expanding TTL/batch-projected event batches. This is what
+/// [`crate::HistoryProjection::ExactTranscript`] substitutes for the
+/// `short_memory` half of [`ShortMemoryProjector::materialize_for_model_step`]'s
+/// output; the current run's own exchange is unaffected and continues to be
+/// reconstructed separately by `exact_run_continuation`.
+///
+/// Two rules apply only here, not in [`event_to_short_memory`]:
+///
+/// - A tool call is kept only if the SAME run also recorded its completion.
+///   A run can end (`run.failed`, `run.cancelled`) after a call was
+///   requested but before it completed -- for example the Runner
+///   Environment's own hard-error path, which ends a run without appending a
+///   matching `tool.call.completed` -- and such a call must not become an
+///   orphaned assistant `tool_calls` entry with nothing to answer it.
+/// - A run's `run.completed` output is represented only if that run never
+///   recorded a `model.response.item` message. The two otherwise carry the
+///   same text (every scripted response that populates one populates both;
+///   see this crate's own `text_response` test helper), and only one copy
+///   may reach the model.
+///
+/// `command.output` Events are never materialized here at all: expanding
+/// them is what lets a `system` message land between an assistant
+/// `tool_calls` message and its `tool` result under the batch/TTL
+/// projection, which most OpenAI-compatible encoders reject.
+pub fn exact_transcript_entries(
+    events: &[EventEnvelope],
+    current_run_id: &RunId,
+) -> Vec<ShortMemoryEntry> {
+    let mut completed_call_ids: HashMap<RunId, HashSet<String>> = HashMap::new();
+    let mut has_message: HashMap<RunId, bool> = HashMap::new();
+    for envelope in events {
+        let Some(run_id) = envelope.run_id.as_ref() else {
+            continue;
+        };
+        if run_id == current_run_id {
+            continue;
+        }
+        match &envelope.event {
+            Event::ToolCallCompleted { call_id, .. } => {
+                completed_call_ids
+                    .entry(run_id.clone())
+                    .or_default()
+                    .insert(call_id.clone());
+            }
+            Event::ModelResponseItem {
+                item: RuntimeItem::Message(_),
+                ..
+            } => {
+                has_message.insert(run_id.clone(), true);
+            }
+            _ => {}
+        }
+    }
+
+    let mut entries = Vec::new();
+    for envelope in events {
+        let Some(run_id) = envelope.run_id.as_ref() else {
+            continue;
+        };
+        if run_id == current_run_id {
+            continue;
+        }
+        match &envelope.event {
+            Event::ToolCallRequested { call_id, .. } => {
+                let kept = completed_call_ids
+                    .get(run_id)
+                    .is_some_and(|ids| ids.contains(call_id));
+                if kept {
+                    entries.extend(event_to_short_memory(envelope));
+                }
+            }
+            Event::ModelResponseItem {
+                item: RuntimeItem::Message(message),
+                ..
+            } => {
+                entries.push(ShortMemoryEntry {
+                    source_event_ids: vec![envelope.event_id.to_string()],
+                    sequence: envelope.sequence,
+                    item: ShortMemoryItem::ProviderMessage(message.clone()),
+                });
+            }
+            Event::RunCompleted { output: Some(_) }
+                if has_message.get(run_id).copied().unwrap_or(false) => {}
+            Event::CommandOutput { .. } => {}
+            _ => entries.extend(event_to_short_memory(envelope)),
+        }
+    }
+    entries
 }
 
 fn tool_interaction_memory_class(kind: ToolInteractionKind) -> MemoryClass {
@@ -2491,5 +2583,229 @@ mod tests {
             result.entries[0].item,
             ShortMemoryItem::UserMessage { .. }
         ));
+    }
+
+    fn tool_call_and_completed(sequence: u64, run_id: &str, call_id: &str) -> Vec<EventEnvelope> {
+        vec![
+            envelope_for_run(
+                sequence,
+                run_id,
+                Event::ToolCallRequested {
+                    call_id: call_id.to_owned(),
+                    name: "read_file".to_owned(),
+                    arguments: serde_json::json!({}),
+                    provider_state: None,
+                },
+            ),
+            envelope_for_run(
+                sequence + 1,
+                run_id,
+                Event::ToolCallCompleted {
+                    call_id: call_id.to_owned(),
+                    name: "read_file".to_owned(),
+                    result: "contents".to_owned(),
+                    is_error: false,
+                },
+            ),
+        ]
+    }
+
+    #[test]
+    fn exact_transcript_never_materializes_command_output() {
+        let mut events = tool_call_and_completed(1, "run-1", "call-1");
+        events.insert(
+            2,
+            envelope_for_run(
+                3,
+                "run-1",
+                Event::CommandOutput {
+                    stream: OutputStream::Stdout,
+                    chunk: "wrote 5 bytes".to_owned(),
+                },
+            ),
+        );
+        let entries = exact_transcript_entries(&events, &RunId::new("run-2"));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::Observation { .. })),
+            "command.output must never become a materialized item: {entries:?}"
+        );
+        assert!(matches!(entries[0].item, ShortMemoryItem::ToolCall(_)));
+        assert!(matches!(entries[1].item, ShortMemoryItem::ToolResult(_)));
+    }
+
+    #[test]
+    fn exact_transcript_drops_a_tool_call_the_run_never_completed() {
+        // The runner's own hard-error path ends a run without appending
+        // tool.call.completed for the call it was executing (deliberately
+        // not changed in T4a, since fixing it would alter the recorded
+        // Events of runs that already failed this way). A later turn must
+        // not resurrect that call as an orphaned entry.
+        let events = vec![
+            envelope_for_run(
+                1,
+                "run-1",
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({}),
+                    provider_state: None,
+                },
+            ),
+            envelope_for_run(
+                2,
+                "run-1",
+                Event::RunFailed {
+                    message: "runner failed: disk full".to_owned(),
+                },
+            ),
+        ];
+        let entries = exact_transcript_entries(&events, &RunId::new("run-2"));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !matches!(entry.item, ShortMemoryItem::ToolCall(_))),
+            "an uncompleted call must be dropped, not reconstructed: {entries:?}"
+        );
+        assert!(matches!(
+            entries[0].item,
+            ShortMemoryItem::RunFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn exact_transcript_keeps_a_completed_call_from_a_different_run_unaffected() {
+        // Two past runs reusing the same call id must not cross-contaminate
+        // each other's pairing.
+        let mut events = tool_call_and_completed(1, "run-1", "call-1");
+        events.push(envelope_for_run(
+            3,
+            "run-2",
+            Event::ToolCallRequested {
+                call_id: "call-1".to_owned(),
+                name: "shell".to_owned(),
+                arguments: serde_json::json!({}),
+                provider_state: None,
+            },
+        ));
+        events.push(envelope_for_run(4, "run-2", Event::RunCancelled));
+        let entries = exact_transcript_entries(&events, &RunId::new("run-3"));
+        let tool_calls = entries
+            .iter()
+            .filter(|entry| matches!(entry.item, ShortMemoryItem::ToolCall(_)))
+            .count();
+        assert_eq!(
+            tool_calls, 1,
+            "run-2's uncompleted call-1 must stay dropped: {entries:?}"
+        );
+        assert!(matches!(
+            entries.last().unwrap().item,
+            ShortMemoryItem::RunCancelled
+        ));
+    }
+
+    #[test]
+    fn exact_transcript_represents_a_run_completed_message_only_once() {
+        let events = vec![
+            envelope_for_run(
+                1,
+                "run-1",
+                Event::MessageAccepted {
+                    content: "please summarize".to_owned(),
+                },
+            ),
+            envelope_for_run(
+                2,
+                "run-1",
+                Event::ModelResponseItem {
+                    model_step: 0,
+                    item_index: 0,
+                    item: RuntimeItem::Message(structure_model::MessageItem::text(
+                        structure_model::RuntimeRole::Assistant,
+                        "here is the summary",
+                    )),
+                },
+            ),
+            envelope_for_run(
+                3,
+                "run-1",
+                Event::RunCompleted {
+                    output: Some("here is the summary".to_owned()),
+                },
+            ),
+        ];
+        let entries = exact_transcript_entries(&events, &RunId::new("run-2"));
+        let assistant_texts = entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.item,
+                    ShortMemoryItem::ProviderMessage(_) | ShortMemoryItem::AssistantMessage { .. }
+                )
+            })
+            .count();
+        assert_eq!(
+            assistant_texts, 1,
+            "the same final text must not be represented twice: {entries:?}"
+        );
+        assert!(matches!(
+            entries[1].item,
+            ShortMemoryItem::ProviderMessage(_)
+        ));
+    }
+
+    #[test]
+    fn exact_transcript_synthesizes_the_final_message_when_none_was_ever_emitted() {
+        // A provider that only ever populates `final_output` (no typed
+        // response items at all -- see EchoModel) leaves no
+        // model.response.item Message behind. That is the only record of
+        // what the model said, and must not be dropped.
+        let events = vec![
+            envelope_for_run(
+                1,
+                "run-1",
+                Event::MessageAccepted {
+                    content: "ping".to_owned(),
+                },
+            ),
+            envelope_for_run(
+                2,
+                "run-1",
+                Event::RunCompleted {
+                    output: Some("pong".to_owned()),
+                },
+            ),
+        ];
+        let entries = exact_transcript_entries(&events, &RunId::new("run-2"));
+        assert!(entries.iter().any(|entry| matches!(
+            &entry.item,
+            ShortMemoryItem::AssistantMessage { content } if content == "pong"
+        )));
+    }
+
+    #[test]
+    fn exact_transcript_drops_reasoning_and_ignores_the_current_run() {
+        let mut events = vec![envelope_for_run(
+            1,
+            "run-1",
+            Event::ModelResponseItem {
+                model_step: 0,
+                item_index: 0,
+                item: RuntimeItem::Reasoning(ReasoningItem {
+                    id: None,
+                    summary: vec!["private chain of thought".to_owned()],
+                    provider_state: None,
+                }),
+            },
+        )];
+        events.extend(tool_call_and_completed(2, "run-2", "call-1"));
+        let entries = exact_transcript_entries(&events, &RunId::new("run-2"));
+        assert!(
+            entries.is_empty(),
+            "reasoning from a past run must be dropped and the current run \
+             must be skipped entirely (it is reconstructed separately by \
+             exact_run_continuation): {entries:?}"
+        );
     }
 }
