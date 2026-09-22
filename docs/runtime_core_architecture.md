@@ -413,21 +413,38 @@ Both references route permission through the protocol (opencode
 `/permission`; codex approval Ops). Required the moment local tools execute on
 user machines:
 
-Design agreed 2026-09-21 (Appendix B); implementation pending:
+Design agreed 2026-09-21 (Appendix B). Implemented at the Runtime layer
+(`crates/structure-runtime/src/control.rs`, wired into the tool-call loop);
+host-side wiring (ACP's `session/request_permission`, the print host's static
+policy) lands with `structure-cli` (§11 T6-T8):
 
-1. Runtime emits `tool.call.permission_requested` (call id, interaction kind)
-   after `tool.call.classified` and before the Runner executes.
-2. The host supplies the decision through a Runtime-owned approver channel, not
-   a protocol Command: a Command reply cannot be delivered while the Session
-   Manager holds its borrow for the whole run. The ACP host forwards the request
-   to the editor as `session/request_permission`; the print host answers from a
+1. Runtime emits `tool.call.permission_requested` (call id only — no
+   interaction kind, so the event cannot suggest the classifier participates
+   in the decision) after `tool.call.classified` and before the Runner
+   executes.
+2. The host supplies the decision through `RunControl::permissions`, a
+   `ToolPermissionGate` carrying a keyed `ToolPermissionPolicy` and an
+   `mpsc` approver channel Runtime sends a `PermissionRequest` on, answered
+   through a `oneshot` reply — a Runtime-owned channel, not a protocol
+   Command: a Command reply cannot be delivered while the Session Manager
+   holds its borrow for the whole run. The ACP host forwards the request to
+   the editor as `session/request_permission`; the print host answers from a
    static policy.
 3. Runtime emits `tool.call.permission_resolved` (outcome, scope, source), so
-   the decision is in the audit trail either way.
+   the decision is in the audit trail either way. A `Session`-scoped allow is
+   derived from that same canonical log (`session_allows` scans prior
+   `permission_resolved` events for the tool name) rather than held in host
+   memory, so it behaves identically under every host and survives a Session
+   restored from disk.
 4. Policy is keyed by **tool name**, never by the shell interaction classifier:
    that classifier is a memory-retention heuristic and mislabels commands such
    as `cat x | sh` as inspection.
-5. With no approver configured the gate fails closed.
+5. With no approver configured, or a dropped reply, the gate fails closed
+   (`ToolPermissionSource::ApproverUnavailable`). Cancelling the run while a
+   decision is pending resolves it as `Cancelled` rather than leaving it
+   hanging.
+6. A default `RunControl` (`permissions: None`) attaches no gate at all, so
+   every recorded benchmark campaign's Events are unaffected.
 
 The Command side (`tool.approval.response`) stays deferred until asynchronous
 `CommandReceipt` acceptance exists; see the §11 checklist.

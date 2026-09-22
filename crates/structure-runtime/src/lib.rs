@@ -15,7 +15,10 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
-pub use control::{RunCancellation, RunControl};
+pub use control::{
+    PermissionDecision, PermissionRequest, RunCancellation, RunControl, ToolPermissionGate,
+    ToolPermissionPolicy, ToolPermissionRule,
+};
 pub use long_memory::{
     ArchivedMemory, FileArchiveStore, LongMemoryError, LongMemoryErrorKind, LongMemoryManager,
     LongMemoryStore, SqliteArchiveStore,
@@ -36,7 +39,8 @@ use structure_protocol::{
     AgentLoopTerminationReason, Command, ContextEntry, DisclosureLevel, Event, EventEnvelope,
     EventId, ModelResponseRejectionReason, OutputStream, RunId, SessionId,
     TerminalControllerPolicy, TerminalControllerState, TerminalControllerTransitionReason,
-    ToolInteractionKind, WorkspaceId,
+    ToolInteractionKind, ToolPermissionOutcome, ToolPermissionScope, ToolPermissionSource,
+    WorkspaceId,
 };
 use structure_provider::{ModelProvider, ModelRunRequest};
 use structure_runner::{
@@ -581,6 +585,80 @@ impl<M, R> CoreRuntime<M, R> {
                 ),
             )
         })
+    }
+}
+
+/// Ask the host's approver about one call, failing closed.
+///
+/// A missing approver, a closed channel, or a dropped reply all deny the call
+/// as `approver_unavailable`. If the run is cancelled while the decision is
+/// pending, the decision is `cancelled` and the host's late answer is ignored.
+async fn request_permission(
+    approver: Option<&tokio::sync::mpsc::UnboundedSender<PermissionRequest>>,
+    run_id: &RunId,
+    call: &ToolCallItem,
+    cancellation: Option<&RunCancellation>,
+) -> PermissionDecision {
+    let Some(approver) = approver else {
+        return PermissionDecision::approver_unavailable();
+    };
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    let request = PermissionRequest {
+        run_id: run_id.clone(),
+        call: call.clone(),
+        reply,
+    };
+    if approver.send(request).is_err() {
+        return PermissionDecision::approver_unavailable();
+    }
+    let answer = match cancellation {
+        None => answer.await,
+        Some(cancellation) => tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return PermissionDecision::cancelled(),
+            answer = answer => answer,
+        },
+    };
+    answer.unwrap_or_else(|_| PermissionDecision::approver_unavailable())
+}
+
+/// Whether an earlier Session-scoped allowance covers this tool.
+///
+/// "Allow for this Session" is derived from the canonical log rather than held
+/// by the host, so it behaves the same under every host and survives a Session
+/// restored from disk. Call ids can repeat across runs, so each decision is
+/// matched to the most recent request with its id.
+fn session_allows(history: &[EventEnvelope], tool: &str) -> bool {
+    let mut tool_by_call = HashMap::new();
+    for envelope in history {
+        match &envelope.event {
+            Event::ToolCallRequested { call_id, name, .. } => {
+                tool_by_call.insert(call_id.as_str(), name.as_str());
+            }
+            Event::ToolCallPermissionResolved {
+                call_id,
+                outcome: ToolPermissionOutcome::Allowed,
+                scope: ToolPermissionScope::Session,
+                ..
+            } if tool_by_call.get(call_id.as_str()) == Some(&tool) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// What the model reads when the gate refuses a call.
+fn permission_denied_result(tool: &str, source: ToolPermissionSource) -> String {
+    match source {
+        ToolPermissionSource::Policy => {
+            format!("permission denied: the host's policy does not allow {tool}")
+        }
+        ToolPermissionSource::ApproverUnavailable => {
+            format!("permission denied: nobody was available to approve {tool}, so it did not run")
+        }
+        ToolPermissionSource::User | ToolPermissionSource::SessionRule => format!(
+            "permission denied: the user declined to run {tool}; choose another approach or ask the user"
+        ),
     }
 }
 
@@ -1184,6 +1262,82 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     return Ok(());
                                 }
                                 continue;
+                            }
+                        }
+                        if let Some(gate) = control.permissions.as_ref() {
+                            let decision = match gate.policy.rule_for(&call.name) {
+                                // Allowed calls record nothing, so a host that
+                                // gates only shell leaves reads untouched.
+                                ToolPermissionRule::Allow => None,
+                                ToolPermissionRule::Deny => Some(PermissionDecision {
+                                    outcome: ToolPermissionOutcome::Denied,
+                                    scope: ToolPermissionScope::Once,
+                                    source: ToolPermissionSource::Policy,
+                                }),
+                                ToolPermissionRule::Ask
+                                    if session_allows(&event_log.snapshot(), &call.name) =>
+                                {
+                                    Some(PermissionDecision {
+                                        outcome: ToolPermissionOutcome::Allowed,
+                                        scope: ToolPermissionScope::Session,
+                                        source: ToolPermissionSource::SessionRule,
+                                    })
+                                }
+                                ToolPermissionRule::Ask => {
+                                    let requested =
+                                        event_log.append(Event::ToolCallPermissionRequested {
+                                            call_id: call.call_id.clone(),
+                                        });
+                                    next_protected_event_ids.insert(requested.event_id);
+                                    Some(
+                                        request_permission(
+                                            gate.approver.as_ref(),
+                                            run_id,
+                                            &call,
+                                            control.cancellation.as_ref(),
+                                        )
+                                        .await,
+                                    )
+                                }
+                            };
+                            if let Some(decision) = decision {
+                                let resolved =
+                                    event_log.append(Event::ToolCallPermissionResolved {
+                                        call_id: call.call_id.clone(),
+                                        outcome: decision.outcome,
+                                        scope: decision.scope,
+                                        source: decision.source,
+                                    });
+                                next_protected_event_ids.insert(resolved.event_id);
+                                match decision.outcome {
+                                    ToolPermissionOutcome::Allowed => {}
+                                    ToolPermissionOutcome::Denied => {
+                                        // The model reads the refusal as an
+                                        // ordinary failed call and can adapt.
+                                        let completed =
+                                            event_log.append(Event::ToolCallCompleted {
+                                                call_id: call.call_id.clone(),
+                                                name: call.name.clone(),
+                                                result: permission_denied_result(
+                                                    &call.name,
+                                                    decision.source,
+                                                ),
+                                                is_error: true,
+                                            });
+                                        next_protected_event_ids.insert(completed.event_id);
+                                        step_tool_errors = step_tool_errors.saturating_add(1);
+                                        continue;
+                                    }
+                                    ToolPermissionOutcome::Cancelled => {
+                                        event_log.append(Event::ToolCallCompleted {
+                                            call_id: call.call_id.clone(),
+                                            name: call.name.clone(),
+                                            result: CANCELLED_TOOL_RESULT.to_owned(),
+                                            is_error: true,
+                                        });
+                                        return self.finish_cancelled(run_id, event_log).await;
+                                    }
+                                }
                             }
                         }
                         let execution_request = ToolExecutionRequest {
@@ -3075,7 +3229,7 @@ fn tool_result_text(result: &ToolResultItem) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
     use structure_model::{ShortMemoryEntry, ShortMemoryItem};
     use structure_protocol::{CommandId, DisclosureLevel, EventId, EventMetadata};
     use structure_provider::{
@@ -3435,6 +3589,510 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct CountingRunner {
+        executed: Vec<String>,
+    }
+
+    impl RunnerEnvironment for CountingRunner {
+        async fn execute(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            self.executed.push(request.call.call_id.clone());
+            Ok(ToolExecutionResult {
+                result: ToolResultItem {
+                    id: None,
+                    call_id: request.call.call_id,
+                    name: Some(request.call.name),
+                    content: vec![ContentBlock::text("done")],
+                    is_error: false,
+                },
+                output: Vec::new(),
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+            Ok(false)
+        }
+    }
+
+    /// Reply to every request the same way, recording how many arrived.
+    fn fixed_approver(
+        decision: PermissionDecision,
+    ) -> tokio::sync::mpsc::UnboundedSender<PermissionRequest> {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();
+        tokio::spawn(async move {
+            while let Some(request) = receiver.recv().await {
+                let _ = request.reply.send(decision);
+            }
+        });
+        sender
+    }
+
+    /// Answer the first request, then never answer again: exercises the
+    /// session-wide allow path, which must not ask a second time.
+    fn approver_answering_once(
+        decision: PermissionDecision,
+    ) -> (
+        tokio::sync::mpsc::UnboundedSender<PermissionRequest>,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = asked.clone();
+        tokio::spawn(async move {
+            if let Some(request) = receiver.recv().await {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = request.reply.send(decision);
+            }
+            // Hold the receiver open but silent: a second request would hang
+            // forever rather than be answered, so the count above is the
+            // proof a repeated ask did not happen.
+            while receiver.recv().await.is_some() {}
+        });
+        (sender, asked)
+    }
+
+    /// An approver that receives the request and answers nothing, keeping the
+    /// reply channel open so a pending decision can be raced against
+    /// cancellation instead of resolving as a dropped reply.
+    fn silent_approver() -> tokio::sync::mpsc::UnboundedSender<PermissionRequest> {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();
+        tokio::spawn(async move {
+            let Some(request) = receiver.recv().await else {
+                return;
+            };
+            std::future::pending::<()>().await;
+            drop(request);
+        });
+        sender
+    }
+
+    fn tool_call_message(names: &[&str]) -> ModelRunResult {
+        ModelRunResult {
+            final_output: None,
+            prepared_request: None,
+            response: Some(structure_model::RuntimeResponse {
+                items: names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        RuntimeItem::ToolCall(ToolCallItem {
+                            id: None,
+                            call_id: format!("call-{}", index + 1),
+                            name: (*name).to_owned(),
+                            arguments: serde_json::json!({}),
+                            provider_state: None,
+                        })
+                    })
+                    .collect(),
+                finish_reason: Some(FinishReason::ToolCalls),
+                usage: structure_model::RuntimeUsage::default(),
+                provider_state: None,
+            }),
+        }
+    }
+
+    fn permission_events(events: &[Event]) -> Vec<&Event> {
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    Event::ToolCallPermissionRequested { .. }
+                        | Event::ToolCallPermissionResolved { .. }
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rule_for_falls_back_to_the_default() {
+        let mut policy = ToolPermissionPolicy {
+            default: ToolPermissionRule::Ask,
+            by_tool: BTreeMap::new(),
+        };
+        assert_eq!(policy.rule_for("shell"), ToolPermissionRule::Ask);
+        policy
+            .by_tool
+            .insert("read_file".to_owned(), ToolPermissionRule::Allow);
+        assert_eq!(policy.rule_for("read_file"), ToolPermissionRule::Allow);
+        assert_eq!(policy.rule_for("shell"), ToolPermissionRule::Ask);
+    }
+
+    #[test]
+    fn session_allows_matches_only_the_resolved_tool_name() {
+        let history = vec![
+            history_event(
+                1,
+                Event::ToolCallRequested {
+                    call_id: "call-1".to_owned(),
+                    name: "shell".to_owned(),
+                    arguments: serde_json::json!({}),
+                    provider_state: None,
+                },
+            ),
+            history_event(
+                2,
+                Event::ToolCallPermissionResolved {
+                    call_id: "call-1".to_owned(),
+                    outcome: ToolPermissionOutcome::Allowed,
+                    scope: ToolPermissionScope::Session,
+                    source: ToolPermissionSource::User,
+                },
+            ),
+        ];
+        assert!(session_allows(&history, "shell"));
+        assert!(!session_allows(&history, "edit_files"));
+        assert!(!session_allows(&[], "shell"));
+    }
+
+    #[tokio::test]
+    async fn an_allow_rule_matches_the_ungated_baseline() {
+        // A gate configured but never triggered must be invisible: hosts that
+        // only gate shell must leave read tools byte-identical to today.
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let script = || SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_call_message(&["read_file"]), text_response("done")]),
+        };
+
+        let mut plain = opened(script(), CountingRunner::default(), &session_id);
+        let expected = handle(
+            &mut plain,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "do the task".to_owned(),
+            },
+        )
+        .await
+        .expect("the ungated run is handled");
+
+        let mut gated = opened(script(), CountingRunner::default(), &session_id);
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy {
+                    default: ToolPermissionRule::Allow,
+                    by_tool: BTreeMap::new(),
+                },
+                approver: None,
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut gated, &session_id, &run_id, &control, None).await;
+
+        assert_eq!(events, expected);
+        assert!(permission_events(&events).is_empty());
+        assert_eq!(gated.runner().executed, vec!["call-1".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn a_policy_denial_never_reaches_the_runner() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_call_message(&["shell"]), text_response("done")]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let mut by_tool = BTreeMap::new();
+        by_tool.insert("shell".to_owned(), ToolPermissionRule::Deny);
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy {
+                    default: ToolPermissionRule::Allow,
+                    by_tool,
+                },
+                approver: None,
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert!(
+            runtime.runner().executed.is_empty(),
+            "the runner must not run a denied call"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::ToolCallPermissionRequested { .. })),
+            "policy denies without asking anyone"
+        );
+        let resolved = events
+            .iter()
+            .find_map(|event| match event {
+                Event::ToolCallPermissionResolved {
+                    outcome,
+                    scope,
+                    source,
+                    ..
+                } => Some((*outcome, *scope, *source)),
+                _ => None,
+            })
+            .expect("a resolution is recorded");
+        assert_eq!(
+            resolved,
+            (
+                ToolPermissionOutcome::Denied,
+                ToolPermissionScope::Once,
+                ToolPermissionSource::Policy
+            )
+        );
+        assert_every_requested_call_completed(&events);
+        let completion = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                is_error, result, ..
+            } => Some((*is_error, result.clone())),
+            _ => None,
+        });
+        assert_eq!(
+            completion,
+            Some((
+                true,
+                permission_denied_result("shell", ToolPermissionSource::Policy)
+            ))
+        );
+        assert!(matches!(events.last(), Some(Event::RunCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn an_approved_call_executes_after_the_approver_answers() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_call_message(&["shell"]), text_response("done")]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy::default(), // default rule is Ask
+                approver: Some(fixed_approver(PermissionDecision::allow_once())),
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert_eq!(runtime.runner().executed, vec!["call-1".to_owned()]);
+        let kinds = permission_events(&events)
+            .into_iter()
+            .map(std::mem::discriminant)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                std::mem::discriminant(&Event::ToolCallPermissionRequested {
+                    call_id: String::new()
+                }),
+                std::mem::discriminant(&Event::ToolCallPermissionResolved {
+                    call_id: String::new(),
+                    outcome: ToolPermissionOutcome::Allowed,
+                    scope: ToolPermissionScope::Once,
+                    source: ToolPermissionSource::User,
+                }),
+            ]
+        );
+        let completion = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                is_error, result, ..
+            } => Some((*is_error, result.clone())),
+            _ => None,
+        });
+        assert_eq!(completion, Some((false, "done".to_owned())));
+    }
+
+    #[tokio::test]
+    async fn a_session_wide_allow_is_not_asked_for_twice() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        // Both calls name the same tool in one model turn, so the second must
+        // see the first's Session-scoped resolution before it is gated.
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_call_message(&["shell", "shell"]),
+                text_response("done"),
+            ]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let (approver, asked) = approver_answering_once(PermissionDecision::allow_for_session());
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy::default(),
+                approver: Some(approver),
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert_eq!(
+            runtime.runner().executed,
+            vec!["call-1".to_owned(), "call-2".to_owned()]
+        );
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the second call must not ask the approver again"
+        );
+        let resolutions = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolCallPermissionResolved {
+                    call_id,
+                    outcome,
+                    scope,
+                    source,
+                } => Some((call_id.clone(), *outcome, *scope, *source)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolutions,
+            vec![
+                (
+                    "call-1".to_owned(),
+                    ToolPermissionOutcome::Allowed,
+                    ToolPermissionScope::Session,
+                    ToolPermissionSource::User
+                ),
+                (
+                    "call-2".to_owned(),
+                    ToolPermissionOutcome::Allowed,
+                    ToolPermissionScope::Session,
+                    ToolPermissionSource::SessionRule
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_approver_fails_closed() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_call_message(&["shell"]), text_response("done")]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy::default(),
+                approver: None,
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert!(runtime.runner().executed.is_empty());
+        let resolved = events.iter().find_map(|event| match event {
+            Event::ToolCallPermissionResolved {
+                outcome, source, ..
+            } => Some((*outcome, *source)),
+            _ => None,
+        });
+        assert_eq!(
+            resolved,
+            Some((
+                ToolPermissionOutcome::Denied,
+                ToolPermissionSource::ApproverUnavailable
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dropped_reply_fails_closed() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_call_message(&["shell"]), text_response("done")]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<PermissionRequest>();
+        tokio::spawn(async move {
+            // Receive the request and drop it immediately without answering.
+            let _ = receiver.recv().await;
+        });
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy::default(),
+                approver: Some(sender),
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert!(runtime.runner().executed.is_empty());
+        let resolved = events.iter().find_map(|event| match event {
+            Event::ToolCallPermissionResolved {
+                outcome, source, ..
+            } => Some((*outcome, *source)),
+            _ => None,
+        });
+        assert_eq!(
+            resolved,
+            Some((
+                ToolPermissionOutcome::Denied,
+                ToolPermissionSource::ApproverUnavailable
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_a_decision_is_pending_cancels_the_run() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_call_message(&["shell"])]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let control = RunControl {
+            cancellation: Some(RunCancellation::new()),
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy::default(),
+                approver: Some(silent_approver()),
+            }),
+        };
+        let events = handle_controlled(
+            &mut runtime,
+            &session_id,
+            &run_id,
+            &control,
+            Some(std::time::Duration::from_millis(20)),
+        )
+        .await;
+
+        assert!(
+            runtime.runner().executed.is_empty(),
+            "a cancelled decision must not run"
+        );
+        let resolved = events.iter().find_map(|event| match event {
+            Event::ToolCallPermissionResolved {
+                outcome, source, ..
+            } => Some((*outcome, *source)),
+            _ => None,
+        });
+        assert_eq!(
+            resolved,
+            Some((ToolPermissionOutcome::Cancelled, ToolPermissionSource::User))
+        );
+        assert_every_requested_call_completed(&events);
+        let completion = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                is_error, result, ..
+            } => Some((*is_error, result.clone())),
+            _ => None,
+        });
+        assert_eq!(completion, Some((true, CANCELLED_TOOL_RESULT.to_owned())));
+        assert!(matches!(events.last(), Some(Event::RunCancelled)));
+    }
+
     #[tokio::test]
     async fn an_uncancelled_control_changes_nothing() {
         // A cancellation handle that is never signalled must leave the run's
@@ -3466,6 +4124,8 @@ mod tests {
         let mut controlled = opened(script(), SuccessfulValidationRunner, &session_id);
         let control = RunControl {
             cancellation: Some(RunCancellation::new()),
+
+            ..Default::default()
         };
         let events = handle_controlled(&mut controlled, &session_id, &run_id, &control, None).await;
 
@@ -3482,6 +4142,8 @@ mod tests {
         cancellation.cancel();
         let control = RunControl {
             cancellation: Some(cancellation),
+
+            ..Default::default()
         };
         let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
 
@@ -3502,6 +4164,8 @@ mod tests {
         let mut runtime = opened(HangingModel::default(), NoopRunner, &session_id);
         let control = RunControl {
             cancellation: Some(RunCancellation::new()),
+
+            ..Default::default()
         };
         let events = handle_controlled(
             &mut runtime,
@@ -3536,6 +4200,8 @@ mod tests {
         let mut runtime = opened(model, HangingRunner::default(), &session_id);
         let control = RunControl {
             cancellation: Some(RunCancellation::new()),
+
+            ..Default::default()
         };
         let events = handle_controlled(
             &mut runtime,
@@ -3601,6 +4267,8 @@ mod tests {
         let mut runtime = opened(model, runner, &session_id);
         let control = RunControl {
             cancellation: Some(cancellation),
+
+            ..Default::default()
         };
         let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
 
