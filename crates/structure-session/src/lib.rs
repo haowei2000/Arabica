@@ -4,7 +4,7 @@
 //! monotonically ordered event envelopes. Runtime execution remains behind
 //! [`RuntimeEngine`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -68,12 +68,39 @@ pub struct DispatchControl {
 pub trait IdAllocator: Send + std::fmt::Debug {
     fn session_id(&mut self) -> SessionId;
     fn run_id(&mut self) -> RunId;
+
+    /// Tells the allocator that `session_id` is already in use, by a session
+    /// [`SessionManager::restore_session`] just reconstructed, so a later
+    /// [`Self::session_id`] call must never produce it. The default is a
+    /// no-op, which suits an allocator (a UUIDv7 generator, say) whose
+    /// collision probability is already negligible regardless of prior
+    /// history; a counter-based allocator overrides it to advance past the
+    /// observed id.
+    fn observe_used_session_id(&mut self, session_id: &SessionId) {
+        let _ = session_id;
+    }
+
+    /// The [`Self::run_id`] counterpart of [`Self::observe_used_session_id`].
+    /// A restored session's history can contain many run ids (one per past
+    /// turn), so this is called once per id found, not once per restore.
+    fn observe_used_run_id(&mut self, run_id: &RunId) {
+        let _ = run_id;
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct SequentialIds {
     next_session_id: u64,
     next_run_id: u64,
+}
+
+/// Parses the `N` out of a `SequentialIds`-shaped id (`"session-N"` or
+/// `"run-N"`); anything else (a UUID, say) parses to `None` and is silently
+/// ignored, since `observe_used_*`'s only job is to keep this specific
+/// counter-based scheme from reissuing an id already seen, not to make sense
+/// of ids some other allocator minted.
+fn sequential_suffix(id: &str, prefix: &str) -> Option<u64> {
+    id.strip_prefix(prefix)?.parse().ok()
 }
 
 impl IdAllocator for SequentialIds {
@@ -85,6 +112,18 @@ impl IdAllocator for SequentialIds {
     fn run_id(&mut self) -> RunId {
         self.next_run_id += 1;
         RunId::new(format!("run-{}", self.next_run_id))
+    }
+
+    fn observe_used_session_id(&mut self, session_id: &SessionId) {
+        if let Some(n) = sequential_suffix(&session_id.0, "session-") {
+            self.next_session_id = self.next_session_id.max(n);
+        }
+    }
+
+    fn observe_used_run_id(&mut self, run_id: &RunId) {
+        if let Some(n) = sequential_suffix(&run_id.0, "run-") {
+            self.next_run_id = self.next_run_id.max(n);
+        }
     }
 }
 
@@ -654,6 +693,140 @@ impl<R: RuntimeEngine> SessionManager<R> {
             }
         }
     }
+
+    /// Reconstructs a [`SessionRecord`] from a session's replayed Event
+    /// history and re-establishes the Runtime-side state
+    /// [`RuntimeEngine::restore_session`] owns.
+    ///
+    /// Rejects a snapshot whose Events do not form a session this can
+    /// reconstruct: empty, non-contiguous, or forked (Phase 2 does not
+    /// restore a session with a parent -- its `base_events` would need the
+    /// parent's own history too, which this snapshot alone does not carry).
+    /// Also rejects restoring over a session id that is already open,
+    /// matching `Command::SessionCreate`'s own collision behavior.
+    ///
+    /// A run left without a terminal Event (the process ended mid-run) is
+    /// repaired before this returns: every dangling tool call -- requested
+    /// but never completed -- gets a synthetic `tool.call.completed` with an
+    /// error first, then the run itself gets `run.failed`. Both are
+    /// appended under `restore_command_id` through the same
+    /// observer-notifying path as any live Event, so a reattached
+    /// persistent store sees exactly what happened: the run did not
+    /// finish, here is why.
+    pub fn restore_session(
+        &mut self,
+        snapshot: SessionSnapshot,
+        restore_command_id: CommandId,
+        observer: Option<&dyn SessionEventObserver>,
+    ) -> Result<RestoreReport, SessionError> {
+        let events = snapshot.events;
+        let Some(first) = events.first() else {
+            return Err(SessionError::new(
+                ErrorCode::InvalidSnapshot,
+                "a session snapshot must contain at least one Event",
+            ));
+        };
+        if !matches!(first.event, Event::SessionCreated { .. }) {
+            return Err(SessionError::new(
+                ErrorCode::InvalidSnapshot,
+                "restore only accepts a session with no parent; its first Event must be session.created",
+            ));
+        }
+        validate_contiguous_sequence(&events)?;
+
+        let session_id = first.session_id.clone();
+        let workspace_id = first.workspace_id.clone();
+        if self.sessions.contains_key(&session_id) {
+            return Err(SessionError::new(
+                ErrorCode::InvalidSessionState,
+                format!("session {session_id} is already open; cannot restore over it"),
+            ));
+        }
+
+        let status = derive_status(&events);
+        let (runs, interrupted_runs) = derive_runs(&events);
+        let next_sequence = events.last().expect("checked non-empty above").sequence;
+        let dangling_by_run: Vec<(RunId, Vec<(String, String)>)> = interrupted_runs
+            .iter()
+            .map(|run_id| {
+                let run_events: Vec<EventEnvelope> = events
+                    .iter()
+                    .filter(|envelope| envelope.run_id.as_ref() == Some(run_id))
+                    .cloned()
+                    .collect();
+                (run_id.clone(), dangling_tool_calls(&run_events))
+            })
+            .collect();
+
+        self.runtime
+            .restore_session(&session_id, &workspace_id, &events)
+            .map_err(|error| SessionError::new(ErrorCode::RuntimeFailure, error.to_string()))?;
+
+        let restored_event_count = events.len();
+        self.sessions.insert(
+            session_id.clone(),
+            SessionRecord {
+                id: session_id.clone(),
+                workspace_id,
+                parent_session_id: None,
+                status,
+                runs,
+                base_events: Vec::new(),
+                events,
+                next_sequence,
+            },
+        );
+
+        let mut repaired_events = Vec::new();
+        for (run_id, dangling) in dangling_by_run {
+            for (call_id, name) in dangling {
+                repaired_events.extend(
+                    self.append_events(
+                        &restore_command_id,
+                        &session_id,
+                        Some(&run_id),
+                        [Event::ToolCallCompleted {
+                            call_id,
+                            name,
+                            result: "run_interrupted: the process ended before this call completed"
+                                .to_owned(),
+                            is_error: true,
+                        }],
+                        observer,
+                    ),
+                );
+            }
+            repaired_events.extend(self.append_events(
+                &restore_command_id,
+                &session_id,
+                Some(&run_id),
+                [Event::RunFailed {
+                    message: format!(
+                        "run_interrupted: the process ended before run {run_id} finished"
+                    ),
+                }],
+                observer,
+            ));
+        }
+
+        self.ids.observe_used_session_id(&session_id);
+        for run_id in self
+            .sessions
+            .get(&session_id)
+            .expect("just inserted")
+            .runs
+            .keys()
+        {
+            self.ids.observe_used_run_id(run_id);
+        }
+
+        Ok(RestoreReport {
+            session_id,
+            restored_event_count,
+            repaired_events,
+            interrupted_runs,
+        })
+    }
 }
 
 fn unix_time_ms() -> u64 {
@@ -681,6 +854,119 @@ fn terminal_run_status(events: &[EventEnvelope]) -> Option<RunStatus> {
         } => Some(RunStatus::Cancelled),
         _ => None,
     })
+}
+
+/// A session's replayed Event history, ready for
+/// [`SessionManager::restore_session`]. Typically read back from a
+/// `structure-adapters` `FileSessionStore` file, but this type carries no
+/// file-format knowledge itself -- restoring only needs the Events in
+/// order, from wherever a caller got them.
+pub struct SessionSnapshot {
+    pub events: Vec<EventEnvelope>,
+}
+
+/// What `restore_session` actually did, for a caller that wants to log or
+/// display it (a CLI's `--resume` telling the user "recovered N Events,
+/// repaired an interrupted run", say) rather than re-deriving it from the
+/// session afterward.
+#[derive(Debug)]
+pub struct RestoreReport {
+    pub session_id: SessionId,
+    pub restored_event_count: usize,
+    /// The synthetic Events `restore_session` itself appended to repair an
+    /// interrupted run (dangling `tool.call.completed`s, then
+    /// `run.failed`), in the order they were appended. Empty when nothing
+    /// needed repair.
+    pub repaired_events: Vec<EventEnvelope>,
+    /// Which runs, if any, had no terminal Event in the snapshot and were
+    /// therefore repaired and marked `RunStatus::Failed`.
+    pub interrupted_runs: Vec<RunId>,
+}
+
+fn validate_contiguous_sequence(events: &[EventEnvelope]) -> Result<(), SessionError> {
+    for (index, envelope) in events.iter().enumerate() {
+        let expected = (index as u64) + 1;
+        if envelope.sequence != expected {
+            return Err(SessionError::new(
+                ErrorCode::InvalidSnapshot,
+                format!(
+                    "non-contiguous snapshot: expected sequence {expected} at position {index}, found {}",
+                    envelope.sequence
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn derive_status(events: &[EventEnvelope]) -> SessionStatus {
+    events
+        .iter()
+        .rev()
+        .find_map(|envelope| match &envelope.event {
+            Event::SessionCreated { .. } | Event::SessionForked { .. } | Event::SessionResumed => {
+                Some(SessionStatus::Active)
+            }
+            Event::SessionSuspended => Some(SessionStatus::Suspended),
+            Event::SessionClosed => Some(SessionStatus::Closed),
+            _ => None,
+        })
+        // Unreachable in practice: `restore_session` already rejects a
+        // snapshot whose first Event is not `session.created`, so at least
+        // one lifecycle Event always exists. Active is the safe fallback
+        // regardless, since anything else would refuse an operation the
+        // Runtime state might actually support.
+        .unwrap_or(SessionStatus::Active)
+}
+
+/// Every run named by a `run_id` in `events`, with the status its own
+/// terminal Event implies -- or, for a run with none (the process ended
+/// before it finished), `RunStatus::Failed`, since `restore_session`
+/// repairs every such run into that state before returning. Also returns
+/// which run ids those were, so the repair step knows which ones to act on.
+fn derive_runs(events: &[EventEnvelope]) -> (BTreeMap<RunId, RunStatus>, Vec<RunId>) {
+    let mut runs = BTreeMap::new();
+    let mut interrupted = Vec::new();
+    let run_ids: BTreeSet<RunId> = events.iter().filter_map(|e| e.run_id.clone()).collect();
+    for run_id in run_ids {
+        let run_events: Vec<EventEnvelope> = events
+            .iter()
+            .filter(|envelope| envelope.run_id.as_ref() == Some(&run_id))
+            .cloned()
+            .collect();
+        match terminal_run_status(&run_events) {
+            Some(status) => {
+                runs.insert(run_id, status);
+            }
+            None => {
+                runs.insert(run_id.clone(), RunStatus::Failed);
+                interrupted.push(run_id);
+            }
+        }
+    }
+    (runs, interrupted)
+}
+
+/// `(call_id, name)` for every `tool.call.requested` in `run_events` that
+/// has no matching `tool.call.completed`, in request order.
+fn dangling_tool_calls(run_events: &[EventEnvelope]) -> Vec<(String, String)> {
+    let mut requested = Vec::new();
+    let mut completed = BTreeSet::new();
+    for envelope in run_events {
+        match &envelope.event {
+            Event::ToolCallRequested { call_id, name, .. } => {
+                requested.push((call_id.clone(), name.clone()));
+            }
+            Event::ToolCallCompleted { call_id, .. } => {
+                completed.insert(call_id.clone());
+            }
+            _ => {}
+        }
+    }
+    requested
+        .into_iter()
+        .filter(|(call_id, _)| !completed.contains(call_id))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1615,5 +1901,406 @@ mod tests {
         let run_id = manager.allocate_run_id();
         assert_eq!(session_id, SessionId::new("s-1"));
         assert_eq!(run_id, RunId::new("r-2"));
+    }
+
+    #[test]
+    fn sequential_ids_observing_a_used_id_advances_past_it() {
+        let mut ids = SequentialIds::default();
+        ids.observe_used_session_id(&SessionId::new("session-7"));
+        ids.observe_used_run_id(&RunId::new("run-3"));
+        assert_eq!(ids.session_id(), SessionId::new("session-8"));
+        assert_eq!(ids.run_id(), RunId::new("run-4"));
+    }
+
+    #[test]
+    fn sequential_ids_observing_a_lower_id_than_already_issued_does_not_rewind() {
+        let mut ids = SequentialIds::default();
+        assert_eq!(ids.session_id(), SessionId::new("session-1"));
+        assert_eq!(ids.session_id(), SessionId::new("session-2"));
+        // A restore observing an older, smaller id than the allocator has
+        // already handed out live must not walk the counter backwards and
+        // risk a future collision with an id already issued this run.
+        ids.observe_used_session_id(&SessionId::new("session-1"));
+        assert_eq!(ids.session_id(), SessionId::new("session-3"));
+    }
+
+    #[test]
+    fn sequential_ids_ignores_an_id_it_would_never_have_produced_itself() {
+        let mut ids = SequentialIds::default();
+        ids.observe_used_run_id(&RunId::new("01a0c7ea-4f84-73fb-a00d-26087771166a"));
+        ids.observe_used_run_id(&RunId::new("not-even-close"));
+        assert_eq!(
+            ids.run_id(),
+            RunId::new("run-1"),
+            "a foreign id shape must not perturb this allocator's own counter"
+        );
+    }
+
+    mod restore_session_tests {
+        use super::*;
+
+        fn snap_event(sequence: u64, run_id: Option<&str>, event: Event) -> EventEnvelope {
+            EventEnvelope {
+                protocol_version: PROTOCOL_VERSION.to_owned(),
+                event_id: EventId::new(format!("event-{sequence}")),
+                command_id: CommandId::new("original-command"),
+                workspace_id: WorkspaceId::new("ws-1"),
+                session_id: SessionId::new("restored-session"),
+                run_id: run_id.map(RunId::new),
+                sequence,
+                occurred_at_ms: 0,
+                event,
+            }
+        }
+
+        fn manager() -> SessionManager<CoreRuntime<EchoModel, NoopRunner>> {
+            SessionManager::new(CoreRuntime::new(EchoModel::default(), NoopRunner))
+        }
+
+        /// A well-formed, fully-terminated one-run history: created, one
+        /// completed run with a read tool call, nothing left dangling.
+        fn healthy_history() -> Vec<EventEnvelope> {
+            vec![
+                snap_event(
+                    1,
+                    None,
+                    Event::SessionCreated {
+                        workspace_id: WorkspaceId::new("ws-1"),
+                    },
+                ),
+                snap_event(2, Some("run-1"), Event::RunScheduled),
+                snap_event(3, Some("run-1"), Event::RunStarted),
+                snap_event(
+                    4,
+                    Some("run-1"),
+                    Event::ToolCallRequested {
+                        call_id: "call-1".to_owned(),
+                        name: "read_file".to_owned(),
+                        arguments: serde_json::json!({"path": "a.txt"}),
+                        provider_state: None,
+                    },
+                ),
+                snap_event(
+                    5,
+                    Some("run-1"),
+                    Event::ToolCallCompleted {
+                        call_id: "call-1".to_owned(),
+                        name: "read_file".to_owned(),
+                        result: "contents".to_owned(),
+                        is_error: false,
+                    },
+                ),
+                snap_event(
+                    6,
+                    Some("run-1"),
+                    Event::RunCompleted {
+                        output: Some("done".to_owned()),
+                    },
+                ),
+            ]
+        }
+
+        #[test]
+        fn restores_a_healthy_session_exactly() {
+            let mut sessions = manager();
+            let report = sessions
+                .restore_session(
+                    SessionSnapshot {
+                        events: healthy_history(),
+                    },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect("a well-formed snapshot restores");
+
+            assert_eq!(report.session_id, SessionId::new("restored-session"));
+            assert_eq!(report.restored_event_count, 6);
+            assert!(report.repaired_events.is_empty());
+            assert!(report.interrupted_runs.is_empty());
+
+            let session = sessions
+                .session(&SessionId::new("restored-session"))
+                .expect("session is restored");
+            assert_eq!(session.status, SessionStatus::Active);
+            assert_eq!(session.next_sequence, 6);
+            assert_eq!(
+                session.runs.get(&RunId::new("run-1")),
+                Some(&RunStatus::Finished)
+            );
+        }
+
+        #[test]
+        fn rejects_an_empty_snapshot() {
+            let mut sessions = manager();
+            let error = sessions
+                .restore_session(
+                    SessionSnapshot { events: vec![] },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect_err("an empty snapshot cannot be restored");
+            assert_eq!(error.code, ErrorCode::InvalidSnapshot);
+        }
+
+        #[test]
+        fn rejects_a_non_contiguous_sequence() {
+            let mut events = healthy_history();
+            events.remove(2); // drop sequence 3, leaving a 2 -> 4 gap
+            let mut sessions = manager();
+            let error = sessions
+                .restore_session(
+                    SessionSnapshot { events },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect_err("a gap in the sequence cannot be restored");
+            assert_eq!(error.code, ErrorCode::InvalidSnapshot);
+        }
+
+        #[test]
+        fn rejects_a_forked_session() {
+            let events = vec![snap_event(
+                1,
+                None,
+                Event::SessionForked {
+                    source_session_id: SessionId::new("parent"),
+                },
+            )];
+            let mut sessions = manager();
+            let error = sessions
+                .restore_session(
+                    SessionSnapshot { events },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect_err("phase 2 does not restore a forked session");
+            assert_eq!(error.code, ErrorCode::InvalidSnapshot);
+        }
+
+        #[test]
+        fn rejects_restoring_over_an_already_open_session_id() {
+            let mut sessions = manager();
+            sessions
+                .restore_session(
+                    SessionSnapshot {
+                        events: healthy_history(),
+                    },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect("first restore succeeds");
+            let error = sessions
+                .restore_session(
+                    SessionSnapshot {
+                        events: healthy_history(),
+                    },
+                    CommandId::new("restore-2"),
+                    None,
+                )
+                .expect_err("a second restore of the same session id must not clobber the first");
+            assert_eq!(error.code, ErrorCode::InvalidSessionState);
+        }
+
+        #[test]
+        fn derives_status_from_the_last_lifecycle_event() {
+            let mut events = healthy_history();
+            events.push(snap_event(7, None, Event::SessionSuspended));
+            let mut sessions = manager();
+            sessions
+                .restore_session(
+                    SessionSnapshot { events },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect("restores");
+            assert_eq!(
+                sessions
+                    .session(&SessionId::new("restored-session"))
+                    .unwrap()
+                    .status,
+                SessionStatus::Suspended
+            );
+        }
+
+        #[test]
+        fn repairs_an_interrupted_run_before_marking_it_failed() {
+            // The process ended mid-run: a tool call was requested but never
+            // completed, and there is no run.completed/failed/cancelled at
+            // all -- exactly what a crash mid-`shell` call would leave
+            // behind in the file.
+            let events = vec![
+                snap_event(
+                    1,
+                    None,
+                    Event::SessionCreated {
+                        workspace_id: WorkspaceId::new("ws-1"),
+                    },
+                ),
+                snap_event(2, Some("run-1"), Event::RunScheduled),
+                snap_event(3, Some("run-1"), Event::RunStarted),
+                snap_event(
+                    4,
+                    Some("run-1"),
+                    Event::ToolCallRequested {
+                        call_id: "call-1".to_owned(),
+                        name: "shell".to_owned(),
+                        arguments: serde_json::json!({"command": "sleep 100"}),
+                        provider_state: None,
+                    },
+                ),
+            ];
+            let mut sessions = manager();
+            let report = sessions
+                .restore_session(
+                    SessionSnapshot { events },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect("an interrupted run still restores, repaired");
+
+            assert_eq!(report.interrupted_runs, vec![RunId::new("run-1")]);
+            assert_eq!(
+                report.repaired_events.len(),
+                2,
+                "one synthetic completed, one run.failed"
+            );
+            assert!(matches!(
+                report.repaired_events[0].event,
+                Event::ToolCallCompleted { is_error: true, .. }
+            ));
+            assert!(matches!(
+                report.repaired_events[1].event,
+                Event::RunFailed { .. }
+            ));
+
+            let session = sessions
+                .session(&SessionId::new("restored-session"))
+                .unwrap();
+            assert_eq!(
+                session.runs.get(&RunId::new("run-1")),
+                Some(&RunStatus::Failed)
+            );
+            // The repair Events must actually be part of the session's own
+            // log, not just the report, with sequence numbers continuing
+            // from where the snapshot left off (4), not restarting.
+            assert_eq!(session.events.len(), 6);
+            assert_eq!(session.events[4].sequence, 5);
+            assert_eq!(session.events[5].sequence, 6);
+            assert_eq!(session.next_sequence, 6);
+        }
+
+        #[test]
+        fn a_completed_tool_call_in_an_interrupted_run_is_not_repaired_again() {
+            // The run itself never got a terminal Event, but this specific
+            // call did finish before the crash -- only the run needs a
+            // run.failed, the call must not get a second, contradictory
+            // "completed" synthesized on top of its real one.
+            let events = vec![
+                snap_event(
+                    1,
+                    None,
+                    Event::SessionCreated {
+                        workspace_id: WorkspaceId::new("ws-1"),
+                    },
+                ),
+                snap_event(2, Some("run-1"), Event::RunScheduled),
+                snap_event(3, Some("run-1"), Event::RunStarted),
+                snap_event(
+                    4,
+                    Some("run-1"),
+                    Event::ToolCallRequested {
+                        call_id: "call-1".to_owned(),
+                        name: "read_file".to_owned(),
+                        arguments: serde_json::json!({"path": "a.txt"}),
+                        provider_state: None,
+                    },
+                ),
+                snap_event(
+                    5,
+                    Some("run-1"),
+                    Event::ToolCallCompleted {
+                        call_id: "call-1".to_owned(),
+                        name: "read_file".to_owned(),
+                        result: "contents".to_owned(),
+                        is_error: false,
+                    },
+                ),
+            ];
+            let mut sessions = manager();
+            let report = sessions
+                .restore_session(
+                    SessionSnapshot { events },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect("restores");
+            assert_eq!(
+                report.repaired_events.len(),
+                1,
+                "only run.failed, no synthetic completed for the call that already has a real one"
+            );
+            assert!(matches!(
+                report.repaired_events[0].event,
+                Event::RunFailed { .. }
+            ));
+        }
+
+        #[test]
+        fn restoring_advances_a_sequential_allocator_past_the_restored_run() {
+            let mut sessions = SessionManager::with_ids(
+                CoreRuntime::new(EchoModel::default(), NoopRunner),
+                Box::new(SequentialIds::default()),
+            );
+            sessions
+                .restore_session(
+                    SessionSnapshot {
+                        events: healthy_history(),
+                    },
+                    CommandId::new("restore-1"),
+                    None,
+                )
+                .expect("restores");
+            // The snapshot's own run was "run-1"; a fresh SequentialIds
+            // would hand that id out again next, colliding with the
+            // restored run's own history.
+            assert_eq!(sessions.allocate_run_id(), RunId::new("run-2"));
+        }
+
+        #[test]
+        fn an_attached_observer_sees_the_repair_events() {
+            #[derive(Default)]
+            struct Recording(Mutex<Vec<Event>>);
+            impl SessionEventObserver for Recording {
+                fn observe(&self, envelope: &EventEnvelope, _visibility: EventVisibility) {
+                    self.0.lock().unwrap().push(envelope.event.clone());
+                }
+            }
+            let events = vec![
+                snap_event(
+                    1,
+                    None,
+                    Event::SessionCreated {
+                        workspace_id: WorkspaceId::new("ws-1"),
+                    },
+                ),
+                snap_event(2, Some("run-1"), Event::RunScheduled),
+            ];
+            let recorder = Recording::default();
+            let mut sessions = manager();
+            sessions
+                .restore_session(
+                    SessionSnapshot { events },
+                    CommandId::new("restore-1"),
+                    Some(&recorder),
+                )
+                .expect("restores");
+            let recorded = recorder.0.lock().unwrap();
+            assert!(
+                recorded
+                    .iter()
+                    .any(|event| matches!(event, Event::RunFailed { .. })),
+                "the observer must see the repair run.failed Event, not just the report"
+            );
+        }
     }
 }

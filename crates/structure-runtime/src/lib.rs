@@ -141,6 +141,29 @@ pub trait RuntimeEngine {
         target_session_id: &SessionId,
     ) -> Result<(), RuntimeError>;
     fn close_session(&mut self, session_id: &SessionId) -> Result<(), RuntimeError>;
+
+    /// Re-establishes runtime-side state for a session
+    /// [`structure-session`]'s `SessionManager::restore_session` is
+    /// reconstructing from a replayed Event history, rather than opening
+    /// it fresh.
+    ///
+    /// The default just calls [`Self::open_session`], which suits an
+    /// engine with no state beyond what short-memory projection already
+    /// derives from the Event Log on every call. `CoreRuntime` overrides
+    /// it to also rebuild long memory, which today lives only in memory
+    /// (`LongMemoryManager`) and so does not survive a process restart on
+    /// its own: `history` is walked for `context.updated`/`context.deleted`
+    /// Events, replayed in order into the reopened manager.
+    fn restore_session(
+        &mut self,
+        session_id: &SessionId,
+        workspace_id: &WorkspaceId,
+        history: &[EventEnvelope],
+    ) -> Result<(), RuntimeError> {
+        let _ = history;
+        self.open_session(session_id, workspace_id)
+    }
+
     async fn handle(
         &mut self,
         session_id: &SessionId,
@@ -779,6 +802,45 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 disclosure: DisclosureLevel::Overview,
             },
         );
+        Ok(())
+    }
+
+    fn restore_session(
+        &mut self,
+        session_id: &SessionId,
+        workspace_id: &WorkspaceId,
+        history: &[EventEnvelope],
+    ) -> Result<(), RuntimeError> {
+        self.open_session(session_id, workspace_id)?;
+        // `open_session` just inserted a manager for this workspace if none
+        // existed; if one already did (another session in the same
+        // workspace opened first), replaying into it here would double-apply
+        // updates already live from that session's own commands. Long memory
+        // is workspace-scoped, not session-scoped, so only the workspace's
+        // first restore in this process should replay its own history.
+        if self
+            .sessions
+            .values()
+            .filter(|session| session.workspace_id == *workspace_id)
+            .count()
+            > 1
+        {
+            return Ok(());
+        }
+        let Some(memory) = self.long_memory.get_mut(workspace_id) else {
+            return Ok(());
+        };
+        for envelope in history {
+            match &envelope.event {
+                Event::ContextUpdated { entry } => {
+                    let _ = memory.update(entry.path.clone(), entry.content.clone());
+                }
+                Event::ContextDeleted { path } => {
+                    let _ = memory.delete(path);
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 
@@ -7672,6 +7734,129 @@ mod tests {
             .expect_err("closed runtime session rejects work")
             .kind(),
             RuntimeErrorKind::SessionNotOpen
+        );
+    }
+
+    #[test]
+    fn restore_session_replays_context_updates_in_order() {
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("workspace-1");
+        let mut runtime = CoreRuntime::new(EchoModel::default(), NoopRunner);
+        let history = vec![
+            history_event(
+                1,
+                Event::ContextUpdated {
+                    entry: ContextEntry {
+                        path: "notes/a".to_owned(),
+                        content: "first".to_owned(),
+                    },
+                },
+            ),
+            history_event(
+                2,
+                Event::ContextUpdated {
+                    entry: ContextEntry {
+                        path: "notes/a".to_owned(),
+                        content: "second".to_owned(),
+                    },
+                },
+            ),
+        ];
+        runtime
+            .restore_session(&session_id, &workspace_id, &history)
+            .expect("restore succeeds");
+
+        assert_eq!(
+            runtime
+                .long_memory(&workspace_id)
+                .expect("long memory reopened")
+                .read("notes/a", DisclosureLevel::Detail)
+                .expect("valid path")
+                .expect("entry exists")
+                .content,
+            "second",
+            "the later update in history must win, not the earlier one"
+        );
+    }
+
+    #[test]
+    fn restore_session_replays_a_later_delete_over_an_earlier_update() {
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("workspace-1");
+        let mut runtime = CoreRuntime::new(EchoModel::default(), NoopRunner);
+        let history = vec![
+            history_event(
+                1,
+                Event::ContextUpdated {
+                    entry: ContextEntry {
+                        path: "notes/a".to_owned(),
+                        content: "first".to_owned(),
+                    },
+                },
+            ),
+            history_event(
+                2,
+                Event::ContextDeleted {
+                    path: "notes/a".to_owned(),
+                },
+            ),
+        ];
+        runtime
+            .restore_session(&session_id, &workspace_id, &history)
+            .expect("restore succeeds");
+
+        assert_eq!(
+            runtime
+                .long_memory(&workspace_id)
+                .expect("long memory reopened")
+                .read("notes/a", DisclosureLevel::Detail)
+                .expect("valid path"),
+            None,
+            "the delete must remove the entry the earlier update wrote"
+        );
+    }
+
+    #[test]
+    fn restore_session_does_not_replay_into_a_workspace_another_session_already_populated() {
+        let workspace_id = WorkspaceId::new("workspace-1");
+        let mut runtime = CoreRuntime::new(EchoModel::default(), NoopRunner);
+        // A session already live in this workspace, with state that did not
+        // come from any restore.
+        runtime
+            .open_session(&SessionId::new("live-session"), &workspace_id)
+            .expect("live session opens");
+        runtime
+            .long_memory
+            .get_mut(&workspace_id)
+            .expect("workspace long memory exists")
+            .update("notes/a".to_owned(), "from the live session".to_owned())
+            .expect("update succeeds");
+
+        // Restoring a second, unrelated session into the same workspace,
+        // whose own history would overwrite that entry if replayed.
+        let history = vec![history_event(
+            1,
+            Event::ContextUpdated {
+                entry: ContextEntry {
+                    path: "notes/a".to_owned(),
+                    content: "from the restored session's stale history".to_owned(),
+                },
+            },
+        )];
+        runtime
+            .restore_session(&SessionId::new("restored-session"), &workspace_id, &history)
+            .expect("restore succeeds");
+
+        assert_eq!(
+            runtime
+                .long_memory(&workspace_id)
+                .expect("workspace long memory exists")
+                .read("notes/a", DisclosureLevel::Detail)
+                .expect("valid path")
+                .expect("entry exists")
+                .content,
+            "from the live session",
+            "a second session's restore must not roll back state the workspace's first session already established"
         );
     }
 

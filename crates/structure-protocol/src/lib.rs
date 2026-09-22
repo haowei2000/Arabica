@@ -426,6 +426,10 @@ pub enum ErrorCode {
     RunNotFound,
     RuntimeFailure,
     RunnerFailure,
+    /// A restore snapshot's Events do not form a session that can be
+    /// reconstructed: a non-contiguous sequence, or a forked session (Phase
+    /// 2 restores only sessions with no parent).
+    InvalidSnapshot,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
