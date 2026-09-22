@@ -25,5 +25,9 @@ structure-session = { path = "../structure-session" }
 tokio.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+axum.workspace = true
+tokio-util.workspace = true
+
 [lints]
 workspace = true

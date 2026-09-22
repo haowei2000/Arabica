@@ -2042,6 +2042,7 @@ name = "structure-cli"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "axum",
  "clap",
  "serde_json",
  "sha2",
@@ -2052,6 +2053,7 @@ dependencies = [
  "structure-runtime",
  "structure-session",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -2367,6 +2369,7 @@ checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",

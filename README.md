@@ -4,8 +4,8 @@ Structure is a headless AI-agent runtime written in Rust. The project defines a
 canonical command/event protocol, session lifecycle, model-provider boundary,
 tool runner, memory policies, and an HTTP/SSE host.
 
-> Status: active development (`0.1.0`). The current product is backend-only.
-> There is no frontend in this repository.
+> Status: active development (`0.1.0`). There is no GUI in this repository;
+> `structure-cli` (below) is the only client-facing surface.
 
 ## Architecture
 
@@ -20,6 +20,7 @@ The Cargo workspace is split into small crates with explicit ownership:
 | `structure-runtime` | Agent loop, long memory, and short-memory projection |
 | `structure-session` | Session identity, sequencing, history, and lifecycle |
 | `structure-server` | Axum HTTP and SSE protocol host |
+| `structure-cli` | Stdio composition host: `structure acp` (Agent Client Protocol) and `structure -p` (one-shot) |
 
 The runtime is protocol-first: clients submit a `CommandEnvelope`, the session
 layer validates and sequences the operation, and the runtime emits canonical
@@ -41,8 +42,8 @@ The server listens on `127.0.0.1:4096` by default.
 
 ## Requirements
 
-- Rust 1.85 or newer
-- An OpenAI-compatible model endpoint when running the HTTP server
+- Rust 1.88 or newer
+- An OpenAI-compatible model endpoint when running the HTTP server or the CLI
 
 ## Build and Test
 
@@ -86,6 +87,19 @@ Optional configuration:
 The current server and Harbor benchmark entry points use the atomic local-file
 archive adapter. SQLite remains available as an explicit Runtime adapter but is
 not selected by either executable.
+
+## Run the CLI
+
+`structure-cli` builds a `structure` binary with two entry points: `structure
+acp` (Agent Client Protocol v1 over stdio, for editors like Zed) and
+`structure -p "task"` (one-shot execution). Both read the same environment
+variables as the server above. See [`docs/cli.md`](docs/cli.md) for flags,
+exit codes, and a Zed configuration snippet.
+
+```bash
+cargo build -p structure-cli --release
+./target/release/structure -p "explain this repository's crate layout"
+```
 
 ## Benchmarks
 
