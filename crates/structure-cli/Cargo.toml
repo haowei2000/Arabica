@@ -1,0 +1,26 @@
+[package]
+name = "structure-cli"
+description = "Composition host binding the canonical protocol to stdio: ACP and one-shot execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "structure"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+serde_json.workspace = true
+structure-model = { path = "../structure-model" }
+structure-protocol = { path = "../structure-protocol" }
+structure-provider = { path = "../structure-provider" }
+structure-runner = { path = "../structure-runner" }
+structure-runtime = { path = "../structure-runtime" }
+structure-session = { path = "../structure-session" }
+tokio.workspace = true
+
+[lints]
+workspace = true

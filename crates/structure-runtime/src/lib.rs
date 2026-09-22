@@ -545,8 +545,16 @@ impl<M, R> CoreRuntime<M, R> {
         self.pointer_gc_observation_sink = Some(Box::new(sink));
     }
 
+    pub fn max_model_steps_per_run(&self) -> usize {
+        self.max_model_steps_per_run
+    }
+
     pub fn set_max_model_steps_per_run(&mut self, steps: usize) {
         self.max_model_steps_per_run = steps.max(1);
+    }
+
+    pub fn max_model_steps_without_progress(&self) -> usize {
+        self.max_model_steps_without_progress
     }
 
     pub fn set_max_model_steps_without_progress(&mut self, steps: usize) {
@@ -559,6 +567,10 @@ impl<M, R> CoreRuntime<M, R> {
 
     pub fn set_terminal_controller_policy(&mut self, policy: TerminalControllerPolicy) {
         self.terminal_controller_policy = policy;
+    }
+
+    pub fn tools(&self) -> &[ToolDefinition] {
+        &self.tools
     }
 
     pub fn set_tools(&mut self, tools: Vec<ToolDefinition>) {
