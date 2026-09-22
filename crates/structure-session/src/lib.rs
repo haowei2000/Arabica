@@ -45,6 +45,29 @@ pub trait SessionEventObserver: Send + Sync {
     fn observe(&self, envelope: &EventEnvelope, visibility: EventVisibility);
 }
 
+/// Forwards every Event to each observer in turn, in the order given, so a
+/// host can attach more than one -- a persistent store (`structure-adapters`'
+/// `FileSessionStore`) alongside a live-progress observer, say -- to one
+/// `dispatch` call. [`DispatchControl`] only carries one
+/// `Arc<dyn SessionEventObserver>`; this is how a host composes several into
+/// that one slot instead of `structure-session` growing a second observer
+/// field for every combination a host might want.
+pub struct FanOutObserver(Vec<Arc<dyn SessionEventObserver>>);
+
+impl FanOutObserver {
+    pub fn new(observers: Vec<Arc<dyn SessionEventObserver>>) -> Self {
+        Self(observers)
+    }
+}
+
+impl SessionEventObserver for FanOutObserver {
+    fn observe(&self, envelope: &EventEnvelope, visibility: EventVisibility) {
+        for observer in &self.0 {
+            observer.observe(envelope, visibility);
+        }
+    }
+}
+
 /// Everything a host may attach to one call to [`SessionManager::dispatch`].
 ///
 /// The default attaches nothing: no cancellation or permission gate reaches
@@ -1003,6 +1026,38 @@ mod tests {
             serde_json::from_str::<EventVisibility>("\"client\"").unwrap(),
             EventVisibility::Client
         );
+    }
+
+    #[test]
+    fn fan_out_observer_forwards_to_every_observer_in_order() {
+        struct Named(&'static str, Arc<Mutex<Vec<&'static str>>>);
+        impl SessionEventObserver for Named {
+            fn observe(&self, _envelope: &EventEnvelope, _visibility: EventVisibility) {
+                self.1.lock().unwrap().push(self.0);
+            }
+        }
+
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let fan_out = FanOutObserver::new(vec![
+            Arc::new(Named("first", log.clone())),
+            Arc::new(Named("second", log.clone())),
+        ]);
+
+        let envelope = EventEnvelope::new(
+            EventMetadata {
+                event_id: EventId::new("event-1"),
+                command_id: CommandId::new("command-1"),
+                workspace_id: WorkspaceId::new("ws-1"),
+                session_id: SessionId::new("session-1"),
+                run_id: None,
+                sequence: 1,
+                occurred_at_ms: 0,
+            },
+            Event::RunScheduled,
+        );
+        fan_out.observe(&envelope, EventVisibility::Client);
+
+        assert_eq!(*log.lock().unwrap(), vec!["first", "second"]);
     }
 
     #[derive(Debug, Default)]

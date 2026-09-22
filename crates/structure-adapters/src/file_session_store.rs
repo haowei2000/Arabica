@@ -262,6 +262,31 @@ impl FileSessionStore {
         Ok(store)
     }
 
+    /// Reopens an existing session file for append -- the write-side
+    /// counterpart of restoring one with [`Self::read`]: a header already
+    /// exists and is not rewritten, and every Event `observe` is shown from
+    /// here on is appended after whatever the file already held, continuing
+    /// its history rather than starting a new one.
+    ///
+    /// Takes the same exclusive lock [`Self::create`] does, so a session
+    /// cannot be resumed by two processes (or twice by one) at once, and
+    /// fails if `path` does not already exist: this is deliberately not a
+    /// "create if missing" convenience, since a caller reopening a path it
+    /// just got from [`Self::list_sessions`] or [`Self::read`] should never
+    /// be surprised by a silently created empty file when its assumption
+    /// that the session exists was wrong.
+    pub fn open_existing(path: &Path) -> Result<Self, StoreError> {
+        let file = OpenOptions::new()
+            .append(true)
+            .open(path)
+            .map_err(|error| io_error(path, "reopen", error))?;
+        lock_exclusive(&file, path)?;
+        Ok(Self {
+            file: Mutex::new(file),
+            path: path.to_path_buf(),
+        })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -851,6 +876,85 @@ mod tests {
         let stored =
             FileSessionStore::read_session(&home, &workspace_id, &session_id).expect("reads by id");
         assert_eq!(stored.header.id, session_id);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn open_existing_appends_after_the_original_history_without_rewriting_the_header() {
+        let home = temp_home("reopen");
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let path = {
+            let store = FileSessionStore::create(
+                &home,
+                NewSession {
+                    session_id: &session_id,
+                    workspace_id: &workspace_id,
+                    cwd: Path::new("/repo"),
+                    profile: None,
+                    instructions_sha256: None,
+                },
+            )
+            .expect("store creates");
+            store.observe(&envelope(1, Event::RunScheduled), EventVisibility::Client);
+            store.path().to_path_buf()
+            // `store` drops here, releasing its lock before reopening.
+        };
+
+        let reopened = FileSessionStore::open_existing(&path).expect("reopens for append");
+        reopened.observe(&envelope(2, Event::RunStarted), EventVisibility::Client);
+        drop(reopened);
+
+        let stored = FileSessionStore::read(&path).expect("reads back");
+        assert_eq!(
+            stored.header.id, session_id,
+            "the original header is untouched"
+        );
+        assert_eq!(
+            stored.events.len(),
+            2,
+            "the new Event is appended after the original one"
+        );
+        assert!(matches!(stored.events[0].event, Event::RunScheduled));
+        assert!(matches!(stored.events[1].event, Event::RunStarted));
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn open_existing_fails_on_a_path_that_does_not_exist() {
+        let home = temp_home("reopen-missing");
+        let missing = home
+            .join("sessions")
+            .join("ws-1")
+            .join("no-such-session.jsonl");
+        let error = FileSessionStore::open_existing(&missing)
+            .expect_err("there is nothing to reopen at this path");
+        assert_eq!(error.kind(), StoreErrorKind::Io);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_existing_is_rejected_while_the_original_store_still_holds_the_lock() {
+        let home = temp_home("reopen-locked");
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let store = FileSessionStore::create(
+            &home,
+            NewSession {
+                session_id: &session_id,
+                workspace_id: &workspace_id,
+                cwd: Path::new("/repo"),
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .expect("store creates");
+
+        let error = FileSessionStore::open_existing(store.path())
+            .expect_err("the original store's lock must still be held");
+        assert_eq!(error.kind(), StoreErrorKind::Io);
 
         std::fs::remove_dir_all(&home).ok();
     }
