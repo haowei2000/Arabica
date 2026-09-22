@@ -698,7 +698,12 @@ async fn request_permission(
 /// by the host, so it behaves the same under every host and survives a Session
 /// restored from disk. Call ids can repeat across runs, so each decision is
 /// matched to the most recent request with its id.
-fn session_allows(history: &[EventEnvelope], tool: &str) -> bool {
+/// The Session-scoped decision already on record for `tool`, if a person
+/// resolved one earlier in this run's history. `Allow` and `Deny` are each
+/// checked by the caller as their own gate arm; a tool never carries both
+/// within one Session, since once either is on record this function makes
+/// the gate stop asking, so no later resolution can be recorded for it.
+fn session_decision(history: &[EventEnvelope], tool: &str) -> Option<ToolPermissionOutcome> {
     let mut tool_by_call = HashMap::new();
     for envelope in history {
         match &envelope.event {
@@ -707,14 +712,14 @@ fn session_allows(history: &[EventEnvelope], tool: &str) -> bool {
             }
             Event::ToolCallPermissionResolved {
                 call_id,
-                outcome: ToolPermissionOutcome::Allowed,
+                outcome: outcome @ (ToolPermissionOutcome::Allowed | ToolPermissionOutcome::Denied),
                 scope: ToolPermissionScope::Session,
                 ..
-            } if tool_by_call.get(call_id.as_str()) == Some(&tool) => return true,
+            } if tool_by_call.get(call_id.as_str()) == Some(&tool) => return Some(*outcome),
             _ => {}
         }
     }
-    false
+    None
 }
 
 /// What the model reads when the gate refuses a call.
@@ -1354,30 +1359,34 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                     scope: ToolPermissionScope::Once,
                                     source: ToolPermissionSource::Policy,
                                 }),
-                                ToolPermissionRule::Ask
-                                    if session_allows(&event_log.snapshot(), &call.name) =>
-                                {
-                                    Some(PermissionDecision {
-                                        outcome: ToolPermissionOutcome::Allowed,
-                                        scope: ToolPermissionScope::Session,
-                                        source: ToolPermissionSource::SessionRule,
-                                    })
-                                }
                                 ToolPermissionRule::Ask => {
-                                    let requested =
-                                        event_log.append(Event::ToolCallPermissionRequested {
-                                            call_id: call.call_id.clone(),
-                                        });
-                                    next_protected_event_ids.insert(requested.event_id);
-                                    Some(
-                                        request_permission(
-                                            gate.approver.as_ref(),
-                                            run_id,
-                                            &call,
-                                            control.cancellation.as_ref(),
-                                        )
-                                        .await,
-                                    )
+                                    match session_decision(&event_log.snapshot(), &call.name) {
+                                        Some(outcome @ ToolPermissionOutcome::Allowed)
+                                        | Some(outcome @ ToolPermissionOutcome::Denied) => {
+                                            Some(PermissionDecision {
+                                                outcome,
+                                                scope: ToolPermissionScope::Session,
+                                                source: ToolPermissionSource::SessionRule,
+                                            })
+                                        }
+                                        Some(ToolPermissionOutcome::Cancelled) | None => {
+                                            let requested = event_log.append(
+                                                Event::ToolCallPermissionRequested {
+                                                    call_id: call.call_id.clone(),
+                                                },
+                                            );
+                                            next_protected_event_ids.insert(requested.event_id);
+                                            Some(
+                                                request_permission(
+                                                    gate.approver.as_ref(),
+                                                    run_id,
+                                                    &call,
+                                                    control.cancellation.as_ref(),
+                                                )
+                                                .await,
+                                            )
+                                        }
+                                    }
                                 }
                             };
                             if let Some(decision) = decision {
@@ -3812,30 +3821,55 @@ mod tests {
     }
 
     #[test]
-    fn session_allows_matches_only_the_resolved_tool_name() {
-        let history = vec![
-            history_event(
-                1,
-                Event::ToolCallRequested {
-                    call_id: "call-1".to_owned(),
-                    name: "shell".to_owned(),
-                    arguments: serde_json::json!({}),
-                    provider_state: None,
-                },
-            ),
-            history_event(
-                2,
-                Event::ToolCallPermissionResolved {
-                    call_id: "call-1".to_owned(),
-                    outcome: ToolPermissionOutcome::Allowed,
-                    scope: ToolPermissionScope::Session,
-                    source: ToolPermissionSource::User,
-                },
-            ),
-        ];
-        assert!(session_allows(&history, "shell"));
-        assert!(!session_allows(&history, "edit_files"));
-        assert!(!session_allows(&[], "shell"));
+    fn session_decision_matches_only_the_resolved_tool_name_and_session_scope() {
+        let resolution_for =
+            |outcome: ToolPermissionOutcome, scope: ToolPermissionScope| -> Vec<EventEnvelope> {
+                vec![
+                    history_event(
+                        1,
+                        Event::ToolCallRequested {
+                            call_id: "call-1".to_owned(),
+                            name: "shell".to_owned(),
+                            arguments: serde_json::json!({}),
+                            provider_state: None,
+                        },
+                    ),
+                    history_event(
+                        2,
+                        Event::ToolCallPermissionResolved {
+                            call_id: "call-1".to_owned(),
+                            outcome,
+                            scope,
+                            source: ToolPermissionSource::User,
+                        },
+                    ),
+                ]
+            };
+        let allowed = resolution_for(ToolPermissionOutcome::Allowed, ToolPermissionScope::Session);
+        assert_eq!(
+            session_decision(&allowed, "shell"),
+            Some(ToolPermissionOutcome::Allowed)
+        );
+        assert_eq!(session_decision(&allowed, "edit_files"), None);
+        assert_eq!(session_decision(&[], "shell"), None);
+
+        let denied = resolution_for(ToolPermissionOutcome::Denied, ToolPermissionScope::Session);
+        assert_eq!(
+            session_decision(&denied, "shell"),
+            Some(ToolPermissionOutcome::Denied)
+        );
+
+        // Once-scoped and Cancelled resolutions must never short-circuit a
+        // later ask: Once is deliberately not remembered, and a Cancelled
+        // decision reflects the run ending before anyone answered, not an
+        // actual answer.
+        let once = resolution_for(ToolPermissionOutcome::Allowed, ToolPermissionScope::Once);
+        assert_eq!(session_decision(&once, "shell"), None);
+        let cancelled = resolution_for(
+            ToolPermissionOutcome::Cancelled,
+            ToolPermissionScope::Session,
+        );
+        assert_eq!(session_decision(&cancelled, "shell"), None);
     }
 
     #[tokio::test]
@@ -4053,6 +4087,74 @@ mod tests {
                 (
                     "call-2".to_owned(),
                     ToolPermissionOutcome::Allowed,
+                    ToolPermissionScope::Session,
+                    ToolPermissionSource::SessionRule
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_wide_denial_is_not_asked_for_twice() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        // Both calls name the same tool in one model turn, so the second must
+        // see the first's Session-scoped resolution before it is gated.
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_call_message(&["shell", "shell"]),
+                text_response("done"),
+            ]),
+        };
+        let mut runtime = opened(model, CountingRunner::default(), &session_id);
+        let (approver, asked) = approver_answering_once(PermissionDecision {
+            outcome: ToolPermissionOutcome::Denied,
+            scope: ToolPermissionScope::Session,
+            source: ToolPermissionSource::User,
+        });
+        let control = RunControl {
+            permissions: Some(ToolPermissionGate {
+                policy: ToolPermissionPolicy::default(),
+                approver: Some(approver),
+            }),
+            ..Default::default()
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert!(
+            runtime.runner().executed.is_empty(),
+            "a session-wide denial must keep the runner from ever running either call"
+        );
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the second call must not ask the approver again"
+        );
+        let resolutions = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolCallPermissionResolved {
+                    call_id,
+                    outcome,
+                    scope,
+                    source,
+                } => Some((call_id.clone(), *outcome, *scope, *source)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolutions,
+            vec![
+                (
+                    "call-1".to_owned(),
+                    ToolPermissionOutcome::Denied,
+                    ToolPermissionScope::Session,
+                    ToolPermissionSource::User
+                ),
+                (
+                    "call-2".to_owned(),
+                    ToolPermissionOutcome::Denied,
                     ToolPermissionScope::Session,
                     ToolPermissionSource::SessionRule
                 ),
