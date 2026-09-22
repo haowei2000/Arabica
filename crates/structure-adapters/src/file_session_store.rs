@@ -11,14 +11,14 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use structure_protocol::{Event, EventEnvelope, PROTOCOL_VERSION, SessionId, WorkspaceId};
-use structure_session::{EventVisibility, SessionEventObserver};
+use structure_session::{EventVisibility, SessionEventObserver, SessionSnapshot};
 
 /// `$STRUCTURE_HOME`'s default name inside the user's home directory.
 const HOME_DIR_NAME: &str = ".structure";
@@ -123,18 +123,22 @@ pub struct NewSession<'a> {
     pub instructions_sha256: Option<&'a str>,
 }
 
-#[derive(Serialize)]
-struct HeaderRecord<'a> {
-    schema: &'a str,
-    id: &'a SessionId,
-    workspace_id: &'a WorkspaceId,
-    cwd: String,
-    created_at_ms: u64,
-    protocol_version: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    profile: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    instructions_sha256: Option<&'a str>,
+/// A session file's header line, parsed or about to be written. Owned (not
+/// borrowed like the rest of this module's write path) because it is also
+/// this module's read-side return value, where there is no caller-owned
+/// data to borrow from.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SessionHeader {
+    pub schema: String,
+    pub id: SessionId,
+    pub workspace_id: WorkspaceId,
+    pub cwd: String,
+    pub created_at_ms: u64,
+    pub protocol_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions_sha256: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -142,6 +146,53 @@ struct EventRecord<'a> {
     record: &'static str,
     visibility: EventVisibility,
     envelope: &'a EventEnvelope,
+}
+
+#[derive(Deserialize)]
+struct StoredEventRecord {
+    #[expect(
+        dead_code,
+        reason = "present in every line for humans/tools reading the file directly; nothing here needs to branch on it, since a session file has no other record kind yet"
+    )]
+    record: String,
+    #[expect(
+        dead_code,
+        reason = "read back for completeness; nothing here re-derives visibility from it today, since Event::is_client_visible is already the source of truth"
+    )]
+    visibility: EventVisibility,
+    envelope: EventEnvelope,
+}
+
+/// One session file's header and however much of its Event history could be
+/// read. `events` may be shorter than what was truly written if the file's
+/// last line was left mid-write by a crash -- see [`FileSessionStore::read`].
+#[derive(Debug)]
+pub struct StoredSession {
+    pub header: SessionHeader,
+    pub events: Vec<EventEnvelope>,
+}
+
+impl StoredSession {
+    /// This session's Events as a [`SessionSnapshot`], ready for
+    /// `structure_session::SessionManager::restore_session`.
+    pub fn into_snapshot(self) -> SessionSnapshot {
+        SessionSnapshot {
+            events: self.events,
+        }
+    }
+}
+
+/// One session's header plus where its file lives and when it was last
+/// touched, for listing sessions without reading each one's full history.
+pub struct SessionListing {
+    pub header: SessionHeader,
+    pub path: PathBuf,
+    /// The file's own modification time, read from filesystem metadata as a
+    /// cheap proxy for "last activity" -- every Event this session ever
+    /// recorded touched the file, so this is accurate without reading the
+    /// file's body at all. `None` only if the platform or filesystem
+    /// cannot report it.
+    pub modified_at_ms: Option<u64>,
 }
 
 fn is_run_boundary(event: &Event) -> bool {
@@ -220,15 +271,15 @@ impl FileSessionStore {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0);
-        let record = HeaderRecord {
-            schema: SCHEMA,
-            id: header.session_id,
-            workspace_id: header.workspace_id,
+        let record = SessionHeader {
+            schema: SCHEMA.to_owned(),
+            id: header.session_id.clone(),
+            workspace_id: header.workspace_id.clone(),
             cwd: header.cwd.display().to_string(),
             created_at_ms,
-            protocol_version: PROTOCOL_VERSION,
-            profile: header.profile,
-            instructions_sha256: header.instructions_sha256,
+            protocol_version: PROTOCOL_VERSION.to_owned(),
+            profile: header.profile.map(str::to_owned),
+            instructions_sha256: header.instructions_sha256.map(str::to_owned),
         };
         self.write_line(&record, false)
     }
@@ -253,6 +304,133 @@ impl FileSessionStore {
         }
         Ok(())
     }
+
+    /// Reads a session file back into its header and Events.
+    ///
+    /// Tolerates the last line being incomplete: `observe` flushes after
+    /// every Event, but a crash can still land mid-`write_all` and leave a
+    /// truncated final line. If only the last line fails to parse, this
+    /// returns everything before it rather than erroring -- that Event
+    /// never durably finished writing, so treating it as never having
+    /// happened is correct, not lossy. A failure anywhere *else* in the
+    /// file is not tolerated: that is corruption, not an interrupted
+    /// write, and a caller trusting the result would silently restore from
+    /// a history with an unexplained hole in the middle.
+    pub fn read(path: &Path) -> Result<StoredSession, StoreError> {
+        let content =
+            std::fs::read_to_string(path).map_err(|error| io_error(path, "read", error))?;
+        let mut lines = content.lines();
+        let header_line = lines.next().ok_or_else(|| {
+            StoreError::new(
+                StoreErrorKind::Io,
+                format!("{} has no header line", path.display()),
+            )
+        })?;
+        let header: SessionHeader = serde_json::from_str(header_line).map_err(|error| {
+            StoreError::new(
+                StoreErrorKind::Io,
+                format!("{} has an unreadable header: {error}", path.display()),
+            )
+        })?;
+
+        let remaining: Vec<&str> = lines.collect();
+        let mut events = Vec::with_capacity(remaining.len());
+        for (index, line) in remaining.iter().enumerate() {
+            match serde_json::from_str::<StoredEventRecord>(line) {
+                Ok(record) => events.push(record.envelope),
+                Err(error) => {
+                    if index + 1 == remaining.len() {
+                        break;
+                    }
+                    return Err(StoreError::new(
+                        StoreErrorKind::Io,
+                        format!(
+                            "{} line {} is corrupt (not the file's last line, so not tolerated as a truncated write): {error}",
+                            path.display(),
+                            index + 2
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(StoredSession { header, events })
+    }
+
+    /// [`Self::read`] at the path [`Self::session_path`] would compute for
+    /// this workspace/session id pair.
+    pub fn read_session(
+        structure_home: &Path,
+        workspace_id: &WorkspaceId,
+        session_id: &SessionId,
+    ) -> Result<StoredSession, StoreError> {
+        Self::read(&Self::session_path(
+            structure_home,
+            workspace_id,
+            session_id,
+        ))
+    }
+
+    /// Every session file under `$STRUCTURE_HOME/sessions/`, or just one
+    /// workspace's, newest first by file modification time.
+    ///
+    /// Reads only each file's header line, not its full history, so this
+    /// stays fast no matter how long any one session's log has grown. A
+    /// file that cannot be read as a session (an unrelated file dropped in
+    /// that directory, say, or one this process cannot open) is skipped
+    /// rather than failing the whole listing.
+    pub fn list_sessions(
+        structure_home: &Path,
+        workspace_id: Option<&WorkspaceId>,
+    ) -> Result<Vec<SessionListing>, StoreError> {
+        let sessions_dir = structure_home.join(SESSIONS_DIR_NAME);
+        if !sessions_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let workspace_dirs: Vec<PathBuf> = match workspace_id {
+            Some(workspace_id) => vec![sessions_dir.join(workspace_id.to_string())],
+            None => std::fs::read_dir(&sessions_dir)
+                .map_err(|error| io_error(&sessions_dir, "read", error))?
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .map(|entry| entry.path())
+                .collect(),
+        };
+
+        let mut listings = Vec::new();
+        for workspace_dir in workspace_dirs {
+            let Ok(files) = std::fs::read_dir(&workspace_dir) else {
+                continue;
+            };
+            for file_entry in files.filter_map(|entry| entry.ok()) {
+                let path = file_entry.path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Some(header) = read_header_line(&path) else {
+                    continue;
+                };
+                let modified_at_ms = file_entry
+                    .metadata()
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_millis() as u64);
+                listings.push(SessionListing {
+                    header,
+                    path,
+                    modified_at_ms,
+                });
+            }
+        }
+        listings.sort_by_key(|listing| std::cmp::Reverse(listing.modified_at_ms));
+        Ok(listings)
+    }
+}
+
+fn read_header_line(path: &Path) -> Option<SessionHeader> {
+    let file = File::open(path).ok()?;
+    let first_line = BufReader::new(file).lines().next()?.ok()?;
+    serde_json::from_str(&first_line).ok()
 }
 
 impl SessionEventObserver for FileSessionStore {
@@ -616,5 +794,215 @@ mod tests {
         let lookup = env_map(&[]);
         let error = structure_home_from(lookup).unwrap_err();
         assert_eq!(error.kind(), StoreErrorKind::NoHome);
+    }
+
+    #[test]
+    fn read_recovers_exactly_what_create_and_observe_wrote() {
+        let home = temp_home("read-roundtrip");
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let store = FileSessionStore::create(
+            &home,
+            NewSession {
+                session_id: &session_id,
+                workspace_id: &workspace_id,
+                cwd: Path::new("/repo"),
+                profile: Some("default"),
+                instructions_sha256: Some("abc123"),
+            },
+        )
+        .expect("store creates");
+        store.observe(&envelope(1, Event::RunScheduled), EventVisibility::Client);
+        store.observe(&envelope(2, Event::RunStarted), EventVisibility::Client);
+
+        let stored = FileSessionStore::read(store.path()).expect("file reads back");
+        assert_eq!(stored.header.id, session_id);
+        assert_eq!(stored.header.workspace_id, workspace_id);
+        assert_eq!(stored.header.cwd, "/repo");
+        assert_eq!(stored.header.profile.as_deref(), Some("default"));
+        assert_eq!(stored.header.instructions_sha256.as_deref(), Some("abc123"));
+        assert_eq!(stored.events.len(), 2);
+        assert!(matches!(stored.events[0].event, Event::RunScheduled));
+        assert!(matches!(stored.events[1].event, Event::RunStarted));
+
+        let snapshot = stored.into_snapshot();
+        assert_eq!(snapshot.events.len(), 2);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn read_session_finds_the_same_file_create_would_have_written() {
+        let home = temp_home("read-by-id");
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("ws-1");
+        FileSessionStore::create(
+            &home,
+            NewSession {
+                session_id: &session_id,
+                workspace_id: &workspace_id,
+                cwd: Path::new("/repo"),
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .expect("store creates");
+
+        let stored =
+            FileSessionStore::read_session(&home, &workspace_id, &session_id).expect("reads by id");
+        assert_eq!(stored.header.id, session_id);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn read_tolerates_a_truncated_final_line_but_keeps_everything_before_it() {
+        let home = temp_home("read-truncated");
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let store = FileSessionStore::create(
+            &home,
+            NewSession {
+                session_id: &session_id,
+                workspace_id: &workspace_id,
+                cwd: Path::new("/repo"),
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .expect("store creates");
+        store.observe(&envelope(1, Event::RunScheduled), EventVisibility::Client);
+        drop(store); // release the lock so this test can reopen the file directly
+
+        // Simulate a crash mid-write: a well-formed Event, then a line cut
+        // off partway through, exactly what an interrupted `write_all`
+        // would leave behind.
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(FileSessionStore::session_path(
+                &home,
+                &workspace_id,
+                &session_id,
+            ))
+            .expect("file reopens");
+        // No leading newline here: `observe`'s `writeln!` for event 1
+        // already terminated the previous line, so this continues directly
+        // as the file's next (here, final and incomplete) line.
+        write!(
+            file,
+            "{{\"record\":\"event\",\"visibility\":\"client\",\"envelope\":{{\"sequence\":2,\"event\":{{\"typ"
+        )
+        .expect("partial line writes");
+        file.flush().expect("flush succeeds");
+        drop(file);
+
+        let stored = FileSessionStore::read(&FileSessionStore::session_path(
+            &home,
+            &workspace_id,
+            &session_id,
+        ))
+        .expect("a truncated last line must not fail the whole read");
+        assert_eq!(
+            stored.events.len(),
+            1,
+            "only the one fully-written Event survives; the truncated one is dropped, not guessed at"
+        );
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn read_does_not_tolerate_corruption_in_the_middle_of_the_file() {
+        let home = temp_home("read-corrupt-middle");
+        let session_id = SessionId::new("session-1");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let store = FileSessionStore::create(
+            &home,
+            NewSession {
+                session_id: &session_id,
+                workspace_id: &workspace_id,
+                cwd: Path::new("/repo"),
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .expect("store creates");
+        store.observe(&envelope(1, Event::RunScheduled), EventVisibility::Client);
+        drop(store);
+
+        let path = FileSessionStore::session_path(&home, &workspace_id, &session_id);
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("file reopens");
+        // A corrupt line in the middle, followed by a well-formed one: the
+        // well-formed line at the end must not make this look like a
+        // "truncated last line" and get tolerated.
+        writeln!(file, "not json at all").expect("corrupt line writes");
+        writeln!(
+            file,
+            "{{\"record\":\"event\",\"visibility\":\"client\",\"envelope\":{{\"protocol_version\":\"1.0\",\"event_id\":\"event-3\",\"command_id\":\"command-1\",\"workspace_id\":\"ws-1\",\"session_id\":\"session-1\",\"sequence\":3,\"occurred_at_ms\":0,\"event\":{{\"type\":\"run.started\"}}}}}}"
+        )
+        .expect("well-formed line writes");
+        file.flush().expect("flush succeeds");
+        drop(file);
+
+        let error = FileSessionStore::read(&path)
+            .expect_err("corruption before the last line must not be silently tolerated");
+        assert_eq!(error.kind(), StoreErrorKind::Io);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn list_sessions_finds_headers_without_needing_the_full_file() {
+        let home = temp_home("list");
+        let workspace_id = WorkspaceId::new("ws-1");
+        for label in ["session-1", "session-2"] {
+            FileSessionStore::create(
+                &home,
+                NewSession {
+                    session_id: &SessionId::new(label),
+                    workspace_id: &workspace_id,
+                    cwd: Path::new("/repo"),
+                    profile: None,
+                    instructions_sha256: None,
+                },
+            )
+            .expect("store creates");
+        }
+        let other_workspace = WorkspaceId::new("ws-2");
+        FileSessionStore::create(
+            &home,
+            NewSession {
+                session_id: &SessionId::new("session-3"),
+                workspace_id: &other_workspace,
+                cwd: Path::new("/other"),
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .expect("store creates");
+
+        let all = FileSessionStore::list_sessions(&home, None).expect("lists");
+        assert_eq!(all.len(), 3);
+
+        let scoped = FileSessionStore::list_sessions(&home, Some(&workspace_id)).expect("lists");
+        assert_eq!(scoped.len(), 2);
+        assert!(
+            scoped
+                .iter()
+                .all(|listing| listing.header.workspace_id == workspace_id)
+        );
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn list_sessions_on_a_structure_home_with_no_sessions_yet_is_empty_not_an_error() {
+        let home = temp_home("list-empty");
+        let listings = FileSessionStore::list_sessions(&home, None)
+            .expect("a missing sessions directory is not an error");
+        assert!(listings.is_empty());
     }
 }

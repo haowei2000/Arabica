@@ -5,12 +5,14 @@
 //! Event as it is appended, including internal ones
 //! (`crates/structure-session/src/lib.rs`). This crate's
 //! [`FileSessionStore`] is the first adapter for it: one append-only JSONL
-//! file per session under `$STRUCTURE_HOME`. No host wires it in yet --
-//! that is `structure-cli`'s job, once session resume (`P2-2`/`P2-3` in the
-//! CLI/ACP extension plan) needs something to read it back.
+//! file per session under `$STRUCTURE_HOME`, writable as that observer and
+//! readable back into a `structure_session::SessionSnapshot` for
+//! `SessionManager::restore_session`. No host wires it in yet -- that is
+//! `structure-cli`'s job (`P2-3` in the CLI/ACP extension plan).
 
 mod file_session_store;
 
 pub use file_session_store::{
-    FileSessionStore, NewSession, StoreError, StoreErrorKind, default_structure_home,
+    FileSessionStore, NewSession, SessionHeader, SessionListing, StoreError, StoreErrorKind,
+    StoredSession, default_structure_home,
 };
