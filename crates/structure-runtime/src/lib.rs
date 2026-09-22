@@ -1518,17 +1518,17 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         } else {
                             None
                         };
-                        if let Some((next_state, reason)) = transition {
-                            if terminal_controller_state != next_state {
-                                event_log.append(Event::TerminalControlTransition {
-                                    model_step,
-                                    policy: self.terminal_controller_policy,
-                                    from: terminal_controller_state,
-                                    to: next_state,
-                                    reason,
-                                });
-                                terminal_controller_state = next_state;
-                            }
+                        if let Some((next_state, reason)) = transition
+                            && terminal_controller_state != next_state
+                        {
+                            event_log.append(Event::TerminalControlTransition {
+                                model_step,
+                                policy: self.terminal_controller_policy,
+                                from: terminal_controller_state,
+                                to: next_state,
+                                reason,
+                            });
+                            terminal_controller_state = next_state;
                         }
                     }
                     if made_state_progress {

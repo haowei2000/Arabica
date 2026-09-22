@@ -3,17 +3,17 @@
     "name": "read_file",
     "description": "Read one UTF-8 file relative to the confined workspace root.",
     "input_schema": {
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "path": {
-          "description": "Relative file path inside the workspace root",
-          "type": "string"
+          "type": "string",
+          "description": "Relative file path inside the workspace root"
         }
       },
       "required": [
         "path"
       ],
-      "type": "object"
+      "additionalProperties": false
     },
     "strict": true
   },
@@ -21,22 +21,22 @@
     "name": "write_file",
     "description": "Write UTF-8 text to a relative path inside the configured workspace root. Parent directories must already exist.",
     "input_schema": {
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
-        "content": {
-          "description": "Complete UTF-8 file content",
-          "type": "string"
-        },
         "path": {
-          "description": "Relative file path inside the workspace root",
-          "type": "string"
+          "type": "string",
+          "description": "Relative file path inside the workspace root"
+        },
+        "content": {
+          "type": "string",
+          "description": "Complete UTF-8 file content"
         }
       },
       "required": [
         "path",
         "content"
       ],
-      "type": "object"
+      "additionalProperties": false
     },
     "strict": null
   },
@@ -44,22 +44,22 @@
     "name": "memory_search",
     "description": "Search archived runtime evidence when exact older tool results, arguments, failures, or decisions may be relevant. Returns relative paths for memory_read without injecting the archive into the prompt.",
     "input_schema": {
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
-        "limit": {
-          "maximum": 10,
-          "minimum": 1,
-          "type": "integer"
-        },
         "query": {
-          "description": "Tool name, path, error fragment, identifier, or other evidence text",
-          "type": "string"
+          "type": "string",
+          "description": "Tool name, path, error fragment, identifier, or other evidence text"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
         }
       },
       "required": [
         "query"
       ],
-      "type": "object"
+      "additionalProperties": false
     },
     "strict": true
   },
@@ -67,17 +67,17 @@
     "name": "memory_read",
     "description": "Recover the exact archived runtime events referenced by a short-memory pointer. Use only when the pointer's compact metadata is insufficient for the current task.",
     "input_schema": {
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "path": {
-          "description": "Exact relative path copied from a recoverable short-memory pointer",
-          "type": "string"
+          "type": "string",
+          "description": "Exact relative path copied from a recoverable short-memory pointer"
         }
       },
       "required": [
         "path"
       ],
-      "type": "object"
+      "additionalProperties": false
     },
     "strict": true
   },
@@ -85,18 +85,18 @@
     "name": "runtime_complete",
     "description": "End the active run successfully after all task requirements and validation are complete. Call this alone, with no other tool calls in the same response.",
     "input_schema": {
-      "additionalProperties": false,
+      "type": "object",
       "properties": {
         "summary": {
-          "description": "Concise final status describing the completed work and validation",
+          "type": "string",
           "minLength": 1,
-          "type": "string"
+          "description": "Concise final status describing the completed work and validation"
         }
       },
       "required": [
         "summary"
       ],
-      "type": "object"
+      "additionalProperties": false
     },
     "strict": true
   }

@@ -391,12 +391,10 @@ impl ShortMemoryProjector {
             protect_all_current_run_tools,
             protected_event_ids,
         );
-        if !protect_all_current_run_tools {
-            if let Some(current_run_id) = current_run_id {
-                for batch in &mut batches {
-                    if batch.run_id.as_ref() == Some(current_run_id) {
-                        batch.raw_item_bytes = model_step_full_batch_item_bytes(&batch.events);
-                    }
+        if !protect_all_current_run_tools && let Some(current_run_id) = current_run_id {
+            for batch in &mut batches {
+                if batch.run_id.as_ref() == Some(current_run_id) {
+                    batch.raw_item_bytes = model_step_full_batch_item_bytes(&batch.events);
                 }
             }
         }
@@ -471,12 +469,12 @@ fn visibility_decisions(
             visible: ttl.pin || protected_by_recency_floor || within_ttl,
         });
         *newer_class_counts.entry(traits.class).or_default() += 1;
-        if traits.completes_relation {
-            if let Some(relation_key) = traits.relation_key {
-                *newer_completion_counts
-                    .entry((relation_key, traits.class))
-                    .or_default() += 1;
-            }
+        if traits.completes_relation
+            && let Some(relation_key) = traits.relation_key
+        {
+            *newer_completion_counts
+                .entry((relation_key, traits.class))
+                .or_default() += 1;
         }
     }
 

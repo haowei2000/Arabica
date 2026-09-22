@@ -12,6 +12,7 @@ name = "structure"
 path = "src/main.rs"
 
 [dependencies]
+agent-client-protocol.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 structure-model = { path = "../structure-model" }
@@ -21,6 +22,7 @@ structure-runner = { path = "../structure-runner" }
 structure-runtime = { path = "../structure-runtime" }
 structure-session = { path = "../structure-session" }
 tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

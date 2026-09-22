@@ -159,7 +159,7 @@ impl SyntheticTraceGenerator {
 
                 let is_error = config
                     .failure_every
-                    .is_some_and(|interval| tool_ordinal % interval == 0);
+                    .is_some_and(|interval| tool_ordinal.is_multiple_of(interval));
                 let result_text = factory.rng.payload(
                     if is_error {
                         "read failed: "

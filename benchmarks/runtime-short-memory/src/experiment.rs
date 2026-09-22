@@ -102,16 +102,16 @@ impl<P: WireModel> ModelProvider for AuditedProvider<P> {
         } else {
             None
         };
-        if let Some((expected, _)) = &previous {
-            if *expected != bytes {
-                write_new(
-                    &dir.join("error.txt"),
-                    b"First request mismatch; no API call made",
-                )?;
-                return Err(ProviderError::new(
-                    "paired first request differs; refusing model call",
-                ));
-            }
+        if let Some((expected, _)) = &previous
+            && *expected != bytes
+        {
+            write_new(
+                &dir.join("error.txt"),
+                b"First request mismatch; no API call made",
+            )?;
+            return Err(ProviderError::new(
+                "paired first request differs; refusing model call",
+            ));
         }
         let replay = self.shared && previous.is_some();
         let capture = first_call && previous.is_none();
