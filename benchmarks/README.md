@@ -40,3 +40,14 @@ not deleted by source cleanup.
 
 Run new experiments with explicit inputs and retain the source commit, exact
 binary, checksum, configuration and outputs together.
+
+As of `97bd0d5`, `serde_json/preserve_order` is on workspace-wide (pulled in
+transitively by the `agent-client-protocol` dependency), so any
+`serde_json::Value` with object keys — including the default tool
+definitions' JSON schemas sent to the provider — serializes in
+field-insertion order from that commit onward instead of the previous
+alphabetically-sorted order. Same keys and values, different byte sequence.
+This does not change any already-recorded campaign, but it does break exact
+provider-request byte comparison (and therefore prompt-cache prefix
+continuity) across that commit boundary. Comparisons that must be
+byte-exact should pin both sides fully before or fully after it.
