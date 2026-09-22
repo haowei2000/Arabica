@@ -6,6 +6,7 @@
 //! scheduling, event persistence,
 //! and event sequencing belong to `structure-session`.
 
+mod control;
 mod long_memory;
 mod short_memory;
 
@@ -14,6 +15,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
+pub use control::{RunCancellation, RunControl};
 pub use long_memory::{
     ArchivedMemory, FileArchiveStore, LongMemoryError, LongMemoryErrorKind, LongMemoryManager,
     LongMemoryStore, SqliteArchiveStore,
@@ -43,6 +45,10 @@ use structure_runner::{
 };
 
 const DEFAULT_MAX_MODEL_STEPS_PER_RUN: usize = 32;
+/// Result recorded for a tool call that was requested but never finished
+/// because the host cancelled the run.
+const CANCELLED_TOOL_RESULT: &str =
+    "cancelled: the run was interrupted before this tool call completed";
 const MEMORY_READ_TOOL_NAME: &str = "memory_read";
 const MEMORY_SEARCH_TOOL_NAME: &str = "memory_search";
 pub const RUNTIME_COMPLETE_TOOL_NAME: &str = "runtime_complete";
@@ -137,6 +143,22 @@ pub trait RuntimeEngine {
         event_log: &mut dyn RuntimeEventLog,
         command: &Command,
     ) -> Result<(), RuntimeError>;
+
+    /// Handle a Command with host-supplied control for the run it starts.
+    ///
+    /// The default ignores `control`, which suits an engine without
+    /// cancellation points. `CoreRuntime` overrides it.
+    async fn handle_with_control(
+        &mut self,
+        session_id: &SessionId,
+        run_id: Option<&RunId>,
+        event_log: &mut dyn RuntimeEventLog,
+        command: &Command,
+        control: &RunControl,
+    ) -> Result<(), RuntimeError> {
+        let _ = control;
+        self.handle(session_id, run_id, event_log, command).await
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -562,6 +584,25 @@ impl<M, R> CoreRuntime<M, R> {
     }
 }
 
+impl<M: ModelProvider, R: RunnerEnvironment> CoreRuntime<M, R> {
+    /// End a run the host cancelled while it executed.
+    ///
+    /// Provider and runner cleanup is best effort: dropping the in-flight
+    /// future is what stops the work, and the outcome is recorded either way.
+    /// No terminal-controller transition is emitted because the protocol has
+    /// no cancellation reason for one.
+    async fn finish_cancelled(
+        &mut self,
+        run_id: &RunId,
+        event_log: &mut dyn RuntimeEventLog,
+    ) -> Result<(), RuntimeError> {
+        let _ = self.model.cancel(run_id).await;
+        let _ = self.runner.cancel(run_id).await;
+        event_log.append(Event::RunCancelled);
+        Ok(())
+    }
+}
+
 impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R> {
     fn open_session(
         &mut self,
@@ -622,6 +663,24 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
         event_log: &mut dyn RuntimeEventLog,
         command: &Command,
     ) -> Result<(), RuntimeError> {
+        self.handle_with_control(
+            session_id,
+            run_id,
+            event_log,
+            command,
+            &RunControl::default(),
+        )
+        .await
+    }
+
+    async fn handle_with_control(
+        &mut self,
+        session_id: &SessionId,
+        run_id: Option<&RunId>,
+        event_log: &mut dyn RuntimeEventLog,
+        command: &Command,
+        control: &RunControl,
+    ) -> Result<(), RuntimeError> {
         self.session_ref(session_id)?;
         match command {
             Command::MessageSend { content } => {
@@ -655,6 +714,9 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                 let mut last_no_progress_advisory_had_errors = None;
                 let mut terminal_controller_state = TerminalControllerState::Working;
                 for model_step in 0..self.max_model_steps_per_run {
+                    if control.is_cancelled() {
+                        return self.finish_cancelled(run_id, event_log).await;
+                    }
                     let history = event_log.snapshot();
                     let projection = {
                         let memory = self.long_memory.get_mut(&workspace_id).ok_or_else(|| {
@@ -763,7 +825,23 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                         disclosure,
                     };
                     let request_bytes = model_run_request_bytes(&request);
-                    let result = self.model.complete(request).await;
+                    let result = match control.cancellation.as_ref() {
+                        // Without a cancellation handle the call is awaited
+                        // exactly as it was before control existed.
+                        None => self.model.complete(request).await,
+                        Some(cancellation) => {
+                            let outcome = tokio::select! {
+                                biased;
+                                () = cancellation.cancelled() => None,
+                                result = self.model.complete(request) => Some(result),
+                            };
+                            match outcome {
+                                Some(result) => result,
+                                // Dropping the call aborts the provider request.
+                                None => return self.finish_cancelled(run_id, event_log).await,
+                            }
+                        }
+                    };
                     let result = match result {
                         Ok(result) => result,
                         Err(error) => {
@@ -949,6 +1027,11 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                     let mut step_tool_errors = 0usize;
                     let mut step_successful_validation = false;
                     for call in tool_calls {
+                        // Stop before requesting the next call rather than
+                        // after, so every requested call also completes.
+                        if control.is_cancelled() {
+                            return self.finish_cancelled(run_id, event_log).await;
+                        }
                         let interaction_kind = if call.name == RUNTIME_COMPLETE_TOOL_NAME {
                             ToolInteractionKind::Inspection
                         } else {
@@ -1103,13 +1186,37 @@ impl<M: ModelProvider, R: RunnerEnvironment> RuntimeEngine for CoreRuntime<M, R>
                                 continue;
                             }
                         }
-                        let execution = self
-                            .runner
-                            .execute(ToolExecutionRequest {
-                                run_id: run_id.clone(),
-                                call: call.clone(),
-                            })
-                            .await;
+                        let execution_request = ToolExecutionRequest {
+                            run_id: run_id.clone(),
+                            call: call.clone(),
+                        };
+                        let execution = match control.cancellation.as_ref() {
+                            None => self.runner.execute(execution_request).await,
+                            Some(cancellation) => {
+                                let outcome = tokio::select! {
+                                    biased;
+                                    () = cancellation.cancelled() => None,
+                                    execution = self.runner.execute(execution_request) => {
+                                        Some(execution)
+                                    }
+                                };
+                                match outcome {
+                                    Some(execution) => execution,
+                                    None => {
+                                        // Dropping the execution kills a
+                                        // shell call's process group. The call
+                                        // was requested, so it must complete.
+                                        event_log.append(Event::ToolCallCompleted {
+                                            call_id: call.call_id.clone(),
+                                            name: call.name.clone(),
+                                            result: CANCELLED_TOOL_RESULT.to_owned(),
+                                            is_error: true,
+                                        });
+                                        return self.finish_cancelled(run_id, event_log).await;
+                                    }
+                                }
+                            }
+                        };
                         let execution = match execution {
                             Ok(execution) => execution,
                             Err(error) => {
@@ -3189,6 +3296,324 @@ mod tests {
         let mut event_log = TestEventLog::new(history, session_id, run_id);
         RuntimeEngine::handle(runtime, session_id, run_id, &mut event_log, command).await?;
         Ok(event_log.emitted)
+    }
+
+    /// Run one Command under host control, failing instead of hanging if a
+    /// cancellation point is missing.
+    async fn handle_controlled<M: ModelProvider, R: RunnerEnvironment>(
+        runtime: &mut CoreRuntime<M, R>,
+        session_id: &SessionId,
+        run_id: &RunId,
+        control: &RunControl,
+        cancel_after: Option<std::time::Duration>,
+    ) -> Vec<Event> {
+        let mut event_log = TestEventLog::new(&[], session_id, Some(run_id));
+        let command = Command::MessageSend {
+            content: "do the task".to_owned(),
+        };
+        let run = RuntimeEngine::handle_with_control(
+            runtime,
+            session_id,
+            Some(run_id),
+            &mut event_log,
+            &command,
+            control,
+        );
+        let cancel = async {
+            if let (Some(delay), Some(cancellation)) = (cancel_after, &control.cancellation) {
+                tokio::time::sleep(delay).await;
+                cancellation.cancel();
+            }
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(run, cancel)
+        })
+        .await
+        .expect("the run must end within five seconds of being cancelled");
+        result.expect("the run is handled");
+        event_log.emitted
+    }
+
+    /// Every requested tool call must be answered, or the next model request
+    /// would carry an orphan call that providers reject.
+    fn assert_every_requested_call_completed(events: &[Event]) {
+        let requested = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolCallRequested { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let completed = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolCallCompleted { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(requested, completed, "requested and completed calls differ");
+    }
+
+    fn opened<M: ModelProvider, R: RunnerEnvironment>(
+        model: M,
+        runner: R,
+        session_id: &SessionId,
+    ) -> CoreRuntime<M, R> {
+        let mut runtime = CoreRuntime::new(model, runner);
+        runtime
+            .open_session(session_id, &WorkspaceId::new("workspace-1"))
+            .expect("runtime session opens");
+        runtime
+    }
+
+    #[derive(Debug, Default)]
+    struct HangingModel {
+        cancelled: bool,
+    }
+
+    impl ModelProvider for HangingModel {
+        async fn complete(
+            &mut self,
+            _request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            std::future::pending().await
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            self.cancelled = true;
+            Ok(true)
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct HangingRunner {
+        cancelled: bool,
+    }
+
+    impl RunnerEnvironment for HangingRunner {
+        async fn execute(
+            &mut self,
+            _request: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            std::future::pending().await
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+            self.cancelled = true;
+            Ok(true)
+        }
+    }
+
+    /// Cancels the run while it executes the first call, then succeeds.
+    #[derive(Debug)]
+    struct CancellingRunner {
+        cancellation: RunCancellation,
+        executed: Vec<String>,
+    }
+
+    impl RunnerEnvironment for CancellingRunner {
+        async fn execute(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            self.executed.push(request.call.call_id.clone());
+            self.cancellation.cancel();
+            Ok(ToolExecutionResult {
+                result: ToolResultItem {
+                    id: None,
+                    call_id: request.call.call_id,
+                    name: Some(request.call.name),
+                    content: vec![ContentBlock::text("inspected")],
+                    is_error: false,
+                },
+                output: Vec::new(),
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn an_uncancelled_control_changes_nothing() {
+        // A cancellation handle that is never signalled must leave the run's
+        // Events identical to a run without control: recorded campaigns and
+        // hosts that attach control unconditionally both depend on it.
+        let script = || SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response("validate-1", "validate", serde_json::json!({})),
+                text_response("done"),
+            ]),
+        };
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+
+        let mut plain = opened(script(), SuccessfulValidationRunner, &session_id);
+        let expected = handle(
+            &mut plain,
+            &session_id,
+            Some(&run_id),
+            &[],
+            &Command::MessageSend {
+                content: "do the task".to_owned(),
+            },
+        )
+        .await
+        .expect("the uncontrolled run is handled");
+
+        let mut controlled = opened(script(), SuccessfulValidationRunner, &session_id);
+        let control = RunControl {
+            cancellation: Some(RunCancellation::new()),
+        };
+        let events = handle_controlled(&mut controlled, &session_id, &run_id, &control, None).await;
+
+        assert_eq!(events, expected);
+        assert!(matches!(events.last(), Some(Event::RunCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_run_cancelled_before_it_starts_never_calls_the_model() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let mut runtime = opened(HangingModel::default(), NoopRunner, &session_id);
+        let cancellation = RunCancellation::new();
+        cancellation.cancel();
+        let control = RunControl {
+            cancellation: Some(cancellation),
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Event::RunStarted,
+                Event::MessageAccepted { .. },
+                Event::RunCancelled
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_during_the_model_call_aborts_it() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let mut runtime = opened(HangingModel::default(), NoopRunner, &session_id);
+        let control = RunControl {
+            cancellation: Some(RunCancellation::new()),
+        };
+        let events = handle_controlled(
+            &mut runtime,
+            &session_id,
+            &run_id,
+            &control,
+            Some(std::time::Duration::from_millis(20)),
+        )
+        .await;
+
+        assert!(matches!(events.last(), Some(Event::RunCancelled)));
+        assert!(
+            runtime.model().cancelled,
+            "the provider is told to clean up"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::ModelRequestPrepared { .. })),
+            "an aborted call recorded a completed request"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_during_tool_execution_still_completes_the_call() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([tool_response("call-1", "inspect", serde_json::json!({}))]),
+        };
+        let mut runtime = opened(model, HangingRunner::default(), &session_id);
+        let control = RunControl {
+            cancellation: Some(RunCancellation::new()),
+        };
+        let events = handle_controlled(
+            &mut runtime,
+            &session_id,
+            &run_id,
+            &control,
+            Some(std::time::Duration::from_millis(20)),
+        )
+        .await;
+
+        assert_every_requested_call_completed(&events);
+        let completion = events
+            .iter()
+            .find_map(|event| match event {
+                Event::ToolCallCompleted {
+                    call_id,
+                    result,
+                    is_error,
+                    ..
+                } => Some((call_id.clone(), result.clone(), *is_error)),
+                _ => None,
+            })
+            .expect("the interrupted call is completed");
+        assert_eq!(
+            completion,
+            ("call-1".to_owned(), CANCELLED_TOOL_RESULT.to_owned(), true)
+        );
+        assert!(matches!(events.last(), Some(Event::RunCancelled)));
+        assert!(runtime.runner().cancelled, "the runner is told to clean up");
+    }
+
+    #[tokio::test]
+    async fn cancelling_between_tool_calls_requests_no_further_call() {
+        let session_id = SessionId::new("session-1");
+        let run_id = RunId::new("run-1");
+        let call = |call_id: &str| {
+            RuntimeItem::ToolCall(ToolCallItem {
+                id: None,
+                call_id: call_id.to_owned(),
+                name: "inspect".to_owned(),
+                arguments: serde_json::json!({}),
+                provider_state: None,
+            })
+        };
+        let model = SequencedModel {
+            requests: Vec::new(),
+            results: VecDeque::from([ModelRunResult {
+                final_output: None,
+                prepared_request: None,
+                response: Some(structure_model::RuntimeResponse {
+                    items: vec![call("call-a"), call("call-b")],
+                    finish_reason: Some(FinishReason::ToolCalls),
+                    usage: structure_model::RuntimeUsage::default(),
+                    provider_state: None,
+                }),
+            }]),
+        };
+        let cancellation = RunCancellation::new();
+        let runner = CancellingRunner {
+            cancellation: cancellation.clone(),
+            executed: Vec::new(),
+        };
+        let mut runtime = opened(model, runner, &session_id);
+        let control = RunControl {
+            cancellation: Some(cancellation),
+        };
+        let events = handle_controlled(&mut runtime, &session_id, &run_id, &control, None).await;
+
+        assert_eq!(runtime.runner().executed, vec!["call-a".to_owned()]);
+        assert_every_requested_call_completed(&events);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                Event::ToolCallRequested { call_id, .. } if call_id == "call-b"
+            )),
+            "the second call was requested after cancellation"
+        );
+        assert!(matches!(events.last(), Some(Event::RunCancelled)));
     }
 
     #[tokio::test]
