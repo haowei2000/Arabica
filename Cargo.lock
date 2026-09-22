@@ -2044,6 +2044,7 @@ dependencies = [
  "agent-client-protocol",
  "clap",
  "serde_json",
+ "sha2",
  "structure-model",
  "structure-protocol",
  "structure-provider",

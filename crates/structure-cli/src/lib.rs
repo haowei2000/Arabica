@@ -9,4 +9,5 @@
 //! (one-shot execution) are its two bindings; see
 //! `docs/runtime_core_architecture.md` Appendix B for the decision record.
 
+pub mod acp;
 pub mod host;

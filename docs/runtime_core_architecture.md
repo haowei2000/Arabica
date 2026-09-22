@@ -367,6 +367,7 @@ Runtime evidence archive ── memory_search/read + SHA-256 verify ──> cont
 | `structure-server --profile service` | multi-tenant hosted backend, public bind | current FastAPI deployment |
 | `structure-server --profile local` ("daemon") | single-user, loopback, token auth, auto-spawned by clients | opencode server on :4096 |
 | `structure-exec` | embed core in-process, JSONL events on stdout, exit code from terminal run state | codex-exec |
+| `structure acp` | Agent Client Protocol v1 over stdio, one `SessionManager` per ACP session | Zed's own agent servers, `claude-code-acp` |
 | MCP server mode | expose runtime as MCP tools | codex-mcp-server |
 
 One binary for both server profiles is the structural advantage neither
@@ -378,6 +379,9 @@ Python benchmark adapter this section used to pair it with was removed with the
 Python implementation in `a3823ee`; the maintained experiment package
 (`benchmarks/runtime-short-memory`) links the production crates directly
 instead of speaking the protocol over a transport.
+
+`structure acp` is implemented in `crates/structure-cli/src/acp/`. It is the
+other binding of `structure-cli` alongside `structure-exec`; see Appendix B.
 
 ## 7. Surfaces (Deferred)
 
@@ -573,10 +577,12 @@ filesystem and terminal APIs would therefore have to be undone for v2.
 | Consequence | Why it is unavoidable |
 |---|---|
 | Cooperative in-flight cancellation in Runtime (implemented: `RunControl`/`RunCancellation`) | ACP `session/cancel` must stop a run that `SessionManager::handle` is executing under one borrow |
-| A Session-level event observer (pending: T5) | ACP streams progress; today events are returned only after the whole run finishes |
+| A Session-level event observer (implemented: `SessionEventObserver`, `IdAllocator`) | ACP streams progress; today events are returned only after the whole run finishes |
 | A permission gate recorded as typed Events (implemented: `ToolPermissionGate`) | ACP delegates approval to the client; the decision must still reach the audit trail |
+| A Session-scoped denial the gate remembers, not only an allow (implemented: `session_decision`, replacing `session_allows`) | ACP's `RejectAlways` permission option must mean what it says: an ACP surface that offered it against a gate that only remembered allows would silently re-ask |
 | An exact-transcript history projection (implemented: `HistoryProjection::ExactTranscript`) | the default TTL/batch memory projection targets single-turn agent runs and, under it, a still-fresh past tool call has a `command.output` Event wedged between its `tool_calls` message and its result -- multi-turn chat needs the provider-valid transcript this mode reconstructs instead |
-| MSRV 1.85 → 1.88, `serde_json/preserve_order` unified workspace-wide | required by `agent-client-protocol`; the feature must be explicit so serialized bytes do not depend on the build invocation |
+| MSRV 1.85 → 1.88, `serde_json/preserve_order` unified workspace-wide (implemented) | required by `agent-client-protocol`; the feature must be explicit so serialized bytes do not depend on the build invocation |
+| The ACP surface itself (implemented: `crates/structure-cli/src/acp/`) | `initialize`/`session/new`/`session/prompt`/`session/cancel`, the Event→`session/update` mapping, stop-reason derivation, and the permission-request bridge, built against `agent-client-protocol` v2.2.0's builder/handler API rather than the simpler trait-based shape earlier drafts of this document assumed -- see that crate's own `concepts::ordering` module for why `session/prompt` must `cx.spawn` its run and return immediately |
 
 ### Alternatives rejected
 
