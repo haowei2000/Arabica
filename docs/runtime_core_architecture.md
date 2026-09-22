@@ -374,9 +374,10 @@ One binary for both server profiles is the structural advantage neither
 reference has: their hosted products do not run the same code as their local
 ones. Ours does by construction.
 
-`structure-exec` lands as the print mode of `structure-cli` (Appendix B). The
-Python benchmark adapter this section used to pair it with was removed with the
-Python implementation in `a3823ee`; the maintained experiment package
+`structure-exec` is implemented as the print mode of `structure-cli`
+(`crates/structure-cli/src/print.rs`; Appendix B). The Python benchmark
+adapter this section used to pair it with was removed with the Python
+implementation in `a3823ee`; the maintained experiment package
 (`benchmarks/runtime-short-memory`) links the production crates directly
 instead of speaking the protocol over a transport.
 
@@ -486,13 +487,16 @@ production until phase 6.
   calls, and confined LocalRunner file execution are implemented. Durable
   sessions, streaming deltas, background dispatch/event sinks, MCP routing,
   approvals, SQLite EventStore, and the in-process bus remain.
-- [ ] **`structure-exec`** — headless one-shot over the local profile. Lands as
-   the print mode of `structure-cli` (`structure -p`), emitting canonical event
-   envelopes as JSONL. The Python benchmark adapter this entry used to feed was
-   removed with the Python implementation in `a3823ee`.
-- [ ] **ACP host** — `structure acp` binds the contract to Agent Client
-   Protocol v1 over stdio so editors can drive Structure directly. v2 stays
-   behind a feature flag while it is draft. See Appendix B.
+- [x] **`structure-exec`** — headless one-shot over the local profile. Implemented
+   as the print mode of `structure-cli` (`structure -p`, `crates/structure-cli/src/print.rs`),
+   emitting canonical event envelopes as JSONL (`--output-format jsonl`) or just
+   the final answer (`--output-format text`, the default). The Python benchmark
+   adapter this entry used to feed was removed with the Python implementation
+   in `a3823ee`.
+- [x] **ACP host** — `structure acp` binds the contract to Agent Client
+   Protocol v1 over stdio so editors can drive Structure directly
+   (`crates/structure-cli/src/acp/`). v2 stays behind a feature flag while it
+   is draft. See Appendix B.
 - [ ] **UI surfaces after protocol freeze** — generate clients from the frozen
    schema, then introduce TUI, web, and desktop shells as separate thin
    clients. No surface-specific command or event variants.

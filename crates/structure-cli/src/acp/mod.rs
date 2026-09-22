@@ -28,10 +28,8 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
 };
-use sha2::{Digest, Sha256};
 use structure_protocol::{
     Command, CommandEnvelope, CommandId, RunId as StructureRunId, SessionId as StructureSessionId,
-    WorkspaceId,
 };
 use structure_runtime::{RunCancellation, RunControl, ToolPermissionGate};
 use structure_session::{DispatchControl, IdAllocator, SessionError, SessionManager};
@@ -110,7 +108,7 @@ impl AcpState {
             return Err(AcpError::invalid_params()
                 .data(format!("cwd must be absolute: {}", request.cwd.display())));
         }
-        let workspace_id = workspace_id_for(&request.cwd);
+        let workspace_id = crate::host::workspace_id_for(&request.cwd);
         let model = (self.model_factory)()?;
         let runtime = build_host_runtime(model, &request.cwd, self.tool_policy.clone());
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
@@ -156,11 +154,6 @@ impl AcpState {
             cancellation.cancel();
         }
     }
-}
-
-fn workspace_id_for(cwd: &std::path::Path) -> WorkspaceId {
-    let digest = Sha256::digest(cwd.to_string_lossy().as_bytes());
-    WorkspaceId::new(format!("ws-{:.16}", format!("{digest:x}")))
 }
 
 fn provider_error(error: structure_provider::ProviderError) -> AcpError {

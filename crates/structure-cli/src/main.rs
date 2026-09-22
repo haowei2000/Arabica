@@ -1,13 +1,14 @@
 //! `structure`: the CLI binary. `structure acp` speaks Agent Client Protocol
-//! v1 over stdio; `structure -p` (one-shot execution) lands in a later
-//! commit (see `docs/runtime_core_architecture.md` §11).
+//! v1 over stdio; `structure -p "task"` runs one task non-interactively and
+//! exits (see `docs/runtime_core_architecture.md` §11).
 
 use clap::{Parser, Subcommand};
 use structure_cli::host::{
     HostConfigArgs, HostModel, LocalRunnerPolicy, build_host_runtime, process_environment,
     resolve_provider_config,
 };
-use structure_provider::ApiModelProvider;
+use structure_cli::print::{self, OutputFormat, PrintOptions};
+use structure_provider::{ApiModelProvider, ApiProviderConfig};
 use structure_runner::LocalTool;
 
 #[derive(Parser, Debug)]
@@ -17,6 +18,21 @@ struct Cli {
     config: HostConfigArgs,
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Run one task non-interactively and exit. Pass "-" to read the task
+    /// from stdin instead of the argument.
+    #[arg(short = 'p', long = "print", value_name = "TASK")]
+    print: Option<String>,
+    /// Output format for -p: "text" (default; stdout is only the final
+    /// answer) or "jsonl" (stdout is one JSON event per line, live).
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    output_format: OutputFormat,
+    /// Allow -p to run the shell tool. Off by default: shell has no path
+    /// confinement, and -p has no one to ask before a call runs.
+    #[arg(long)]
+    allow_shell: bool,
+    /// Restrict -p to read-only tools. Mutually exclusive with --allow-shell.
+    #[arg(long)]
+    read_only: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -28,38 +44,102 @@ enum Commands {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    if let Err(error) = run(cli).await {
-        eprintln!("error: {error}");
-        std::process::exit(2);
-    }
+    std::process::exit(run(cli).await);
 }
 
-async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let provider_config = resolve_provider_config(&cli.config, process_environment)?;
-
-    match cli.command {
-        Some(Commands::Acp) => {
-            // Shell is opt-in at the policy layer (`LocalRunnerPolicy::coding`
-            // does not include it: it is the tool with no confinement, the
-            // one place the permission gate is the only boundary). ACP is
-            // exactly the surface built to gate it -- the client asks the
-            // user before every call (`acp/permission.rs`'s default policy
-            // always routes `shell` through `session/request_permission`) --
-            // so a coding agent that can never build, test, or run `git`
-            // would not be a meaningfully useful trade for that safety.
-            let tool_policy = LocalRunnerPolicy::coding().with_tool(LocalTool::Shell);
-            structure_cli::acp::run(provider_config, tool_policy).await?;
-            Ok(())
+async fn run(cli: Cli) -> i32 {
+    let provider_config = match resolve_provider_config(&cli.config, process_environment) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
         }
-        None => describe_configuration(provider_config),
+    };
+
+    let Cli {
+        command,
+        print: print_task,
+        output_format,
+        allow_shell,
+        read_only,
+        ..
+    } = cli;
+
+    match (command, print_task) {
+        (Some(Commands::Acp), Some(_)) => {
+            eprintln!("error: -p cannot be combined with the acp subcommand");
+            2
+        }
+        (Some(Commands::Acp), None) => run_acp(provider_config).await,
+        (None, Some(task)) => {
+            run_print(
+                provider_config,
+                &task,
+                output_format,
+                allow_shell,
+                read_only,
+            )
+            .await
+        }
+        (None, None) => match describe_configuration(provider_config) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("error: {error}");
+                1
+            }
+        },
     }
 }
 
-/// No subcommand: report the resolved configuration and exit. Kept for
-/// smoke-testing configuration outside of an editor; `structure -p` will
-/// replace this as the CLI's own default action.
+async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
+    // Shell is opt-in at the policy layer (`LocalRunnerPolicy::coding` does
+    // not include it: it is the tool with no confinement, the one place the
+    // permission gate is the only boundary). ACP is exactly the surface
+    // built to gate it -- the client asks the user before every call
+    // (`acp/permission.rs`'s default policy always routes `shell` through
+    // `session/request_permission`) -- so a coding agent that can never
+    // build, test, or run `git` would not be a meaningfully useful trade
+    // for that safety.
+    let tool_policy = LocalRunnerPolicy::coding().with_tool(LocalTool::Shell);
+    match structure_cli::acp::run(provider_config, tool_policy).await {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    }
+}
+
+async fn run_print(
+    provider_config: ApiProviderConfig,
+    task: &str,
+    output_format: OutputFormat,
+    allow_shell: bool,
+    read_only: bool,
+) -> i32 {
+    let task = match print::resolve_task(task) {
+        Ok(task) => task,
+        Err(error) => {
+            eprintln!("error: reading task: {error}");
+            return 2;
+        }
+    };
+    print::run(
+        provider_config,
+        PrintOptions {
+            task,
+            output_format,
+            allow_shell,
+            read_only,
+        },
+    )
+    .await
+}
+
+/// No subcommand and no `-p`: report the resolved configuration and exit.
+/// Kept for smoke-testing configuration outside of an editor or a task.
 fn describe_configuration(
-    provider_config: structure_provider::ApiProviderConfig,
+    provider_config: ApiProviderConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Never printed: the api_key field itself is not touched below.
     let api_type = provider_config.api_type;
@@ -84,8 +164,6 @@ fn describe_configuration(
             .collect::<Vec<_>>()
             .join(", ")
     );
-    println!(
-        "  next: run `structure acp` (Agent Client Protocol) or wait for `structure -p` (one-shot)"
-    );
+    println!("  next: run `structure acp` (Agent Client Protocol) or `structure -p \"task\"`");
     Ok(())
 }

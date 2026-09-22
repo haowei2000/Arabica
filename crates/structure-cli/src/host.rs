@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 
 use clap::Args;
+use sha2::{Digest, Sha256};
 use structure_protocol::RunId;
 use structure_provider::{
     ApiModelProvider, ApiProviderConfig, ApiType, ModelProvider, ModelRunRequest, ModelRunResult,
@@ -179,6 +180,17 @@ pub fn coding_system_instructions(root: &Path) -> String {
         root.display(),
         std::env::consts::OS,
     )
+}
+
+/// Derives a stable [`structure_protocol::WorkspaceId`] from a working
+/// directory: the same `cwd` always maps to the same id, distinct `cwd`s
+/// (almost certainly) do not collide, and the id never leaks the path
+/// itself. Shared by every host binding that opens a session from a `cwd`
+/// (`acp::AcpState::new_session`, `print::run`) so the same project looks
+/// like the same workspace regardless of which binding opened it.
+pub fn workspace_id_for(cwd: &Path) -> structure_protocol::WorkspaceId {
+    let digest = Sha256::digest(cwd.to_string_lossy().as_bytes());
+    structure_protocol::WorkspaceId::new(format!("ws-{:.16}", format!("{digest:x}")))
 }
 
 /// Build a [`HostRuntime`] fixed to the CLI profile: compaction disabled
@@ -378,5 +390,15 @@ mod tests {
         );
         assert!(!runtime.tools().iter().any(|tool| tool.name == "shell"));
         std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_id_is_stable_for_the_same_cwd_and_differs_for_another() {
+        let a = workspace_id_for(std::path::Path::new("/workspace/one"));
+        let a_again = workspace_id_for(std::path::Path::new("/workspace/one"));
+        let b = workspace_id_for(std::path::Path::new("/workspace/two"));
+        assert_eq!(a, a_again);
+        assert_ne!(a, b);
+        assert!(a.to_string().starts_with("ws-"));
     }
 }
