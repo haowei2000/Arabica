@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, Implementation, InitializeRequest, InitializeResponse,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-    SessionId as AcpSessionId,
+    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
+    PromptResponse, SessionId as AcpSessionId, SessionNotification,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
@@ -181,6 +181,96 @@ impl AcpState {
         Ok(NewSessionResponse::new(acp_session_id))
     }
 
+    /// `session/load`: only reachable once `initialize` has advertised
+    /// `agentCapabilities.loadSession` (set unconditionally in `serve` below,
+    /// since this handler exists). Replay-then-respond is the client's
+    /// contract (`agent_client_protocol::session::RestoreSessionBuilder`'s
+    /// own doc comment: "replay notifications sent before the response are
+    /// available"), so nothing is sent to the client until the session is
+    /// known-restorable -- a `session/load` that fails must not have already
+    /// shown the client a history for a session it cannot actually resume.
+    async fn load_session(
+        &self,
+        request: LoadSessionRequest,
+        connection: &ConnectionTo<Client>,
+    ) -> AcpResult<LoadSessionResponse> {
+        if !request.cwd.is_absolute() {
+            return Err(AcpError::invalid_params()
+                .data(format!("cwd must be absolute: {}", request.cwd.display())));
+        }
+        let workspace_id = crate::host::workspace_id_for(&request.cwd);
+        let structure_session_id = StructureSessionId::new(request.session_id.to_string());
+
+        let stored = FileSessionStore::read_session(
+            &self.structure_home,
+            &workspace_id,
+            &structure_session_id,
+        )
+        .map_err(|error| {
+            AcpError::invalid_params().data(format!(
+                "cannot load session {}: {error}",
+                request.session_id
+            ))
+        })?;
+        let original_events = stored.events.clone();
+
+        let path = FileSessionStore::session_path(
+            &self.structure_home,
+            &workspace_id,
+            &structure_session_id,
+        );
+        let store = FileSessionStore::open_existing(&path)
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+
+        let model = (self.model_factory)()?;
+        let runtime = build_host_runtime(model, &request.cwd, self.tool_policy.clone());
+        let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
+        let restore_report = manager
+            .restore_session(
+                stored.into_snapshot(),
+                CommandId::new(uuid::Uuid::now_v7().to_string()),
+                Some(&store as &dyn SessionEventObserver),
+            )
+            .map_err(session_error)?;
+
+        let acp_session_id = AcpSessionId::new(structure_session_id.to_string());
+        // Original history first, then any repair Events restore_session
+        // synthesized for a run the previous connection never got to finish
+        // (dangling tool calls, then run.failed) -- the repairs are new
+        // Events appended after the stored history, not part of it, so they
+        // belong after it in replay order too.
+        for envelope in original_events
+            .iter()
+            .chain(restore_report.repaired_events.iter())
+        {
+            for update in mapping::updates_for(&envelope.event, &envelope.run_id, &request.cwd) {
+                if let Err(error) = connection
+                    .send_notification(SessionNotification::new(acp_session_id.clone(), update))
+                {
+                    eprintln!(
+                        "structure acp: dropped a session/update during session/load replay: {error}"
+                    );
+                }
+            }
+        }
+
+        self.sessions
+            .lock()
+            .expect("session map lock poisoned")
+            .insert(
+                acp_session_id,
+                Arc::new(SessionEntry {
+                    manager: Arc::new(tokio::sync::Mutex::new(manager)),
+                    structure_session_id,
+                    cwd: request.cwd,
+                    current_run: Mutex::new(None),
+                    store: Arc::new(store),
+                }),
+            );
+
+        Ok(LoadSessionResponse::new())
+    }
+
     fn cancel(&self, session_id: &AcpSessionId) {
         let Some(entry) = self.entry(session_id) else {
             return;
@@ -251,7 +341,7 @@ async fn serve(
                 let _ = request.protocol_version;
                 responder.respond(
                     InitializeResponse::new(ProtocolVersion::V1)
-                        .agent_capabilities(AgentCapabilities::new())
+                        .agent_capabilities(AgentCapabilities::new().load_session(true))
                         .agent_info(Implementation::new("structure", env!("CARGO_PKG_VERSION"))),
                 )
             },
@@ -278,6 +368,20 @@ async fn serve(
                             responder: Responder<PromptResponse>,
                             connection: ConnectionTo<Client>| {
                     handle_prompt(state.clone(), request, responder, connection)
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: LoadSessionRequest,
+                            responder: Responder<LoadSessionResponse>,
+                            connection: ConnectionTo<Client>| {
+                    match state.load_session(request, &connection).await {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -396,10 +500,10 @@ mod round_trip {
 
     use agent_client_protocol::schema::v1::{
         ContentBlock as AcpContentBlock, InitializeRequest as AcpInitializeRequest,
-        NewSessionRequest as AcpNewSessionRequest, PermissionOptionKind,
-        PromptRequest as AcpPromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-        RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
-        StopReason, ToolCallStatus,
+        LoadSessionRequest as AcpLoadSessionRequest, NewSessionRequest as AcpNewSessionRequest,
+        PermissionOptionKind, PromptRequest as AcpPromptRequest, RequestPermissionOutcome,
+        RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+        SessionNotification, SessionUpdate, StopReason, ToolCallStatus,
     };
     use agent_client_protocol::{Channel, Client as ClientRole, Responder};
     use structure_model::{
@@ -628,6 +732,141 @@ mod round_trip {
             "the prompt turn must have appended events beyond session.created, got {:?}",
             stored.events
         );
+
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
+    }
+
+    fn chunk_text(update: &SessionUpdate) -> Option<&str> {
+        let SessionUpdate::AgentMessageChunk(chunk) = update else {
+            return None;
+        };
+        let AcpContentBlock::Text(text) = &chunk.content else {
+            return None;
+        };
+        Some(&text.text)
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_history_then_accepts_a_new_prompt() {
+        let root = temp_root("load");
+        let structure_home = temp_root("load-home");
+
+        // Connection 1: create a session and send one prompt, then let the
+        // connection end -- simulating the editor (or the agent process)
+        // disconnecting. Nothing here ever calls session/load.
+        let state1 = scripted_state(
+            vec![text_result("hello from turn one")],
+            LocalRunnerPolicy::coding(),
+            &structure_home,
+        );
+        let (server1, client_channel1) = spawn_agent(state1);
+        let session_id = tokio::time::timeout(Duration::from_secs(10), {
+            let root = root.clone();
+            ClientRole.builder().name("test-client-1").connect_with(
+                client_channel1,
+                async move |cx| {
+                    cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    let new_session = cx
+                        .send_request(AcpNewSessionRequest::new(root))
+                        .block_task()
+                        .await?;
+                    cx.send_request(AcpPromptRequest::new(
+                        new_session.session_id.clone(),
+                        vec![AcpContentBlock::from("say hello")],
+                    ))
+                    .block_task()
+                    .await?;
+                    Ok(new_session.session_id)
+                },
+            )
+        })
+        .await
+        .expect("first client round trip did not time out")
+        .expect("first client round trip succeeded");
+
+        server1
+            .await
+            .expect("server task did not panic")
+            .expect("first connection's server run completed cleanly");
+
+        // Connection 2: a brand new AcpState -- its `sessions` map starts
+        // empty, with no entry for this session at all, the same as a fresh
+        // `structure acp` process would have -- pointed at the SAME
+        // structure_home. session/load must find the session on disk,
+        // replay its history as session/update notifications, then accept a
+        // new prompt on the session it just restored.
+        let state2 = scripted_state(
+            vec![text_result("hello again after loading")],
+            LocalRunnerPolicy::coding(),
+            &structure_home,
+        );
+        let (server2, client_channel2) = spawn_agent(state2);
+        let updates: Arc<StdMutex<Vec<SessionUpdate>>> = Arc::new(StdMutex::new(Vec::new()));
+
+        let second_stop_reason = tokio::time::timeout(Duration::from_secs(10), {
+            let updates = updates.clone();
+            let root = root.clone();
+            let session_id = session_id.clone();
+            ClientRole
+                .builder()
+                .name("test-client-2")
+                .on_receive_notification(
+                    {
+                        let updates = updates.clone();
+                        async move |notification: SessionNotification, _connection| {
+                            updates
+                                .lock()
+                                .expect("updates lock poisoned")
+                                .push(notification.update);
+                            Ok(())
+                        }
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                )
+                .connect_with(client_channel2, async move |cx| {
+                    cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    cx.send_request(AcpLoadSessionRequest::new(session_id.clone(), root))
+                        .block_task()
+                        .await?;
+                    let prompt = cx
+                        .send_request(AcpPromptRequest::new(
+                            session_id,
+                            vec![AcpContentBlock::from("what did you say before?")],
+                        ))
+                        .block_task()
+                        .await?;
+                    Ok(prompt.stop_reason)
+                })
+        })
+        .await
+        .expect("second client round trip did not time out")
+        .expect("second client round trip succeeded");
+
+        assert_eq!(second_stop_reason, StopReason::EndTurn);
+        {
+            let seen = updates.lock().expect("updates lock poisoned");
+            assert!(
+                seen.iter()
+                    .any(|update| chunk_text(update) == Some("hello from turn one")),
+                "session/load must replay the first turn's message as a session/update \
+                 before responding, got {seen:?}"
+            );
+            assert!(
+                seen.iter()
+                    .any(|update| chunk_text(update) == Some("hello again after loading")),
+                "the post-load prompt must also stream live, got {seen:?}"
+            );
+        }
+
+        server2
+            .await
+            .expect("server task did not panic")
+            .expect("second connection's server run completed cleanly");
 
         std::fs::remove_dir_all(root).ok();
         std::fs::remove_dir_all(structure_home).ok();
