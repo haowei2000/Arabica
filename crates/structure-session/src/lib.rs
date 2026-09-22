@@ -7,13 +7,81 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use structure_protocol::{
     Command, CommandEnvelope, CommandId, ErrorCode, Event, EventEnvelope, EventId, EventMetadata,
     PROTOCOL_VERSION, RunId, RunStatus, SessionId, SessionStatus, WorkspaceId,
 };
-use structure_runtime::{RuntimeEngine, RuntimeEventLog};
+use structure_runtime::{RunControl, RuntimeEngine, RuntimeEventLog};
+
+/// Whether an Event reached the client-visible subset `dispatch` and `handle`
+/// return, or was internal evidence such as a `model.response.item`.
+///
+/// This is [`Event::is_client_visible`] reified as data, so an observer that
+/// wants only what a client sees does not have to duplicate that rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EventVisibility {
+    Client,
+    Internal,
+}
+
+/// Receives every canonical Event as it is appended, in sequence order,
+/// including internal ones. This is how a host streams progress: `dispatch`
+/// itself returns only after the whole Command finishes, and internal Events
+/// such as `model.response.item` never appear in that return value at all.
+///
+/// `observe` is called synchronously, inline with the append that produced
+/// the Event, from inside the `.await`ed call that is doing the work. An
+/// implementation must not block: hand the envelope to a channel or a `Vec`
+/// behind a mutex rather than doing I/O here.
+pub trait SessionEventObserver: Send + Sync {
+    fn observe(&self, envelope: &EventEnvelope, visibility: EventVisibility);
+}
+
+/// Everything a host may attach to one call to [`SessionManager::dispatch`].
+///
+/// The default attaches nothing: no cancellation or permission gate reaches
+/// Runtime, and no observer is notified. A Command dispatched with the
+/// default emits exactly the Events it emitted before this type existed;
+/// [`SessionManager::handle`] uses the default so its behavior is unchanged.
+#[derive(Clone, Default)]
+pub struct DispatchControl {
+    pub run: RunControl,
+    pub observer: Option<Arc<dyn SessionEventObserver>>,
+}
+
+/// Allocates Session and Run identifiers.
+///
+/// The default, [`SequentialIds`], reproduces the `session-N` / `run-N`
+/// format every existing caller and recorded benchmark campaign depends on.
+/// A host that runs one `SessionManager` per external session (for example
+/// one per ACP connection) needs identifiers unique across managers, not just
+/// within one, and supplies its own allocator (a UUIDv7 generator, typically)
+/// through [`SessionManager::with_ids`].
+pub trait IdAllocator: Send + std::fmt::Debug {
+    fn session_id(&mut self) -> SessionId;
+    fn run_id(&mut self) -> RunId;
+}
+
+#[derive(Debug, Default)]
+pub struct SequentialIds {
+    next_session_id: u64,
+    next_run_id: u64,
+}
+
+impl IdAllocator for SequentialIds {
+    fn session_id(&mut self) -> SessionId {
+        self.next_session_id += 1;
+        SessionId::new(format!("session-{}", self.next_session_id))
+    }
+
+    fn run_id(&mut self) -> RunId {
+        self.next_run_id += 1;
+        RunId::new(format!("run-{}", self.next_run_id))
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SessionRecord {
@@ -40,14 +108,25 @@ impl SessionRecord {
             .collect()
     }
 
+    /// Append one canonical Event and, if a host attached one, notify the
+    /// observer. This is the single place envelopes are constructed, so both
+    /// runtime-driven Events (through `SessionRuntimeEventLog`) and
+    /// session-lifecycle Events (through `SessionManager::append_events`)
+    /// reach the same observer through the same path.
     fn append_event(
         &mut self,
         command_id: &CommandId,
         run_id: Option<&RunId>,
         event: Event,
+        observer: Option<&dyn SessionEventObserver>,
     ) -> EventEnvelope {
         self.next_sequence += 1;
         let sequence = self.next_sequence;
+        let visibility = if event.is_client_visible() {
+            EventVisibility::Client
+        } else {
+            EventVisibility::Internal
+        };
         let envelope = EventEnvelope::new(
             EventMetadata {
                 event_id: EventId::new(format!("event-{}-{sequence}", self.id)),
@@ -61,6 +140,9 @@ impl SessionRecord {
             event,
         );
         self.events.push(envelope.clone());
+        if let Some(observer) = observer {
+            observer.observe(&envelope, visibility);
+        }
         envelope
     }
 }
@@ -69,15 +151,22 @@ struct SessionRuntimeEventLog<'a> {
     session: &'a mut SessionRecord,
     command_id: CommandId,
     run_id: Option<RunId>,
+    observer: Option<&'a dyn SessionEventObserver>,
     emitted: Vec<EventEnvelope>,
 }
 
 impl<'a> SessionRuntimeEventLog<'a> {
-    fn new(session: &'a mut SessionRecord, command_id: CommandId, run_id: Option<RunId>) -> Self {
+    fn new(
+        session: &'a mut SessionRecord,
+        command_id: CommandId,
+        run_id: Option<RunId>,
+        observer: Option<&'a dyn SessionEventObserver>,
+    ) -> Self {
         Self {
             session,
             command_id,
             run_id,
+            observer,
             emitted: Vec::new(),
         }
     }
@@ -94,9 +183,9 @@ impl RuntimeEventLog for SessionRuntimeEventLog<'_> {
 
     fn append(&mut self, event: Event) -> EventEnvelope {
         let client_visible = event.is_client_visible();
-        let envelope = self
-            .session
-            .append_event(&self.command_id, self.run_id.as_ref(), event);
+        let envelope =
+            self.session
+                .append_event(&self.command_id, self.run_id.as_ref(), event, self.observer);
         if client_visible {
             self.emitted.push(envelope.clone());
         }
@@ -132,18 +221,23 @@ pub struct SessionManager<R> {
     runtime: R,
     sessions: BTreeMap<SessionId, SessionRecord>,
     processed_commands: BTreeMap<CommandId, (CommandEnvelope, Vec<EventEnvelope>)>,
-    next_session_id: u64,
-    next_run_id: u64,
+    ids: Box<dyn IdAllocator>,
 }
 
 impl<R> SessionManager<R> {
     pub fn new(runtime: R) -> Self {
+        Self::with_ids(runtime, Box::new(SequentialIds::default()))
+    }
+
+    /// Construct with a caller-supplied [`IdAllocator`], for a host that runs
+    /// one `SessionManager` per external session and needs identifiers
+    /// unique across managers, not just within one.
+    pub fn with_ids(runtime: R, ids: Box<dyn IdAllocator>) -> Self {
         Self {
             runtime,
             sessions: BTreeMap::new(),
             processed_commands: BTreeMap::new(),
-            next_session_id: 1,
-            next_run_id: 1,
+            ids,
         }
     }
 
@@ -156,15 +250,11 @@ impl<R> SessionManager<R> {
     }
 
     fn allocate_session_id(&mut self) -> SessionId {
-        let id = SessionId::new(format!("session-{}", self.next_session_id));
-        self.next_session_id += 1;
-        id
+        self.ids.session_id()
     }
 
     fn allocate_run_id(&mut self) -> RunId {
-        let id = RunId::new(format!("run-{}", self.next_run_id));
-        self.next_run_id += 1;
-        id
+        self.ids.run_id()
     }
 
     fn require_session_id(
@@ -208,6 +298,7 @@ impl<R> SessionManager<R> {
         session_id: &SessionId,
         run_id: Option<&RunId>,
         events: impl IntoIterator<Item = Event>,
+        observer: Option<&dyn SessionEventObserver>,
     ) -> Vec<EventEnvelope> {
         let session = self
             .sessions
@@ -215,15 +306,37 @@ impl<R> SessionManager<R> {
             .expect("session must exist before events are appended");
         events
             .into_iter()
-            .map(|event| session.append_event(command_id, run_id, event))
+            .map(|event| session.append_event(command_id, run_id, event, observer))
             .collect()
     }
 }
 
 impl<R: RuntimeEngine> SessionManager<R> {
+    /// Handle one Command with no host control attached: no cancellation or
+    /// permission gate reaches Runtime, and nothing observes Events as they
+    /// occur. Delegates to [`Self::dispatch`] with the default
+    /// [`DispatchControl`], so its behavior is exactly what it was before
+    /// `dispatch` existed.
     pub async fn handle(
         &mut self,
         envelope: CommandEnvelope,
+    ) -> Result<Vec<EventEnvelope>, SessionError> {
+        self.dispatch(envelope, DispatchControl::default()).await
+    }
+
+    /// Handle one Command with host-supplied control for the run it starts
+    /// and an observer notified of every Event as it is appended, including
+    /// internal ones. Still returns only the client-visible subset, exactly
+    /// like [`Self::handle`]; the observer is the channel for everything
+    /// else.
+    ///
+    /// A retried `command_id` (see the idempotency rule below) is replayed
+    /// from the cached result without re-invoking Runtime, so the observer is
+    /// not notified a second time for it: nothing new was appended.
+    pub async fn dispatch(
+        &mut self,
+        envelope: CommandEnvelope,
+        control: DispatchControl,
     ) -> Result<Vec<EventEnvelope>, SessionError> {
         if envelope.protocol_version != PROTOCOL_VERSION {
             return Err(SessionError::new(
@@ -250,7 +363,7 @@ impl<R: RuntimeEngine> SessionManager<R> {
 
         let original = envelope.clone();
         let command_id = envelope.command_id.clone();
-        let events = self.handle_once(envelope).await?;
+        let events = self.handle_once(envelope, &control).await?;
         self.processed_commands
             .insert(command_id, (original, events.clone()));
         Ok(events)
@@ -259,7 +372,9 @@ impl<R: RuntimeEngine> SessionManager<R> {
     async fn handle_once(
         &mut self,
         envelope: CommandEnvelope,
+        control: &DispatchControl,
     ) -> Result<Vec<EventEnvelope>, SessionError> {
+        let observer = control.observer.as_deref();
         let command_id = envelope.command_id;
         match envelope.command {
             Command::SessionCreate { workspace_id } => {
@@ -287,6 +402,7 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     &session_id,
                     None,
                     [Event::SessionCreated { workspace_id }],
+                    observer,
                 ))
             }
             Command::SessionFork { source_session_id } => {
@@ -325,6 +441,7 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     &session_id,
                     None,
                     [Event::SessionForked { source_session_id }],
+                    observer,
                 ))
             }
             Command::SessionResume => {
@@ -344,7 +461,13 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .get_mut(&session_id)
                     .expect("validated session exists")
                     .status = SessionStatus::Active;
-                Ok(self.append_events(&command_id, &session_id, None, [Event::SessionResumed]))
+                Ok(self.append_events(
+                    &command_id,
+                    &session_id,
+                    None,
+                    [Event::SessionResumed],
+                    observer,
+                ))
             }
             Command::SessionSuspend => {
                 let session_id = self.require_session_id(envelope.session_id.as_ref())?;
@@ -353,7 +476,13 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .get_mut(&session_id)
                     .expect("validated session exists")
                     .status = SessionStatus::Suspended;
-                Ok(self.append_events(&command_id, &session_id, None, [Event::SessionSuspended]))
+                Ok(self.append_events(
+                    &command_id,
+                    &session_id,
+                    None,
+                    [Event::SessionSuspended],
+                    observer,
+                ))
             }
             Command::SessionClose => {
                 let session_id = self.require_session_id(envelope.session_id.as_ref())?;
@@ -375,7 +504,13 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .get_mut(&session_id)
                     .expect("validated session exists")
                     .status = SessionStatus::Closed;
-                Ok(self.append_events(&command_id, &session_id, None, [Event::SessionClosed]))
+                Ok(self.append_events(
+                    &command_id,
+                    &session_id,
+                    None,
+                    [Event::SessionClosed],
+                    observer,
+                ))
             }
             Command::MessageSend { content } => {
                 let session_id = self.require_session_id(envelope.session_id.as_ref())?;
@@ -392,6 +527,7 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     &session_id,
                     Some(&run_id),
                     [Event::RunScheduled],
+                    observer,
                 );
                 self.sessions
                     .get_mut(&session_id)
@@ -405,10 +541,20 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .sessions
                     .get_mut(&session_id)
                     .expect("validated session exists");
-                let mut event_log =
-                    SessionRuntimeEventLog::new(session, command_id.clone(), Some(run_id.clone()));
+                let mut event_log = SessionRuntimeEventLog::new(
+                    session,
+                    command_id.clone(),
+                    Some(run_id.clone()),
+                    observer,
+                );
                 if let Err(error) = runtime
-                    .handle(&session_id, Some(&run_id), &mut event_log, &runtime_command)
+                    .handle_with_control(
+                        &session_id,
+                        Some(&run_id),
+                        &mut event_log,
+                        &runtime_command,
+                        &control.run,
+                    )
                     .await
                 {
                     event_log.append(Event::RunFailed {
@@ -452,10 +598,20 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .sessions
                     .get_mut(&session_id)
                     .expect("validated session exists");
-                let mut event_log =
-                    SessionRuntimeEventLog::new(session, command_id, Some(run_id.clone()));
+                let mut event_log = SessionRuntimeEventLog::new(
+                    session,
+                    command_id,
+                    Some(run_id.clone()),
+                    observer,
+                );
                 runtime
-                    .handle(&session_id, Some(&run_id), &mut event_log, &command)
+                    .handle_with_control(
+                        &session_id,
+                        Some(&run_id),
+                        &mut event_log,
+                        &command,
+                        &control.run,
+                    )
                     .await
                     .map_err(|error| {
                         SessionError::new(ErrorCode::RuntimeFailure, error.to_string())
@@ -478,9 +634,10 @@ impl<R: RuntimeEngine> SessionManager<R> {
                     .sessions
                     .get_mut(&session_id)
                     .expect("validated session exists");
-                let mut event_log = SessionRuntimeEventLog::new(session, command_id, None);
+                let mut event_log =
+                    SessionRuntimeEventLog::new(session, command_id, None, observer);
                 if let Err(error) = runtime
-                    .handle(&session_id, None, &mut event_log, &command)
+                    .handle_with_control(&session_id, None, &mut event_log, &command, &control.run)
                     .await
                 {
                     event_log.append(Event::Error {
@@ -524,13 +681,22 @@ fn terminal_run_status(events: &[EventEnvelope]) -> Option<RunStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use structure_model::{
+        ContentBlock, MessageItem, RuntimeItem, RuntimeRole, ToolCallItem, ToolResultItem,
+    };
     use structure_model::{FinishReason, RuntimeResponse, RuntimeUsage, ShortMemoryItem};
     use structure_protocol::ContextEntry;
     use structure_provider::{
         EchoModel, ModelProvider, ModelRunRequest, ModelRunResult, ProviderError,
     };
     use structure_runner::NoopRunner;
-    use structure_runtime::CoreRuntime;
+    use structure_runner::{
+        RunnerEnvironment, RunnerError, RunnerOutput, ToolExecutionRequest, ToolExecutionResult,
+    };
+    use structure_runtime::{
+        CoreRuntime, RunCancellation, ToolPermissionGate, ToolPermissionPolicy, ToolPermissionRule,
+    };
 
     #[derive(Debug, Default)]
     struct CapturingModel {
@@ -985,5 +1151,448 @@ mod tests {
             .await
             .expect_err("closed session rejects work");
         assert_eq!(error.code, ErrorCode::InvalidSessionState);
+    }
+
+    /// A model that emits a real `model.response.item` (an internal Event)
+    /// in addition to `final_output`, so a run through it produces at least
+    /// one internal Event alongside its client-visible ones.
+    #[derive(Debug, Default)]
+    struct TextItemModel;
+
+    impl ModelProvider for TextItemModel {
+        async fn complete(
+            &mut self,
+            request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            let output = format!("echo: {}", request.input);
+            Ok(ModelRunResult {
+                final_output: Some(output.clone()),
+                prepared_request: None,
+                response: Some(RuntimeResponse {
+                    items: vec![RuntimeItem::Message(MessageItem::text(
+                        RuntimeRole::Assistant,
+                        output,
+                    ))],
+                    finish_reason: Some(FinishReason::Stop),
+                    usage: RuntimeUsage::default(),
+                    provider_state: None,
+                }),
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            Ok(false)
+        }
+    }
+
+    /// Records every envelope and its visibility, in the order `observe` is
+    /// called. `observe` takes `&self`, so a std `Mutex` provides the
+    /// interior mutability; no `.await` is ever held across the lock.
+    #[derive(Debug, Default)]
+    struct RecordingObserver(Mutex<Vec<(EventEnvelope, EventVisibility)>>);
+
+    impl RecordingObserver {
+        fn seen(&self) -> Vec<(EventEnvelope, EventVisibility)> {
+            self.0
+                .lock()
+                .expect("observer mutex is not poisoned")
+                .clone()
+        }
+    }
+
+    impl SessionEventObserver for RecordingObserver {
+        fn observe(&self, envelope: &EventEnvelope, visibility: EventVisibility) {
+            self.0
+                .lock()
+                .expect("observer mutex is not poisoned")
+                .push((envelope.clone(), visibility));
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_with_the_default_control_matches_handle_exactly() {
+        // The default DispatchControl must be behaviorally invisible: this is
+        // what lets `handle()` delegate to `dispatch()` without changing what
+        // every existing caller and recorded benchmark campaign observes.
+        let mut plain = SessionManager::new(CoreRuntime::new(EchoModel::default(), NoopRunner));
+        let created = plain
+            .handle(command(
+                "create",
+                None,
+                Command::SessionCreate {
+                    workspace_id: WorkspaceId::new("workspace-1"),
+                },
+            ))
+            .await
+            .expect("session is created");
+        let session_id = created[0].session_id.clone();
+        let expected = plain
+            .handle(command(
+                "message",
+                Some(session_id.clone()),
+                Command::MessageSend {
+                    content: "hello".to_owned(),
+                },
+            ))
+            .await
+            .expect("message is handled");
+
+        let mut controlled =
+            SessionManager::new(CoreRuntime::new(EchoModel::default(), NoopRunner));
+        controlled
+            .dispatch(
+                command(
+                    "create",
+                    None,
+                    Command::SessionCreate {
+                        workspace_id: WorkspaceId::new("workspace-1"),
+                    },
+                ),
+                DispatchControl::default(),
+            )
+            .await
+            .expect("session is created");
+        let events = controlled
+            .dispatch(
+                command(
+                    "message",
+                    Some(session_id),
+                    Command::MessageSend {
+                        content: "hello".to_owned(),
+                    },
+                ),
+                DispatchControl::default(),
+            )
+            .await
+            .expect("message is handled");
+
+        // occurred_at_ms is wall-clock and explicitly informational (see
+        // docs/protocol.md: consumers order by sequence, never by it), so two
+        // separately timed runs may legitimately differ there by a
+        // millisecond. The claim under test is that dispatch with the
+        // default control changes none of the canonical content.
+        let content = |envelopes: &[EventEnvelope]| {
+            envelopes
+                .iter()
+                .map(|envelope| envelope.event.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(content(&events), content(&expected));
+    }
+
+    #[tokio::test]
+    async fn the_observer_sees_every_event_including_internal_ones_in_order() {
+        let observer: Arc<RecordingObserver> = Arc::default();
+        let mut manager = SessionManager::new(CoreRuntime::new(TextItemModel, NoopRunner));
+
+        let created = manager
+            .dispatch(
+                command(
+                    "create",
+                    None,
+                    Command::SessionCreate {
+                        workspace_id: WorkspaceId::new("workspace-1"),
+                    },
+                ),
+                DispatchControl {
+                    run: RunControl::default(),
+                    observer: Some(observer.clone()),
+                },
+            )
+            .await
+            .expect("session is created");
+        let session_id = created[0].session_id.clone();
+
+        let returned = manager
+            .dispatch(
+                command(
+                    "message",
+                    Some(session_id),
+                    Command::MessageSend {
+                        content: "hi".to_owned(),
+                    },
+                ),
+                DispatchControl {
+                    run: RunControl::default(),
+                    observer: Some(observer.clone()),
+                },
+            )
+            .await
+            .expect("message is handled");
+
+        let seen = observer.seen();
+
+        // Sequence order is preserved end to end.
+        let sequences: Vec<u64> = seen.iter().map(|(envelope, _)| envelope.sequence).collect();
+        let mut sorted = sequences.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sequences, sorted,
+            "observed order must match sequence order"
+        );
+
+        // session.created is a lifecycle Event appended through append_events,
+        // not through SessionRuntimeEventLog; the observer must see it too.
+        assert!(seen.iter().any(|(envelope, visibility)| matches!(
+            envelope.event,
+            Event::SessionCreated { .. }
+        ) && *visibility
+            == EventVisibility::Client));
+
+        // model.response.item is internal: never in dispatch's own return
+        // value, but the observer must see it, and label it Internal.
+        assert!(
+            !returned
+                .iter()
+                .any(|envelope| matches!(envelope.event, Event::ModelResponseItem { .. })),
+            "model.response.item must not be client-visible"
+        );
+        assert!(seen.iter().any(|(envelope, visibility)| matches!(
+            envelope.event,
+            Event::ModelResponseItem { .. }
+        ) && *visibility
+            == EventVisibility::Internal));
+
+        // Every Event dispatch returned was also observed, labeled Client.
+        for envelope in &returned {
+            assert!(
+                seen.iter()
+                    .any(
+                        |(seen_envelope, visibility)| seen_envelope.event_id == envelope.event_id
+                            && *visibility == EventVisibility::Client
+                    ),
+                "returned event {:?} was not observed as Client-visible",
+                envelope.event_id
+            );
+        }
+    }
+
+    /// Hangs until cancelled, so a run through it only ends if cancellation
+    /// actually reaches Runtime through `dispatch`.
+    #[derive(Debug, Default)]
+    struct HangingModel;
+
+    impl ModelProvider for HangingModel {
+        async fn complete(
+            &mut self,
+            _request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            std::future::pending().await
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_propagates_cancellation_to_a_hanging_run() {
+        let mut manager = SessionManager::new(CoreRuntime::new(HangingModel, NoopRunner));
+        let created = manager
+            .handle(command(
+                "create",
+                None,
+                Command::SessionCreate {
+                    workspace_id: WorkspaceId::new("workspace-1"),
+                },
+            ))
+            .await
+            .expect("session is created");
+        let session_id = created[0].session_id.clone();
+
+        let cancellation = RunCancellation::new();
+        let control = DispatchControl {
+            run: RunControl {
+                cancellation: Some(cancellation.clone()),
+                permissions: None,
+            },
+            observer: None,
+        };
+        let run = manager.dispatch(
+            command(
+                "message",
+                Some(session_id),
+                Command::MessageSend {
+                    content: "hang".to_owned(),
+                },
+            ),
+            control,
+        );
+        let cancel_after_a_moment = async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            cancellation.cancel();
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(run, cancel_after_a_moment)
+        })
+        .await
+        .expect("dispatch must end once cancelled, not hang");
+
+        let events = result.expect("a cancelled run is still a handled Command");
+        assert!(matches!(
+            events.last(),
+            Some(EventEnvelope {
+                event: Event::RunCancelled,
+                ..
+            })
+        ));
+    }
+
+    /// Denies every call, so a permission gate threaded through `dispatch`
+    /// must be what stops the tool from ever reaching this runner.
+    #[derive(Debug, Default)]
+    struct CountingRunner {
+        executed: Vec<String>,
+    }
+
+    impl RunnerEnvironment for CountingRunner {
+        async fn execute(
+            &mut self,
+            request: ToolExecutionRequest,
+        ) -> Result<ToolExecutionResult, RunnerError> {
+            self.executed.push(request.call.call_id.clone());
+            Ok(ToolExecutionResult {
+                result: ToolResultItem {
+                    id: None,
+                    call_id: request.call.call_id,
+                    name: Some(request.call.name),
+                    content: vec![ContentBlock::text("done")],
+                    is_error: false,
+                },
+                output: vec![RunnerOutput::Stdout("done".to_owned())],
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, RunnerError> {
+            Ok(false)
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct OneToolCallModel {
+        called: bool,
+    }
+
+    impl ModelProvider for OneToolCallModel {
+        async fn complete(
+            &mut self,
+            _request: ModelRunRequest,
+        ) -> Result<ModelRunResult, ProviderError> {
+            if self.called {
+                return Ok(ModelRunResult {
+                    final_output: Some("done".to_owned()),
+                    prepared_request: None,
+                    response: None,
+                });
+            }
+            self.called = true;
+            Ok(ModelRunResult {
+                final_output: None,
+                prepared_request: None,
+                response: Some(RuntimeResponse {
+                    items: vec![RuntimeItem::ToolCall(ToolCallItem {
+                        id: None,
+                        call_id: "call-1".to_owned(),
+                        name: "shell".to_owned(),
+                        arguments: serde_json::json!({}),
+                        provider_state: None,
+                    })],
+                    finish_reason: Some(FinishReason::ToolCalls),
+                    usage: RuntimeUsage::default(),
+                    provider_state: None,
+                }),
+            })
+        }
+
+        async fn cancel(&mut self, _run_id: &RunId) -> Result<bool, ProviderError> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_propagates_the_permission_gate_and_denies_the_call() {
+        let mut manager = SessionManager::new(CoreRuntime::new(
+            OneToolCallModel::default(),
+            CountingRunner::default(),
+        ));
+        let created = manager
+            .handle(command(
+                "create",
+                None,
+                Command::SessionCreate {
+                    workspace_id: WorkspaceId::new("workspace-1"),
+                },
+            ))
+            .await
+            .expect("session is created");
+        let session_id = created[0].session_id.clone();
+
+        let mut by_tool = std::collections::BTreeMap::new();
+        by_tool.insert("shell".to_owned(), ToolPermissionRule::Deny);
+        let control = DispatchControl {
+            run: RunControl {
+                cancellation: None,
+                permissions: Some(ToolPermissionGate {
+                    policy: ToolPermissionPolicy {
+                        default: ToolPermissionRule::Allow,
+                        by_tool,
+                    },
+                    approver: None,
+                }),
+            },
+            observer: None,
+        };
+        let events = manager
+            .dispatch(
+                command(
+                    "message",
+                    Some(session_id),
+                    Command::MessageSend {
+                        content: "run shell".to_owned(),
+                    },
+                ),
+                control,
+            )
+            .await
+            .expect("the run is handled");
+
+        assert!(
+            events.iter().any(|envelope| matches!(
+                &envelope.event,
+                Event::ToolCallPermissionResolved {
+                    outcome: structure_protocol::ToolPermissionOutcome::Denied,
+                    ..
+                }
+            )),
+            "the gate's denial must reach dispatch's own return value: {events:?}"
+        );
+        assert!(
+            manager.runtime().runner().executed.is_empty(),
+            "a denied call must never reach the runner"
+        );
+    }
+
+    #[test]
+    fn a_custom_id_allocator_actually_changes_the_produced_identifiers() {
+        #[derive(Debug, Default)]
+        struct FixedIds(u64);
+        impl IdAllocator for FixedIds {
+            fn session_id(&mut self) -> SessionId {
+                self.0 += 1;
+                SessionId::new(format!("s-{}", self.0))
+            }
+            fn run_id(&mut self) -> RunId {
+                self.0 += 1;
+                RunId::new(format!("r-{}", self.0))
+            }
+        }
+        let mut manager = SessionManager::with_ids(
+            CoreRuntime::new(EchoModel::default(), NoopRunner),
+            Box::new(FixedIds::default()),
+        );
+        let session_id = manager.allocate_session_id();
+        let run_id = manager.allocate_run_id();
+        assert_eq!(session_id, SessionId::new("s-1"));
+        assert_eq!(run_id, RunId::new("r-2"));
     }
 }

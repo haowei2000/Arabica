@@ -12,6 +12,7 @@ structure-protocol = { path = "../structure-protocol" }
 structure-runtime = { path = "../structure-runtime" }
 
 [dev-dependencies]
+serde_json.workspace = true
 structure-model = { path = "../structure-model" }
 structure-provider = { path = "../structure-provider" }
 structure-runner = { path = "../structure-runner" }

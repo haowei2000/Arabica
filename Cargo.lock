@@ -1318,6 +1318,7 @@ dependencies = [
 name = "structure-session"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "structure-model",
  "structure-protocol",
  "structure-provider",
