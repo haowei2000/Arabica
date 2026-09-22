@@ -6,15 +6,24 @@
 //! outright, and what it excludes is invisible to the model. `--allow-shell`
 //! and `--read-only` are the only controls, decided once at startup, not
 //! per call. See `docs/runtime_core_architecture.md` Appendix B.
+//!
+//! Every run persists to `$STRUCTURE_HOME` (`structure_adapters::FileSessionStore`)
+//! so a later `--continue`/`--resume` has something to pick back up --
+//! `structure sessions list` (`crates/structure-cli/src/sessions.rs`) reads
+//! the same files to show what is available.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use structure_protocol::{Command, CommandEnvelope, CommandId, Event, EventEnvelope};
+use structure_adapters::{FileSessionStore, NewSession, StoredSession};
+use structure_protocol::{Command, CommandEnvelope, CommandId, Event, EventEnvelope, WorkspaceId};
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
 use structure_runner::LocalTool;
 use structure_runtime::{RunCancellation, RunControl};
-use structure_session::{DispatchControl, EventVisibility, SessionEventObserver, SessionManager};
+use structure_session::{
+    DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver, SessionManager,
+};
 
 use crate::host::{
     HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime, workspace_id_for,
@@ -42,6 +51,17 @@ pub struct PrintOptions {
     pub output_format: OutputFormat,
     pub allow_shell: bool,
     pub read_only: bool,
+    pub resume: Resume,
+}
+
+/// Which session `-p` should send `task` to.
+pub enum Resume {
+    /// Start a fresh session, as `-p` always did before persistence existed.
+    None,
+    /// `--continue`: the most recently active session in this workspace.
+    Continue,
+    /// `--resume <ID>`: a specific session id, looked up in this workspace.
+    Id(String),
 }
 
 /// Reads the task text for `-p`: the flag's value verbatim, or all of
@@ -173,42 +193,148 @@ pub async fn run(provider_config: ApiProviderConfig, options: PrintOptions) -> i
             return EXIT_CONFIG_ERROR;
         }
     };
+    let structure_home = match structure_adapters::default_structure_home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+    let workspace_id = workspace_id_for(&runner_root);
 
-    match run_task(model, &runner_root, policy, options).await {
+    // Finding what to resume is a configuration question -- "does the
+    // session the user named exist" -- not a run failure, so it is answered
+    // here, before there is a runtime to fail, and reported as such
+    // (EXIT_CONFIG_ERROR) rather than folded into run_task's own failure
+    // handling (EXIT_FAILED, for a provider or runtime problem once a run
+    // is actually under way).
+    let resumed = match resolve_resume(&options.resume, &structure_home, &workspace_id) {
+        Ok(resumed) => resumed,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    match run_task(
+        model,
+        &runner_root,
+        policy,
+        options,
+        structure_home,
+        workspace_id,
+        resumed,
+    )
+    .await
+    {
         Ok(outcome) => report(outcome),
-        Err(session_error) => {
-            eprintln!("error: {session_error}");
+        Err(error) => {
+            eprintln!("error: {error}");
             EXIT_FAILED
         }
     }
 }
 
+/// Resolves `--continue`/`--resume <ID>` to the stored session (if any) that
+/// `run_task` should append to, without touching the runtime: a pure lookup
+/// against `$STRUCTURE_HOME` so the "does this session exist" question is
+/// directly testable without spinning up a model or a `SessionManager`.
+fn resolve_resume(
+    resume: &Resume,
+    structure_home: &Path,
+    workspace_id: &WorkspaceId,
+) -> Result<Option<StoredSession>, String> {
+    match resume {
+        Resume::None => Ok(None),
+        Resume::Continue => {
+            let listings = FileSessionStore::list_sessions(structure_home, Some(workspace_id))
+                .map_err(|error| error.to_string())?;
+            let Some(most_recent) = listings.first() else {
+                return Err("no session to continue in this workspace".to_owned());
+            };
+            FileSessionStore::read(&most_recent.path)
+                .map(Some)
+                .map_err(|error| error.to_string())
+        }
+        Resume::Id(id) => FileSessionStore::read_session(
+            structure_home,
+            workspace_id,
+            &structure_protocol::SessionId::new(id.clone()),
+        )
+        .map(Some)
+        .map_err(|error| format!("could not resume session {id}: {error}")),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_task(
     model: HostModel,
     runner_root: &Path,
     policy: LocalRunnerPolicy,
     options: PrintOptions,
-) -> Result<Outcome, structure_session::SessionError> {
+    structure_home: PathBuf,
+    workspace_id: WorkspaceId,
+    resumed: Option<StoredSession>,
+) -> Result<Outcome, Box<dyn std::error::Error>> {
     let runtime: HostRuntime = build_host_runtime(model, runner_root, policy);
     let mut manager = SessionManager::new(runtime);
 
-    let create = CommandEnvelope::new(
-        CommandId::new(uuid::Uuid::now_v7().to_string()),
-        None,
-        Command::SessionCreate {
-            workspace_id: workspace_id_for(runner_root),
-        },
-    );
-    let created = manager.dispatch(create, DispatchControl::default()).await?;
-    let session_id = created
-        .first()
-        .map(|envelope| envelope.session_id.clone())
-        .expect("session.create always produces at least one Event");
-
-    let observer: std::sync::Arc<dyn SessionEventObserver> = match options.output_format {
-        OutputFormat::Text => std::sync::Arc::new(TextProgressObserver),
-        OutputFormat::Jsonl => std::sync::Arc::new(JsonlObserver),
+    let (session_id, store) = match resumed {
+        Some(stored) => {
+            let session_id = stored.header.id.clone();
+            let path = FileSessionStore::session_path(&structure_home, &workspace_id, &session_id);
+            manager.restore_session(
+                stored.into_snapshot(),
+                CommandId::new(uuid::Uuid::now_v7().to_string()),
+                None,
+            )?;
+            let store = FileSessionStore::open_existing(&path)?;
+            (session_id, store)
+        }
+        None => {
+            let create = CommandEnvelope::new(
+                CommandId::new(uuid::Uuid::now_v7().to_string()),
+                None,
+                Command::SessionCreate {
+                    workspace_id: workspace_id.clone(),
+                },
+            );
+            let created = manager.dispatch(create, DispatchControl::default()).await?;
+            let session_created = created
+                .into_iter()
+                .next()
+                .expect("session.create always produces at least one Event");
+            let session_id = session_created.session_id.clone();
+            let store = FileSessionStore::create(
+                &structure_home,
+                NewSession {
+                    session_id: &session_id,
+                    workspace_id: &workspace_id,
+                    cwd: runner_root,
+                    profile: None,
+                    instructions_sha256: None,
+                },
+            )?;
+            // dispatch's own return value already has this Event; nothing
+            // observed it live because the store could not exist before its
+            // own session_id -- allocated inside that same dispatch call --
+            // was known. Persisting it here closes that one-event gap
+            // rather than leaving session.created permanently missing from
+            // the file restore_session later requires it to start with.
+            store.observe(&session_created, EventVisibility::Client);
+            (session_id, store)
+        }
     };
+
+    let progress_observer: Arc<dyn SessionEventObserver> = match options.output_format {
+        OutputFormat::Text => Arc::new(TextProgressObserver),
+        OutputFormat::Jsonl => Arc::new(JsonlObserver),
+    };
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+        Arc::new(store) as Arc<dyn SessionEventObserver>,
+        progress_observer,
+    ]));
+
     let cancellation = RunCancellation::new();
     let ctrl_c = tokio::spawn({
         let cancellation = cancellation.clone();
@@ -385,5 +511,124 @@ mod tests {
             .expect("a client-visible event must produce a line")
             .expect("serialization succeeds");
         assert!(line.contains("run.started"));
+    }
+
+    fn temp_home(label: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!("structure-cli-print-{label}-{unique}"))
+    }
+
+    fn seed_session(home: &Path, workspace_id: &WorkspaceId) -> structure_protocol::SessionId {
+        let session_id = structure_protocol::SessionId::new("session-1");
+        FileSessionStore::create(
+            home,
+            NewSession {
+                session_id: &session_id,
+                workspace_id,
+                cwd: Path::new("/repo"),
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .expect("store creates");
+        session_id
+    }
+
+    #[test]
+    fn resume_none_resolves_to_nothing_without_touching_the_filesystem() {
+        // A structure_home that does not exist: if this ever touched the
+        // filesystem, the lookup itself would error rather than returning
+        // Ok(None).
+        let home = PathBuf::from("/nonexistent/does-not-exist");
+        let workspace_id = WorkspaceId::new("ws-1");
+        assert!(
+            resolve_resume(&Resume::None, &home, &workspace_id)
+                .expect("None never fails")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn continue_with_no_sessions_in_the_workspace_is_a_configuration_error() {
+        let home = temp_home("continue-empty");
+        let workspace_id = WorkspaceId::new("ws-1");
+        std::fs::create_dir_all(&home).expect("home creates");
+
+        let error = resolve_resume(&Resume::Continue, &home, &workspace_id)
+            .expect_err("no session exists to continue");
+        assert!(
+            error.contains("no session to continue"),
+            "unexpected message: {error}"
+        );
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn continue_resolves_to_the_most_recently_active_session() {
+        let home = temp_home("continue-hit");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let session_id = seed_session(&home, &workspace_id);
+
+        let resumed = resolve_resume(&Resume::Continue, &home, &workspace_id)
+            .expect("a session exists to continue")
+            .expect("Continue resolves to Some when a session exists");
+        assert_eq!(resumed.header.id, session_id);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn resume_by_an_unknown_id_is_a_configuration_error() {
+        let home = temp_home("resume-unknown");
+        let workspace_id = WorkspaceId::new("ws-1");
+        std::fs::create_dir_all(&home).expect("home creates");
+
+        let error = resolve_resume(
+            &Resume::Id("no-such-session".to_owned()),
+            &home,
+            &workspace_id,
+        )
+        .expect_err("the named session does not exist");
+        assert!(
+            error.contains("could not resume session no-such-session"),
+            "unexpected message: {error}"
+        );
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn resume_by_a_known_id_resolves_to_that_session() {
+        let home = temp_home("resume-hit");
+        let workspace_id = WorkspaceId::new("ws-1");
+        let session_id = seed_session(&home, &workspace_id);
+
+        let resumed = resolve_resume(&Resume::Id(session_id.0.clone()), &home, &workspace_id)
+            .expect("the named session exists")
+            .expect("Id resolves to Some when the session exists");
+        assert_eq!(resumed.header.id, session_id);
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn resume_by_id_does_not_see_a_session_in_a_different_workspace() {
+        let home = temp_home("resume-cross-workspace");
+        let other_workspace = WorkspaceId::new("ws-other");
+        seed_session(&home, &other_workspace);
+
+        let this_workspace = WorkspaceId::new("ws-1");
+        let error = resolve_resume(&Resume::Id("session-1".to_owned()), &home, &this_workspace)
+            .expect_err("session-1 belongs to a different workspace");
+        assert!(
+            error.contains("could not resume session session-1"),
+            "unexpected message: {error}"
+        );
+
+        std::fs::remove_dir_all(&home).ok();
     }
 }

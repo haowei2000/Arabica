@@ -2058,6 +2058,7 @@ dependencies = [
  "clap",
  "serde_json",
  "sha2",
+ "structure-adapters",
  "structure-model",
  "structure-protocol",
  "structure-provider",

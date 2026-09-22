@@ -2,12 +2,12 @@
 //! v1 over stdio; `structure -p "task"` runs one task non-interactively and
 //! exits (see `docs/runtime_core_architecture.md` §11).
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use structure_cli::host::{
     HostConfigArgs, HostModel, LocalRunnerPolicy, build_host_runtime, process_environment,
     resolve_provider_config,
 };
-use structure_cli::print::{self, OutputFormat, PrintOptions};
+use structure_cli::print::{self, OutputFormat, PrintOptions, Resume};
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
 use structure_runner::LocalTool;
 
@@ -18,6 +18,12 @@ struct Cli {
     config: HostConfigArgs,
     #[command(subcommand)]
     command: Option<Commands>,
+    #[command(flatten)]
+    print_args: PrintArgs,
+}
+
+#[derive(Args, Debug)]
+struct PrintArgs {
     /// Run one task non-interactively and exit. Pass "-" to read the task
     /// from stdin instead of the argument.
     #[arg(short = 'p', long = "print", value_name = "TASK")]
@@ -33,6 +39,26 @@ struct Cli {
     /// Restrict -p to read-only tools. Mutually exclusive with --allow-shell.
     #[arg(long)]
     read_only: bool,
+    /// Continue the most recently active session in this workspace instead
+    /// of starting a new one. Mutually exclusive with --resume.
+    #[arg(long = "continue", conflicts_with = "resume")]
+    resume_last: bool,
+    /// Resume a specific session by id instead of starting a new one.
+    /// Mutually exclusive with --continue. See `structure sessions list`.
+    #[arg(long, value_name = "ID", conflicts_with = "resume_last")]
+    resume: Option<String>,
+}
+
+impl PrintArgs {
+    fn resume_mode(&self) -> Resume {
+        if self.resume_last {
+            Resume::Continue
+        } else if let Some(id) = &self.resume {
+            Resume::Id(id.clone())
+        } else {
+            Resume::None
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -58,29 +84,17 @@ async fn run(cli: Cli) -> i32 {
 
     let Cli {
         command,
-        print: print_task,
-        output_format,
-        allow_shell,
-        read_only,
+        print_args,
         ..
     } = cli;
 
-    match (command, print_task) {
+    match (command, &print_args.print) {
         (Some(Commands::Acp), Some(_)) => {
             eprintln!("error: -p cannot be combined with the acp subcommand");
             2
         }
         (Some(Commands::Acp), None) => run_acp(provider_config).await,
-        (None, Some(task)) => {
-            run_print(
-                provider_config,
-                &task,
-                output_format,
-                allow_shell,
-                read_only,
-            )
-            .await
-        }
+        (None, Some(task)) => run_print(provider_config, task.clone(), print_args).await,
         (None, None) => match describe_configuration(provider_config) {
             Ok(()) => 0,
             Err(error) => {
@@ -110,27 +124,23 @@ async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
     }
 }
 
-async fn run_print(
-    provider_config: ApiProviderConfig,
-    task: &str,
-    output_format: OutputFormat,
-    allow_shell: bool,
-    read_only: bool,
-) -> i32 {
-    let task = match print::resolve_task(task) {
+async fn run_print(provider_config: ApiProviderConfig, task: String, args: PrintArgs) -> i32 {
+    let task = match print::resolve_task(&task) {
         Ok(task) => task,
         Err(error) => {
             eprintln!("error: reading task: {error}");
             return 2;
         }
     };
+    let resume = args.resume_mode();
     print::run(
         provider_config,
         PrintOptions {
             task,
-            output_format,
-            allow_shell,
-            read_only,
+            output_format: args.output_format,
+            allow_shell: args.allow_shell,
+            read_only: args.read_only,
+            resume,
         },
     )
     .await
