@@ -198,7 +198,12 @@ fn message_chunks(content: &[structure_model::ContentBlock]) -> Vec<ContentBlock
         .collect()
 }
 
-fn updates_for(
+/// `pub(super)`: `mod.rs`'s `session/load` handler reuses this to turn a
+/// restored session's stored history into the same `session/update`
+/// notifications a live `session/prompt` would have produced, so a client
+/// sees identical updates whether it watched a turn happen or loaded it
+/// after the fact.
+pub(super) fn updates_for(
     event: &Event,
     run_id: &Option<structure_protocol::RunId>,
     workspace_root: &Path,

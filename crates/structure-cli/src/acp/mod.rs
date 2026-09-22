@@ -28,11 +28,15 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
 };
+use structure_adapters::{FileSessionStore, NewSession};
 use structure_protocol::{
     Command, CommandEnvelope, CommandId, RunId as StructureRunId, SessionId as StructureSessionId,
 };
 use structure_runtime::{RunCancellation, RunControl, ToolPermissionGate};
-use structure_session::{DispatchControl, IdAllocator, SessionError, SessionManager};
+use structure_session::{
+    DispatchControl, EventVisibility, FanOutObserver, IdAllocator, SessionError,
+    SessionEventObserver, SessionManager,
+};
 
 use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime};
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
@@ -65,6 +69,12 @@ struct SessionEntry {
     /// reads this; `session/prompt` sets it for the run it starts and
     /// clears it when that run ends.
     current_run: Mutex<Option<RunCancellation>>,
+    /// Persists every Event for this session across its whole ACP
+    /// connection lifetime (every `session/prompt`, not just one), unlike
+    /// `print.rs`'s `run_task`, which builds a fresh store for one run and
+    /// drops it. `Arc` because `handle_prompt` shares it into a
+    /// per-call `FanOutObserver` alongside the live `AcpObserver`.
+    store: Arc<FileSessionStore>,
 }
 
 /// Builds one fresh [`HostModel`] per `session/new`: every ACP session gets
@@ -77,14 +87,20 @@ type ModelFactory = dyn Fn() -> Result<HostModel, AcpError> + Send + Sync;
 struct AcpState {
     model_factory: Arc<ModelFactory>,
     tool_policy: LocalRunnerPolicy,
+    structure_home: PathBuf,
     sessions: Arc<Mutex<HashMap<AcpSessionId, Arc<SessionEntry>>>>,
 }
 
 impl AcpState {
-    fn new(model_factory: Arc<ModelFactory>, tool_policy: LocalRunnerPolicy) -> Self {
+    fn new(
+        model_factory: Arc<ModelFactory>,
+        tool_policy: LocalRunnerPolicy,
+        structure_home: PathBuf,
+    ) -> Self {
         Self {
             model_factory,
             tool_policy,
+            structure_home,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -115,17 +131,40 @@ impl AcpState {
         let envelope = CommandEnvelope::new(
             CommandId::new(uuid::Uuid::now_v7().to_string()),
             None,
-            Command::SessionCreate { workspace_id },
+            Command::SessionCreate {
+                workspace_id: workspace_id.clone(),
+            },
         );
         let events = manager
             .dispatch(envelope, DispatchControl::default())
             .await
             .map_err(session_error)?;
-        let structure_session_id = events
+        // dispatch's own return value always carries the produced Events
+        // regardless of whether an observer was attached, which is the only
+        // way to get at session.created here at all: the store below needs
+        // this session's id to name its file, but that id is allocated
+        // *inside* this very dispatch call, so the store cannot exist yet to
+        // observe it live. `store.observe` a few lines down closes that gap
+        // by hand (the same pattern `print.rs`'s `run_task` uses).
+        let session_created = events
             .first()
-            .map(|envelope| envelope.session_id.clone())
             .ok_or_else(|| AcpError::internal_error().data("session.create produced no Events"))?;
+        let structure_session_id = session_created.session_id.clone();
         let acp_session_id = AcpSessionId::new(structure_session_id.to_string());
+
+        let store = FileSessionStore::create(
+            &self.structure_home,
+            NewSession {
+                session_id: &structure_session_id,
+                workspace_id: &workspace_id,
+                cwd: &request.cwd,
+                profile: None,
+                instructions_sha256: None,
+            },
+        )
+        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+        store.observe(session_created, EventVisibility::Client);
+
         self.sessions
             .lock()
             .expect("session map lock poisoned")
@@ -136,6 +175,7 @@ impl AcpState {
                     structure_session_id,
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
+                    store: Arc::new(store),
                 }),
             );
         Ok(NewSessionResponse::new(acp_session_id))
@@ -180,12 +220,18 @@ pub async fn run(
     provider_config: ApiProviderConfig,
     tool_policy: LocalRunnerPolicy,
 ) -> AcpResult<()> {
+    let structure_home = structure_adapters::default_structure_home()
+        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
     let model_factory: Arc<ModelFactory> = Arc::new(move || {
         ApiModelProvider::new(provider_config.clone())
             .map(HostModel::Api)
             .map_err(provider_error)
     });
-    serve(AcpState::new(model_factory, tool_policy), Stdio::new()).await
+    serve(
+        AcpState::new(model_factory, tool_policy, structure_home),
+        Stdio::new(),
+    )
+    .await
 }
 
 /// The handler chain, generic over the transport so tests can drive it
@@ -281,6 +327,14 @@ fn handle_prompt(
     *entry.current_run.lock().expect("current_run lock poisoned") = Some(cancellation.clone());
 
     let (permission_tx, permission_rx) = tokio::sync::mpsc::unbounded_channel();
+    let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
+        Arc::clone(&entry.store) as Arc<dyn SessionEventObserver>,
+        Arc::new(mapping::AcpObserver::new(
+            connection.clone(),
+            request.session_id.clone(),
+            entry.cwd.clone(),
+        )) as Arc<dyn SessionEventObserver>,
+    ]));
     let control = DispatchControl {
         run: RunControl {
             cancellation: Some(cancellation),
@@ -289,11 +343,7 @@ fn handle_prompt(
                 approver: Some(permission_tx),
             }),
         },
-        observer: Some(Arc::new(mapping::AcpObserver::new(
-            connection.clone(),
-            request.session_id.clone(),
-            entry.cwd.clone(),
-        ))),
+        observer: Some(observer),
     };
 
     let session_id = request.session_id.clone();
@@ -340,6 +390,7 @@ mod round_trip {
     //! server) is T9's job; this is the minimum that must work for T7 to be
     //! trustworthy at all.
 
+    use std::path::Path;
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
@@ -405,7 +456,11 @@ mod round_trip {
         root
     }
 
-    fn scripted_state(results: Vec<ModelRunResult>, tool_policy: LocalRunnerPolicy) -> AcpState {
+    fn scripted_state(
+        results: Vec<ModelRunResult>,
+        tool_policy: LocalRunnerPolicy,
+        structure_home: &Path,
+    ) -> AcpState {
         let results = StdMutex::new(Some(results));
         let model_factory: Arc<ModelFactory> = Arc::new(move || {
             Ok(HostModel::Scripted(ScriptedModel::new(
@@ -416,7 +471,7 @@ mod round_trip {
                     .unwrap_or_default(),
             )))
         });
-        AcpState::new(model_factory, tool_policy)
+        AcpState::new(model_factory, tool_policy, structure_home.to_path_buf())
     }
 
     /// The exact policy `main.rs` builds for `structure acp` (`coding()`
@@ -438,9 +493,11 @@ mod round_trip {
     #[tokio::test]
     async fn a_plain_text_prompt_ends_the_turn_and_streams_the_message() {
         let root = temp_root("plain-text");
+        let structure_home = temp_root("plain-text-home");
         let state = scripted_state(
             vec![text_result("hello from structure")],
             LocalRunnerPolicy::coding(),
+            &structure_home,
         );
         let (server, client_channel) = spawn_agent(state);
         let updates: Arc<StdMutex<Vec<SessionUpdate>>> = Arc::new(StdMutex::new(Vec::new()));
@@ -502,17 +559,91 @@ mod round_trip {
             .expect("server task did not panic")
             .expect("server run completed cleanly");
         std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
+    }
+
+    #[tokio::test]
+    async fn a_prompt_turn_persists_its_session_to_disk() {
+        let root = temp_root("persist");
+        let structure_home = temp_root("persist-home");
+        let state = scripted_state(
+            vec![text_result("hello from structure")],
+            LocalRunnerPolicy::coding(),
+            &structure_home,
+        );
+        let (server, client_channel) = spawn_agent(state);
+
+        let session_id = tokio::time::timeout(Duration::from_secs(10), {
+            let root = root.clone();
+            ClientRole
+                .builder()
+                .name("test-client")
+                .connect_with(client_channel, async move |cx| {
+                    cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    let new_session = cx
+                        .send_request(AcpNewSessionRequest::new(root))
+                        .block_task()
+                        .await?;
+                    cx.send_request(AcpPromptRequest::new(
+                        new_session.session_id.clone(),
+                        vec![AcpContentBlock::from("say hello")],
+                    ))
+                    .block_task()
+                    .await?;
+                    Ok(new_session.session_id)
+                })
+        })
+        .await
+        .expect("client round trip did not time out")
+        .expect("client round trip succeeded");
+
+        server
+            .await
+            .expect("server task did not panic")
+            .expect("server run completed cleanly");
+
+        // The ACP session id is exactly the stringified Structure session
+        // id (`AcpState::new_session`), so this round-trips it back rather
+        // than re-deriving anything the store itself would not have used.
+        let workspace_id = crate::host::workspace_id_for(&root);
+        let stored = FileSessionStore::read_session(
+            &structure_home,
+            &workspace_id,
+            &structure_protocol::SessionId::new(session_id.to_string()),
+        )
+        .expect("the session persisted by the live observer is readable back");
+        assert_eq!(stored.header.id.to_string(), session_id.to_string());
+        assert!(
+            matches!(
+                stored.events.first().map(|envelope| &envelope.event),
+                Some(structure_protocol::Event::SessionCreated { .. })
+            ),
+            "the first persisted event must be session.created, got {:?}",
+            stored.events.first()
+        );
+        assert!(
+            stored.events.len() > 1,
+            "the prompt turn must have appended events beyond session.created, got {:?}",
+            stored.events
+        );
+
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
     }
 
     #[tokio::test]
     async fn a_shell_call_is_gated_approved_executed_and_reported_before_the_turn_ends() {
         let root = temp_root("shell-allow");
+        let structure_home = temp_root("shell-allow-home");
         let state = scripted_state(
             vec![
                 tool_call_result("shell", serde_json::json!({"command": "true"})),
                 text_result("done"),
             ],
             acp_tool_policy(),
+            &structure_home,
         );
         let (server, client_channel) = spawn_agent(state);
         let updates: Arc<StdMutex<Vec<SessionUpdate>>> = Arc::new(StdMutex::new(Vec::new()));
@@ -611,5 +742,6 @@ mod round_trip {
             .expect("server task did not panic")
             .expect("server run completed cleanly");
         std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
     }
 }

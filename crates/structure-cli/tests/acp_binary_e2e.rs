@@ -151,13 +151,13 @@ async fn chat_completions(State(state): State<MockState>, Json(body): Json<Value
     Json(response).into_response()
 }
 
-fn temp_workspace() -> PathBuf {
+fn temp_dir(label: &str) -> PathBuf {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock is valid")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("structure-acp-e2e-{unique}"));
-    std::fs::create_dir_all(&root).expect("workspace root is created");
+    let root = std::env::temp_dir().join(format!("structure-acp-e2e-{label}-{unique}"));
+    std::fs::create_dir_all(&root).expect("dir is created");
     root
 }
 
@@ -177,13 +177,15 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
             .expect("mock endpoint serves");
     });
 
-    let workspace_root = temp_workspace();
+    let workspace_root = temp_dir("workspace");
+    let structure_home = temp_dir("home");
 
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_structure"))
         .arg("acp")
         .env("OPENAI__API_KEY", "test-key")
         .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
         .env("OPENAI__MODEL", "test-model")
+        .env("STRUCTURE_HOME", &structure_home)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -242,6 +244,7 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
                 .send_request(NewSessionRequest::new(workspace_for_client))
                 .block_task()
                 .await?;
+            let session_id = session.session_id.to_string();
             let first = cx
                 .send_request(PromptRequest::new(
                     session.session_id.clone(),
@@ -256,10 +259,10 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
                 ))
                 .block_task()
                 .await?;
-            Ok((first.stop_reason, second.stop_reason))
+            Ok((first.stop_reason, second.stop_reason, session_id))
         });
 
-    let (first_stop_reason, second_stop_reason) =
+    let (first_stop_reason, second_stop_reason, session_id) =
         tokio::time::timeout(Duration::from_secs(8), round_trip)
             .await
             .unwrap_or_else(|_| {
@@ -302,7 +305,32 @@ async fn two_prompt_turns_over_the_real_binary_stay_wire_legal_and_execute_for_r
         .expect("write_file actually ran against the real filesystem");
     assert_eq!(written, "hello from the mock model");
 
+    // The ACP session id is exactly the stringified Structure session id
+    // (`acp::AcpState::new_session`), so this round-trips it back rather
+    // than re-deriving anything the store itself would not have used.
+    let workspace_id = structure_cli::host::workspace_id_for(&workspace_root);
+    let stored = structure_adapters::FileSessionStore::read_session(
+        &structure_home,
+        &workspace_id,
+        &structure_protocol::SessionId::new(session_id),
+    )
+    .expect("the real binary persisted this session and it is readable back");
+    assert!(
+        matches!(
+            stored.events.first().map(|envelope| &envelope.event),
+            Some(structure_protocol::Event::SessionCreated { .. })
+        ),
+        "the first persisted event must be session.created, got {:?}",
+        stored.events.first()
+    );
+    assert!(
+        stored.events.len() > 5,
+        "two prompt turns, one with a tool call, must persist more than a handful of events, got {}",
+        stored.events.len()
+    );
+
     std::fs::remove_dir_all(&workspace_root).ok();
+    std::fs::remove_dir_all(&structure_home).ok();
 }
 
 // The binary test above only ever exercises `find_sequencing_violation`
