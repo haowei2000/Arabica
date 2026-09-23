@@ -1214,18 +1214,21 @@ mod round_trip {
 
     #[tokio::test]
     async fn client_supplied_stdio_mcp_tool_is_discovered_approved_and_executed() {
-        let python = std::process::Command::new("which")
-            .arg("python3")
-            .output()
-            .expect("which is available");
-        assert!(
-            python.status.success(),
-            "python3 is required for the MCP fixture"
-        );
-        let python = PathBuf::from(String::from_utf8(python.stdout).expect("UTF-8 path").trim());
         let fixture =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_server.py");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_server.rs");
         let root = temp_root("mcp-tool");
+        let server_binary = root.join(format!("mcp-server{}", std::env::consts::EXE_SUFFIX));
+        let compile = std::process::Command::new("rustc")
+            .args(["--edition=2024", "-o"])
+            .arg(&server_binary)
+            .arg(&fixture)
+            .output()
+            .expect("rustc is available to compile the MCP fixture");
+        assert!(
+            compile.status.success(),
+            "MCP fixture compilation failed: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
         let marker = root.join("mcp-result.txt");
         let structure_home = temp_root("mcp-tool-home");
         let state = scripted_state(
@@ -1238,14 +1241,9 @@ mod round_trip {
         );
         let (server, client_channel) = spawn_agent(state);
         let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mcp_server = McpServer::Stdio(
-            McpServerStdio::new("fixture", python)
-                .args(vec![fixture.display().to_string()])
-                .env(vec![EnvVariable::new(
-                    "MCP_TEST_MARKER",
-                    marker.display().to_string(),
-                )]),
-        );
+        let mcp_server = McpServer::Stdio(McpServerStdio::new("fixture", server_binary).env(vec![
+            EnvVariable::new("MCP_TEST_MARKER", marker.display().to_string()),
+        ]));
         let outcome = tokio::time::timeout(Duration::from_secs(20), {
             let asked = asked.clone();
             let root = root.clone();
