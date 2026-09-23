@@ -174,6 +174,24 @@ def _print_summary(results: Sequence[StepResult]) -> None:
         print(f"[{status}] {item.name} ({item.elapsed_seconds:.2f}s)")
 
 
+def _summary_payload(results: Sequence[StepResult]) -> dict[str, object]:
+    """Build a machine-readable report for successful and failed workflows."""
+    failed_steps = [item.name for item in results if item.returncode != 0]
+    return {
+        "status": "ok" if not failed_steps else "failed",
+        "failed_steps": failed_steps,
+        "results": [
+            {
+                "name": item.name,
+                "command": item.command,
+                "returncode": item.returncode,
+                "elapsed_seconds": round(item.elapsed_seconds, 3),
+            }
+            for item in results
+        ],
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run local benchmark integration workflow.",
@@ -235,30 +253,17 @@ def main(argv: list[str] | None = None) -> int:
     _print_summary(results)
 
     success = all(item.returncode == 0 for item in results)
+    payload = _summary_payload(results)
+    rendered_payload = json.dumps(payload, indent=2, ensure_ascii=False)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered_payload, encoding="utf-8")
+    else:
+        print(rendered_payload)
+
     if not success:
         print("Benchmark workflow failed; check failed command output above.")
         return 1
-
-    payload = {
-        "status": "ok",
-        "results": [
-            {
-                "name": item.name,
-                "command": item.command,
-                "returncode": item.returncode,
-                "elapsed_seconds": round(item.elapsed_seconds, 3),
-            }
-            for item in results
-        ],
-    }
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    else:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
 
     return 0
 

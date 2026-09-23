@@ -77,3 +77,32 @@ def test_benchmark_integration_writes_json_summary(monkeypatch, tmp_path):
     assert payload["status"] == "ok"
     assert payload["results"][0]["name"] == "benchmark-unit"
     assert payload["results"][0]["returncode"] == 0
+
+
+@pytest.mark.unit
+def test_benchmark_integration_writes_failure_summary(monkeypatch, tmp_path):
+    def fake_run_command(command, *, cwd, env):
+        return runner.StepResult(
+            name=command.name,
+            command=command.command,
+            returncode=1,
+            elapsed_seconds=0.1234,
+        )
+
+    monkeypatch.setattr(runner, "_run_command", fake_run_command)
+    output = tmp_path / "benchmark-failure-summary.json"
+
+    exit_code = runner.main(
+        [
+            "--skip-fixture",
+            "--skip-baselines",
+            "--output",
+            str(output),
+        ]
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["failed_steps"] == ["benchmark-unit"]
+    assert payload["results"][0]["returncode"] == 1

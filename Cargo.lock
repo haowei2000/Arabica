@@ -983,6 +983,7 @@ dependencies = [
 name = "structure-runtime"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "structure-model",
  "structure-protocol",
@@ -1014,10 +1015,26 @@ dependencies = [
 name = "structure-session"
 version = "0.1.0"
 dependencies = [
+ "structure-model",
  "structure-protocol",
  "structure-provider",
  "structure-runner",
  "structure-runtime",
+ "tokio",
+]
+
+[[package]]
+name = "structure-short-memory-benchmark"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "structure-model",
+ "structure-protocol",
+ "structure-provider",
+ "structure-runner",
+ "structure-runtime",
+ "structure-session",
  "tokio",
 ]
 

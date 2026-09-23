@@ -4,12 +4,46 @@
 **Owner:** haowei
 **Related:** `docs/runtime_core_architecture.md` (v2 Rust core), `benchmarks/short_memory/` (回归验证)
 
-> **Rust v2 alignment (2026-07-25):** `structure-session` now owns the
-> append-only per-Session event history and captures inherited history at a
-> fork boundary. `structure-runtime::ShortMemoryProjector` derives the
-> ephemeral Runner input from that history. Workspace Long Memory is a
-> separate `LongMemoryManager` and reaches Runner through a distinct
+> **Rust v2 alignment (2026-07-26):** `structure-session` owns the append-only
+> per-Session event history and captures inherited history at a fork boundary.
+> `structure-runtime::ShortMemoryProjector` now applies deterministic
+> event-count TTL, five-class retention, relation-aware decay, pinning, a
+> recency floor, stable semantic batching, deterministic key-budget admission,
+> and `LOAD_ALL` / `LOAD_KEY` / `NO_LOAD` materialisation. Workspace
+> Long Memory remains separate and reaches the model through a distinct
 > `long_memory` field. Short Memory is not writable through `context.*`.
+
+### Rust v2 materialisation contract
+
+The Rust implementation returns four replayable products from the same
+immutable event slice:
+
+1. Per-event visibility decisions containing memory class, relation key,
+   accumulated decay, configured TTL, pin state, and recency-floor protection.
+2. Stable batches containing `context_key`, kind, sequence span, event count,
+   estimated token count, bounded `key_content`, and load state.
+3. The ordered provider-neutral short-memory entries used for the next model
+   request.
+4. A key-admission summary containing the serialized policy, candidate/admitted
+   counts, rejection count, and admitted key-content bytes.
+
+`LOAD_ALL` preserves typed user/assistant messages and typed
+`ToolCall`/`ToolResult` pairs. `LOAD_KEY` emits a deterministic batch index
+without an LLM summarisation call. `NO_LOAD` omits the batch from the prompt
+without deleting or rewriting its source events. Promotion or archival into
+Long Memory remains an explicit operation outside the collector.
+
+An optional hard budget limits historical keys by count and total UTF-8 key
+content bytes. Admission is deterministic: memory-class evidence value, batch
+kind, then recency in the Session-supplied lineage order. Every candidate keeps
+an explainable rank, candidate size, and admission/rejection reason. The
+default is unbounded so enabling the mechanism requires an explicit policy.
+
+Detailed Protocol events are projected into five Runtime-only retention
+classes: `Anchor`, `Working`, `Recovery`, `Transient`, and `Control`. This
+keeps the wire audit vocabulary independent from GC policy. Decay rules may
+also require a matching relation key, so `tool.result(call-7)` accelerates
+only `tool.call(call-7)`, not every older tool call.
 
 ---
 

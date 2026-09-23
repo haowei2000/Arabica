@@ -110,6 +110,64 @@ pub enum RuntimeItem {
     Reasoning(ReasoningItem),
 }
 
+/// Stable semantic group used by Runtime when materialising short memory.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryBatchKind {
+    Turn,
+    Tool,
+    Context,
+    Task,
+    Artifact,
+    Transient,
+    Misc,
+}
+
+/// The amount of one event batch that Runtime exposes to the next model turn.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryLoadState {
+    LoadAll,
+    LoadKey,
+    NoLoad,
+}
+
+/// Compact, deterministic representation of a batch whose full events are not
+/// visible. It contains no generated summary: `key_content` is derived only
+/// from typed event metadata and bounded payload excerpts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MemoryBatchKey {
+    pub context_key: String,
+    pub context_kind: MemoryBatchKind,
+    pub sequence_start: u64,
+    pub sequence_end: u64,
+    pub event_count: usize,
+    pub estimated_tokens: u64,
+    pub key_content: String,
+}
+
+/// Provider-neutral item in Runtime's ephemeral short-memory view.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum ShortMemoryItem {
+    UserMessage { content: String },
+    AssistantMessage { content: String },
+    ToolCall(ToolCallItem),
+    ToolResult(ToolResultItem),
+    Observation { content: String },
+    RunFailure { message: String },
+    RunCancelled,
+    BatchKey(MemoryBatchKey),
+}
+
+/// One ordered item selected from the immutable Session event log.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ShortMemoryEntry {
+    pub source_event_ids: Vec<String>,
+    pub sequence: u64,
+    pub item: ShortMemoryItem,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ToolDefinition {
     pub name: String,
@@ -152,6 +210,8 @@ pub enum FinishReason {
 pub struct RuntimeUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default)]
+    pub cached_input_tokens: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

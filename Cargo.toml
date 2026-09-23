@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "benchmarks/runtime-short-memory",
     "crates/structure-model",
     "crates/structure-provider",
     "crates/structure-protocol",

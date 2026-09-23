@@ -53,6 +53,10 @@ pytest tests/benchmarks -m unit
 uv run python -m benchmarks.scripts.run_benchmark_integration
 make benchmark
 
+# Archive a JSON summary. It is written even when one or more steps fail.
+uv run python -m benchmarks.scripts.run_benchmark_integration \
+  --output benchmark_runs/integration-summary.json
+
 # Export the LightMem/MemBase LoCoMo baseline table used by the paper.
 python -m benchmarks.scripts.lightmem_baseline_report --format markdown
 
