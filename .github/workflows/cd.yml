@@ -31,10 +31,6 @@ jobs:
             build_args: |
               PYTHON_VERSION=3.12
               UV_VERSION=0.5.24
-          - name: frontend
-            dockerfile: docker/Dockerfile.frontend
-            image_suffix: frontend
-            build_args: ""
 
     steps:
       - uses: actions/checkout@v6
@@ -101,13 +97,10 @@ jobs:
             # Pull latest images
             SHA=$(echo ${{ github.sha }} | cut -c1-7)
             BACKEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:sha-$SHA
-            FRONTEND=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:sha-$SHA
             docker pull $BACKEND
-            docker pull $FRONTEND
 
             # Tag as local names used by docker-compose
             docker tag $BACKEND structure-service:latest
-            docker tag $FRONTEND structure-frontend:latest
 
             # Inline of `make docker-deploy` (avoids depending on `make`
             # being installed on the deploy host).

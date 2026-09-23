@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/structure-model",
+    "crates/structure-provider",
+    "crates/structure-protocol",
+    "crates/structure-runner",
+    "crates/structure-runtime",
+    "crates/structure-server",
+    "crates/structure-session",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/haowei2000/Structure"
+
+[workspace.dependencies]
+axum = "0.8"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower = { version = "0.5", features = ["util"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

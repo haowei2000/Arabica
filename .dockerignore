@@ -23,13 +23,6 @@ coverage.xml
 .pytest_cache/
 .ruff_cache/
 
-# Node.js (Frontend)
-frontend/node_modules
-frontend/dist
-frontend/.next
-frontend/out
-frontend/build
-
 # IDEs and Editors
 .idea/
 .vscode/

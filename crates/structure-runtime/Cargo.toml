@@ -1,0 +1,19 @@
+[package]
+name = "structure-runtime"
+description = "Headless Structure runtime with context management and runner output normalization"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+structure-model = { path = "../structure-model" }
+structure-provider = { path = "../structure-provider" }
+structure-protocol = { path = "../structure-protocol" }
+structure-runner = { path = "../structure-runner" }
+tokio.workspace = true
+
+[lints]
+workspace = true

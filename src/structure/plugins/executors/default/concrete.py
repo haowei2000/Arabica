@@ -338,6 +338,23 @@ def _compact_replay_payload(value: Any, *, max_text_chars: int) -> Any:
     return value
 
 
+def _tool_result_re_query_path(tool_name: str, payload: dict[str, Any]) -> str | None:
+    """Best-effort reconstruction of a re-query command for a deduped result.
+
+    For ``read_context`` this gives ``read_context("path")``; for unknown tools
+    we fall back to the raw ``tool_call_id``.  Callers use this to tag the
+    dedup reference with a recovery hint the LLM can act on.
+    """
+    if tool_name == "read_context":
+        result = payload.get("result") or {}
+        if isinstance(result, dict) and result.get("path"):
+            return f"read_context({result['path']!r})"
+        args = payload.get("arguments") or {}
+        if isinstance(args, dict) and args.get("path"):
+            return f"read_context({args['path']!r})"
+    return None
+
+
 def _strip_orphaned_tool_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
     """Fix malformed tool call sequences in both directions.
 
@@ -425,6 +442,7 @@ def _events_to_messages(
     compact_replay: bool = True,
     tool_argument_max_chars: int = _DEFAULT_TOOL_ARGUMENT_REPLAY_MAX_CHARS,
     tool_result_max_chars: int = _DEFAULT_TOOL_RESULT_REPLAY_MAX_CHARS,
+    dedup_tool_results: bool = False,
 ) -> list[ChatMessage]:
     """Convert raw event dicts to a full LLM-ready ChatMessage list.
 
@@ -435,9 +453,18 @@ def _events_to_messages(
       TOOL_ERROR    -> role="tool" message with error JSON and tool_call_id
       USER_FEEDBACK -> role="tool" (ask_for_user answer) or role="user" (corrective)
       TOOL_CALL     -> skipped (captured in AGENT_MESSAGE.tool_calls)
+
+    When ``dedup_tool_results`` is True, consecutive TOOL_RESULT events that
+    return identical content (same tool name + same result sha256) are folded
+    into a one-line reference pointing back to the first occurrence.  The
+    reference preserves a sha256 digest and a ``read_context`` re-query path so
+    the LLM can recover the full content on demand.  This is the short-memory
+    P2 lever: it shrinks the replayed body without losing information.
     """
     messages: list[ChatMessage] = []
     last_tc_id_map: dict[str, str] = {}  # maps raw id / tool name → assigned tc id
+    seen_tool_results: dict[str, int] = {}  # sha256 → first turn index (for dedup)
+    _dedup_turn_counter = 0
     for e in raw_events:
         event_type = e.event_type
         payload = e.payload or {}
@@ -519,9 +546,33 @@ def _events_to_messages(
                     max_text_chars=tool_result_max_chars,
                 )
             result_str = json.dumps(result_data, ensure_ascii=False, default=str)
-            messages.append(
-                ChatMessage(role="tool", content=result_str, tool_call_id=resolved_id)
-            )
+
+            # Short-memory P2: fold duplicate tool results into a reference.
+            deduped = False
+            if dedup_tool_results and tool_name:
+                digest = hashlib.sha256(result_str.encode("utf-8")).hexdigest()[:16]
+                dup_key = f"{tool_name}:{digest}"
+                if dup_key in seen_tool_results:
+                    first_turn = seen_tool_results[dup_key]
+                    re_query = _tool_result_re_query_path(tool_name, payload)
+                    ref = (
+                        f"<dedup: first seen turn {first_turn}, "
+                        f"sha256={digest}"
+                        f"{', re-read: ' + re_query if re_query else ''}>"
+                    )
+                    messages.append(
+                        ChatMessage(role="tool", content=ref, tool_call_id=resolved_id)
+                    )
+                    deduped = True
+                else:
+                    seen_tool_results[dup_key] = _dedup_turn_counter
+            if not deduped:
+                messages.append(
+                    ChatMessage(
+                        role="tool", content=result_str, tool_call_id=resolved_id
+                    )
+                )
+            _dedup_turn_counter += 1
 
         elif event_type == str(EventType.TOOL_ERROR):
             raw_id = payload.get("tool_id", "")
@@ -870,6 +921,10 @@ class DefaultExecutor(Executor):
             config.get("history_tool_result_max_chars"),
             _DEFAULT_TOOL_RESULT_REPLAY_MAX_CHARS,
         )
+        self.dedup_tool_results = _coerce_bool(
+            config.get("dedup_tool_results"),
+            True,
+        )
         self._model_request_options = _normalise_model_request_options(config)
         self.bootstrap_tool_names = config.get(
             "bootstrap_tool_names",
@@ -983,6 +1038,7 @@ class DefaultExecutor(Executor):
             compact_replay=self.compact_history_replay,
             tool_argument_max_chars=self.history_tool_argument_max_chars,
             tool_result_max_chars=self.history_tool_result_max_chars,
+            dedup_tool_results=self.dedup_tool_results,
         )
 
     # ── abstract method ───────────────────────────────────────────

@@ -1,0 +1,28 @@
+[package]
+name = "structure-server"
+description = "HTTP and SSE host for the Structure Command/Event Protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum.workspace = true
+dotenvy = "0.15"
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+structure-provider = { path = "../structure-provider" }
+structure-protocol = { path = "../structure-protocol" }
+structure-runner = { path = "../structure-runner" }
+structure-runtime = { path = "../structure-runtime" }
+structure-session = { path = "../structure-session" }
+tokio.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
+
+[lints]
+workspace = true

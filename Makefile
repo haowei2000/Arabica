@@ -26,15 +26,11 @@ help: ## 显示帮助信息
 docker-build: ## Build Docker image (backend)
 	cd docker && docker build -f Dockerfile -t structure-service:latest ..
 
-docker-build-frontend: ## Build Docker image (frontend)
-	cd docker && docker build -f Dockerfile.frontend -t structure-frontend:latest ..
-
 docker-build-context-service: ## Build Docker image (context-service)
 	cd docker && docker build -f Dockerfile.context-service -t structure-context-service:latest ..
 
-docker-build-all: ## Build all Docker images (backend + frontend + context-service)
+docker-build-all: ## Build all Docker images (backend + context-service)
 	$(MAKE) docker-build
-	$(MAKE) docker-build-frontend
 	$(MAKE) docker-build-context-service
 
 docker-up: ## Start all containers (infra + app + celery worker)
@@ -54,7 +50,7 @@ dev-infra: docker-up-infra ## Start infra in docker, run migrations, and prepare
 	@echo "$(BLUE)等待数据库就绪...$(NC)"
 	@sleep 3
 	$(MAKE) db-upgrade
-	@echo "$(GREEN)基础设施已就绪。现在你可以运行 'make start-api', 'make start-worker', 'make start-frontend' 等命令进行本地开发。$(NC)"
+	@echo "$(GREEN)基础设施已就绪。现在你可以运行 'make start-api' 或 'make start-worker' 进行本地开发。$(NC)"
 
 dev-local: dev-infra ## Start infra in docker and then start all other services locally
 	$(MAKE) start-all
@@ -140,10 +136,7 @@ start-celery-beat: ## 启动 Celery Beat 调度器
 start-mcp: ## 启动 MCP 服务 (端口 9000)
 	uv run structure-mcp
 
-start-frontend: ## 启动前端开发服务器
-	cd frontend && npm run dev
-
-start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
+start-all: ## 启动所有服务 (API, Worker, Celery)
 	@echo "$(BLUE)启动所有服务...$(NC)"
 	@echo "$(YELLOW)提示: 每个服务将在后台运行，使用 'make stop-all' 停止所有服务$(NC)"
 	@echo ""
@@ -153,7 +146,6 @@ start-all: ## 启动所有服务 (API, Worker, Celery, Frontend)
 	uv run structure-api & \
 	uv run structure-worker & \
 	uv run structure-celery worker --concurrency=4 --loglevel=info & \
-	cd frontend && npm run dev & \
 	wait
 
 resync-tools: ## 重新同步所有工具到 Context/WorkspaceContext 表
@@ -172,7 +164,6 @@ stop-all: ## 停止所有本地服务
 	@-pkill -f "structure-api" 2>/dev/null || true
 	@-pkill -f "structure-worker" 2>/dev/null || true
 	@-pkill -f "structure-celery" 2>/dev/null || true
-	@-pkill -f "vite" 2>/dev/null || true
 	@echo "$(GREEN)所有服务已停止$(NC)"
 
 # ============================================================================

@@ -19,9 +19,7 @@ Write-Host ""
 
 # 定义规则
 $rules = @(
-    @{Name="Structure API"; Port=8000; Description="允许访问 Structure API 服务"},
-    @{Name="Structure Frontend"; Port=3000; Description="允许访问 Structure 前端"},
-    @{Name="Structure Nginx"; Port=80; Description="允许访问 Structure Nginx 代理"}
+    @{Name="Structure API"; Port=8000; Description="允许访问 Structure API 服务"}
 )
 
 # 创建或更新规则

@@ -1,0 +1,316 @@
+//! Canonical wire contract for Structure.
+//!
+//! Every UI sends [`CommandEnvelope`] values and observes [`EventEnvelope`]
+//! values. Runtime, session, and runner modules must not invent parallel wire
+//! types.
+
+use schemars::{JsonSchema, Schema, schema_for};
+use serde::{Deserialize, Serialize};
+
+pub const PROTOCOL_VERSION: &str = "1.0";
+
+macro_rules! string_id {
+    ($name:ident) => {
+        #[derive(
+            Clone, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+        )]
+        #[serde(transparent)]
+        pub struct $name(pub String);
+
+        impl $name {
+            pub fn new(value: impl Into<String>) -> Self {
+                Self(value.into())
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+    };
+}
+
+string_id!(CommandId);
+string_id!(EventId);
+string_id!(SessionId);
+string_id!(RunId);
+string_id!(WorkspaceId);
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct CommandEnvelope {
+    pub protocol_version: String,
+    pub command_id: CommandId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    pub command: Command,
+}
+
+impl CommandEnvelope {
+    pub fn new(command_id: CommandId, session_id: Option<SessionId>, command: Command) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION.to_owned(),
+            command_id,
+            session_id,
+            command,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Command {
+    #[serde(rename = "session.create")]
+    SessionCreate { workspace_id: WorkspaceId },
+    #[serde(rename = "session.fork")]
+    SessionFork { source_session_id: SessionId },
+    #[serde(rename = "session.resume")]
+    SessionResume,
+    #[serde(rename = "session.suspend")]
+    SessionSuspend,
+    #[serde(rename = "session.close")]
+    SessionClose,
+    #[serde(rename = "message.send")]
+    MessageSend { content: String },
+    #[serde(rename = "run.cancel")]
+    RunCancel { run_id: RunId },
+    #[serde(rename = "context.read")]
+    ContextRead { path: String },
+    #[serde(rename = "context.search")]
+    ContextSearch { query: String },
+    #[serde(rename = "context.update")]
+    ContextUpdate { path: String, content: String },
+    #[serde(rename = "context.delete")]
+    ContextDelete { path: String },
+    #[serde(rename = "context.set_disclosure")]
+    ContextSetDisclosure { level: DisclosureLevel },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisclosureLevel {
+    Glance,
+    Overview,
+    Detail,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct ContextEntry {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Active,
+    Suspended,
+    Closed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Pending,
+    Running,
+    WaitingForTool,
+    Finished,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Event {
+    #[serde(rename = "session.created")]
+    SessionCreated { workspace_id: WorkspaceId },
+    #[serde(rename = "session.forked")]
+    SessionForked { source_session_id: SessionId },
+    #[serde(rename = "session.resumed")]
+    SessionResumed,
+    #[serde(rename = "session.suspended")]
+    SessionSuspended,
+    #[serde(rename = "session.closed")]
+    SessionClosed,
+    #[serde(rename = "run.scheduled")]
+    RunScheduled,
+    #[serde(rename = "run.started")]
+    RunStarted,
+    #[serde(rename = "message.accepted")]
+    MessageAccepted { content: String },
+    #[serde(rename = "tool.call.requested")]
+    ToolCallRequested {
+        call_id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    #[serde(rename = "tool.call.completed")]
+    ToolCallCompleted {
+        call_id: String,
+        name: String,
+        result: String,
+        is_error: bool,
+    },
+    #[serde(rename = "command.output")]
+    CommandOutput { stream: OutputStream, chunk: String },
+    #[serde(rename = "run.completed")]
+    RunCompleted { output: Option<String> },
+    #[serde(rename = "run.failed")]
+    RunFailed { message: String },
+    #[serde(rename = "run.cancelled")]
+    RunCancelled,
+    #[serde(rename = "context.read")]
+    ContextRead { entry: ContextEntry },
+    #[serde(rename = "context.search.result")]
+    ContextSearchResult { entries: Vec<ContextEntry> },
+    #[serde(rename = "context.updated")]
+    ContextUpdated { entry: ContextEntry },
+    #[serde(rename = "context.deleted")]
+    ContextDeleted { path: String },
+    #[serde(rename = "context.disclosure.set")]
+    ContextDisclosureSet { level: DisclosureLevel },
+    #[serde(rename = "error")]
+    Error { code: ErrorCode, message: String },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    InvalidCommand,
+    ProtocolVersionMismatch,
+    SessionNotFound,
+    InvalidSessionState,
+    RunNotFound,
+    RuntimeFailure,
+    RunnerFailure,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+pub struct EventEnvelope {
+    pub protocol_version: String,
+    pub event_id: EventId,
+    pub command_id: CommandId,
+    pub workspace_id: WorkspaceId,
+    pub session_id: SessionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<RunId>,
+    pub sequence: u64,
+    pub occurred_at_ms: u64,
+    pub event: Event,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct EventMetadata {
+    pub event_id: EventId,
+    pub command_id: CommandId,
+    pub workspace_id: WorkspaceId,
+    pub session_id: SessionId,
+    pub run_id: Option<RunId>,
+    pub sequence: u64,
+    pub occurred_at_ms: u64,
+}
+
+/// A command rejected before it can produce a session-scoped event.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CommandFailure {
+    pub protocol_version: String,
+    pub command_id: CommandId,
+    pub code: ErrorCode,
+    pub message: String,
+}
+
+impl CommandFailure {
+    pub fn new(command_id: CommandId, code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION.to_owned(),
+            command_id,
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(JsonSchema)]
+pub struct ProtocolSchemaDocument {
+    pub command: CommandEnvelope,
+    pub event: EventEnvelope,
+    pub failure: CommandFailure,
+}
+
+/// Export the complete protocol schema used by code generators and hosts.
+pub fn protocol_schema() -> Schema {
+    schema_for!(ProtocolSchemaDocument)
+}
+
+impl EventEnvelope {
+    pub fn new(metadata: EventMetadata, event: Event) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION.to_owned(),
+            event_id: metadata.event_id,
+            command_id: metadata.command_id,
+            workspace_id: metadata.workspace_id,
+            session_id: metadata.session_id,
+            run_id: metadata.run_id,
+            sequence: metadata.sequence,
+            occurred_at_ms: metadata.occurred_at_ms,
+            event,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_wire_shape_is_stable() {
+        let command = CommandEnvelope::new(
+            CommandId::new("command-1"),
+            Some(SessionId::new("session-1")),
+            Command::MessageSend {
+                content: "hello".to_owned(),
+            },
+        );
+
+        let value = serde_json::to_value(&command).expect("command serializes");
+        assert_eq!(value["protocol_version"], "1.0");
+        assert_eq!(value["command"]["type"], "message.send");
+        assert_eq!(value["command"]["payload"]["content"], "hello");
+        assert_eq!(
+            serde_json::from_value::<CommandEnvelope>(value).expect("command deserializes"),
+            command
+        );
+    }
+
+    #[test]
+    fn event_carries_causation_and_ordering_metadata() {
+        let event = EventEnvelope::new(
+            EventMetadata {
+                event_id: EventId::new("event-1"),
+                command_id: CommandId::new("command-1"),
+                workspace_id: WorkspaceId::new("workspace-1"),
+                session_id: SessionId::new("session-1"),
+                run_id: Some(RunId::new("run-1")),
+                sequence: 3,
+                occurred_at_ms: 1_000,
+            },
+            Event::CommandOutput {
+                stream: OutputStream::Stdout,
+                chunk: "done".to_owned(),
+            },
+        );
+
+        let value = serde_json::to_value(event).expect("event serializes");
+        assert_eq!(value["sequence"], 3);
+        assert_eq!(value["event_id"], "event-1");
+        assert_eq!(value["occurred_at_ms"], 1_000);
+        assert_eq!(value["event"]["type"], "command.output");
+    }
+}

@@ -89,13 +89,11 @@ if (-not $firewallRules) {
     Write-Host "运行以下命令（需要管理员权限）:" -ForegroundColor White
     Write-Host ""
     Write-Host "New-NetFirewallRule -DisplayName 'Structure API' -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow" -ForegroundColor Green
-    Write-Host "New-NetFirewallRule -DisplayName 'Structure Frontend' -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow" -ForegroundColor Green
-    Write-Host "New-NetFirewallRule -DisplayName 'Structure Nginx' -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow" -ForegroundColor Green
     Write-Host ""
 }
 
 # 检查服务监听地址
-$localhostOnly = Get-NetTCPConnection -LocalAddress "127.0.0.1" -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.LocalPort -in @(8000, 3000, 80)}
+$localhostOnly = Get-NetTCPConnection -LocalAddress "127.0.0.1" -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.LocalPort -eq 8000}
 if ($localhostOnly) {
     $needsFix = $true
     Write-Host "建议 2: 修改服务监听地址" -ForegroundColor Cyan
@@ -106,7 +104,6 @@ if ($localhostOnly) {
     Write-Host ""
     Write-Host "检查以下文件:" -ForegroundColor White
     Write-Host "  - src/structure/api_cli.py (确保 host='0.0.0.0')" -ForegroundColor Gray
-    Write-Host "  - frontend/vite.config.ts (确保 host: '0.0.0.0')" -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -114,7 +111,6 @@ if (-not $needsFix) {
     Write-Host "✓ 配置看起来正确！" -ForegroundColor Green
     Write-Host ""
     Write-Host "从局域网访问:" -ForegroundColor Cyan
-    Write-Host "  前端: http://$localIP:3000" -ForegroundColor White
     Write-Host "  API:  http://$localIP:8000/api" -ForegroundColor White
 }
 

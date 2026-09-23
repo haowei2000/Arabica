@@ -1,0 +1,20 @@
+[package]
+name = "structure-session"
+description = "Session lifecycle, scheduling, and canonical event sequencing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+structure-protocol = { path = "../structure-protocol" }
+structure-runtime = { path = "../structure-runtime" }
+
+[dev-dependencies]
+structure-provider = { path = "../structure-provider" }
+structure-runner = { path = "../structure-runner" }
+tokio.workspace = true
+
+[lints]
+workspace = true
