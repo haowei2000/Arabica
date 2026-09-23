@@ -1,105 +1,71 @@
 \subsection{Research Questions}
 
-We design experiments to answer six questions.
-\textbf{RQ1.} Does path-addressable multi-level disclosure improve
-task accuracy on long-horizon agent benchmarks relative to flat
-history, vector RAG, and MemGPT-style paging?
-\textbf{RQ2.} How does the token cost per successful trajectory
-compare across methods?
-\textbf{RQ3.} Which of the five mechanisms --- path addressing,
-multi-level disclosure, source evaluation, event-level garbage
-collection, or the audit-log feedback --- contributes most to the
-gains?
-\textbf{RQ4.} How does the system scale with workspace size (number
-of entries) and concurrent agents?
-\textbf{RQ5.} Does rating-aware retrieval shift the accuracy / token
-frontier, and is the effect driven by filtering, reranking, or both?
-\textbf{RQ6.} Under the event-level GC policy, how does task accuracy
-vary with the per-type TTL budget, and where is the point of
-diminishing returns?
+We deliberately narrow the evaluation to questions that the released
+artifact can answer reproducibly.
+\textbf{RQ1.} On long-term memory and context-selection benchmarks,
+does path-addressable multi-level disclosure reach a better
+accuracy--token trade-off than full-context and retrieval baselines?
+\textbf{RQ2.} How much context does \textsc{Structure} select relative
+to the available workspace state, and how does this affect tokens per
+scored point?
+\textbf{RQ3.} Do the two implemented feedback mechanisms---source
+ratings and event-level garbage collection---change retrieval
+evidence, token cost, or latency in sampled runs?
+\textbf{RQ4.} Is the benchmark harness itself reproducible across
+dataset adapters, scorers, external baseline registries, and paper
+tables?
 
 \subsection{Datasets and Benchmarks}
 
-We evaluate across four complementary axes. For end-to-end \emph{task
-success paired with step- or token-cost}, we extend the
-AgentBench~\citep{liu2024agentbench}, WebArena~\citep{zhou2024webarena},
-and LongBench-Agent~\citep{bai2024longbench} core suite with
-GAIA~\citep{mialon2024gaia}, $\tau$-bench~\citep{yao2024taubench},
-OSWorld~\citep{xie2024osworld}, AppWorld~\citep{trivedi2024appworld},
-and WorkArena~\citep{drouin2024workarena}, covering multi-tool
-assistants, GUI control, coding agents, and enterprise workflows. For
-\emph{long-horizon code and tool reliability} we add
-SWE-bench~\citep{jimenez2024swebench} and BFCL-v4~\citep{patil2025bfcl},
-and we report the process-level progress-rate metric from
-AgentBoard~\citep{ma2024agentboard} to expose partial-credit behaviour
-that a binary success metric hides. For \emph{context and memory
-fidelity} we probe synthetic retrieval with RULER~\citep{hsieh2024ruler},
-application-shaped long context with HELMET~\citep{yen2025helmet} and
-LOFT~\citep{lee2024loft}, and multi-session conversational memory with
-LoCoMo~\citep{maharana2024locomo} and
-LongMemEval~\citep{wu2025longmemeval}. The hot-research benchmark
-extension also adds a fixture-level LongMemEval-V2 adapter
-\citep{wu2026longmemevalv2} to track the newer Insert/Query
-memory-system formulation over agent environment trajectories.
-Running the full grid is not
-strictly required for the main claim; we identify a \emph{core} subset
-(Table~\ref{tab:datasets}) and treat the remainder as an extended
-battery reported in the appendix.
+The main paper no longer claims coverage across the full agent
+benchmark landscape. Instead, we evaluate the context-layer hypothesis
+on three memory-focused benchmarks whose inputs expose the exact
+choice our method targets: read all available state, retrieve a flat
+top-$k$ subset, or navigate an addressable workspace at a chosen
+disclosure level. LongMemEval measures long-term conversational memory
+over ability-tagged questions; LoCoMo measures multi-session memory
+over conversational histories; LongMemEval-V2 follows the newer
+Insert/Query memory-system formulation over agent environment
+trajectories. Broader task benchmarks such as AgentBench, WebArena,
+OSWorld, AppWorld, SWE-bench, and $\tau$-bench are treated as future
+generalisation targets rather than evidence for the current claim.
 
 \begin{table}[t]
     \centering
     \small
-    \begin{tabular}{llll}
+    \begin{tabular}{p{0.22\columnwidth}p{0.24\columnwidth}p{0.30\columnwidth}p{0.12\columnwidth}}
         \toprule
         Benchmark & Axis & Success & Cost \\
         \midrule
-        AgentBench \citep{liu2024agentbench}     & General agent        & task score      & steps \\
-        WebArena \citep{zhou2024webarena}        & Web GUI              & end-state       & actions \\
-        LongBench-Agent \citep{bai2024longbench} & Long context         & F1 / EM         & tokens \\
-        \midrule
-        $\tau$-bench \citep{yao2024taubench}     & Tool + user          & pass, pass$^k$  & tool calls \\
-        SWE-bench \citep{jimenez2024swebench}    & Code agent           & tests pass      & tokens \\
-        AppWorld \citep{trivedi2024appworld}     & Interactive coding   & state + tests   & API calls \\
-        OSWorld \citep{xie2024osworld}           & Multimodal desktop   & state checker   & actions \\
-        \midrule
-        LoCoMo \citep{maharana2024locomo}        & Multi-session memory & QA / summarisation & tokens \\
-        LongMemEval \citep{wu2025longmemeval}    & Long-term memory     & per-ability accuracy & tokens \\
+        LoCoMo \citep{maharana2024locomo} & Multi-session memory & QA / summarisation & tokens \\
+        LongMemEval \citep{wu2025longmemeval} & Long-term memory & per-ability accuracy & tokens \\
         LongMemEval-V2 \citep{wu2026longmemevalv2} & Agent experience memory & answer + evidence & latency \\
-        RULER \citep{hsieh2024ruler}             & Effective context    & retrieval acc.  & tokens \\
         \bottomrule
     \end{tabular}
-    \caption{Core evaluation set. Each benchmark contributes a success
-    metric and a native cost signal; aggregation across benchmarks is
-    reported as per-benchmark deltas against each baseline rather than
-    a single headline average, to avoid washing out regime-specific
-    effects.}
+    \caption{Narrowed evaluation set. Each benchmark directly probes
+    memory/context selection and contributes both a success signal and
+    a cost signal.}
     \label{tab:datasets}
 \end{table}
-
-\todo{Fill Train/Dev/Test splits for each benchmark in an appendix
-table once the final configurations are fixed.}
 
 \subsection{Baselines}
 
 We use two baseline tiers. The first tier compares \textsc{Structure}
-against four native baselines that cover the space of current
-practice.
-\textbf{(B1) Flat window.} All tool outputs and retrieved documents
-are appended to the prompt, truncated from the oldest when the window
-is reached. This is the \texttt{ReAct} \citep{yao2023react} default
-and the behaviour most agent frameworks fall back to.
-\textbf{(B2) Vector RAG.} The same state is embedded and stored in a
-pgvector collection; at each step the top-$k$ entries by cosine
-similarity to the current question are concatenated
-\citep{lewis2020rag}.
-\textbf{(B3) MemGPT paging.} We reimplement the main/archival
-distinction of MemGPT \citep{packer2023memgpt} over the same backing
-store, giving the agent \texttt{memory\_insert} and
-\texttt{memory\_search} tools.
-\textbf{(B4) Self-RAG.} An adaptive-retrieval baseline using
-reflection tokens \citep{asai2024selfrag} to decide when to retrieve.
-All baselines use the same underlying language model and tool
-implementations; only the context layer differs.
+against native baselines implemented in the released harness.
+\textbf{(B1) FullText / flat window.} All available memory chunks are
+materialised into the reader prompt, subject to the configured
+context-character cap. This represents the simplest long-context
+strategy and corresponds to the runner method \texttt{FullText}.
+\textbf{(B2) NaiveRAG / top-$k$ retrieval.} The same state is split
+into chunks and the top-$k$ chunks most similar to the current question
+are materialised. This corresponds to the runner method
+\texttt{NaiveRAG}.
+\textbf{(B3) StructurePathMemory.} The reader model sees only the
+context selected by the path-addressable workspace adapter, preserving
+path metadata and disclosure/evidence diagnostics. This corresponds to
+\texttt{StructureMemory} or \texttt{StructurePathMemory}. All live runs
+use the same reader model, deterministic scorer, temperature, and case
+sample; only context selection differs.
 
 The second tier aligns the evaluation with the LightMem/MemBase memory
 suite~\citep{fang2026lightmem}. We track the LoCoMo-reported FullText,
@@ -112,37 +78,57 @@ These external numbers are used for benchmark calibration only; new
 
 \subsection{Implementation Details}
 
-We evaluate with a frontier chat model as the agent backbone.
-\todo{Specify exact model, e.g., GPT-4.1 or Claude Sonnet, plus
-temperature, top-$p$, and context window.}
-Embeddings use the 1536-dimensional index in \textsc{Structure} and
-the same embedding model across all baselines to isolate the context
-mechanism. Each benchmark task is run with three random seeds, and
-we report mean $\pm$ standard deviation. We cap each trajectory at
-\todo{$N$} steps and a token budget of \todo{$B$} per run to prevent
-runaway loops. Experiments are executed on a single worker node with
-a dedicated PostgreSQL and Redis, mirroring a minimal production
-deployment.
+The released runner reads \texttt{OPENAI\_\_API\_KEY},
+\texttt{OPENAI\_\_BASE\_URL}, and \texttt{OPENAI\_\_MODEL}; the
+reported model name is copied into every JSON result file. Unless
+otherwise stated, live runs use temperature $0$, top-$k=6$, a maximum
+materialised context of $120{,}000$ characters, deterministic
+benchmark-specific scorers, and hash-based case sampling for stable
+subsets. We report the exact sample size, source split size, prompt
+tokens, completion tokens, latency, evidence summary, selected chunks,
+available chunks, and per-case diagnostics. The CI-friendly validation
+workflow runs without an LLM and verifies adapter/scorer correctness;
+performance claims are made only from live JSON outputs produced by
+\path{benchmarks/scripts/run_full_memory_benchmark.py}.
 
 \subsection{Evaluation Metrics}
 
 \paragraph{Task accuracy.} Benchmark-native success rate (higher is
-better). For AgentBench we report the official composite score; for
-WebArena, end-state correctness; for LongBench-Agent, task-level F1
-or exact match as prescribed by the benchmark.
+better). LongMemEval reports per-ability accuracy; LoCoMo uses the
+released QA scorer; LongMemEval-V2 blends answer correctness with
+supporting-evidence recall.
 
 \paragraph{Token cost.} Mean prompt and completion tokens per
 trajectory, reported separately because prompt tokens dominate for
-long agents (lower is better).
+long-context agents (lower is better).
 
-\paragraph{Latency.} Wall-clock time per step and per trajectory,
-decomposed into context retrieval, LLM inference, and tool execution
-(lower is better).
+\paragraph{Latency.} Wall-clock time per trajectory, with per-case
+diagnostics retained in JSON/JSONL artifacts.
 
-\paragraph{Context efficiency.} The ratio of detail-level reads to
-glance-level reads. Lower ratios indicate that the agent is
-successfully using cheap summaries to route attention.
+\paragraph{Context efficiency.} Selected context chunks and selected
+context tokens divided by available chunks/tokens. Lower ratios
+indicate stronger compression at comparable accuracy.
 
-\paragraph{Significance.} We use paired bootstrap resampling
-($10{,}000$ resamples) for accuracy differences between our method
-and each baseline, reporting $p$-values at $\alpha = 0.05$.
+\paragraph{Decision rule.} We treat a result as supporting the paper
+claim only if \textsc{Structure} improves tokens per scored point at
+comparable accuracy on at least two of the three narrowed benchmarks.
+
+\subsection{Supplementary End-to-End Runtime Baseline}
+
+We additionally record a coding-agent runtime baseline that is
+supplementary to the three memory benchmarks and is not used to answer
+RQ1--RQ3. The task is Terminal-Bench 2.0
+\texttt{db-wal-recovery}; the B0 policy replays the full Provider-visible
+event history without context compaction. We ran five sequential
+LongCat-2.0 attempts with one frozen binary (SHA-256 prefix
+\texttt{1cd20b3b024d}; the full digest is in the released ledger),
+a 128-step limit, an 8,192-token output limit, and concurrency one.
+
+An attempt enters the success-conditioned cost baseline only when the
+Runtime emits a successful terminal event, Harbor reports reward 1,
+all seven task verifier checks pass, and the Provider/tool raw captures
+are complete. We report task effectiveness over all five attempts and
+cost only over accepted attempts. This two-level rule prevents failed
+or length-truncated trajectories from disappearing through
+success-only selection. The credential-free run ledger is released at
+\path{benchmarks/runtime-short-memory/results/2026-07-31-b0-wal-baseline.json}.

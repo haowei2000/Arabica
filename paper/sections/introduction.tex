@@ -1,17 +1,22 @@
 % Introduction: ~1 page.
 
-An LLM agent that runs for more than a handful of turns has to remember
-things. Tool outputs pile up, retrieved documents are consulted and
-re-consulted, plans are revised, and sub-agents report back. The
-dominant solution is to concatenate this history into the model's
-context window and trust the attention mechanism to find what matters.
+An LLM agent that runs for more than a handful of turns has to manage
+many kinds of context. Conversation turns accumulate, tool schemas and
+tool outputs pile up, retrieved documents are consulted and
+re-consulted, workspace artifacts change, plans are revised, and
+sub-agents report back. Some of this state behaves like long-term
+memory, some like short-lived working context, and some like executable
+environment metadata. The dominant solution is to concatenate this
+heterogeneous state into the model's context window and trust the
+attention mechanism to find what matters.
 Even setting aside cost, this strategy fails for a measurable reason:
 language models attend poorly to information in the middle of long
 inputs \citep{liu2024lostmiddle}, and benchmarks such as LongBench
 \citep{bai2024longbench} confirm that simply enlarging the window does
 not close the gap.
 
-A second line of work treats context as \emph{external memory}.
+A second line of work treats part of this context as \emph{external
+memory}.
 MemGPT \citep{packer2023memgpt} borrows the virtual-memory metaphor
 from operating systems and pages content between the window and a
 backing store. A-MEM \citep{xu2025amem} learns Zettelkasten-style
@@ -27,12 +32,14 @@ different pattern: Anthropic's recent context-engineering guidance
 \citep{anthropic2025contexteng} and Agent Skills system
 \citep{anthropic2025skills} argue for progressive disclosure and
 just-in-time loading over file-system-organised resources. This
-paper gives that pattern an academic formalisation and pairs it with
-two mechanisms that keep it useful over long runs.
+paper builds on that direction, but does not treat it as the main
+claim. The contribution is an operational contract: which state is
+addressable outside the prompt, which event signals remain visible
+inside the prompt, and how the exact prompt can be reconstructed later.
 
 We argue that this opacity is the problem. An agent that is itself a
-reasoning system should be able to reason about where its state
-\emph{lives}, not only about what the state says. Concretely, an agent
+reasoning system should be able to reason about where its context and
+memory \emph{live}, not only about what they say. Concretely, an agent
 should be able to ask: \emph{``Is there a tool that does X?''} and
 receive a list of paths under \texttt{/tools}; it should be able to
 distinguish \emph{``I need a summary of this document to decide if I
@@ -40,47 +47,59 @@ should read it''} from \emph{``I've decided; give me the full text.''}
 Flat buffers, opaque retrievers, and learned links all collapse these
 distinctions.
 
-\paragraph{Our approach.} We propose \textsc{Structure}, a context
-layer built on two primitives. First, every durable piece of state is
-addressed by a hierarchical path and can be discovered by prefix and
-glob queries --- the same operations a programmer uses on a
-filesystem. Second, every entry is \emph{disclosable} at three
-levels: a \textsc{glance} (one-line summary, $\leq 50$\,B), an
-\textsc{overview} (structured metadata and tags, $\approx 1$\,KB),
-and a \textsc{detail} (full content, optionally S3-backed). The
-disclosure method lives on the entry itself, so an agent can scan
-hundreds of glances in a single prompt and pay for full content only
-where it is warranted. Mutations are emitted as events onto an
-append-only log, giving us both real-time streaming to clients and
-exact replay for evaluation.
+\paragraph{Our approach.} We propose \textsc{Structure}, a
+context-and-memory layer whose novelty is the contract it exposes to
+the agent and to the evaluator. Durable state is addressable under
+typed paths such as \texttt{/knowledge}, \texttt{/tools},
+\texttt{/artifacts}, \texttt{/workspaces}, and \texttt{/runs}, and each
+entry implements the same disclosure interface:
+\textsc{glance} (one-line summary, $\leq 50$\,B), \textsc{overview}
+(structured metadata and tags, $\approx 1$\,KB), and \textsc{detail}
+(full content, optionally S3-backed). This unifies existing context
+sources without claiming that hierarchy or retrieval are new.
+
+The less visible part of the contract is short-context materialisation.
+Every mutation, tool call, retrieval result, and rating is
+emitted as a typed event. Before each model step, \textsc{Structure}
+computes the prompt-visible event slice by applying a deterministic
+policy: pin task anchors and user-visible decisions, retain recent
+plan--act events for a type-specific event time-to-live, suppress
+token-level noise, and protect a recency floor of the most recent
+events regardless of type. The prompt receives this
+compressed event slice plus selected path entries; the append-only log
+remains intact for audit and replay.
 
 \paragraph{Contributions.} Our main contributions are:
 \begin{itemize}
-    \item We formalise \emph{path-addressable multi-level disclosure}
-    as a context-management primitive for LLM agents and contrast it
-    with paging, retrieval, and learned-link memories
-    (\S\ref{sec:related_work}).
-    \item We introduce two mechanisms layered on top of the address
-    space: (a) \emph{source evaluation}, where the agent rates each
-    consulted entry and ratings are event-sourced into an aggregate
-    that reorders future retrieval
-    (\S\ref{sec:component_rating}); and (b) \emph{event-level
-    garbage collection}, a per-type TTL policy that prunes transient
-    events from the agent's working context on every step while
-    preserving pinned turns and the append-only audit log
-    (\S\ref{sec:component_gc}).
+    \item We specify an executable \emph{context materialisation
+    contract}: path-addressable entries provide long-context candidates,
+    while typed events provide the short-context slice used at each
+    model step (\S\ref{sec:related_work}).
+    \item We introduce \emph{event-compressed short context}: a
+    deterministic per-type policy that pins task anchors, keeps recent
+    plan--act events, drops noise, and protects a recency floor, all
+    without deleting the append-only event log
+    (\S\ref{sec:long_short_context}, \S\ref{sec:component_gc}).
+    \item We introduce \emph{source evaluation}, where the agent rates
+    each consulted entry and ratings are event-sourced into a
+    replayable per-entry aggregate, together with a specified read
+    path by which retrieval filters and re-ranks on that aggregate
+    (\S\ref{sec:component_rating}).
     \item We implement \textsc{Structure} as an event-sourced
-    orchestration platform with a path-addressable context layer, three
-    visibility scopes (user, workspace, global), and eleven first-class
-    context tools; the system sustains sub-10\,ms retrieval over
+    orchestration platform with a path-addressable context/memory layer,
+    three visibility scopes (user, workspace, global), and ten
+    first-class context tools; the system sustains sub-10\,ms retrieval over
     hundreds of entries via in-memory caches and HNSW indices
     (\S\ref{sec:method}).
-    \item We evaluate the system on long-horizon agent tasks against
-    flat-window, RAG, and MemGPT-style baselines, reporting accuracy,
-    token cost, and end-to-end latency, and ablate the two new
-    mechanisms to isolate their effect
+    \item We narrow the empirical evaluation to memory and
+    context-selection tasks---LongMemEval, LoCoMo, and
+    LongMemEval-V2---where the hypothesis is directly testable. The
+    benchmark harness reports accuracy, evidence support, token cost,
+    latency, and per-case diagnostics for \textsc{Structure},
+    full-context, and retrieval baselines
     (\S\ref{sec:experiments}, \S\ref{sec:results}).
     \item We release the implementation, benchmark harness, and
-    configurations so that the architecture can be reused and
-    compared against future context-management designs.
+    configurations so that prompt materialisation decisions can be
+    audited, replayed, and compared against future context-management
+    designs.
 \end{itemize}

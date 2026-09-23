@@ -1,0 +1,10 @@
+{
+  "sampling": {
+    "seed": 20260912,
+    "temperature": 0,
+    "top_p": 1,
+    "thinking_enabled": false,
+    "max_tokens": 8192
+  },
+  "shared_first_response": true
+}

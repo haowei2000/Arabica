@@ -1,108 +1,32 @@
 name: CI
-
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'codex/**']
+    tags: ['v*']
   pull_request:
     branches: [main, develop]
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 permissions:
   contents: read
-
-env:
-  PYTHON_VERSION: "3.12"
-  UV_VERSION: "0.5.24"
-  UV_HTTP_TIMEOUT: "300"
-
 jobs:
-  lint:
-    name: Lint
+  rust:
+    name: Rust workspace and offline experiments
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: ${{ env.UV_VERSION }}
-
-      - name: Run ruff check
-        run: uvx ruff@0.14.7 check src/
-
-      - name: Run ruff format check
-        run: uvx ruff@0.14.7 format --check src/
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_DB: structure_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: "123456"
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      UV_HTTP_TIMEOUT: "300"
-      POSTGRES__HOST: localhost
-      POSTGRES__PORT: 5432
-      POSTGRES__USERNAME: postgres
-      POSTGRES__PASSWORD: "123456"
-      POSTGRES__STRUCTURE_DBNAME: structure_test
-      POSTGRES__DRIVER: postgresql+asyncpg
-      REDIS__HOST: localhost
-      REDIS__PORT: 6379
-      REDIS__PASSWORD: ""
-      REDIS__DB: "0"
-      AUTH__JWT_SECRET_KEY: test-jwt-secret-key
-      ENV: test
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
         with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv sync --frozen
-
-      - name: Run tests
-        run: uv run pytest tests/unit/ --cov=src/structure --cov-report=xml -q
-
-      - name: Upload coverage report
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
+          node-version: '22'
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo build --workspace
+      - run: cargo test --workspace
+      - run: make benchmark-smoke
+      - run: make test-proxy
+      - name: Enforce Rust-only maintained sources
+        run: test -z "$(git ls-files '*.py')"

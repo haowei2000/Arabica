@@ -1,0 +1,25 @@
+[package]
+name = "structure-short-memory-benchmark"
+description = "Rust-native deterministic benchmark harness for Structure short memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+default-run = "structure-short-memory-benchmark"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+structure-model = { path = "../../crates/structure-model" }
+structure-provider = { path = "../../crates/structure-provider" }
+structure-protocol = { path = "../../crates/structure-protocol" }
+structure-runner = { path = "../../crates/structure-runner" }
+structure-runtime = { path = "../../crates/structure-runtime" }
+structure-session = { path = "../../crates/structure-session" }
+tokio.workspace = true
+
+[lints]
+workspace = true

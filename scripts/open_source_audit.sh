@@ -40,7 +40,6 @@ fi
 echo "==> Checking current tree for high-confidence secret patterns"
 if rg -n -I \
   -g '!uv.lock' \
-  -g '!frontend/package-lock.json' \
   -g '!LICENSE' \
   '(sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[0-9A-Za-z-]{20,}|-----BEGIN (RSA|OPENSSH|PRIVATE) KEY-----|Bearer eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)' \
   .; then
@@ -51,7 +50,6 @@ fi
 echo "==> Checking for internal endpoints and placeholder production credentials"
 if rg -n -I \
   -g '!uv.lock' \
-  -g '!frontend/package-lock.json' \
   -g '!scripts/open_source_audit.sh' \
   -g '!docs/OPEN_SOURCE_RELEASE.md' \
   '(10\.1\.2\.111|difyai123456|AI630|/Users/.*/PycharmProjects|AUTH__JWT_SECRET_KEY=structure|POSTGRES__PASSWORD=123456|REDIS__PASSWORD=123456|AUTH__ADMIN_PASSWORD=123456|REDIS_COMMANDER_PASSWORD=123456)' \

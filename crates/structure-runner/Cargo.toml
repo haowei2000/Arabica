@@ -1,0 +1,27 @@
+[package]
+name = "structure-runner"
+description = "Runner environment boundary and local runner implementations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+globset.workspace = true
+ignore.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+structure-model = { path = "../structure-model" }
+structure-protocol = { path = "../structure-protocol" }
+tokio.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true

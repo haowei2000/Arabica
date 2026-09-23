@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+    "benchmarks/runtime-short-memory",
+    "crates/structure-adapters",
+    "crates/structure-cli",
+    "crates/structure-model",
+    "crates/structure-provider",
+    "crates/structure-protocol",
+    "crates/structure-runner",
+    "crates/structure-runtime",
+    "crates/structure-server",
+    "crates/structure-session",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/haowei2000/Structure"
+
+[workspace.dependencies]
+agent-client-protocol = "=2.2.0"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+globset = "0.4"
+ignore = "0.4"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rmcp = { version = "3.4", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rustix = { version = "1", features = ["process"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+# preserve_order is pulled in transitively by agent-client-protocol regardless
+# of what we request (Cargo unifies features across the build), so this makes
+# that unconditional; see docs/runtime_core_architecture.md Appendix B.
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+toml = "0.9"
+tower = { version = "0.5", features = ["util"] }
+uuid = { version = "1", features = ["v7"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

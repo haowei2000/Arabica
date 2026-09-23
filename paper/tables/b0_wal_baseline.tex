@@ -1,0 +1,22 @@
+\begin{table*}[t]
+    \centering
+    \small
+    \begin{tabular}{lrrrrrrr}
+        \toprule
+        Accepted run & Input & Cached & Uncached & Output & Model calls & Tool calls & Time (s) \\
+        \midrule
+        S1 & 40,080 & 30,208 & 9,872 & 2,211 & 13 & 12 & 97.5 \\
+        S2 & 47,580 & 32,512 & 15,068 & 3,093 & 15 & 14 & 110.4 \\
+        S3 & 50,161 & 34,816 & 15,345 & 4,755 & 10 & 9 & 119.3 \\
+        \midrule
+        Mean & 45,940 & 32,512 & 13,428 & 3,353 & 12.7 & 11.7 & 109.0 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Success-conditioned B0 full-replay costs on the
+    Terminal-Bench 2.0 \texttt{db-wal-recovery} task. Five sequential
+    LongCat-2.0 attempts used one frozen binary; three passed all seven
+    verifier checks. The two rejected attempts are included in the
+    separately reported 3/5 effectiveness rate, but excluded from this
+    conditional efficiency table.}
+    \label{tab:b0-wal-baseline}
+\end{table*}

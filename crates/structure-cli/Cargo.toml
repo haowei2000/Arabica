@@ -1,0 +1,41 @@
+[package]
+name = "structure-cli"
+description = "Composition host binding the canonical protocol to stdio: ACP and one-shot execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "structure"
+path = "src/main.rs"
+
+[dependencies]
+agent-client-protocol.workspace = true
+rmcp.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+rpassword = "7.5"
+clap.workspace = true
+crossterm = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+structure-adapters = { path = "../structure-adapters" }
+structure-model = { path = "../structure-model" }
+structure-protocol = { path = "../structure-protocol" }
+structure-provider = { path = "../structure-provider" }
+structure-runner = { path = "../structure-runner" }
+structure-runtime = { path = "../structure-runtime" }
+structure-session = { path = "../structure-session" }
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true

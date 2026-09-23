@@ -1,65 +1,35 @@
 # Contributing to Structure
 
-Thanks for helping improve Structure. This guide keeps contributions reviewable
-and safe for a project that handles credentials, model calls, and user data.
+Structure is currently a backend-only Rust workspace. There is no frontend, and
+the former Python implementation and benchmark frameworks have been removed.
+Maintain one experiment package: `structure-short-memory-benchmark`.
 
-## Development Setup
+## Development setup
 
-1. Install Python 3.12+ and uv.
-2. Install dependencies:
-
-```bash
-uv sync
-```
-
-3. Create a local environment file:
+Install Rust 1.85 or newer, then run:
 
 ```bash
-uv run sync-env
+cargo build --workspace
+cargo test --workspace
 ```
 
-4. Start local infrastructure and run migrations:
+## Quality checks
+
+Before opening a pull request, run:
 
 ```bash
-make docker-up-infra
-make db-upgrade
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-5. Run the API, workers, and frontend as needed:
+## Pull requests
 
-```bash
-make start-api
-make start-worker
-make start-frontend
-```
+- Keep changes focused and explain observable behavior changes.
+- Add tests for protocol, runtime, provider, runner, or session behavior.
+- Preserve crate boundaries and canonical command/event types.
+- Do not commit credentials, private endpoints, user data, or generated output.
+- Use Conventional Commits, such as `fix(session): preserve event sequence`.
 
-## Quality Checks
-
-Run focused checks before opening a pull request:
-
-```bash
-make lint
-make format-check
-make test
-```
-
-For larger changes, also run:
-
-```bash
-make test-coverage
-```
-
-## Pull Requests
-
-- Keep changes focused and explain the behavior change.
-- Add or update tests for user-facing behavior, state transitions, and shared
-  services.
-- Do not commit real credentials, private endpoints, local editor state, or
-  generated output.
-- Follow Conventional Commits, for example `fix(auth): reject expired tokens`.
-
-## Security-Sensitive Changes
-
-If your change touches authentication, authorization, storage, model credentials,
-tool execution, sandboxing, or deployment, call that out in the PR description
-and include the validation you ran.
+Highlight changes involving credentials, tool execution, persistence, protocol
+compatibility, or untrusted input in the pull-request description.
