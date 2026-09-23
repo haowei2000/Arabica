@@ -11,6 +11,7 @@
 //! `docs/runtime_core_architecture.md` Appendix B for the decision record.
 
 pub mod acp;
+pub mod auth;
 pub mod config;
 pub mod host;
 pub mod interactive;

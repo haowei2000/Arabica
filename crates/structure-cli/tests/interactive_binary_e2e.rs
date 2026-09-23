@@ -8,6 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::routing::post;
 use serde_json::{Value, json};
+use structure_cli::auth::save_key;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
@@ -224,6 +225,60 @@ async fn interactive_write_requires_a_terminal_approval() {
         std::fs::read_to_string(root.join("note.txt")).unwrap(),
         "hello"
     );
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}
+
+#[tokio::test]
+async fn saved_auth_starts_chat_without_an_api_key_environment_variable() {
+    async fn completion(Json(_body): Json<Value>) -> Json<Value> {
+        Json(
+            json!({"choices":[{"message":{"role":"assistant","content":"authenticated"},"finish_reason":"stop"}]}),
+        )
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().route("/v1/chat/completions", post(completion)),
+        )
+        .await
+        .unwrap();
+    });
+    let root = temp_dir("saved-auth-root");
+    let home = temp_dir("saved-auth-home");
+    std::fs::create_dir_all(&root).unwrap();
+    save_key(&home, "saved-test-key").unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_structure"))
+        .current_dir(&root)
+        .env("STRUCTURE_HOME", &home)
+        .env_remove("OPENAI__API_KEY")
+        .env("OPENAI__BASE_URL", format!("http://{address}/v1"))
+        .env("OPENAI__MODEL", "test-model")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"hello\n/exit\n")
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout).contains("authenticated"));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("saved-test-key"));
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_dir_all(home).ok();
 }

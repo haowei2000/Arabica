@@ -1,6 +1,7 @@
 //! `structure`: interactive terminal host, ACP agent, and one-shot runner.
 
 use clap::{Args, Parser, Subcommand};
+use structure_cli::auth::AuthAction;
 use structure_cli::config::resolve_cli_config;
 use structure_cli::host::{
     HostConfigArgs, HostModel, LocalRunnerPolicy, build_host_runtime, process_environment,
@@ -70,6 +71,11 @@ enum Commands {
     Chat,
     /// Show the resolved provider configuration without starting a session.
     Config,
+    /// Manage the terminal CLI's saved API key.
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
     /// Inspect sessions stored under $STRUCTURE_HOME.
     Sessions {
         #[command(subcommand)]
@@ -90,17 +96,21 @@ async fn run(cli: Cli) -> i32 {
         print_args,
     } = cli;
 
-    // `sessions` only reads files under $STRUCTURE_HOME; unlike every other
-    // command it needs no working model provider, so it is dispatched
-    // before resolve_provider_config runs -- otherwise a user who only
-    // wants to see their session history would be blocked by an unrelated
-    // "API key is required" error.
+    // These commands need no working model provider.
     if let Some(Commands::Sessions { action }) = command {
         return if print_args.print.is_some() {
             eprintln!("error: -p cannot be combined with the sessions subcommand");
             2
         } else {
             structure_cli::sessions::run(action)
+        };
+    }
+    if let Some(Commands::Auth { action }) = command {
+        return if print_args.print.is_some() {
+            eprintln!("error: -p cannot be combined with the auth subcommand");
+            2
+        } else {
+            structure_cli::auth::run(action)
         };
     }
 
@@ -141,6 +151,9 @@ async fn run(cli: Cli) -> i32 {
         },
         (Some(Commands::Sessions { .. }), _) => {
             unreachable!("Commands::Sessions returns early above")
+        }
+        (Some(Commands::Auth { .. }), _) => {
+            unreachable!("Commands::Auth returns early above")
         }
         (None, Some(task)) => run_print(provider_config, task.clone(), print_args).await,
         (None, None) => run_chat(provider_config, print_args).await,

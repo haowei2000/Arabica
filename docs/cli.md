@@ -23,7 +23,7 @@ The CLI and ACP share `structure-server`'s environment variable names:
 
 | Variable | Flag override | Required | Purpose |
 |---|---|---|---|
-| `OPENAI__API_KEY` | *(none)* | yes | Credential. Deliberately has no flag: a `--api-key` argument would put the key in shell history and process listings. |
+| `OPENAI__API_KEY` | *(none)* | yes for ACP; CLI can use saved auth | Credential. Deliberately has no flag: a `--api-key` argument would put the key in shell history and process listings. |
 | `OPENAI__BASE_URL` | `--base-url` | yes | Provider endpoint, e.g. `https://api.openai.com/v1`. |
 | `OPENAI__MODEL` | `--model` | yes | Model name. |
 | `STRUCTURE__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`, `gemini_interactions`. |
@@ -47,8 +47,15 @@ model = "gpt-4.1"
 thinking = "off"
 ```
 
-`OPENAI__API_KEY` is always read from the environment; config files reject
-an `api_key` field. Nothing is read from a `.env` or `.structure` directory
+For terminal chat and `-p`, run `structure auth login` once to enter an API
+key without echoing it. The key is saved in `$STRUCTURE_HOME/auth.json`
+(default `~/.structure/auth.json`) with owner-only file permissions. Run
+`structure auth status` to see which credential source is active, or
+`structure auth logout` to remove the saved key. `OPENAI__API_KEY` takes
+precedence over saved auth when present. ACP still requires its environment
+variable, so editor clients keep their existing credential configuration.
+
+The user and workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.structure` directory
 in the project: a malicious repository could otherwise redirect model calls
 and capture the real API key. ACP retains its environment-and-flag resolution
 and its per-session model and thinking controls.

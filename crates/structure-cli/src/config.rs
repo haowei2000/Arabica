@@ -1,4 +1,4 @@
-//! User-owned CLI settings. Credentials stay in the process environment.
+//! User-owned CLI settings. Credentials are resolved separately from auth.json.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -56,8 +56,9 @@ fn read_toml<T: for<'de> Deserialize<'de> + Default>(
 }
 
 /// Resolve CLI settings. Explicit flags win, then saved workspace choices,
-/// then environment variables, then user defaults. The API key is read only
-/// from `OPENAI__API_KEY`. ACP keeps its existing environment-only behavior.
+/// then environment variables, then user defaults. The API key comes from
+/// `OPENAI__API_KEY` or the user-owned auth file. ACP keeps its existing
+/// environment-only behavior.
 pub fn resolve_cli_config(
     args: &HostConfigArgs,
     home: &Path,
@@ -84,7 +85,24 @@ pub fn resolve_cli_config(
             .or_else(|| lookup("OPENAI__BASE_URL"))
             .or(user.provider.base_url),
     };
-    let mut config = resolve_provider_config(&selected, lookup)?;
+    let environment_key = lookup("OPENAI__API_KEY").filter(|key| !key.trim().is_empty());
+    let saved_key = if environment_key.is_some() {
+        None
+    } else {
+        crate::auth::read_saved_key(home)?
+    };
+    if environment_key.is_none() && saved_key.is_none() {
+        return Err(
+            "API key is required; run `structure auth login` or export OPENAI__API_KEY".into(),
+        );
+    }
+    let mut config = resolve_provider_config(&selected, |name| {
+        if name == "OPENAI__API_KEY" {
+            environment_key.clone().or_else(|| saved_key.clone())
+        } else {
+            lookup(name)
+        }
+    })?;
     if let Some(thinking) = workspace.thinking.or(user.provider.thinking) {
         set_thinking(&mut config, &thinking)?;
     }
@@ -225,6 +243,27 @@ mod tests {
                 .to_string()
                 .contains("unsupported thinking level")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn saved_auth_supplies_key_and_environment_takes_precedence() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        crate::auth::save_key(&home, "saved-secret").unwrap();
+        let args = HostConfigArgs {
+            model: Some("model".to_owned()),
+            base_url: Some("https://example.test/v1".to_owned()),
+            ..HostConfigArgs::default()
+        };
+        let saved = resolve_cli_config(&args, &home, &cwd, |_| None).unwrap();
+        assert_eq!(saved.api_key, "saved-secret");
+        let env = resolve_cli_config(&args, &home, &cwd, |name| {
+            (name == "OPENAI__API_KEY").then(|| "env-secret".to_owned())
+        })
+        .unwrap();
+        assert_eq!(env.api_key, "env-secret");
         fs::remove_dir_all(root).unwrap();
     }
 }

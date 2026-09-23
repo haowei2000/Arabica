@@ -53,10 +53,9 @@ mod env {
     pub const API_TYPE: &str = "STRUCTURE__API_TYPE";
 }
 
-/// Model selection, deliberately not the credential. Reads
-/// `OPENAI__API_KEY` from the environment only: a `--api-key` flag would put
-/// the key in shell history and process listings, so this type has no field
-/// for one and never will.
+/// Model selection, deliberately not the credential. A `--api-key` flag would
+/// put the key in shell history and process listings. ACP reads the key from
+/// the environment; terminal chat and print mode can also use saved auth.
 #[derive(Args, Clone, Debug, Default)]
 pub struct HostConfigArgs {
     /// Override OPENAI__MODEL.
