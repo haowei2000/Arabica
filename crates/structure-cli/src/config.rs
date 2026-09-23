@@ -1,4 +1,4 @@
-//! User-owned CLI settings. Credentials are resolved separately from auth.json.
+//! User-owned CLI settings and optional user-file credentials.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -20,6 +20,7 @@ struct UserConfig {
 #[serde(deny_unknown_fields)]
 struct UserProvider {
     api_type: Option<String>,
+    api_key: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
     thinking: Option<String>,
@@ -48,16 +49,52 @@ fn read_toml<T: for<'de> Deserialize<'de> + Default>(
     path: &Path,
 ) -> Result<T, Box<dyn std::error::Error>> {
     match fs::read_to_string(path) {
-        Ok(text) => Ok(toml::from_str(&text)
-            .map_err(|error| format!("invalid {}: {error}", path.display()))?),
+        // A parser error may include an excerpt containing an API key.
+        Ok(text) => {
+            Ok(toml::from_str(&text).map_err(|_| format!("invalid TOML in {}", path.display()))?)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(error) => Err(format!("cannot read {}: {error}", path.display()).into()),
     }
 }
 
+fn read_user_config(home: &Path) -> Result<UserConfig, Box<dyn std::error::Error>> {
+    let path = user_config_path(home);
+    let config: UserConfig = read_toml(&path)?;
+    if let Some(key) = &config.provider.api_key {
+        if key.trim().is_empty() {
+            return Err(format!("{} contains an empty API key", path.display()).into());
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() {
+            return Err(format!(
+                "{} must be a regular file when it contains an API key",
+                path.display()
+            )
+            .into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(format!(
+                    "{} contains an API key and must be readable only by its owner (chmod 600)",
+                    path.display()
+                )
+                .into());
+            }
+        }
+    }
+    Ok(config)
+}
+
+pub fn user_config_key(home: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(read_user_config(home)?.provider.api_key)
+}
+
 /// Resolve CLI settings. Explicit flags win, then saved workspace choices,
 /// then environment variables, then user defaults. The API key comes from
-/// `OPENAI__API_KEY` or the user-owned auth file. ACP keeps its existing
+/// `OPENAI__API_KEY`, the user config, or the user-owned auth file. ACP keeps its existing
 /// environment-only behavior.
 pub fn resolve_cli_config(
     args: &HostConfigArgs,
@@ -65,7 +102,7 @@ pub fn resolve_cli_config(
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<ApiProviderConfig, Box<dyn std::error::Error>> {
-    let user: UserConfig = read_toml(&user_config_path(home))?;
+    let user = read_user_config(home)?;
     let workspace: WorkspaceSettings = read_toml(&workspace_config_path(home, cwd))?;
     let selected = HostConfigArgs {
         model: args
@@ -86,19 +123,23 @@ pub fn resolve_cli_config(
             .or(user.provider.base_url),
     };
     let environment_key = lookup("OPENAI__API_KEY").filter(|key| !key.trim().is_empty());
-    let saved_key = if environment_key.is_some() {
+    let configured_key = user.provider.api_key;
+    let saved_key = if environment_key.is_some() || configured_key.is_some() {
         None
     } else {
         crate::auth::read_saved_key(home)?
     };
-    if environment_key.is_none() && saved_key.is_none() {
+    if environment_key.is_none() && configured_key.is_none() && saved_key.is_none() {
         return Err(
-            "API key is required; run `structure auth login` or export OPENAI__API_KEY".into(),
+            "API key is required; set [provider].api_key in ~/.structure/config.toml, run `structure auth login`, or export OPENAI__API_KEY".into(),
         );
     }
     let mut config = resolve_provider_config(&selected, |name| {
         if name == "OPENAI__API_KEY" {
-            environment_key.clone().or_else(|| saved_key.clone())
+            environment_key
+                .clone()
+                .or_else(|| configured_key.clone())
+                .or_else(|| saved_key.clone())
         } else {
             lookup(name)
         }
@@ -264,6 +305,50 @@ mod tests {
         })
         .unwrap();
         assert_eq!(env.api_key, "env-secret");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn user_config_key_requires_private_file_and_environment_still_wins() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        let home = root.join("home");
+        let cwd = root.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(user_config_path(&home), "[provider]\napi_key = 'config-secret'\nbase_url = 'https://example.test/v1'\nmodel = 'model'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(user_config_path(&home), fs::Permissions::from_mode(0o644))
+                .unwrap();
+            let error =
+                resolve_cli_config(&HostConfigArgs::default(), &home, &cwd, |_| None).unwrap_err();
+            assert!(error.to_string().contains("chmod 600"));
+            assert!(!error.to_string().contains("config-secret"));
+            fs::set_permissions(user_config_path(&home), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        let config = resolve_cli_config(&HostConfigArgs::default(), &home, &cwd, |_| None).unwrap();
+        assert_eq!(config.api_key, "config-secret");
+        let env = resolve_cli_config(&HostConfigArgs::default(), &home, &cwd, |name| {
+            (name == "OPENAI__API_KEY").then(|| "env-secret".to_owned())
+        })
+        .unwrap();
+        assert_eq!(env.api_key, "env-secret");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_user_config_does_not_echo_credential() {
+        let root = std::env::temp_dir().join(format!("structure-config-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            user_config_path(&root),
+            "[provider]\napi_key = 'secret-value'\ninvalid = [\n",
+        )
+        .unwrap();
+        let error = user_config_key(&root).unwrap_err().to_string();
+        assert!(error.contains("invalid TOML"));
+        assert!(!error.contains("secret-value"));
         fs::remove_dir_all(root).unwrap();
     }
 }

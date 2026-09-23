@@ -42,20 +42,23 @@ Example user config:
 ```toml
 [provider]
 api_type = "open_ai_chat_completions"
+api_key = "your-api-key"
 base_url = "https://api.openai.com/v1"
 model = "gpt-4.1"
 thinking = "off"
 ```
 
-For terminal chat and `-p`, run `structure auth login` once to enter an API
-key without echoing it. The key is saved in `$STRUCTURE_HOME/auth.json`
+If `config.toml` contains `api_key`, restrict it to your account with
+`chmod 600 ~/.structure/config.toml`; the CLI refuses to read a key from a
+more permissive file or a symlink. Alternatively, run `structure auth login`
+once to enter the key without echoing it. The key is then saved in `$STRUCTURE_HOME/auth.json`
 (default `~/.structure/auth.json`) with owner-only file permissions. Run
 `structure auth status` to see which credential source is active, or
-`structure auth logout` to remove the saved key. `OPENAI__API_KEY` takes
-precedence over saved auth when present. ACP still requires its environment
+`structure auth logout` to remove the separately saved key. Credential
+priority is `OPENAI__API_KEY` → user `config.toml` → `auth.json`. ACP still requires its environment
 variable, so editor clients keep their existing credential configuration.
 
-The user and workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.structure` directory
+Workspace config files reject an `api_key` field. Nothing is read from a `.env` or `.structure` directory
 in the project: a malicious repository could otherwise redirect model calls
 and capture the real API key. ACP retains its environment-and-flag resolution
 and its per-session model and thinking controls.

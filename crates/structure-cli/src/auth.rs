@@ -124,11 +124,21 @@ pub fn run(action: AuthAction) -> i32 {
                 println!("API key: environment (OPENAI__API_KEY)");
                 Ok(())
             } else {
-                read_saved_key(&home).map(|key| {
+                crate::config::user_config_key(&home).and_then(|key| {
                     if key.is_some() {
-                        println!("API key: saved ({})", auth_path(&home).display());
+                        println!(
+                            "API key: user config ({})",
+                            crate::config::user_config_path(&home).display()
+                        );
+                        Ok(())
                     } else {
-                        println!("API key: not configured");
+                        read_saved_key(&home).map(|key| {
+                            if key.is_some() {
+                                println!("API key: saved ({})", auth_path(&home).display());
+                            } else {
+                                println!("API key: not configured");
+                            }
+                        })
                     }
                 })
             }
