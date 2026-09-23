@@ -66,8 +66,12 @@ and its per-session model and thinking controls.
 ## Interactive terminal
 
 Run `structure` (or `structure chat`) in a project directory to start a
-continuous conversation. Each prompt uses the same session and event log;
-`/exit` or `/quit` ends the terminal process. `--continue` restores the most
+continuous conversation. In a terminal, this opens a full-screen TUI with a
+scrollable transcript, a multi-line editor, model/thinking status, streamed
+responses, tool activity, and permission prompts. When stdin or stdout is
+redirected, the simple line-based interface remains available. `--plain`
+selects that interface explicitly. Each prompt uses the same session and event
+log; `/exit` or `/quit` ends the terminal process. `--continue` restores the most
 recent session in the current directory, and `--resume <ID>` restores a
 specific one (`structure sessions list` shows IDs).
 
@@ -75,13 +79,18 @@ specific one (`structure sessions list` shows IDs).
 structure
 structure --continue
 structure --allow-shell
+structure --plain
 ```
 
-`/help` lists commands. `/session` shows the current session and model;
-`/model <name>` and `/thinking <off|on|low|medium|high>` change the provider
-for the next prompt and persist those choices for this workspace. Chat Completions supports `off` and `on`; Responses
-supports `off`, `low`, `medium`, and `high`. The model name must be supported
-by the configured endpoint.
+In the TUI, Enter sends, Shift+Enter or Ctrl+J inserts a line, PageUp/PageDown
+scrolls the transcript, Ctrl+T shows or hides thinking, and Escape cancels a
+running turn. Ctrl+C exits at the editor and cancels a running turn. Messages
+typed during a run are queued for the next turn. The TUI restores the terminal
+screen on exit. `/help` lists commands. `/session` shows the current session and
+model; `/model <name>` and `/thinking <off|on|low|medium|high>` change the
+provider for the next prompt and persist those choices for this workspace. Chat
+Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
+and `high`. The model name must be supported by the configured endpoint.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval (`y` once, `a` for the session, `n` once, or `v` for the session).

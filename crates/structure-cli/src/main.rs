@@ -1,6 +1,7 @@
 //! `structure`: interactive terminal host, ACP agent, and one-shot runner.
 
 use clap::{Args, Parser, Subcommand};
+use std::io::IsTerminal;
 use structure_cli::auth::AuthAction;
 use structure_cli::config::resolve_cli_config;
 use structure_cli::host::{
@@ -41,6 +42,9 @@ struct PrintArgs {
     /// Restrict terminal chat or -p to read-only tools.
     #[arg(long)]
     read_only: bool,
+    /// Use the simple line-based terminal instead of the full-screen TUI.
+    #[arg(long)]
+    plain: bool,
     /// Continue the most recent session in this workspace instead
     /// of starting a new one. Mutually exclusive with --resume.
     #[arg(long = "continue", conflicts_with = "resume")]
@@ -165,15 +169,16 @@ async fn run_chat(provider_config: ApiProviderConfig, args: PrintArgs) -> i32 {
         eprintln!("error: --output-format is only available with -p");
         return 2;
     }
-    interactive::run(
-        provider_config,
-        InteractiveOptions {
-            allow_shell: args.allow_shell,
-            read_only: args.read_only,
-            resume: args.resume_mode(),
-        },
-    )
-    .await
+    let options = InteractiveOptions {
+        allow_shell: args.allow_shell,
+        read_only: args.read_only,
+        resume: args.resume_mode(),
+    };
+    if !args.plain && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        structure_cli::tui::run(provider_config, options).await
+    } else {
+        interactive::run(provider_config, options).await
+    }
 }
 
 async fn run_acp(provider_config: ApiProviderConfig) -> i32 {

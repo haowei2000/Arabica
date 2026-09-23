@@ -169,7 +169,7 @@ impl SessionEventObserver for TerminalObserver {
     }
 }
 
-fn policy() -> ToolPermissionPolicy {
+pub(crate) fn policy() -> ToolPermissionPolicy {
     let mut by_tool = BTreeMap::new();
     for name in ["read_file", "list_dir", "grep", "find_files"] {
         by_tool.insert(name.to_owned(), ToolPermissionRule::Allow);
@@ -209,7 +209,7 @@ fn prompt(label: &str) {
     let _ = std::io::stdout().flush();
 }
 
-fn set_progress(model: &mut HostModel, sink: ModelProgressSink) {
+pub(crate) fn set_progress(model: &mut HostModel, sink: ModelProgressSink) {
     match model {
         HostModel::Api(_) => {
             let old = std::mem::replace(model, HostModel::Scripted(ScriptedModel::default()));
@@ -222,19 +222,19 @@ fn set_progress(model: &mut HostModel, sink: ModelProgressSink) {
     }
 }
 
-struct InteractiveSession {
-    manager: SessionManager<HostRuntime>,
-    session_id: SessionId,
-    store: Arc<FileSessionStore>,
-    config: ApiProviderConfig,
-    structure_home: PathBuf,
-    runner_root: PathBuf,
-    read_only: bool,
-    allow_shell: bool,
+pub(crate) struct InteractiveSession {
+    pub(crate) manager: SessionManager<HostRuntime>,
+    pub(crate) session_id: SessionId,
+    pub(crate) store: Arc<FileSessionStore>,
+    pub(crate) config: ApiProviderConfig,
+    pub(crate) structure_home: PathBuf,
+    pub(crate) runner_root: PathBuf,
+    pub(crate) read_only: bool,
+    pub(crate) allow_shell: bool,
 }
 
 impl InteractiveSession {
-    async fn open(
+    pub(crate) async fn open(
         config: ApiProviderConfig,
         options: InteractiveOptions,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -327,7 +327,7 @@ impl InteractiveSession {
         })
     }
 
-    fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut next = self.config.clone();
         next.model = model.to_owned();
         let provider = ApiModelProvider::new(next.clone())?;
@@ -339,7 +339,10 @@ impl InteractiveSession {
         Ok(())
     }
 
-    fn change_thinking(&mut self, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn change_thinking(
+        &mut self,
+        value: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut next = self.config.clone();
         set_thinking(&mut next, value)?;
         let provider = ApiModelProvider::new(next.clone())?;
