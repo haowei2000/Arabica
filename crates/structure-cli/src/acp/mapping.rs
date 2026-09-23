@@ -11,6 +11,7 @@
 //! exactly where the assistant's text and reasoning live.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, Diff, SessionId as AcpSessionId, SessionNotification,
@@ -21,6 +22,7 @@ use agent_client_protocol::{Client, ConnectionTo};
 use serde_json::Value;
 use structure_model::{RuntimeItem, RuntimeRole};
 use structure_protocol::{Event, EventEnvelope};
+use structure_provider::{ModelProgress, ModelProgressSink};
 use structure_session::{EventVisibility, SessionEventObserver};
 
 /// Forwards one `dispatch` call's Events to the ACP client as live
@@ -29,6 +31,13 @@ pub struct AcpObserver {
     connection: ConnectionTo<Client>,
     session_id: AcpSessionId,
     workspace_root: PathBuf,
+    streamed: Mutex<StreamedContent>,
+}
+
+#[derive(Default)]
+struct StreamedContent {
+    message: String,
+    reasoning: String,
 }
 
 impl AcpObserver {
@@ -41,19 +50,88 @@ impl AcpObserver {
             connection,
             session_id,
             workspace_root,
+            streamed: Mutex::new(StreamedContent::default()),
+        }
+    }
+
+    pub fn progress_sink(self: &Arc<Self>) -> ModelProgressSink {
+        let observer = Arc::clone(self);
+        ModelProgressSink::new(move |progress| {
+            let update = match progress {
+                ModelProgress::Start => {
+                    *observer
+                        .streamed
+                        .lock()
+                        .expect("stream state lock poisoned") = StreamedContent::default();
+                    return;
+                }
+                ModelProgress::Message(text) => {
+                    observer
+                        .streamed
+                        .lock()
+                        .expect("stream state lock poisoned")
+                        .message
+                        .push_str(&text);
+                    SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text)))
+                }
+                ModelProgress::Reasoning(text) => {
+                    observer
+                        .streamed
+                        .lock()
+                        .expect("stream state lock poisoned")
+                        .reasoning
+                        .push_str(&text);
+                    SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(text)))
+                }
+            };
+            observer.send(update);
+        })
+    }
+
+    fn send(&self, update: SessionUpdate) {
+        if let Err(error) = self
+            .connection
+            .send_notification(SessionNotification::new(self.session_id.clone(), update))
+        {
+            eprintln!("structure acp: dropped a session/update: {error}");
         }
     }
 }
 
 impl SessionEventObserver for AcpObserver {
     fn observe(&self, envelope: &EventEnvelope, _visibility: EventVisibility) {
-        for update in updates_for(&envelope.event, &envelope.run_id, &self.workspace_root) {
-            if let Err(error) = self
-                .connection
-                .send_notification(SessionNotification::new(self.session_id.clone(), update))
+        let mut updates = updates_for(&envelope.event, &envelope.run_id, &self.workspace_root);
+        if let Event::ModelResponseItem { item, .. } = &envelope.event {
+            let streamed = self.streamed.lock().expect("stream state lock poisoned");
+            let already_sent = match item {
+                RuntimeItem::Message(message) if message.role == RuntimeRole::Assistant => {
+                    Some(streamed.message.as_str())
+                }
+                RuntimeItem::Reasoning(_) => Some(streamed.reasoning.as_str()),
+                _ => None,
+            };
+            if let Some(already_sent) = already_sent
+                && !already_sent.is_empty()
+                && updates.len() == 1
             {
-                eprintln!("structure acp: dropped a session/update: {error}");
+                match &mut updates[0] {
+                    SessionUpdate::AgentMessageChunk(chunk)
+                    | SessionUpdate::AgentThoughtChunk(chunk) => {
+                        if let ContentBlock::Text(text) = &mut chunk.content
+                            && let Some(rest) = text.text.strip_prefix(already_sent)
+                        {
+                            text.text = rest.to_owned();
+                            if text.text.is_empty() {
+                                updates.clear();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
+        }
+        for update in updates {
+            self.send(update);
         }
     }
 }

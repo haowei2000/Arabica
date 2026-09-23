@@ -17,6 +17,7 @@
 //! actually is `session.created` -- rather than only proving restore
 //! happens not to fail.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -162,6 +163,28 @@ async fn continue_and_resume_append_to_the_same_session_file_across_real_process
     );
     assert_eq!(events_after_first[0]["envelope"]["sequence"], 1);
 
+    // ACP session/close leaves this same persisted state. Continuing it from
+    // print mode must activate it before dispatching the next message.
+    let mut suspended = events_after_first.last().expect("run produced events")["envelope"].clone();
+    suspended["event_id"] = serde_json::json!(format!("event-{session_id}-suspended"));
+    suspended["command_id"] = serde_json::json!("test-suspend");
+    suspended["run_id"] = Value::Null;
+    suspended["sequence"] = serde_json::json!(events_after_first.len() + 1);
+    suspended["event"] = serde_json::json!({"type": "session.suspended"});
+    let record = serde_json::json!({
+        "record": "event",
+        "visibility": "client",
+        "envelope": suspended
+    });
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&session_file)
+            .expect("open session log"),
+        "{record}"
+    )
+    .expect("append suspended event");
+
     let second = run_structure(
         &structure_home,
         &workspace_root,
@@ -181,6 +204,11 @@ async fn continue_and_resume_append_to_the_same_session_file_across_real_process
     assert_eq!(session_file_after_continue, session_file);
 
     let events_after_continue = read_event_records(&session_file);
+    assert!(
+        events_after_continue
+            .iter()
+            .any(|record| { record["envelope"]["event"]["type"] == "session.resumed" })
+    );
     assert!(
         events_after_continue.len() > events_after_first.len(),
         "--continue must append new events, not replace the file"

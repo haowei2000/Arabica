@@ -24,10 +24,12 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
     Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
-    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, PromptRequest, PromptResponse, ResumeSessionRequest, ResumeSessionResponse,
-    SessionCapabilities, SessionCloseCapabilities, SessionId as AcpSessionId, SessionInfo,
+    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities,
+    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, ResumeSessionRequest,
+    ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOption, SessionId as AcpSessionId, SessionInfo,
     SessionListCapabilities, SessionNotification, SessionResumeCapabilities,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, Error as AcpError, Responder, Result as AcpResult, Stdio,
@@ -35,6 +37,7 @@ use agent_client_protocol::{
 use structure_adapters::{FileSessionStore, NewSession};
 use structure_protocol::{
     Command, CommandEnvelope, CommandId, RunId as StructureRunId, SessionId as StructureSessionId,
+    SessionStatus,
 };
 use structure_runtime::{RunCancellation, RunControl, ToolPermissionGate};
 use structure_session::{
@@ -42,8 +45,59 @@ use structure_session::{
     SessionEventObserver, SessionManager,
 };
 
-use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime};
-use structure_provider::{ApiModelProvider, ApiProviderConfig};
+use crate::host::{HostModel, HostRuntime, LocalRunnerPolicy, build_host_runtime_with_mcp};
+use structure_provider::{ApiModelProvider, ApiProviderConfig, ApiType};
+
+#[derive(Clone)]
+struct AcpProviderSettings {
+    initial: ApiProviderConfig,
+    models: Vec<String>,
+}
+
+impl AcpProviderSettings {
+    fn options(&self, config: &ApiProviderConfig) -> Vec<SessionConfigOption> {
+        let models = self
+            .models
+            .iter()
+            .map(|model| SessionConfigSelectOption::new(model.clone(), model.clone()))
+            .collect::<Vec<_>>();
+        let mut options = vec![
+            SessionConfigOption::select("model", "Model", config.model.clone(), models)
+                .category(SessionConfigOptionCategory::Model),
+        ];
+        if !matches!(
+            config.api_type,
+            ApiType::OpenAiChatCompletions | ApiType::OpenAiResponses
+        ) {
+            return options;
+        }
+        let levels = if config.api_type == ApiType::OpenAiResponses {
+            vec!["off", "low", "medium", "high"]
+        } else {
+            vec!["off", "on"]
+        };
+        let current = if !config.thinking_enabled {
+            "off"
+        } else if config.api_type == ApiType::OpenAiResponses {
+            config.reasoning_effort.as_deref().unwrap_or("medium")
+        } else {
+            "on"
+        };
+        options.push(
+            SessionConfigOption::select(
+                "thinking",
+                "Thinking",
+                current.to_owned(),
+                levels
+                    .into_iter()
+                    .map(|level| SessionConfigSelectOption::new(level, level))
+                    .collect::<Vec<_>>(),
+            )
+            .category(SessionConfigOptionCategory::ThoughtLevel),
+        );
+        options
+    }
+}
 
 /// Structure's own session/run ids only need to be unique within one
 /// `SessionManager`, but this host runs one `SessionManager` per ACP
@@ -79,6 +133,7 @@ struct SessionEntry {
     /// drops it. `Arc` because `handle_prompt` shares it into a
     /// per-call `FanOutObserver` alongside the live `AcpObserver`.
     store: Arc<FileSessionStore>,
+    provider_config: Option<Mutex<ApiProviderConfig>>,
 }
 
 /// Builds one fresh [`HostModel`] per `session/new`: every ACP session gets
@@ -93,6 +148,7 @@ struct AcpState {
     tool_policy: LocalRunnerPolicy,
     structure_home: PathBuf,
     sessions: Arc<Mutex<HashMap<AcpSessionId, Arc<SessionEntry>>>>,
+    provider_settings: Option<Arc<AcpProviderSettings>>,
 }
 
 impl AcpState {
@@ -106,7 +162,19 @@ impl AcpState {
             tool_policy,
             structure_home,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            provider_settings: None,
         }
+    }
+
+    fn with_provider_settings(mut self, settings: AcpProviderSettings) -> Self {
+        self.provider_settings = Some(Arc::new(settings));
+        self
+    }
+
+    fn config_options(&self) -> Option<Vec<SessionConfigOption>> {
+        self.provider_settings
+            .as_ref()
+            .map(|settings| settings.options(&settings.initial))
     }
 
     fn entry(&self, session_id: &AcpSessionId) -> Option<Arc<SessionEntry>> {
@@ -117,20 +185,51 @@ impl AcpState {
             .cloned()
     }
 
-    async fn new_session(&self, request: NewSessionRequest) -> AcpResult<NewSessionResponse> {
-        if !request.mcp_servers.is_empty() {
-            eprintln!(
-                "structure acp: ignoring {} MCP server(s) from session/new; this agent's tools run in-process, not over MCP",
-                request.mcp_servers.len()
-            );
+    async fn activate_restored_session(
+        manager: &mut SessionManager<HostRuntime>,
+        session_id: &StructureSessionId,
+        store: &Arc<FileSessionStore>,
+    ) -> AcpResult<()> {
+        let status = manager
+            .session(session_id)
+            .ok_or_else(|| AcpError::internal_error().data("restored session is missing"))?
+            .status;
+        match status {
+            SessionStatus::Active => Ok(()),
+            SessionStatus::Suspended => {
+                manager
+                    .dispatch(
+                        CommandEnvelope::new(
+                            CommandId::new(uuid::Uuid::now_v7().to_string()),
+                            Some(session_id.clone()),
+                            Command::SessionResume,
+                        ),
+                        DispatchControl {
+                            run: RunControl::default(),
+                            observer: Some(Arc::clone(store) as Arc<dyn SessionEventObserver>),
+                        },
+                    )
+                    .await
+                    .map_err(session_error)?;
+                Ok(())
+            }
+            SessionStatus::Closed => Err(AcpError::invalid_params()
+                .data(format!("session {session_id} is permanently closed"))),
         }
+    }
+
+    async fn new_session(&self, request: NewSessionRequest) -> AcpResult<NewSessionResponse> {
         if !request.cwd.is_absolute() {
             return Err(AcpError::invalid_params()
                 .data(format!("cwd must be absolute: {}", request.cwd.display())));
         }
         let workspace_id = crate::host::workspace_id_for(&request.cwd);
         let model = (self.model_factory)()?;
-        let runtime = build_host_runtime(model, &request.cwd, self.tool_policy.clone());
+        let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
+            .await
+            .map_err(|error| AcpError::invalid_params().data(error))?;
+        let runtime =
+            build_host_runtime_with_mcp(model, &request.cwd, self.tool_policy.clone(), mcp);
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let envelope = CommandEnvelope::new(
             CommandId::new(uuid::Uuid::now_v7().to_string()),
@@ -180,9 +279,13 @@ impl AcpState {
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
                     store: Arc::new(store),
+                    provider_config: self
+                        .provider_settings
+                        .as_ref()
+                        .map(|settings| Mutex::new(settings.initial.clone())),
                 }),
             );
-        Ok(NewSessionResponse::new(acp_session_id))
+        Ok(NewSessionResponse::new(acp_session_id).config_options(self.config_options()))
     }
 
     /// `session/load`: only reachable once `initialize` has advertised
@@ -223,19 +326,26 @@ impl AcpState {
             &workspace_id,
             &structure_session_id,
         );
-        let store = FileSessionStore::open_existing(&path)
-            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+        let store = Arc::new(
+            FileSessionStore::open_existing(&path)
+                .map_err(|error| AcpError::internal_error().data(error.to_string()))?,
+        );
 
         let model = (self.model_factory)()?;
-        let runtime = build_host_runtime(model, &request.cwd, self.tool_policy.clone());
+        let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
+            .await
+            .map_err(|error| AcpError::invalid_params().data(error))?;
+        let runtime =
+            build_host_runtime_with_mcp(model, &request.cwd, self.tool_policy.clone(), mcp);
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let restore_report = manager
             .restore_session(
                 stored.into_snapshot(),
                 CommandId::new(uuid::Uuid::now_v7().to_string()),
-                Some(&store as &dyn SessionEventObserver),
+                Some(store.as_ref() as &dyn SessionEventObserver),
             )
             .map_err(session_error)?;
+        Self::activate_restored_session(&mut manager, &structure_session_id, &store).await?;
 
         let acp_session_id = AcpSessionId::new(structure_session_id.to_string());
         // Original history first, then any repair Events restore_session
@@ -268,11 +378,15 @@ impl AcpState {
                     structure_session_id,
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
-                    store: Arc::new(store),
+                    store,
+                    provider_config: self
+                        .provider_settings
+                        .as_ref()
+                        .map(|settings| Mutex::new(settings.initial.clone())),
                 }),
             );
 
-        Ok(LoadSessionResponse::new())
+        Ok(LoadSessionResponse::new().config_options(self.config_options()))
     }
 
     /// `session/resume`: only reachable once `initialize` has advertised
@@ -312,19 +426,26 @@ impl AcpState {
             &workspace_id,
             &structure_session_id,
         );
-        let store = FileSessionStore::open_existing(&path)
-            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+        let store = Arc::new(
+            FileSessionStore::open_existing(&path)
+                .map_err(|error| AcpError::internal_error().data(error.to_string()))?,
+        );
 
         let model = (self.model_factory)()?;
-        let runtime = build_host_runtime(model, &request.cwd, self.tool_policy.clone());
+        let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
+            .await
+            .map_err(|error| AcpError::invalid_params().data(error))?;
+        let runtime =
+            build_host_runtime_with_mcp(model, &request.cwd, self.tool_policy.clone(), mcp);
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         manager
             .restore_session(
                 stored.into_snapshot(),
                 CommandId::new(uuid::Uuid::now_v7().to_string()),
-                Some(&store as &dyn SessionEventObserver),
+                Some(store.as_ref() as &dyn SessionEventObserver),
             )
             .map_err(session_error)?;
+        Self::activate_restored_session(&mut manager, &structure_session_id, &store).await?;
 
         let acp_session_id = AcpSessionId::new(structure_session_id.to_string());
         self.sessions
@@ -337,11 +458,72 @@ impl AcpState {
                     structure_session_id,
                     cwd: request.cwd,
                     current_run: Mutex::new(None),
-                    store: Arc::new(store),
+                    store,
+                    provider_config: self
+                        .provider_settings
+                        .as_ref()
+                        .map(|settings| Mutex::new(settings.initial.clone())),
                 }),
             );
 
-        Ok(ResumeSessionResponse::new())
+        Ok(ResumeSessionResponse::new().config_options(self.config_options()))
+    }
+
+    fn set_config_option(
+        &self,
+        request: SetSessionConfigOptionRequest,
+    ) -> AcpResult<SetSessionConfigOptionResponse> {
+        let settings = self.provider_settings.as_ref().ok_or_else(|| {
+            AcpError::invalid_request().data("provider configuration is unavailable")
+        })?;
+        let entry = self.entry(&request.session_id).ok_or_else(|| {
+            AcpError::invalid_params().data(format!("unknown session {}", request.session_id))
+        })?;
+        let config_lock = entry.provider_config.as_ref().ok_or_else(|| {
+            AcpError::invalid_request().data("provider configuration is unavailable")
+        })?;
+        let mut manager = entry.manager.try_lock().map_err(|_| {
+            AcpError::invalid_request().data("a prompt is already in progress for this session")
+        })?;
+        let mut config = config_lock.lock().expect("provider config lock poisoned");
+        let mut updated = config.clone();
+        let value = request
+            .value
+            .as_value_id()
+            .ok_or_else(|| AcpError::invalid_params().data("expected a select value"))?
+            .to_string();
+        match request.config_id.to_string().as_str() {
+            "model" if settings.models.contains(&value) => updated.model = value,
+            "thinking" => match (updated.api_type, value.as_str()) {
+                (_, "off") => {
+                    updated.thinking_enabled = false;
+                    updated.reasoning_effort = None;
+                }
+                (ApiType::OpenAiResponses, "low" | "medium" | "high") => {
+                    updated.thinking_enabled = true;
+                    updated.reasoning_effort = Some(value);
+                }
+                (ApiType::OpenAiChatCompletions, "on") => {
+                    updated.thinking_enabled = true;
+                }
+                _ => {
+                    return Err(AcpError::invalid_params()
+                        .data("unsupported thinking level for this provider"));
+                }
+            },
+            "model" => {
+                return Err(AcpError::invalid_params().data("model is not in STRUCTURE__MODELS"));
+            }
+            _ => return Err(AcpError::invalid_params().data("unknown configuration option")),
+        }
+        let model = ApiModelProvider::new(updated.clone())
+            .map(HostModel::Api)
+            .map_err(provider_error)?;
+        *manager.runtime_mut().model_mut() = model;
+        *config = updated;
+        Ok(SetSessionConfigOptionResponse::new(
+            settings.options(&config),
+        ))
     }
 
     /// `session/list`: only reachable once `initialize` has advertised
@@ -469,13 +651,27 @@ pub async fn run(
 ) -> AcpResult<()> {
     let structure_home = structure_adapters::default_structure_home()
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+    let mut models = std::env::var("STRUCTURE__MODELS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if !models.contains(&provider_config.model) {
+        models.insert(0, provider_config.model.clone());
+    }
+    let settings = AcpProviderSettings {
+        initial: provider_config.clone(),
+        models,
+    };
     let model_factory: Arc<ModelFactory> = Arc::new(move || {
         ApiModelProvider::new(provider_config.clone())
             .map(HostModel::Api)
             .map_err(provider_error)
     });
     serve(
-        AcpState::new(model_factory, tool_policy, structure_home),
+        AcpState::new(model_factory, tool_policy, structure_home).with_provider_settings(settings),
         Stdio::new(),
     )
     .await
@@ -501,6 +697,7 @@ async fn serve(
                         .agent_capabilities(
                             AgentCapabilities::new()
                                 .load_session(true)
+                                .mcp_capabilities(McpCapabilities::new().http(true))
                                 .session_capabilities(
                                     SessionCapabilities::new()
                                         .list(SessionListCapabilities::new())
@@ -534,6 +731,20 @@ async fn serve(
                             responder: Responder<PromptResponse>,
                             connection: ConnectionTo<Client>| {
                     handle_prompt(state.clone(), request, responder, connection)
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = state.clone();
+                async move |request: SetSessionConfigOptionRequest,
+                            responder: Responder<SetSessionConfigOptionResponse>,
+                            _connection: ConnectionTo<Client>| {
+                    match state.set_config_option(request) {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -623,7 +834,7 @@ fn handle_prompt(
             AcpError::invalid_params().data(format!("unknown session {}", request.session_id)),
         );
     };
-    let Ok(guard) = Arc::clone(&entry.manager).try_lock_owned() else {
+    let Ok(mut guard) = Arc::clone(&entry.manager).try_lock_owned() else {
         return responder.respond_with_error(
             AcpError::invalid_request().data("a prompt is already in progress for this session"),
         );
@@ -639,13 +850,29 @@ fn handle_prompt(
     *entry.current_run.lock().expect("current_run lock poisoned") = Some(cancellation.clone());
 
     let (permission_tx, permission_rx) = tokio::sync::mpsc::unbounded_channel();
+    let acp_observer = Arc::new(mapping::AcpObserver::new(
+        connection.clone(),
+        request.session_id.clone(),
+        entry.cwd.clone(),
+    ));
+    let progress = acp_observer.progress_sink();
+    let model = guard.runtime_mut().model_mut();
+    match model {
+        HostModel::Api(_) => {
+            let old = std::mem::replace(
+                model,
+                HostModel::Scripted(crate::host::ScriptedModel::default()),
+            );
+            if let HostModel::Api(provider) = old {
+                *model = HostModel::StreamingApi(provider, progress);
+            }
+        }
+        HostModel::StreamingApi(_, sink) => *sink = progress,
+        HostModel::Scripted(_) => {}
+    }
     let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
         Arc::clone(&entry.store) as Arc<dyn SessionEventObserver>,
-        Arc::new(mapping::AcpObserver::new(
-            connection.clone(),
-            request.session_id.clone(),
-            entry.cwd.clone(),
-        )) as Arc<dyn SessionEventObserver>,
+        acp_observer as Arc<dyn SessionEventObserver>,
     ]));
     let control = DispatchControl {
         run: RunControl {
@@ -708,12 +935,12 @@ mod round_trip {
 
     use agent_client_protocol::schema::v1::{
         CloseSessionRequest as AcpCloseSessionRequest, ContentBlock as AcpContentBlock,
-        InitializeRequest as AcpInitializeRequest, ListSessionsRequest as AcpListSessionsRequest,
-        LoadSessionRequest as AcpLoadSessionRequest, NewSessionRequest as AcpNewSessionRequest,
-        PermissionOptionKind, PromptRequest as AcpPromptRequest, RequestPermissionOutcome,
-        RequestPermissionRequest, RequestPermissionResponse,
-        ResumeSessionRequest as AcpResumeSessionRequest, SelectedPermissionOutcome,
-        SessionNotification, SessionUpdate, StopReason, ToolCallStatus,
+        EnvVariable, InitializeRequest as AcpInitializeRequest,
+        ListSessionsRequest as AcpListSessionsRequest, LoadSessionRequest as AcpLoadSessionRequest,
+        McpServer, McpServerStdio, NewSessionRequest as AcpNewSessionRequest, PermissionOptionKind,
+        PromptRequest as AcpPromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+        RequestPermissionResponse, ResumeSessionRequest as AcpResumeSessionRequest,
+        SelectedPermissionOutcome, SessionNotification, SessionUpdate, StopReason, ToolCallStatus,
     };
     use agent_client_protocol::{Channel, Client as ClientRole, Responder};
     use structure_model::{
@@ -802,6 +1029,281 @@ mod round_trip {
     fn spawn_agent(state: AcpState) -> (tokio::task::JoinHandle<AcpResult<()>>, Channel) {
         let (agent_channel, client_channel) = Channel::duplex();
         (tokio::spawn(serve(state, agent_channel)), client_channel)
+    }
+
+    #[tokio::test]
+    async fn streaming_chat_updates_reach_acp_once() {
+        use axum::Json;
+        use axum::routing::post;
+        use axum::{Router, serve};
+        async fn completion(
+            Json(body): Json<serde_json::Value>,
+        ) -> ([(axum::http::HeaderName, &'static str); 1], String) {
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["thinking"]["type"], "enabled");
+            let chunks = [
+                serde_json::json!({"choices":[{"delta":{"reasoning_content":"reason "}}]}),
+                serde_json::json!({"choices":[{"delta":{"reasoning_content":"here","content":"hello "}}]}),
+                serde_json::json!({"choices":[{"delta":{"content":"there"},"finish_reason":"stop"}]}),
+            ];
+            let body = chunks
+                .iter()
+                .map(|chunk| format!("data: {chunk}\n\n"))
+                .collect::<String>()
+                + "data: [DONE]\n\n";
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                body,
+            )
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(completion)),
+            )
+            .await
+            .unwrap();
+        });
+        let config = ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "test-key",
+            format!("http://{address}/v1"),
+            "mock-model",
+        );
+        let initial = config.clone();
+        let factory: Arc<ModelFactory> = Arc::new(move || {
+            ApiModelProvider::new(config.clone())
+                .map(HostModel::Api)
+                .map_err(provider_error)
+        });
+        let root = temp_root("streaming");
+        let home = temp_root("streaming-home");
+        let state = AcpState::new(factory, LocalRunnerPolicy::coding(), home.clone())
+            .with_provider_settings(AcpProviderSettings {
+                initial,
+                models: vec!["mock-model".to_owned()],
+            });
+        let (server, channel) = spawn_agent(state);
+        let updates = Arc::new(StdMutex::new(Vec::<SessionUpdate>::new()));
+        let received = Arc::clone(&updates);
+        let outcome = ClientRole
+            .builder()
+            .name("stream-client")
+            .on_receive_notification(
+                async move |notification: SessionNotification, _connection| {
+                    received.lock().unwrap().push(notification.update);
+                    Ok(())
+                },
+                agent_client_protocol::on_receive_notification!(),
+            )
+            .connect_with(channel, async move |cx| {
+                cx.send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                    .block_task()
+                    .await?;
+                let session = cx
+                    .send_request(AcpNewSessionRequest::new(root.clone()))
+                    .block_task()
+                    .await?;
+                assert_eq!(session.config_options.as_ref().map(Vec::len), Some(2));
+                let changed = cx
+                    .send_request(SetSessionConfigOptionRequest::new(
+                        session.session_id.clone(),
+                        "thinking",
+                        "on",
+                    ))
+                    .block_task()
+                    .await?;
+                assert_eq!(changed.config_options.len(), 2);
+                let result = cx
+                    .send_request(AcpPromptRequest::new(
+                        session.session_id,
+                        vec![AcpContentBlock::from("hello")],
+                    ))
+                    .block_task()
+                    .await?;
+                Ok(result.stop_reason)
+            })
+            .await
+            .expect("ACP stream succeeds");
+        assert_eq!(outcome, StopReason::EndTurn);
+        let updates = updates.lock().unwrap();
+        let mut message = String::new();
+        let mut thought = String::new();
+        for update in updates.iter() {
+            let target = match update {
+                SessionUpdate::AgentMessageChunk(_) => &mut message,
+                SessionUpdate::AgentThoughtChunk(_) => &mut thought,
+                _ => continue,
+            };
+            let chunk = match update {
+                SessionUpdate::AgentMessageChunk(chunk)
+                | SessionUpdate::AgentThoughtChunk(chunk) => chunk,
+                _ => unreachable!(),
+            };
+            if let agent_client_protocol::schema::v1::ContentBlock::Text(text) = &chunk.content {
+                target.push_str(&text.text);
+            }
+        }
+        assert_eq!(message, "hello there");
+        assert_eq!(thought, "reason here");
+        drop(updates);
+        server.abort();
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[tokio::test]
+    async fn acp_config_switches_model_and_thinking_for_the_next_turn() {
+        let root = temp_root("config");
+        let structure_home = temp_root("config-home");
+        let initial = ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "test-key",
+            "http://127.0.0.1:9/v1",
+            "first-model",
+        );
+        let factory_config = initial.clone();
+        let model_factory: Arc<ModelFactory> = Arc::new(move || {
+            ApiModelProvider::new(factory_config.clone())
+                .map(HostModel::Api)
+                .map_err(provider_error)
+        });
+        let state = AcpState::new(
+            model_factory,
+            LocalRunnerPolicy::coding(),
+            structure_home.clone(),
+        )
+        .with_provider_settings(AcpProviderSettings {
+            initial,
+            models: vec!["first-model".to_owned(), "second-model".to_owned()],
+        });
+        let session = state
+            .new_session(NewSessionRequest::new(root.clone()))
+            .await
+            .unwrap();
+        assert_eq!(session.config_options.as_ref().unwrap().len(), 2);
+        let response = state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "model",
+                "second-model",
+            ))
+            .unwrap();
+        assert_eq!(response.config_options.len(), 2);
+        state
+            .set_config_option(SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "thinking",
+                "on",
+            ))
+            .unwrap();
+        let entry = state.entry(&session.session_id).unwrap();
+        let manager = entry.manager.lock().await;
+        let HostModel::Api(ApiModelProvider::OpenAiChatCompletions(provider)) =
+            manager.runtime().model()
+        else {
+            panic!("expected Chat Completions provider");
+        };
+        assert_eq!(provider.config().model, "second-model");
+        assert!(provider.config().thinking_enabled);
+        drop(manager);
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
+    }
+
+    #[tokio::test]
+    async fn client_supplied_stdio_mcp_tool_is_discovered_approved_and_executed() {
+        let python = std::process::Command::new("which")
+            .arg("python3")
+            .output()
+            .expect("which is available");
+        assert!(
+            python.status.success(),
+            "python3 is required for the MCP fixture"
+        );
+        let python = PathBuf::from(String::from_utf8(python.stdout).expect("UTF-8 path").trim());
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_server.py");
+        let root = temp_root("mcp-tool");
+        let marker = root.join("mcp-result.txt");
+        let structure_home = temp_root("mcp-tool-home");
+        let state = scripted_state(
+            vec![
+                tool_call_result("mcp__fixture__echo", serde_json::json!({"value": "worked"})),
+                text_result("done"),
+            ],
+            acp_tool_policy(),
+            &structure_home,
+        );
+        let (server, client_channel) = spawn_agent(state);
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mcp_server = McpServer::Stdio(
+            McpServerStdio::new("fixture", python)
+                .args(vec![fixture.display().to_string()])
+                .env(vec![EnvVariable::new(
+                    "MCP_TEST_MARKER",
+                    marker.display().to_string(),
+                )]),
+        );
+        let outcome = tokio::time::timeout(Duration::from_secs(20), {
+            let asked = asked.clone();
+            let root = root.clone();
+            ClientRole
+                .builder()
+                .name("test-client")
+                .on_receive_request(
+                    async move |request: RequestPermissionRequest,
+                                responder: Responder<RequestPermissionResponse>,
+                                _connection| {
+                        asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let allow_once = request
+                            .options
+                            .iter()
+                            .find(|option| option.kind == PermissionOptionKind::AllowOnce)
+                            .expect("allow once is offered")
+                            .option_id
+                            .clone();
+                        responder.respond(RequestPermissionResponse::new(
+                            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                                allow_once,
+                            )),
+                        ))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_with(client_channel, async move |cx| {
+                    let initialize = cx
+                        .send_request(AcpInitializeRequest::new(ProtocolVersion::V1))
+                        .block_task()
+                        .await?;
+                    assert!(initialize.agent_capabilities.mcp_capabilities.http);
+                    let session = cx
+                        .send_request(AcpNewSessionRequest::new(root).mcp_servers(vec![mcp_server]))
+                        .block_task()
+                        .await?;
+                    let prompt = cx
+                        .send_request(AcpPromptRequest::new(
+                            session.session_id,
+                            vec![AcpContentBlock::from("echo worked")],
+                        ))
+                        .block_task()
+                        .await?;
+                    Ok(prompt.stop_reason)
+                })
+        })
+        .await
+        .expect("MCP round trip timed out")
+        .expect("MCP round trip succeeded");
+        assert_eq!(outcome, StopReason::EndTurn);
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("MCP tool ran"),
+            "worked"
+        );
+        server.abort();
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(structure_home).ok();
     }
 
     #[tokio::test]
@@ -1210,14 +1712,19 @@ mod round_trip {
     async fn session_close_suspends_and_forgets_the_session_in_this_connection() {
         let root = temp_root("close");
         let structure_home = temp_root("close-home");
-        let state = scripted_state(
-            vec![text_result("hello before closing")],
+        let model_factory: Arc<ModelFactory> = Arc::new(|| {
+            Ok(HostModel::Scripted(ScriptedModel::new([text_result(
+                "hello after reopening",
+            )])))
+        });
+        let state = AcpState::new(
+            model_factory,
             LocalRunnerPolicy::coding(),
-            &structure_home,
+            structure_home.clone(),
         );
         let (server, client_channel) = spawn_agent(state);
 
-        let (session_id, prompt_after_close_was_rejected, load_after_close_succeeded) =
+        let (session_id, prompt_after_close_was_rejected, loaded_stop, resumed_stop) =
             tokio::time::timeout(Duration::from_secs(10), {
                 let root = root.clone();
                 ClientRole.builder().name("test-client").connect_with(
@@ -1264,15 +1771,45 @@ mod round_trip {
                         // session id would fail on lock contention with that
                         // never-released handle. Success here means no
                         // stale entry survived close.
-                        let load_succeeded = cx
-                            .send_request(AcpLoadSessionRequest::new(
+                        cx.send_request(AcpLoadSessionRequest::new(
+                            new_session.session_id.clone(),
+                            root.clone(),
+                        ))
+                        .block_task()
+                        .await?;
+                        let loaded_stop = cx
+                            .send_request(AcpPromptRequest::new(
                                 new_session.session_id.clone(),
-                                root,
+                                vec![AcpContentBlock::from("after load")],
                             ))
                             .block_task()
-                            .await
-                            .is_ok();
-                        Ok((new_session.session_id, prompt_rejected, load_succeeded))
+                            .await?
+                            .stop_reason;
+                        cx.send_request(AcpCloseSessionRequest::new(
+                            new_session.session_id.clone(),
+                        ))
+                        .block_task()
+                        .await?;
+                        cx.send_request(AcpResumeSessionRequest::new(
+                            new_session.session_id.clone(),
+                            root,
+                        ))
+                        .block_task()
+                        .await?;
+                        let resumed_stop = cx
+                            .send_request(AcpPromptRequest::new(
+                                new_session.session_id.clone(),
+                                vec![AcpContentBlock::from("after resume")],
+                            ))
+                            .block_task()
+                            .await?
+                            .stop_reason;
+                        Ok((
+                            new_session.session_id,
+                            prompt_rejected,
+                            loaded_stop,
+                            resumed_stop,
+                        ))
                     },
                 )
             })
@@ -1284,12 +1821,8 @@ mod round_trip {
             prompt_after_close_was_rejected,
             "a session/prompt for a session already closed in this connection must be rejected"
         );
-        assert!(
-            load_after_close_succeeded,
-            "session/load for a session already closed in this connection must succeed; a \
-             failure here means close_session left a stale entry (and its locked \
-             FileSessionStore) behind in the session map"
-        );
+        assert_eq!(loaded_stop, StopReason::EndTurn);
+        assert_eq!(resumed_stop, StopReason::EndTurn);
 
         server
             .await
@@ -1311,6 +1844,18 @@ mod round_trip {
             "session/close must persist session.suspend, not session.close (a terminal \
              state session/load or session/resume could never reopen), got {:?}",
             stored.events
+        );
+        assert_eq!(
+            stored
+                .events
+                .iter()
+                .filter(|envelope| matches!(
+                    envelope.event,
+                    structure_protocol::Event::SessionResumed
+                ))
+                .count(),
+            2,
+            "both ACP load and resume must activate a suspended session"
         );
 
         std::fs::remove_dir_all(root).ok();

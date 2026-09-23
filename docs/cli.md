@@ -28,6 +28,7 @@ works for either host unchanged:
 | `OPENAI__BASE_URL` | `--base-url` | yes | Provider endpoint, e.g. `https://api.openai.com/v1`. |
 | `OPENAI__MODEL` | `--model` | yes | Model name. |
 | `STRUCTURE__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`, `gemini_interactions`. |
+| `STRUCTURE__MODELS` | *(none)* | no | Comma-separated model names offered in the ACP selector. The current `OPENAI__MODEL` is always included. |
 
 A flag always overrides its matching variable. Nothing is read from a `.env`
 file in the project directory: a malicious repository could otherwise smuggle
@@ -51,17 +52,38 @@ Add to Zed's `settings.json`:
 {
   "agent_servers": {
     "Structure": {
+      "type": "custom",
       "command": "/absolute/path/to/structure",
-      "args": ["acp"]
+      "args": ["acp"],
+      "env": {
+        "OPENAI__API_KEY": "<your-api-key>",
+        "OPENAI__BASE_URL": "https://api.openai.com/v1",
+        "OPENAI__MODEL": "<model-name>",
+        "STRUCTURE__MODELS": "<model-name>,<another-model>"
+      }
     }
   }
 }
 ```
 
-`OPENAI__API_KEY` and the rest of the configuration above must already be set
-in the environment Zed itself launches from (e.g. exported in your shell
-profile) — nothing reads them from Zed's own settings, and there is no field
-for them there.
+Zed passes `env` to the agent process. These values can also be inherited
+from Zed's launch environment, in which case the `env` object may be omitted.
+Putting `OPENAI__API_KEY` in `settings.json` stores it as plain text; use a
+secure launch environment if that is unacceptable. Zed's own model-provider
+settings do not configure Structure's provider.
+
+New and restored sessions expose ACP model and thinking selectors. The model
+selector contains `STRUCTURE__MODELS` plus the starting model. Chat
+Completions has `off` and `on` thinking levels; Responses has `off`, `low`,
+`medium`, and `high`. A switch applies to the next prompt in that session.
+The Chat Completions adapter sends a nonstandard `thinking` parameter when
+enabled, so the endpoint must support it. In ACP sessions it requests Chat
+Completions streaming and forwards text and `reasoning_content` deltas as
+message and thought updates. A provider that returns ordinary JSON instead
+of SSE still works, with updates emitted when the response completes. The
+complete model response is retained in the session event log for subsequent
+turns; streamed chunks are not duplicated on completion. Other provider
+adapters still emit their ACP updates after complete HTTP responses.
 
 ### Tools and permissions
 
@@ -76,12 +98,44 @@ allow once, allow for the rest of the session, reject once, reject for the
 rest of the session — all four are enforced by the runtime's permission gate,
 not just displayed.
 
-### What is not implemented yet
+### Sessions and MCP tools
 
-Session persistence, `session/load`, and `session/resume` do not exist: each
-ACP session lives only as long as its connection. `AgentCapabilities` reports
-`loadSession: false` accordingly. `mcpServers` in `session/new` are ignored
-with a warning on stderr — tools run in-process, not over MCP.
+ACP sessions are saved under `$STRUCTURE_HOME` (or its default location) as
+append-only event logs. The agent supports `session/list`, `session/load`
+(replays history), `session/resume` (continues without replay), and
+`session/close` (suspends the session so it can be opened again). A client
+may supply MCP servers in `session/new`, `session/load`, or `session/resume`;
+each request reconnects to its supplied servers and discovers their tools.
+Server configuration, especially environment variables and HTTP headers, is
+not written to the session log.
+
+Stdio and streamable HTTP MCP transports are supported. Stdio commands must
+be absolute paths. Legacy SSE MCP transport is rejected with an error;
+the ACP capability advertises HTTP support but not SSE support. An MCP tool
+is exposed to the model as `mcp__SERVER__TOOL` (non-alphanumeric characters
+become underscores). Name collisions and connection failures fail session
+creation rather than silently hiding tools. MCP resources and prompts are not
+exposed to the model yet. Every MCP tool call requires an
+ACP `session/request_permission` decision, even if the server advertises a
+read-only hint.
+
+The MCP client uses the official Rust SDK (`rmcp`). A stdio server receives
+only a small base environment (`PATH`, `HOME`, temporary-directory and locale
+variables) plus the `env` entries supplied by the ACP client; it does not
+inherit the model provider's API key. HTTP requests use the headers in the
+client's server configuration.
+
+### ACP verification
+
+`cargo test -p structure-cli` covers a real `structure acp` subprocess with
+an ACP client and mock model provider, multi-turn message ordering, permission
+requests, ACP load/resume, and print-mode cross-process session recovery. The
+in-process ACP client test
+`client_supplied_stdio_mcp_tool_is_discovered_approved_and_executed` connects
+to a stdio MCP fixture, approves a tool, and checks its side effect. The HTTP
+MCP test verifies discovery, a client-supplied request header, and a tool
+call. After building the binary, configure Zed as above and verify a new
+session, a tool approval, and reopening the session after restarting Zed.
 
 ## `structure -p`
 
@@ -103,6 +157,13 @@ echo "summarize open TODOs in src/" | structure -p -
 | `--output-format text\|jsonl` | `text` (default): stdout is only the final answer (nothing at all if the run didn't complete); progress goes to stderr. `jsonl`: stdout streams one JSON `EventEnvelope` per line, live, for every client-visible Event — the same boundary `structure acp` uses, so no internal model exchange (system prompt, raw reasoning) ever reaches a pipe built for scripting. |
 | `--allow-shell` | Adds `shell` to the tool policy. Off by default. |
 | `--read-only` | Restricts the policy to read-only tools. Mutually exclusive with `--allow-shell` (exit code 2 if both are given): `shell` has no path confinement, so allowing it while also promising nothing changes would make the promise false, not just permissive. |
+| `--continue` | Continue the most recently active session in this workspace. |
+| `--resume <ID>` | Resume a specific session in this workspace; see `structure sessions list`. |
+
+Each print-mode run is saved in the same event-log format as ACP. Use
+`structure sessions list` to see sessions for the current workspace, or
+`structure sessions list --all` to see every workspace. Listing does not
+require model-provider credentials.
 
 ### Exit codes
 

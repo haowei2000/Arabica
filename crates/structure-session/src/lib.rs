@@ -316,6 +316,10 @@ impl<R> SessionManager<R> {
         &self.runtime
     }
 
+    pub fn runtime_mut(&mut self) -> &mut R {
+        &mut self.runtime
+    }
+
     fn allocate_session_id(&mut self) -> SessionId {
         self.ids.session_id()
     }

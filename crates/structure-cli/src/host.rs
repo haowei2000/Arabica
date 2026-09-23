@@ -14,11 +14,13 @@ use clap::Args;
 use sha2::{Digest, Sha256};
 use structure_protocol::RunId;
 use structure_provider::{
-    ApiModelProvider, ApiProviderConfig, ApiType, ModelProvider, ModelRunRequest, ModelRunResult,
-    ProviderError,
+    ApiModelProvider, ApiProviderConfig, ApiType, ModelProgressSink, ModelProvider,
+    ModelRunRequest, ModelRunResult, ProviderError,
 };
-use structure_runner::LocalRunner;
 pub use structure_runner::LocalRunnerPolicy;
+use structure_runner::{
+    LocalRunner, RunnerEnvironment, RunnerError, ToolExecutionRequest, ToolExecutionResult,
+};
 use structure_runtime::{CoreRuntime, HistoryProjection, RuntimeArchiveStore, ShortMemoryPolicy};
 
 /// A run cap generous enough for a real coding task, short enough that a
@@ -109,6 +111,7 @@ pub fn process_environment(name: &str) -> Option<String> {
 #[derive(Debug)]
 pub enum HostModel {
     Api(ApiModelProvider),
+    StreamingApi(ApiModelProvider, ModelProgressSink),
     /// A fixed sequence of responses, consumed one per call. Used by this
     /// crate's own tests; never selected from user-facing configuration.
     Scripted(ScriptedModel),
@@ -121,6 +124,9 @@ impl ModelProvider for HostModel {
     ) -> Result<ModelRunResult, ProviderError> {
         match self {
             Self::Api(model) => model.complete(request).await,
+            Self::StreamingApi(model, progress) => {
+                model.complete_with_progress(request, progress).await
+            }
             Self::Scripted(model) => model.complete(request).await,
         }
     }
@@ -128,6 +134,7 @@ impl ModelProvider for HostModel {
     async fn cancel(&mut self, run_id: &RunId) -> Result<bool, ProviderError> {
         match self {
             Self::Api(model) => model.cancel(run_id).await,
+            Self::StreamingApi(model, _) => model.cancel(run_id).await,
             Self::Scripted(model) => model.cancel(run_id).await,
         }
     }
@@ -163,7 +170,45 @@ impl ModelProvider for ScriptedModel {
     }
 }
 
-pub type HostRuntime = CoreRuntime<HostModel, LocalRunner>;
+/// Routes local tools to the confined runner and session-scoped MCP tools to
+/// their originating server.
+#[derive(Debug)]
+pub struct HostRunner {
+    local: LocalRunner,
+    mcp: crate::mcp::McpTools,
+}
+
+impl RunnerEnvironment for HostRunner {
+    fn classify(
+        &self,
+        call: &structure_model::ToolCallItem,
+    ) -> structure_protocol::ToolInteractionKind {
+        if self.mcp.contains(&call.name) {
+            self.mcp.classify(call)
+        } else {
+            self.local.classify(call)
+        }
+    }
+
+    async fn execute(
+        &mut self,
+        request: ToolExecutionRequest,
+    ) -> Result<ToolExecutionResult, RunnerError> {
+        if self.mcp.contains(&request.call.name) {
+            self.mcp.execute(request).await
+        } else {
+            self.local.execute(request).await
+        }
+    }
+
+    async fn cancel(&mut self, run_id: &RunId) -> Result<bool, RunnerError> {
+        let local = self.local.cancel(run_id).await?;
+        let mcp = self.mcp.cancel(run_id).await?;
+        Ok(local || mcp)
+    }
+}
+
+pub type HostRuntime = CoreRuntime<HostModel, HostRunner>;
 
 /// The standing instruction every coding CLI run carries: where it is, what
 /// it is running on, and the one rule the confined tools already enforce.
@@ -210,8 +255,26 @@ pub fn build_host_runtime(
     runner_root: &Path,
     tool_policy: LocalRunnerPolicy,
 ) -> HostRuntime {
-    let tools = structure_runner::tool_definitions(&tool_policy);
-    let runner = LocalRunner::with_policy(runner_root, tool_policy);
+    build_host_runtime_with_mcp(
+        model,
+        runner_root,
+        tool_policy,
+        crate::mcp::McpTools::default(),
+    )
+}
+
+pub fn build_host_runtime_with_mcp(
+    model: HostModel,
+    runner_root: &Path,
+    tool_policy: LocalRunnerPolicy,
+    mcp: crate::mcp::McpTools,
+) -> HostRuntime {
+    let mut tools = structure_runner::tool_definitions(&tool_policy);
+    tools.extend_from_slice(mcp.definitions());
+    let runner = HostRunner {
+        local: LocalRunner::with_policy(runner_root, tool_policy),
+        mcp,
+    };
     let mut runtime = CoreRuntime::with_memory_configuration(
         model,
         runner,

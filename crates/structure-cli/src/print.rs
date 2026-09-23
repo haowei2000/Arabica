@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use structure_adapters::{FileSessionStore, NewSession, StoredSession};
-use structure_protocol::{Command, CommandEnvelope, CommandId, Event, EventEnvelope, WorkspaceId};
+use structure_protocol::{
+    Command, CommandEnvelope, CommandId, Event, EventEnvelope, SessionStatus, WorkspaceId,
+};
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
 use structure_runner::LocalTool;
 use structure_runtime::{RunCancellation, RunControl};
@@ -289,6 +291,24 @@ async fn run_task(
                 None,
             )?;
             let store = FileSessionStore::open_existing(&path)?;
+            if manager
+                .session(&session_id)
+                .is_some_and(|session| session.status == SessionStatus::Suspended)
+            {
+                let resumed = manager
+                    .dispatch(
+                        CommandEnvelope::new(
+                            CommandId::new(uuid::Uuid::now_v7().to_string()),
+                            Some(session_id.clone()),
+                            Command::SessionResume,
+                        ),
+                        DispatchControl::default(),
+                    )
+                    .await?;
+                for event in &resumed {
+                    store.observe(event, EventVisibility::Client);
+                }
+            }
             (session_id, store)
         }
         None => {

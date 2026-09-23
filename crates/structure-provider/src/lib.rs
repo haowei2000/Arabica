@@ -3,11 +3,12 @@
 //! This crate owns provider-neutral model turns and bidirectional API wire
 //! mappings. It does not execute tools or own sessions, memory, or UI concerns.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::Client;
@@ -82,6 +83,32 @@ pub struct ModelRunResult {
     pub prepared_request: Option<RuntimeRequest>,
     /// Provider response decoded back into Structure's typed runtime model.
     pub response: Option<RuntimeResponse>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelProgress {
+    Start,
+    Message(String),
+    Reasoning(String),
+}
+
+#[derive(Clone)]
+pub struct ModelProgressSink(Arc<dyn Fn(ModelProgress) + Send + Sync>);
+
+impl std::fmt::Debug for ModelProgressSink {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ModelProgressSink")
+    }
+}
+
+impl ModelProgressSink {
+    pub fn new(callback: impl Fn(ModelProgress) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(callback))
+    }
+
+    pub fn emit(&self, progress: ModelProgress) {
+        (self.0)(progress);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -274,6 +301,20 @@ pub enum ApiModelProvider {
 }
 
 impl ApiModelProvider {
+    pub async fn complete_with_progress(
+        &mut self,
+        request: ModelRunRequest,
+        progress: &ModelProgressSink,
+    ) -> Result<ModelRunResult, ProviderError> {
+        progress.emit(ModelProgress::Start);
+        match self {
+            Self::OpenAiChatCompletions(adapter) => {
+                adapter.complete_with_progress(request, progress).await
+            }
+            _ => self.complete(request).await,
+        }
+    }
+
     pub fn new(config: ApiProviderConfig) -> Result<Self, ProviderError> {
         match config.api_type {
             ApiType::OpenAiChatCompletions => {
@@ -443,6 +484,122 @@ pub struct OpenAiModelProvider {
 }
 
 impl OpenAiModelProvider {
+    pub async fn complete_with_progress(
+        &mut self,
+        request: ModelRunRequest,
+        progress: &ModelProgressSink,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let run_id = request.run_id.clone();
+        self.active_runs.insert(run_id.clone());
+        let mut prepared_request = compile_runtime_request(&request, &self.config.model);
+        prepared_request.generation.max_output_tokens = self.config.max_tokens;
+        prepared_request.generation.thinking_enabled = self.config.thinking_enabled;
+        let mut stream_unsupported = false;
+        let result = async {
+            let mut wire = self.map_prepared_request(&prepared_request)?;
+            wire.stream = true;
+            let request_body = serde_json::to_vec(&wire).map_err(|error| {
+                ProviderError::new(format!("OpenAI request serialization failed: {error}"))
+            })?;
+            let raw_exchange = self.begin_raw_exchange(&run_id, &request_body)?;
+            let mut response = self
+                .client
+                .post(self.endpoint())
+                .bearer_auth(&self.config.api_key)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(request_body)
+                .send()
+                .await
+                .map_err(|error| ProviderError::new(format!("OpenAI request failed: {error}")))?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.map_err(|error| {
+                    ProviderError::new(format!("OpenAI response failed: {error}"))
+                })?;
+                let detail =
+                    openai_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+                stream_unsupported = (status == reqwest::StatusCode::BAD_REQUEST
+                    || status == reqwest::StatusCode::UNPROCESSABLE_ENTITY)
+                    && detail.to_ascii_lowercase().contains("stream");
+                return Err(ProviderError::new(format!(
+                    "OpenAI endpoint rejected request: {detail}"
+                )));
+            }
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            let mut raw = Vec::new();
+            let wire_response =
+                if content_type.contains("text/event-stream") {
+                    let mut pending = Vec::new();
+                    let mut state = OpenAiChatStreamState::default();
+                    while let Some(chunk) = response.chunk().await.map_err(|error| {
+                        ProviderError::new(format!("OpenAI stream failed: {error}"))
+                    })? {
+                        raw.extend_from_slice(&chunk);
+                        pending.extend_from_slice(&chunk);
+                        while let Some((end, delimiter)) = sse_event_boundary(&pending) {
+                            let event = pending.drain(..end + delimiter).collect::<Vec<_>>();
+                            if parse_chat_stream_event(&event[..end], &mut state, progress)? {
+                                break;
+                            }
+                        }
+                    }
+                    if !pending.is_empty() {
+                        parse_chat_stream_event(&pending, &mut state, progress)?;
+                    }
+                    state.finish()?
+                } else {
+                    raw.extend_from_slice(&response.bytes().await.map_err(|error| {
+                        ProviderError::new(format!("OpenAI response failed: {error}"))
+                    })?);
+                    serde_json::from_slice(&raw).map_err(|error| {
+                        ProviderError::new(format!("invalid OpenAI response: {error}"))
+                    })?
+                };
+            if let Some(directory) = &raw_exchange {
+                std::fs::write(directory.join("response.raw"), &raw).map_err(raw_exchange_error)?;
+                write_json_file(
+                    &directory.join("response.json"),
+                    &RawExchangeResponse {
+                        status: status.as_u16(),
+                        received_at_unix_ms: unix_time_ms(),
+                        response_bytes: raw.len(),
+                    },
+                )?;
+            }
+            let decoded = OpenAiChatCodec.decode(wire_response)?;
+            let content = decoded
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RuntimeItem::Message(message) if message.role == RuntimeRole::Assistant => {
+                        Some(text_content(
+                            &message.content,
+                            ApiType::OpenAiChatCompletions,
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .join("");
+            Ok(ModelRunResult {
+                final_output: (!content.is_empty()).then_some(content),
+                prepared_request: Some(prepared_request.clone()),
+                response: Some(decoded),
+            })
+        }
+        .await;
+        self.active_runs.remove(&run_id);
+        if stream_unsupported {
+            return self.complete(request).await;
+        }
+        result.map_err(|error: ProviderError| error.with_prepared_request(prepared_request))
+    }
+
     /// Exact bytes that complete() will send, excluding authorization headers.
     pub fn experiment_request_bytes(
         &self,
@@ -1575,6 +1732,12 @@ pub struct OpenAiChatRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<OpenAiThinking>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    stream: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1674,6 +1837,174 @@ pub struct OpenAiChatResponse {
     choices: Vec<OpenAiChoice>,
     #[serde(default)]
     usage: Option<OpenAiUsage>,
+}
+
+#[derive(Default)]
+struct OpenAiChatStreamState {
+    content: String,
+    reasoning: String,
+    calls: BTreeMap<usize, StreamToolCall>,
+    finish_reason: Option<String>,
+    usage: Option<OpenAiUsage>,
+    saw_choice: bool,
+}
+
+#[derive(Default)]
+struct StreamToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl OpenAiChatStreamState {
+    fn finish(self) -> Result<OpenAiChatResponse, ProviderError> {
+        if !self.saw_choice {
+            return Err(ProviderError::new("OpenAI stream contained no choices"));
+        }
+        let calls = self
+            .calls
+            .into_values()
+            .map(|call| {
+                if call.id.is_empty() || call.name.is_empty() {
+                    return Err(ProviderError::new(
+                        "OpenAI stream contained an incomplete tool call",
+                    ));
+                }
+                Ok(OpenAiToolCall {
+                    id: call.id,
+                    kind: OpenAiToolKind::Function,
+                    function: OpenAiFunctionCall {
+                        name: call.name,
+                        arguments: call.arguments,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(OpenAiChatResponse {
+            choices: vec![OpenAiChoice {
+                message: OpenAiMessage {
+                    role: OpenAiRole::Assistant,
+                    content: (!self.content.is_empty()).then_some(self.content),
+                    reasoning_content: (!self.reasoning.is_empty()).then_some(self.reasoning),
+                    tool_calls: calls,
+                    tool_call_id: None,
+                },
+                finish_reason: self.finish_reason,
+            }],
+            usage: self.usage,
+        })
+    }
+}
+
+fn sse_event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
+    bytes
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2))
+        .or_else(|| {
+            bytes
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| (index, 4))
+        })
+}
+
+fn parse_chat_stream_event(
+    event: &[u8],
+    state: &mut OpenAiChatStreamState,
+    progress: &ModelProgressSink,
+) -> Result<bool, ProviderError> {
+    let event = std::str::from_utf8(event)
+        .map_err(|error| ProviderError::new(format!("OpenAI stream is not UTF-8: {error}")))?;
+    let data = event
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.is_empty() {
+        return Ok(false);
+    }
+    if data == "[DONE]" {
+        return Ok(true);
+    }
+    let value: serde_json::Value = serde_json::from_str(&data)
+        .map_err(|error| ProviderError::new(format!("invalid OpenAI stream event: {error}")))?;
+    if let Some(detail) = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return Err(ProviderError::new(format!(
+            "OpenAI stream failed: {detail}"
+        )));
+    }
+    if let Some(usage) = value.get("usage").filter(|usage| !usage.is_null()) {
+        state.usage = Some(serde_json::from_value(usage.clone()).map_err(|error| {
+            ProviderError::new(format!("invalid OpenAI stream usage: {error}"))
+        })?);
+    }
+    let Some(choice) = value
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+    else {
+        return Ok(false);
+    };
+    state.saw_choice = true;
+    if let Some(reason) = choice
+        .get("finish_reason")
+        .and_then(serde_json::Value::as_str)
+    {
+        state.finish_reason = Some(reason.to_owned());
+    }
+    let Some(delta) = choice.get("delta") else {
+        return Ok(false);
+    };
+    if let Some(reasoning) = delta
+        .get("reasoning_content")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        state.reasoning.push_str(reasoning);
+        progress.emit(ModelProgress::Reasoning(reasoning.to_owned()));
+    }
+    if let Some(content) = delta
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        state.content.push_str(content);
+        progress.emit(ModelProgress::Message(content.to_owned()));
+    }
+    if let Some(calls) = delta
+        .get("tool_calls")
+        .and_then(serde_json::Value::as_array)
+    {
+        for call in calls {
+            let index = call
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| ProviderError::new("OpenAI stream tool call has no index"))?
+                as usize;
+            let entry = state.calls.entry(index).or_default();
+            if let Some(id) = call.get("id").and_then(serde_json::Value::as_str) {
+                entry.id.push_str(id);
+            }
+            if let Some(function) = call.get("function") {
+                if let Some(name) = function.get("name").and_then(serde_json::Value::as_str) {
+                    entry.name.push_str(name);
+                }
+                if let Some(arguments) = function
+                    .get("arguments")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    entry.arguments.push_str(arguments);
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1817,6 +2148,7 @@ impl ApiCodec for OpenAiChatCodec {
             tool_choice,
             max_tokens: None,
             thinking: None,
+            stream: false,
         })
     }
 
@@ -1834,7 +2166,7 @@ impl ApiCodec for OpenAiChatCodec {
         {
             items.push(RuntimeItem::Reasoning(ReasoningItem {
                 id: None,
-                summary: Vec::new(),
+                summary: vec![reasoning_content.clone()],
                 provider_state: Some(ProviderState::OpenAiChatCompletions { reasoning_content }),
             }));
         }
@@ -2687,11 +3019,13 @@ mod tests {
         assert!(matches!(
             &decoded.items[0],
             RuntimeItem::Reasoning(ReasoningItem {
+                summary,
                 provider_state: Some(ProviderState::OpenAiChatCompletions {
                     reasoning_content,
                 }),
                 ..
             }) if reasoning_content == "I should write the requested file and then inspect the tool result."
+                && summary == &vec![reasoning_content.clone()]
         ));
         assert!(matches!(
             &decoded.items[1],
@@ -2911,6 +3245,147 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&raw_body).expect("raw JSON")["id"],
             "resp_1"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_completions_falls_back_when_streaming_is_unsupported() {
+        async fn completion(Json(body): Json<Value>) -> (axum::http::StatusCode, Json<Value>) {
+            if body["stream"] == true {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(json!({"error":{"message":"stream is unsupported"}})),
+                )
+            } else {
+                (
+                    axum::http::StatusCode::OK,
+                    Json(
+                        json!({"choices":[{"message":{"role":"assistant","content":"fallback"},"finish_reason":"stop"}]}),
+                    ),
+                )
+            }
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("mock binds");
+        let address = listener.local_addr().expect("mock address");
+        tokio::spawn(async move {
+            serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(completion)),
+            )
+            .await
+            .expect("mock serves");
+        });
+        let mut provider = ApiModelProvider::new(ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "test-key",
+            format!("http://{address}/v1"),
+            "test-model",
+        ))
+        .expect("provider builds");
+        let sink = ModelProgressSink::new(|_| {});
+        let result = provider
+            .complete_with_progress(
+                ModelRunRequest {
+                    system_instructions: Vec::new(),
+                    session_id: SessionId::new("session-1"),
+                    run_id: RunId::new("run-1"),
+                    input: "hello".to_owned(),
+                    short_memory: Vec::new(),
+                    run_memory: Vec::new(),
+                    long_memory: Vec::new(),
+                    tools: Vec::new(),
+                    tool_choice: ToolChoice::Auto,
+                    continuation: Vec::new(),
+                    disclosure: DisclosureLevel::Overview,
+                },
+                &sink,
+            )
+            .await
+            .expect("fallback succeeds");
+        assert_eq!(result.final_output.as_deref(), Some("fallback"));
+    }
+
+    #[tokio::test]
+    async fn chat_completions_stream_emits_deltas_and_preserves_tool_call() {
+        async fn completion(
+            Json(body): Json<Value>,
+        ) -> ([(axum::http::HeaderName, &'static str); 1], String) {
+            assert_eq!(body["stream"], true);
+            let events = [
+                json!({"choices":[{"delta":{"reasoning_content":"think "}}]}),
+                json!({"choices":[{"delta":{"reasoning_content":"first","content":"hello "}}]}),
+                json!({"choices":[{"delta":{"content":"world","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\"path\":"}}]}}]}),
+                json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.txt\"}"}}]},"finish_reason":"tool_calls"}]}),
+                json!({"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":7}}),
+            ];
+            let mut body = events
+                .iter()
+                .map(|event| format!("data: {event}\n\n"))
+                .collect::<String>();
+            body.push_str("data: [DONE]\n\n");
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                body,
+            )
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("mock binds");
+        let address = listener.local_addr().expect("mock address");
+        tokio::spawn(async move {
+            serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(completion)),
+            )
+            .await
+            .expect("mock serves");
+        });
+        let mut provider = ApiModelProvider::new(ApiProviderConfig::new(
+            ApiType::OpenAiChatCompletions,
+            "test-key",
+            format!("http://{address}/v1"),
+            "test-model",
+        ))
+        .expect("provider builds");
+        let deltas = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = Arc::clone(&deltas);
+        let sink = ModelProgressSink::new(move |delta| captured.lock().unwrap().push(delta));
+        let result = provider
+            .complete_with_progress(
+                ModelRunRequest {
+                    system_instructions: Vec::new(),
+                    session_id: SessionId::new("session-1"),
+                    run_id: RunId::new("run-1"),
+                    input: "hello".to_owned(),
+                    short_memory: Vec::new(),
+                    run_memory: Vec::new(),
+                    long_memory: Vec::new(),
+                    tools: Vec::new(),
+                    tool_choice: ToolChoice::Auto,
+                    continuation: Vec::new(),
+                    disclosure: DisclosureLevel::Overview,
+                },
+                &sink,
+            )
+            .await
+            .expect("stream succeeds");
+        assert_eq!(result.final_output.as_deref(), Some("hello world"));
+        assert_eq!(
+            *deltas.lock().unwrap(),
+            vec![
+                ModelProgress::Start,
+                ModelProgress::Reasoning("think ".to_owned()),
+                ModelProgress::Reasoning("first".to_owned()),
+                ModelProgress::Message("hello ".to_owned()),
+                ModelProgress::Message("world".to_owned()),
+            ]
+        );
+        let response = result.response.unwrap();
+        assert_eq!(response.usage.input_tokens, 4);
+        assert_eq!(response.usage.output_tokens, 7);
+        assert!(
+            matches!(&response.items[0], RuntimeItem::Reasoning(reasoning) if reasoning.summary == vec!["think first"])
+        );
+        assert!(
+            matches!(&response.items[2], RuntimeItem::ToolCall(call) if call.name == "read_file" && call.arguments == json!({"path":"a.txt"}))
         );
     }
 
