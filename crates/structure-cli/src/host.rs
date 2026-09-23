@@ -238,7 +238,9 @@ pub fn coding_system_instructions(root: &Path) -> String {
         "You are Structure, an autonomous coding agent working in {}. \
          The host operating system is {}. Use paths relative to that \
          workspace root for every tool call; the tools refuse absolute \
-         paths and any path that would escape the root.",
+         paths and any path that would escape the root. A user may refer to \
+         workspace files as @path; inspect those files with read_file before \
+         relying on their contents.",
         root.display(),
         std::env::consts::OS,
     )

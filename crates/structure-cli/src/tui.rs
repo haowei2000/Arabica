@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::io;
+use std::path::{Component, Path};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -55,6 +56,134 @@ struct ContextView {
     scroll: u16,
 }
 
+#[derive(Clone, Debug)]
+struct CompletionView {
+    replace_start: usize,
+    replace_end: usize,
+    candidates: Vec<String>,
+    selected: usize,
+}
+
+const COMMANDS: &[&str] = &[
+    "/context",
+    "/exit",
+    "/help",
+    "/model",
+    "/quit",
+    "/session",
+    "/thinking",
+];
+const THINKING_LEVELS: &[&str] = &["off", "on", "low", "medium", "high"];
+
+fn workspace_files(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for entry in ignore::WalkBuilder::new(root).build().flatten() {
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            continue;
+        }
+        if let Ok(path) = entry.path().strip_prefix(root)
+            && let Some(path) = path.to_str()
+        {
+            files.push(path.to_owned());
+        }
+        if files.len() >= 10_000 {
+            break;
+        }
+    }
+    files.sort();
+    files
+}
+
+fn configured_models(current: &str) -> Vec<String> {
+    let mut models = vec![current.to_owned()];
+    if let Ok(configured) = std::env::var("STRUCTURE__MODELS") {
+        for model in configured
+            .split(',')
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            if !models.iter().any(|known| known == model) {
+                models.push(model.to_owned());
+            }
+        }
+    }
+    models
+}
+
+fn completion_for(
+    input: &str,
+    cursor: usize,
+    files: &[String],
+    models: &[String],
+) -> Option<CompletionView> {
+    let before = &input[..cursor];
+    let word_start = before
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(0, |(i, ch)| i + ch.len_utf8());
+    let token = &before[word_start..];
+    let (replace_start, candidates): (usize, Vec<String>) =
+        if word_start == 0 && token.starts_with('/') && !token.contains(' ') {
+            (
+                word_start,
+                COMMANDS
+                    .iter()
+                    .filter(|command| command.starts_with(token))
+                    .map(|command| (*command).to_owned())
+                    .collect(),
+            )
+        } else if before.starts_with("/thinking ") && word_start == "/thinking ".len() {
+            (
+                word_start,
+                THINKING_LEVELS
+                    .iter()
+                    .filter(|level| level.starts_with(token))
+                    .map(|level| (*level).to_owned())
+                    .collect(),
+            )
+        } else if before.starts_with("/model ") && word_start == "/model ".len() {
+            (
+                word_start,
+                models
+                    .iter()
+                    .filter(|model| model.to_lowercase().contains(&token.to_lowercase()))
+                    .cloned()
+                    .collect(),
+            )
+        } else if let Some(query) = token.strip_prefix('@') {
+            let query = query.to_lowercase();
+            let mut matches: Vec<_> = files
+                .iter()
+                .filter(|file| file.to_lowercase().contains(&query))
+                .take(50)
+                .map(|file| {
+                    if file.contains(char::is_whitespace) {
+                        format!("@\"{file}\"")
+                    } else {
+                        format!("@{file}")
+                    }
+                })
+                .collect();
+            matches.sort_by_key(|file| (!file[1..].to_lowercase().starts_with(&query), file.len()));
+            (word_start, matches)
+        } else {
+            return None;
+        };
+    if candidates.is_empty() || (candidates.len() == 1 && candidates[0] == token) {
+        return None;
+    }
+    Some(CompletionView {
+        replace_start,
+        replace_end: cursor
+            + input[cursor..]
+                .find(char::is_whitespace)
+                .unwrap_or(input.len() - cursor),
+        candidates,
+        selected: 0,
+    })
+}
+
 impl ContextView {
     fn handle_scroll(&mut self, code: KeyCode) {
         match code {
@@ -70,10 +199,10 @@ impl ContextView {
 }
 
 impl PermissionView {
-    fn new(request: &PermissionRequest) -> Self {
+    fn new(request: &PermissionRequest, root: &Path) -> Self {
         Self {
             tool: request.call.name.clone(),
-            details: permission_details(&request.call.name, &request.call.arguments),
+            details: permission_details(&request.call.name, &request.call.arguments, root),
             scroll: 0,
         }
     }
@@ -91,16 +220,116 @@ impl PermissionView {
     }
 }
 
-fn permission_details(tool: &str, arguments: &serde_json::Value) -> String {
+fn permission_details(tool: &str, arguments: &serde_json::Value, root: &Path) -> String {
     if tool == "write_file"
         && let (Some(path), Some(content)) = (
             arguments.get("path").and_then(|v| v.as_str()),
             arguments.get("content").and_then(|v| v.as_str()),
         )
     {
-        return format!("Path: {path}\n\nContent:\n{content}");
+        let preview = write_file_preview(root, path, content);
+        return format!("Path: {path}\n\n{preview}\nContent:\n{content}");
     }
     serde_json::to_string_pretty(arguments).unwrap_or_else(|_| arguments.to_string())
+}
+
+fn write_file_preview(root: &Path, path: &str, content: &str) -> String {
+    let relative = Path::new(path);
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return "Change preview unavailable: path is outside the workspace.\n".to_owned();
+    }
+    let Ok(root) = root.canonicalize() else {
+        return "Change preview unavailable: workspace cannot be resolved.\n".to_owned();
+    };
+    let target = root.join(relative);
+    let Ok(parent) = target
+        .parent()
+        .expect("relative path has a parent")
+        .canonicalize()
+    else {
+        return "Change preview unavailable: parent directory cannot be resolved.\n".to_owned();
+    };
+    if !parent.starts_with(&root) {
+        return "Change preview unavailable: path is outside the workspace.\n".to_owned();
+    }
+    if !target.exists() {
+        return format!(
+            "Change preview: new file ({} lines)\n",
+            content.lines().count()
+        );
+    }
+    let Ok(metadata) = target.symlink_metadata() else {
+        return "Change preview unavailable: current file cannot be inspected.\n".to_owned();
+    };
+    if !metadata.file_type().is_file() || metadata.len() > 512 * 1024 {
+        return "Change preview unavailable: target is not a regular file or exceeds 512 KiB.\n"
+            .to_owned();
+    }
+    let Ok(old) = std::fs::read_to_string(&target) else {
+        return "Change preview unavailable: current file cannot be read as UTF-8.\n".to_owned();
+    };
+    line_change_preview(&old, content)
+}
+
+fn line_change_preview(old: &str, new: &str) -> String {
+    if old == new {
+        return "Change preview: no content change.\n".to_owned();
+    }
+    let before: Vec<_> = old.lines().collect();
+    let after: Vec<_> = new.lines().collect();
+    if new.len() > 512 * 1024
+        || before.len() + after.len() > 2_000
+        || before.len().saturating_mul(after.len()) > 250_000
+    {
+        return format!(
+            "Change preview: {} old lines → {} new lines; line diff exceeds display limit.\n",
+            before.len(),
+            after.len()
+        );
+    }
+    let mut lengths = vec![vec![0_u32; after.len() + 1]; before.len() + 1];
+    for i in (0..before.len()).rev() {
+        for j in (0..after.len()).rev() {
+            lengths[i][j] = if before[i] == after[j] {
+                lengths[i + 1][j + 1] + 1
+            } else {
+                lengths[i + 1][j].max(lengths[i][j + 1])
+            };
+        }
+    }
+    let mut out = String::from("Change preview (current - / proposed +):\n");
+    let (mut i, mut j) = (0, 0);
+    while i < before.len() || j < after.len() {
+        if i < before.len() && j < after.len() && before[i] == after[j] {
+            out.push_str("  ");
+            out.push_str(before[i]);
+            out.push('\n');
+            i += 1;
+            j += 1;
+        } else if i < before.len() && (j == after.len() || lengths[i + 1][j] >= lengths[i][j + 1]) {
+            out.push_str("- ");
+            out.push_str(before[i]);
+            out.push('\n');
+            i += 1;
+        } else {
+            out.push_str("+ ");
+            out.push_str(after[j]);
+            out.push('\n');
+            j += 1;
+        }
+    }
+    if old.ends_with('\n') != new.ends_with('\n') {
+        out.push_str(if new.ends_with('\n') {
+            "+ final newline\n"
+        } else {
+            "- final newline\n"
+        });
+    }
+    out
 }
 
 #[derive(Default)]
@@ -114,6 +343,9 @@ struct App {
     show_thinking: bool,
     permission: Option<PermissionView>,
     context: Option<ContextView>,
+    completion: Option<CompletionView>,
+    file_index: Option<Vec<String>>,
+    models: Vec<String>,
     status: String,
     model: String,
     thinking: String,
@@ -128,6 +360,7 @@ impl App {
             status: "Ready".to_owned(),
             workspace: session.runner_root.display().to_string(),
             session: session.session_id.to_string(),
+            models: configured_models(&session.config.model),
             ..Self::default()
         };
         app.refresh_config(session);
@@ -150,6 +383,37 @@ impl App {
                 .clone()
                 .unwrap_or_else(|| "on".to_owned())
         };
+        if !self.models.contains(&self.model) {
+            self.models.push(self.model.clone());
+        }
+    }
+
+    fn refresh_completion(&mut self) {
+        let before = &self.input[..self.cursor];
+        let token = before.rsplit(char::is_whitespace).next().unwrap_or("");
+        if token.starts_with('@') && self.file_index.is_none() {
+            self.file_index = Some(workspace_files(Path::new(&self.workspace)));
+        }
+        self.completion = completion_for(
+            &self.input,
+            self.cursor,
+            self.file_index.as_deref().unwrap_or(&[]),
+            &self.models,
+        );
+    }
+
+    fn apply_completion(&mut self) {
+        let Some(completion) = self.completion.take() else {
+            return;
+        };
+        let candidate = &completion.candidates[completion.selected];
+        self.input
+            .replace_range(completion.replace_start..completion.replace_end, candidate);
+        self.cursor = completion.replace_start + candidate.len();
+        if candidate.starts_with('@') || (candidate.starts_with('/') && !candidate.contains(' ')) {
+            self.input.insert(self.cursor, ' ');
+            self.cursor += 1;
+        }
     }
 
     fn push(&mut self, kind: Kind, text: impl Into<String>) {
@@ -197,6 +461,7 @@ impl App {
 
     fn take_input(&mut self) -> String {
         self.cursor = 0;
+        self.completion = None;
         std::mem::take(&mut self.input).trim().to_owned()
     }
 
@@ -393,9 +658,14 @@ fn render(frame: &mut Frame, app: &App) {
         return;
     }
     let input_lines = app.input.split('\n').count().clamp(1, 5) as u16;
+    let completion_lines = app
+        .completion
+        .as_ref()
+        .map_or(0, |view| view.candidates.len().min(5) as u16 + 2);
     let sections = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
+        Constraint::Length(completion_lines),
         Constraint::Length(input_lines + 2),
         Constraint::Length(1),
     ])
@@ -451,6 +721,43 @@ fn render(frame: &mut Frame, app: &App) {
         .min(u16::MAX as usize) as u16;
     frame.render_widget(transcript.scroll((offset, 0)), sections[1]);
 
+    if let Some(completion) = &app.completion {
+        let start = completion.selected.saturating_sub(4);
+        let lines = completion
+            .candidates
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(5)
+            .map(|(index, candidate)| {
+                let style = if index == completion.selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default()
+                };
+                Line::styled(
+                    format!(
+                        " {} {}",
+                        if index == completion.selected {
+                            "›"
+                        } else {
+                            " "
+                        },
+                        candidate
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Complete · Tab/Enter select "),
+            ),
+            sections[2],
+        );
+    }
     let editor_title = if app.busy {
         " Queued input "
     } else {
@@ -460,7 +767,7 @@ fn render(frame: &mut Frame, app: &App) {
         .chars()
         .filter(|&ch| ch == '\n')
         .count();
-    let visible_rows = sections[2].height.saturating_sub(2).max(1) as usize;
+    let visible_rows = sections[3].height.saturating_sub(2).max(1) as usize;
     let first_row = cursor_row.saturating_sub(visible_rows - 1);
     let visible_input = app
         .input
@@ -472,13 +779,13 @@ fn render(frame: &mut Frame, app: &App) {
     let input = Paragraph::new(visible_input)
         .block(Block::default().borders(Borders::ALL).title(editor_title))
         .wrap(Wrap { trim: false });
-    frame.render_widget(input, sections[2]);
+    frame.render_widget(input, sections[3]);
     if !app.busy && app.permission.is_none() && app.context.is_none() {
         let before = &app.input[..app.cursor];
         let row = cursor_row.saturating_sub(first_row) as u16;
         let column = Line::from(before.rsplit('\n').next().unwrap_or("")).width() as u16;
-        let x = sections[2].x + 1 + column.min(sections[2].width.saturating_sub(3));
-        let y = sections[2].y + 1 + row.min(sections[2].height.saturating_sub(3));
+        let x = sections[3].x + 1 + column.min(sections[3].width.saturating_sub(3));
+        let y = sections[3].y + 1 + row.min(sections[3].height.saturating_sub(3));
         frame.set_cursor_position((x, y));
     }
     let footer = format!(
@@ -495,7 +802,7 @@ fn render(frame: &mut Frame, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
-        sections[3],
+        sections[4],
     );
 
     if let Some(permission) = &app.permission {
@@ -603,6 +910,36 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
         InputEvent::Paste(text) => app.insert(&text),
         InputEvent::Key(key) if key.kind == KeyEventKind::Press => match key {
             KeyEvent {
+                code: KeyCode::Up, ..
+            } if app.completion.is_some() => {
+                let completion = app.completion.as_mut().expect("completion visible");
+                completion.selected = completion.selected.saturating_sub(1);
+                return EditorAction::None;
+            }
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } if app.completion.is_some() => {
+                let completion = app.completion.as_mut().expect("completion visible");
+                completion.selected =
+                    (completion.selected + 1).min(completion.candidates.len() - 1);
+                return EditorAction::None;
+            }
+            KeyEvent {
+                code: KeyCode::Tab, ..
+            } if app.completion.is_some() => app.apply_completion(),
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } if app.completion.is_some() => app.apply_completion(),
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } if app.completion.is_some() => {
+                app.completion = None;
+                return EditorAction::None;
+            }
+            KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
@@ -695,6 +1032,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
         },
         _ => {}
     }
+    app.refresh_completion();
     EditorAction::None
 }
 
@@ -711,6 +1049,8 @@ fn command(session: &mut InteractiveSession, app: &mut App, text: &str) -> bool 
     match text {
         "/help" => app.push(Kind::Info, "/help  /exit  /session  /context  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
         "/session" => app.push(Kind::Info, format!("session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}", session.session_id, session.runner_root.display(), session.config.model, session.config.api_type, session.read_only, session.allow_shell)),
+        "/model" => app.push(Kind::Info, format!("current model: {}\nusage: /model <name>", session.config.model)),
+        "/thinking" => app.push(Kind::Info, format!("current thinking: {}\nusage: /thinking <off|on|low|medium|high>", app.thinking)),
         "/context" => match context::report(session) {
             Ok(text) => app.context = Some(ContextView { text, scroll: 0 }),
             Err(error) => app.push(Kind::Error, format!("context: {error}")),
@@ -799,7 +1139,7 @@ async fn run_turn(
                 while let Ok(update) = ui_rx.try_recv() { app.apply(update); }
             }
             Some(request) = permission_rx.recv(), if pending.is_none() => {
-                app.permission = Some(PermissionView::new(&request));
+                app.permission = Some(PermissionView::new(&request, &session.runner_root));
                 pending = Some(request);
                 draw(terminal, app)?;
             }
@@ -840,6 +1180,7 @@ async fn run_turn(
     }
     app.busy = false;
     app.permission = None;
+    app.file_index = None;
     match result {
         Ok(events) => {
             app.status = "Ready".to_owned();
@@ -969,6 +1310,55 @@ mod tests {
     }
 
     #[test]
+    fn completion_replaces_command_and_file_tokens() {
+        let files = vec!["src/main.rs".to_owned(), "docs/design notes.md".to_owned()];
+        let models = vec!["model-a".to_owned()];
+        let slash = completion_for("/con", 4, &files, &models).unwrap();
+        assert_eq!(slash.candidates, vec!["/context"]);
+        let file = completion_for("read @main", 10, &files, &models).unwrap();
+        assert_eq!(file.candidates, vec!["@src/main.rs"]);
+        assert_eq!(file.replace_start, 5);
+        let spaced = completion_for("@design", 7, &files, &models).unwrap();
+        assert_eq!(spaced.candidates, vec!["@\"docs/design notes.md\""]);
+        assert!(completion_for("/help", 5, &files, &models).is_none());
+    }
+
+    #[test]
+    fn completion_keyboard_selects_without_sending() {
+        let mut app = App {
+            workspace: "/nonexistent".to_owned(),
+            input: "/th".to_owned(),
+            cursor: 3,
+            ..App::default()
+        };
+        app.refresh_completion();
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "/thinking ");
+        assert!(app.completion.is_some());
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert!(matches!(
+            handle_editor(
+                &mut app,
+                InputEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            ),
+            EditorAction::None
+        ));
+        assert_eq!(app.input, "/thinking on");
+    }
+
+    #[test]
     fn permission_keeps_choices_visible_for_long_file_content() {
         let mut app = App::default();
         app.entries.push(Entry {
@@ -1038,10 +1428,32 @@ mod tests {
         let details = permission_details(
             "write_file",
             &serde_json::json!({"path": "docs/summary.md", "content": content}),
+            Path::new("."),
         );
-        assert!(details.starts_with("Path: docs/summary.md\n\nContent:\n"));
+        assert!(details.starts_with("Path: docs/summary.md\n\nChange preview"));
         assert!(details.ends_with("important detail\n"));
         assert_eq!(details.matches("important detail").count(), 100);
+    }
+
+    #[test]
+    fn write_permission_preview_shows_changed_lines() {
+        let root = std::env::temp_dir().join(format!("structure-preview-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("note.txt"), "kept\nold\n").unwrap();
+        let details = permission_details(
+            "write_file",
+            &serde_json::json!({"path":"note.txt","content":"kept\nnew\n"}),
+            &root,
+        );
+        assert!(details.contains("  kept\n- old\n+ new\n"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn write_permission_preview_rejects_parent_traversal() {
+        let preview = write_file_preview(Path::new("."), "../private.txt", "replacement");
+        assert!(preview.contains("outside the workspace"));
+        assert!(!preview.contains("replacement"));
     }
 
     #[test]

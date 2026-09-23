@@ -2766,6 +2766,7 @@ dependencies = [
  "axum",
  "clap",
  "crossterm",
+ "ignore",
  "ratatui",
  "reqwest 0.13.5",
  "rmcp",

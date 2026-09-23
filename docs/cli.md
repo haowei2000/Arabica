@@ -91,7 +91,12 @@ structure --allow-shell
 structure --plain
 ```
 
-In the TUI, Enter sends, Shift+Enter or Ctrl+J inserts a line, PageUp/PageDown
+In the TUI, typing `/` completes commands, `/thinking ` or `/model ` offers
+configured choices, and `@` searches workspace file paths (respecting ignore
+rules). Use Up/Down and Tab or Enter to choose a suggestion; enter again to
+send. File suggestions insert a path reference for the agent to inspect with
+its read tool; they do not inline the file contents. The file index refreshes
+after each turn. Enter sends, Shift+Enter or Ctrl+J inserts a line, PageUp/PageDown
 scrolls the transcript, Ctrl+T shows or hides thinking, and Escape cancels a
 running turn. Ctrl+C exits at the editor and cancels a running turn. Messages
 typed during a run are queued for the next turn. The TUI restores the terminal
@@ -108,7 +113,9 @@ and `high`. The model name must be supported by the configured endpoint.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval (`y` once, `a` for the session, `n` once, or `v` for the session).
-The TUI shows the complete tool arguments in a focused permission view; use
+For `write_file`, the TUI previews line changes against an existing regular
+workspace file when it is small enough to inspect. It also shows the complete
+tool arguments in a focused permission view; use
 Up/Down or PageUp/PageDown to inspect long content before deciding.
 `memory_search` and `memory_read` are read-only recovery tools.
 Shell is available only with `--allow-shell` and also requires approval.
