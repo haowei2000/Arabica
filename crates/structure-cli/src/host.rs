@@ -4,7 +4,7 @@
 //! `docs/protocol.md` §1 and `docs/runtime_core_architecture.md` Appendix B):
 //! it only wires `structure-provider`, `structure-runner`, and
 //! `structure-runtime` into a concrete `CoreRuntime` and picks the fixed
-//! policy a coding CLI needs. `structure acp` and `structure -p` both build on
+//! policy a coding CLI needs. Terminal chat, `structure acp`, and `structure -p` build on
 //! this; neither adds a second way to do it.
 
 use std::collections::VecDeque;
@@ -12,7 +12,7 @@ use std::path::Path;
 
 use clap::Args;
 use sha2::{Digest, Sha256};
-use structure_protocol::RunId;
+use structure_protocol::{RunId, SessionId};
 use structure_provider::{
     ApiModelProvider, ApiProviderConfig, ApiType, ModelProgressSink, ModelProvider,
     ModelRunRequest, ModelRunResult, ProviderError,
@@ -22,11 +22,26 @@ use structure_runner::{
     LocalRunner, RunnerEnvironment, RunnerError, ToolExecutionRequest, ToolExecutionResult,
 };
 use structure_runtime::{CoreRuntime, HistoryProjection, RuntimeArchiveStore, ShortMemoryPolicy};
+use structure_session::IdAllocator;
 
 /// A run cap generous enough for a real coding task, short enough that a
 /// runaway loop cannot bill forever. The user can always cancel; see
 /// `RunControl` in `structure-runtime`.
 const MAX_MODEL_STEPS_PER_RUN: usize = 100;
+
+/// Unique ids across terminal processes sharing one session store.
+#[derive(Debug, Default)]
+pub struct UuidIds;
+
+impl IdAllocator for UuidIds {
+    fn session_id(&mut self) -> SessionId {
+        SessionId::new(uuid::Uuid::now_v7().to_string())
+    }
+
+    fn run_id(&mut self) -> RunId {
+        RunId::new(uuid::Uuid::now_v7().to_string())
+    }
+}
 
 /// Environment variables read by [`resolve_provider_config`], reusing
 /// `structure-server`'s names (`crates/structure-server/src/lib.rs`) so a

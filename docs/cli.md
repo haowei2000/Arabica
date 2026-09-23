@@ -1,8 +1,9 @@
 # `structure-cli`
 
-`structure-cli` builds one binary, `structure`, with two ways to drive the
-same coding agent: `structure acp` (Agent Client Protocol v1 over stdio, for
-editors) and `structure -p` (one-shot execution, for scripts and CI). Both
+`structure-cli` builds one binary, `structure`, with three ways to drive the
+same coding agent: `structure` (interactive terminal chat), `structure acp`
+(Agent Client Protocol v1 over stdio, for editors), and `structure -p`
+(one-shot execution, for scripts and CI). All three
 bind the same canonical protocol (`docs/protocol.md`) to the same
 `CoreRuntime`/`LocalRunner` composition (`crates/structure-cli/src/host.rs`);
 neither is a second implementation of the agent. See
@@ -18,9 +19,7 @@ The binary is at `target/release/structure`.
 
 ## Configuration
 
-Both entry points resolve the model provider the same way, sharing
-`structure-server`'s environment variable names so one provider configuration
-works for either host unchanged:
+The CLI and ACP share `structure-server`'s environment variable names:
 
 | Variable | Flag override | Required | Purpose |
 |---|---|---|---|
@@ -30,10 +29,55 @@ works for either host unchanged:
 | `STRUCTURE__API_TYPE` | `--api-type` | no (default `open_ai_chat_completions`) | `open_ai_chat_completions`, `open_ai_responses`, `anthropic_messages`, `gemini_generate_content`, `gemini_interactions`. |
 | `STRUCTURE__MODELS` | *(none)* | no | Comma-separated model names offered in the ACP selector. The current `OPENAI__MODEL` is always included. |
 
-A flag always overrides its matching variable. Nothing is read from a `.env`
-file in the project directory: a malicious repository could otherwise smuggle
-its own `OPENAI__BASE_URL` into a session and capture the real API key on the
-first model call.
+A flag always overrides its matching variable. Terminal chat and `-p` also
+load `$STRUCTURE_HOME/config.toml` (default `~/.structure/config.toml`) and a
+workspace settings file under `$STRUCTURE_HOME/workspaces/<workspace-id>/config.toml`.
+For the model, resolution is flag → saved workspace choice → environment →
+user config. For endpoint and API type, it is flag → environment → user
+config. Thinking is saved workspace choice → user config → off. `structure
+config` prints the resolved values and both file paths.
+
+Example user config:
+
+```toml
+[provider]
+api_type = "open_ai_chat_completions"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4.1"
+thinking = "off"
+```
+
+`OPENAI__API_KEY` is always read from the environment; config files reject
+an `api_key` field. Nothing is read from a `.env` or `.structure` directory
+in the project: a malicious repository could otherwise redirect model calls
+and capture the real API key. ACP retains its environment-and-flag resolution
+and its per-session model and thinking controls.
+
+## Interactive terminal
+
+Run `structure` (or `structure chat`) in a project directory to start a
+continuous conversation. Each prompt uses the same session and event log;
+`/exit` or `/quit` ends the terminal process. `--continue` restores the most
+recent session in the current directory, and `--resume <ID>` restores a
+specific one (`structure sessions list` shows IDs).
+
+```bash
+structure
+structure --continue
+structure --allow-shell
+```
+
+`/help` lists commands. `/session` shows the current session and model;
+`/model <name>` and `/thinking <off|on|low|medium|high>` change the provider
+for the next prompt and persist those choices for this workspace. Chat Completions supports `off` and `on`; Responses
+supports `off`, `low`, `medium`, and `high`. The model name must be supported
+by the configured endpoint.
+
+Read-only tools run without a prompt. File changes require a terminal
+approval (`y` once, `a` for the session, `n` once, or `v` for the session).
+Shell is available only with `--allow-shell` and also requires approval.
+`--read-only` excludes mutating tools and cannot be combined with
+`--allow-shell`. Ctrl-C cancels a running turn; at the input prompt it exits.
 
 ## `structure acp`
 

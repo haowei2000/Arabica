@@ -2383,6 +2383,7 @@ dependencies = [
  "clap",
  "reqwest 0.13.5",
  "rmcp",
+ "serde",
  "serde_json",
  "sha2",
  "structure-adapters",
@@ -2394,6 +2395,7 @@ dependencies = [
  "structure-session",
  "tokio",
  "tokio-util",
+ "toml",
  "uuid",
 ]
 

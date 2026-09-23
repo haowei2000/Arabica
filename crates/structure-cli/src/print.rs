@@ -241,7 +241,7 @@ pub async fn run(provider_config: ApiProviderConfig, options: PrintOptions) -> i
 /// `run_task` should append to, without touching the runtime: a pure lookup
 /// against `$STRUCTURE_HOME` so the "does this session exist" question is
 /// directly testable without spinning up a model or a `SessionManager`.
-fn resolve_resume(
+pub(crate) fn resolve_resume(
     resume: &Resume,
     structure_home: &Path,
     workspace_id: &WorkspaceId,
@@ -279,7 +279,7 @@ async fn run_task(
     resumed: Option<StoredSession>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
     let runtime: HostRuntime = build_host_runtime(model, runner_root, policy);
-    let mut manager = SessionManager::new(runtime);
+    let mut manager = SessionManager::with_ids(runtime, Box::new(crate::host::UuidIds));
 
     let (session_id, store) = match resumed {
         Some(stored) => {

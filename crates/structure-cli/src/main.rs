@@ -1,12 +1,12 @@
-//! `structure`: the CLI binary. `structure acp` speaks Agent Client Protocol
-//! v1 over stdio; `structure -p "task"` runs one task non-interactively and
-//! exits (see `docs/runtime_core_architecture.md` §11).
+//! `structure`: interactive terminal host, ACP agent, and one-shot runner.
 
 use clap::{Args, Parser, Subcommand};
+use structure_cli::config::resolve_cli_config;
 use structure_cli::host::{
     HostConfigArgs, HostModel, LocalRunnerPolicy, build_host_runtime, process_environment,
     resolve_provider_config,
 };
+use structure_cli::interactive::{self, InteractiveOptions};
 use structure_cli::print::{self, OutputFormat, PrintOptions, Resume};
 use structure_cli::sessions::SessionsAction;
 use structure_provider::{ApiModelProvider, ApiProviderConfig};
@@ -33,14 +33,14 @@ struct PrintArgs {
     /// answer) or "jsonl" (stdout is one JSON event per line, live).
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     output_format: OutputFormat,
-    /// Allow -p to run the shell tool. Off by default: shell has no path
-    /// confinement, and -p has no one to ask before a call runs.
+    /// Allow terminal chat or -p to run the shell tool. Off by default.
+    /// Interactive chat asks before execution; -p runs it outright.
     #[arg(long)]
     allow_shell: bool,
-    /// Restrict -p to read-only tools. Mutually exclusive with --allow-shell.
+    /// Restrict terminal chat or -p to read-only tools.
     #[arg(long)]
     read_only: bool,
-    /// Continue the most recently active session in this workspace instead
+    /// Continue the most recent session in this workspace instead
     /// of starting a new one. Mutually exclusive with --resume.
     #[arg(long = "continue", conflicts_with = "resume")]
     resume_last: bool,
@@ -66,6 +66,10 @@ impl PrintArgs {
 enum Commands {
     /// Run as an Agent Client Protocol v1 agent over stdio (for editors like Zed).
     Acp,
+    /// Start an interactive terminal session (also the default).
+    Chat,
+    /// Show the resolved provider configuration without starting a session.
+    Config,
     /// Inspect sessions stored under $STRUCTURE_HOME.
     Sessions {
         #[command(subcommand)]
@@ -100,7 +104,16 @@ async fn run(cli: Cli) -> i32 {
         };
     }
 
-    let provider_config = match resolve_provider_config(&config, process_environment) {
+    let provider_config = match if matches!(command, Some(Commands::Acp)) {
+        resolve_provider_config(&config, process_environment)
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+    } else {
+        (|| {
+            let home = structure_adapters::default_structure_home()?;
+            let cwd = std::env::current_dir()?;
+            resolve_cli_config(&config, &home, &cwd, process_environment)
+        })()
+    } {
         Ok(config) => config,
         Err(error) => {
             eprintln!("error: {error}");
@@ -114,18 +127,40 @@ async fn run(cli: Cli) -> i32 {
             2
         }
         (Some(Commands::Acp), None) => run_acp(provider_config).await,
-        (Some(Commands::Sessions { .. }), _) => {
-            unreachable!("Commands::Sessions returns early above")
+        (Some(Commands::Chat | Commands::Config), Some(_)) => {
+            eprintln!("error: -p cannot be combined with this subcommand");
+            2
         }
-        (None, Some(task)) => run_print(provider_config, task.clone(), print_args).await,
-        (None, None) => match describe_configuration(provider_config) {
+        (Some(Commands::Chat), None) => run_chat(provider_config, print_args).await,
+        (Some(Commands::Config), None) => match describe_configuration(provider_config) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("error: {error}");
                 1
             }
         },
+        (Some(Commands::Sessions { .. }), _) => {
+            unreachable!("Commands::Sessions returns early above")
+        }
+        (None, Some(task)) => run_print(provider_config, task.clone(), print_args).await,
+        (None, None) => run_chat(provider_config, print_args).await,
     }
+}
+
+async fn run_chat(provider_config: ApiProviderConfig, args: PrintArgs) -> i32 {
+    if args.output_format != OutputFormat::Text {
+        eprintln!("error: --output-format is only available with -p");
+        return 2;
+    }
+    interactive::run(
+        provider_config,
+        InteractiveOptions {
+            allow_shell: args.allow_shell,
+            read_only: args.read_only,
+            resume: args.resume_mode(),
+        },
+    )
+    .await
 }
 
 async fn run_acp(provider_config: ApiProviderConfig) -> i32 {
@@ -169,8 +204,7 @@ async fn run_print(provider_config: ApiProviderConfig, task: String, args: Print
     .await
 }
 
-/// No subcommand and no `-p`: report the resolved configuration and exit.
-/// Kept for smoke-testing configuration outside of an editor or a task.
+/// `structure config`: report the resolved provider without starting a run.
 fn describe_configuration(
     provider_config: ApiProviderConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -178,16 +212,34 @@ fn describe_configuration(
     let api_type = provider_config.api_type;
     let base_url = provider_config.base_url.clone();
     let model_name = provider_config.model.clone();
+    let thinking = if !provider_config.thinking_enabled {
+        "off".to_owned()
+    } else {
+        provider_config
+            .reasoning_effort
+            .clone()
+            .unwrap_or_else(|| "on".to_owned())
+    };
 
     let model = HostModel::Api(ApiModelProvider::new(provider_config)?);
     let runner_root = std::env::current_dir()?;
     let runtime = build_host_runtime(model, &runner_root, LocalRunnerPolicy::coding());
 
-    println!("structure: configuration resolved, no subcommand implemented yet");
+    println!("structure: configuration resolved");
     println!("  api_type:    {api_type}");
     println!("  base_url:    {base_url}");
     println!("  model:       {model_name}");
+    println!("  thinking:    {thinking}");
     println!("  runner_root: {}", runner_root.display());
+    let home = structure_adapters::default_structure_home()?;
+    println!(
+        "  user config: {}",
+        structure_cli::config::user_config_path(&home).display()
+    );
+    println!(
+        "  workspace:   {}",
+        structure_cli::config::workspace_config_path(&home, &runner_root).display()
+    );
     println!(
         "  tools:       {}",
         runtime
@@ -197,6 +249,8 @@ fn describe_configuration(
             .collect::<Vec<_>>()
             .join(", ")
     );
-    println!("  next: run `structure acp` (Agent Client Protocol) or `structure -p \"task\"`");
+    println!(
+        "  next: run `structure` for interactive chat or `structure -p \"task\"` for scripting"
+    );
     Ok(())
 }
