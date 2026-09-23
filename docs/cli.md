@@ -94,6 +94,8 @@ and `high`. The model name must be supported by the configured endpoint.
 
 Read-only tools run without a prompt. File changes require a terminal
 approval (`y` once, `a` for the session, `n` once, or `v` for the session).
+The TUI shows the complete tool arguments in a focused permission view; use
+Up/Down or PageUp/PageDown to inspect long content before deciding.
 Shell is available only with `--allow-shell` and also requires approval.
 `--read-only` excludes mutating tools and cannot be combined with
 `--allow-shell`. Ctrl-C cancels a running turn; at the input prompt it exits.

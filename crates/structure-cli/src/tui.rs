@@ -43,6 +43,46 @@ struct Entry {
     text: String,
 }
 
+struct PermissionView {
+    tool: String,
+    details: String,
+    scroll: u16,
+}
+
+impl PermissionView {
+    fn new(request: &PermissionRequest) -> Self {
+        Self {
+            tool: request.call.name.clone(),
+            details: permission_details(&request.call.name, &request.call.arguments),
+            scroll: 0,
+        }
+    }
+
+    fn handle_scroll(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
+            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::Home => self.scroll = 0,
+            KeyCode::End => self.scroll = u16::MAX,
+            _ => {}
+        }
+    }
+}
+
+fn permission_details(tool: &str, arguments: &serde_json::Value) -> String {
+    if tool == "write_file"
+        && let (Some(path), Some(content)) = (
+            arguments.get("path").and_then(|v| v.as_str()),
+            arguments.get("content").and_then(|v| v.as_str()),
+        )
+    {
+        return format!("Path: {path}\n\nContent:\n{content}");
+    }
+    serde_json::to_string_pretty(arguments).unwrap_or_else(|_| arguments.to_string())
+}
+
 #[derive(Default)]
 struct App {
     entries: Vec<Entry>,
@@ -52,7 +92,7 @@ struct App {
     scroll_from_bottom: usize,
     busy: bool,
     show_thinking: bool,
-    permission: Option<String>,
+    permission: Option<PermissionView>,
     status: String,
     model: String,
     thinking: String,
@@ -438,18 +478,37 @@ fn render(frame: &mut Frame, app: &App) {
     );
 
     if let Some(permission) = &app.permission {
+        frame.render_widget(ratatui::widgets::Clear, area);
+        if area.width < 50 || area.height < 10 {
+            frame.render_widget(
+                Paragraph::new("Enlarge the terminal to review tool permission"),
+                area,
+            );
+            return;
+        }
         let popup = ratatui::layout::Rect {
-            x: area.x + area.width / 10,
-            y: area.y + area.height / 3,
-            width: area.width * 4 / 5,
-            height: 7.min(area.height.saturating_sub(2)),
+            x: area.x + 1,
+            y: area.y + 1,
+            width: area.width - 2,
+            height: area.height - 2,
         };
-        frame.render_widget(ratatui::widgets::Clear, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Allow {}? ", permission.tool));
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
+        let details = Paragraph::new(permission.details.as_str()).wrap(Wrap { trim: false });
+        let total = details.line_count(sections[0].width.max(1));
+        let max_scroll = total.saturating_sub(sections[0].height as usize);
+        let scroll = (permission.scroll as usize).min(max_scroll) as u16;
+        frame.render_widget(details.scroll((scroll, 0)), sections[0]);
         frame.render_widget(
-            Paragraph::new(format!("{permission}\n\n[y] Allow once   [a] Allow for session\n[n] Deny once    [v] Deny for session"))
-                .block(Block::default().borders(Borders::ALL).title(" Tool permission "))
-                .wrap(Wrap { trim: true }),
-            popup,
+            Paragraph::new(
+                "↑/↓ or PgUp/PgDn: inspect arguments\n[y] Allow once  [a] Allow for session\n[n] Deny once   [v] Deny for session",
+            )
+            .style(Style::default().fg(Color::Yellow)),
+            sections[1],
         );
     }
 }
@@ -692,9 +751,7 @@ async fn run_turn(
                 while let Ok(update) = ui_rx.try_recv() { app.apply(update); }
             }
             Some(request) = permission_rx.recv(), if pending.is_none() => {
-                let args = request.call.arguments.to_string();
-                let short: String = args.chars().take(250).collect();
-                app.permission = Some(format!("Allow {}?\n{}{}", request.call.name, short, if args.chars().count() > 250 { "…" } else { "" }));
+                app.permission = Some(PermissionView::new(&request));
                 pending = Some(request);
                 draw(terminal, app)?;
             }
@@ -709,6 +766,8 @@ async fn run_turn(
                             let _ = pending.take().expect("permission pending").reply.send(PermissionDecision::deny_once());
                             app.permission = None;
                             cancellation.cancel();
+                        } else if let Some(permission) = app.permission.as_mut() {
+                            permission.handle_scroll(key.code);
                         }
                     }
                 } else if let InputEvent::Key(key) = key {
@@ -833,6 +892,7 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn editor_handles_multiline_and_unicode_backspace() {
@@ -845,5 +905,90 @@ mod tests {
         app.backspace();
         assert_eq!(app.input, "好\nworl");
         assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn permission_keeps_choices_visible_for_long_file_content() {
+        let mut app = App::default();
+        app.entries.push(Entry {
+            kind: Kind::Reasoning,
+            text: "background reasoning".to_owned(),
+        });
+        app.permission = Some(PermissionView {
+            tool: "write_file".to_owned(),
+            details: format!(
+                "Path: docs/summary.md\n\nContent:\n{}",
+                "long line\n".repeat(100)
+            ),
+            scroll: 0,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let output = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(output.contains("Path: docs/summary.md"));
+        assert!(output.contains("[y] Allow once"));
+        assert!(output.contains("[v] Deny for session"));
+        assert!(!output.contains("background reasoning"));
+
+        app.permission.as_mut().unwrap().handle_scroll(KeyCode::End);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let output = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(output.contains("[y] Allow once"));
+        assert!(output.contains("[v] Deny for session"));
+    }
+
+    #[test]
+    fn write_permission_shows_complete_content() {
+        let content = "important detail\n".repeat(100);
+        let details = permission_details(
+            "write_file",
+            &serde_json::json!({"path": "docs/summary.md", "content": content}),
+        );
+        assert!(details.starts_with("Path: docs/summary.md\n\nContent:\n"));
+        assert!(details.ends_with("important detail\n"));
+        assert_eq!(details.matches("important detail").count(), 100);
+    }
+
+    #[test]
+    fn permission_keys_map_to_expected_outcome_and_scope() {
+        for (key, outcome, scope) in [
+            (
+                'y',
+                ToolPermissionOutcome::Allowed,
+                ToolPermissionScope::Once,
+            ),
+            (
+                'a',
+                ToolPermissionOutcome::Allowed,
+                ToolPermissionScope::Session,
+            ),
+            (
+                'n',
+                ToolPermissionOutcome::Denied,
+                ToolPermissionScope::Once,
+            ),
+            (
+                'v',
+                ToolPermissionOutcome::Denied,
+                ToolPermissionScope::Session,
+            ),
+        ] {
+            let decision =
+                permission_decision(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE)).unwrap();
+            assert_eq!(decision.outcome, outcome);
+            assert_eq!(decision.scope, scope);
+        }
     }
 }
