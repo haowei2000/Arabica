@@ -230,6 +230,74 @@ async fn interactive_write_requires_a_terminal_approval() {
 }
 
 #[tokio::test]
+async fn completed_tool_exchange_remains_valid_after_session_resume() {
+    async fn completion(
+        State(requests): State<Arc<Mutex<Vec<Value>>>>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let mut requests = requests.lock().await;
+        requests.push(body);
+        let answer = if requests.len() == 1 {
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"note.txt\",\"content\":\"hello\"}"}}]},"finish_reason":"tool_calls"}]})
+        } else {
+            json!({"choices":[{"message":{"role":"assistant","content":"written"},"finish_reason":"stop"}]})
+        };
+        Json(answer)
+    }
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", post(completion))
+        .with_state(Arc::clone(&requests));
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let root = temp_dir("resume-tool-root");
+    let home = temp_dir("resume-tool-home");
+    std::fs::create_dir_all(&root).unwrap();
+    let first = run_binary(&root, &home, address, "write note\ny\n/exit\n").await;
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let second = run_binary_with_args(
+        &root,
+        &home,
+        address,
+        "what changed?\n/exit\n",
+        &["--continue"],
+    )
+    .await;
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    let messages = requests[2]["messages"].as_array().unwrap();
+    let call = messages
+        .iter()
+        .position(|message| message["tool_calls"].is_array())
+        .unwrap();
+    assert_eq!(messages[call + 1]["role"], "tool");
+    assert_eq!(messages[call + 1]["tool_call_id"], "call-1");
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["content"] == "written")
+            .count(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("note.txt")).unwrap(),
+        "hello"
+    );
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}
+
+#[tokio::test]
 async fn saved_auth_starts_chat_without_an_api_key_environment_variable() {
     async fn completion(Json(_body): Json<Value>) -> Json<Value> {
         Json(

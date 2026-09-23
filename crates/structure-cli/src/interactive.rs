@@ -171,7 +171,14 @@ impl SessionEventObserver for TerminalObserver {
 
 pub(crate) fn policy() -> ToolPermissionPolicy {
     let mut by_tool = BTreeMap::new();
-    for name in ["read_file", "list_dir", "grep", "find_files"] {
+    for name in [
+        "read_file",
+        "list_dir",
+        "grep",
+        "find_files",
+        "memory_search",
+        "memory_read",
+    ] {
         by_tool.insert(name.to_owned(), ToolPermissionRule::Allow);
     }
     ToolPermissionPolicy {
@@ -252,7 +259,7 @@ impl InteractiveSession {
             tool_policy = tool_policy.with_tool(LocalTool::Shell);
         }
         let mut manager = SessionManager::with_ids(
-            build_host_runtime(model, &runner_root, tool_policy),
+            build_host_runtime(model, &runner_root, tool_policy, &structure_home),
             Box::new(UuidIds),
         );
         let (session_id, store) = match resumed {

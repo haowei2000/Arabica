@@ -2316,6 +2316,7 @@ fn project_model_step(
     } else {
         (materialization.entries, None)
     };
+    let entries = provider_safe_policy_entries(entries, history, &materialization.batches, run_id);
     let auto_hydration = if pointer_gc.strategy.enabled() {
         hydrate_repeated_tool_batch(
             &materialization.batches,
@@ -2370,6 +2371,76 @@ fn project_model_step(
         pointer_gc_admission,
         auto_hydration: auto_hydration.map(|(_, observation)| observation),
     })
+}
+
+/// Keep the policy's visibility and archive decisions, but omit event-log
+/// records that cannot be placed in a provider-valid past conversation.
+/// Command output remains in the audit log and in archived evidence; the
+/// completed tool result is the corresponding model-facing message.
+fn provider_safe_policy_entries(
+    entries: Vec<ShortMemoryEntry>,
+    history: &[EventEnvelope],
+    batches: &[EventBatch],
+    current_run_id: &RunId,
+) -> Vec<ShortMemoryEntry> {
+    let mut completed_calls = HashSet::new();
+    let mut runs_with_model_messages = HashSet::new();
+    let mut events_by_id = HashMap::new();
+    for envelope in history {
+        events_by_id.insert(envelope.event_id.to_string(), envelope);
+        let Some(run_id) = &envelope.run_id else {
+            continue;
+        };
+        if run_id == current_run_id {
+            continue;
+        }
+        match &envelope.event {
+            Event::ToolCallCompleted { call_id, .. } => {
+                completed_calls.insert((run_id.clone(), call_id.clone()));
+            }
+            Event::ModelResponseItem {
+                item: RuntimeItem::Message(_),
+                ..
+            } => {
+                runs_with_model_messages.insert(run_id.clone());
+            }
+            _ => {}
+        }
+    }
+    let tool_output_ids: HashSet<String> = batches
+        .iter()
+        .filter(|batch| batch.context_kind == MemoryBatchKind::Tool)
+        .flat_map(|batch| &batch.events)
+        .filter(|event| matches!(event.event, Event::CommandOutput { .. }))
+        .map(|event| event.event_id.to_string())
+        .collect();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            let [event_id] = entry.source_event_ids.as_slice() else {
+                return true;
+            };
+            let Some(envelope) = events_by_id.get(event_id) else {
+                return true;
+            };
+            let Some(run_id) = &envelope.run_id else {
+                return true;
+            };
+            if run_id == current_run_id {
+                return true;
+            }
+            match &envelope.event {
+                Event::CommandOutput { .. } => !tool_output_ids.contains(event_id),
+                Event::ToolCallRequested { call_id, .. } => {
+                    completed_calls.contains(&(run_id.clone(), call_id.clone()))
+                }
+                Event::RunCompleted { output: Some(_) } => {
+                    !runs_with_model_messages.contains(run_id)
+                }
+                _ => true,
+            }
+        })
+        .collect()
 }
 
 fn continuation_substitution<'a>(
@@ -3258,7 +3329,7 @@ fn response_has_nonempty_assistant_text(items: &[RuntimeItem]) -> bool {
     })
 }
 
-fn memory_read_definition() -> ToolDefinition {
+pub fn memory_read_definition() -> ToolDefinition {
     ToolDefinition {
         name: MEMORY_READ_TOOL_NAME.to_owned(),
         description: "Recover the exact archived runtime events referenced by a short-memory pointer. Use only when the pointer's compact metadata is insufficient for the current task.".to_owned(),
@@ -3277,7 +3348,7 @@ fn memory_read_definition() -> ToolDefinition {
     }
 }
 
-fn memory_search_definition() -> ToolDefinition {
+pub fn memory_search_definition() -> ToolDefinition {
     ToolDefinition {
         name: MEMORY_SEARCH_TOOL_NAME.to_owned(),
         description: "Search archived runtime evidence when exact older tool results, arguments, failures, or decisions may be relevant. Returns relative paths for memory_read without injecting the archive into the prompt.".to_owned(),
@@ -6153,6 +6224,117 @@ mod tests {
             return true; // nothing to check
         };
         matches!(items.get(call_index + 1), Some(RuntimeItem::ToolResult(_)))
+    }
+
+    #[tokio::test]
+    async fn policy_projection_keeps_past_tool_pair_provider_valid() {
+        let session_id = SessionId::new("session-1");
+        let run_1 = RunId::new("run-1");
+        let run_2 = RunId::new("run-2");
+        let model = MultiTurnModel {
+            requests: Vec::new(),
+            results: VecDeque::from([
+                tool_response(
+                    "call-1",
+                    "write_file",
+                    serde_json::json!({"path": "note.txt"}),
+                ),
+                text_response("turn one complete"),
+                text_response("turn two complete"),
+            ]),
+        };
+        let mut runtime = opened(model, ToolWithOutputRunner, &session_id);
+        let first = handle_capturing_history(
+            &mut runtime,
+            &session_id,
+            &run_1,
+            &[],
+            &Command::MessageSend {
+                content: "write note.txt".to_owned(),
+            },
+        )
+        .await;
+        handle_capturing_history(
+            &mut runtime,
+            &session_id,
+            &run_2,
+            &first,
+            &Command::MessageSend {
+                content: "what changed?".to_owned(),
+            },
+        )
+        .await;
+        let items = &runtime.model().requests[2].short_memory;
+        let call_index = items
+            .iter()
+            .position(|entry| matches!(entry.item, ShortMemoryItem::ToolCall(_)))
+            .expect("past tool call remains visible");
+        assert!(
+            matches!(items[call_index + 1].item, ShortMemoryItem::ToolResult(_)),
+            "a tool result must immediately follow its call in Policy projection"
+        );
+    }
+
+    #[test]
+    fn policy_projection_drops_orphans_and_keeps_multiple_completed_pairs() {
+        let session_id = SessionId::new("session-1");
+        let old_run = RunId::new("run-1");
+        let current_run = RunId::new("run-2");
+        let mut log = TestEventLog::new(&[], &session_id, Some(&old_run));
+        for call_id in ["call-1", "call-2"] {
+            log.append(Event::ToolCallRequested {
+                call_id: call_id.to_owned(),
+                name: "read_file".to_owned(),
+                arguments: serde_json::json!({"path": "note.txt"}),
+                provider_state: None,
+            });
+            log.append(Event::CommandOutput {
+                stream: structure_protocol::OutputStream::Stdout,
+                chunk: "contents".to_owned(),
+            });
+            log.append(Event::ToolCallCompleted {
+                call_id: call_id.to_owned(),
+                name: "read_file".to_owned(),
+                result: "contents".to_owned(),
+                is_error: false,
+            });
+        }
+        log.append(Event::ToolCallRequested {
+            call_id: "orphan".to_owned(),
+            name: "shell".to_owned(),
+            arguments: serde_json::json!({"command": "true"}),
+            provider_state: None,
+        });
+        log.append(Event::RunFailed {
+            message: "runner stopped".to_owned(),
+        });
+        let projected = ShortMemoryProjector::materialize_for_model_step(
+            &log.history,
+            &current_run,
+            &HashSet::new(),
+            &ShortMemoryPolicy::default(),
+        );
+        let entries = provider_safe_policy_entries(
+            projected.entries,
+            &log.history,
+            &projected.batches,
+            &current_run,
+        );
+        let calls = entries
+            .iter()
+            .filter_map(|entry| match &entry.item {
+                ShortMemoryItem::ToolCall(call) => Some(call.call_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls, ["call-1", "call-2"]);
+        for (index, entry) in entries.iter().enumerate() {
+            if let ShortMemoryItem::ToolCall(call) = &entry.item {
+                assert!(
+                    matches!(entries[index + 1].item, ShortMemoryItem::ToolResult(ref result) if result.call_id == call.call_id)
+                );
+            }
+        }
     }
 
     #[tokio::test]

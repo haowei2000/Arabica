@@ -241,7 +241,13 @@ fn describe_configuration(
 
     let model = HostModel::Api(ApiModelProvider::new(provider_config)?);
     let runner_root = std::env::current_dir()?;
-    let runtime = build_host_runtime(model, &runner_root, LocalRunnerPolicy::coding());
+    let structure_home = structure_adapters::default_structure_home()?;
+    let runtime = build_host_runtime(
+        model,
+        &runner_root,
+        LocalRunnerPolicy::coding(),
+        &structure_home,
+    );
 
     println!("structure: configuration resolved");
     println!("  api_type:    {api_type}");

@@ -228,8 +228,13 @@ impl AcpState {
         let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
             .await
             .map_err(|error| AcpError::invalid_params().data(error))?;
-        let runtime =
-            build_host_runtime_with_mcp(model, &request.cwd, self.tool_policy.clone(), mcp);
+        let runtime = build_host_runtime_with_mcp(
+            model,
+            &request.cwd,
+            self.tool_policy.clone(),
+            &self.structure_home,
+            mcp,
+        );
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let envelope = CommandEnvelope::new(
             CommandId::new(uuid::Uuid::now_v7().to_string()),
@@ -335,8 +340,13 @@ impl AcpState {
         let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
             .await
             .map_err(|error| AcpError::invalid_params().data(error))?;
-        let runtime =
-            build_host_runtime_with_mcp(model, &request.cwd, self.tool_policy.clone(), mcp);
+        let runtime = build_host_runtime_with_mcp(
+            model,
+            &request.cwd,
+            self.tool_policy.clone(),
+            &self.structure_home,
+            mcp,
+        );
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         let restore_report = manager
             .restore_session(
@@ -435,8 +445,13 @@ impl AcpState {
         let mcp = crate::mcp::McpTools::connect(request.mcp_servers, &request.cwd)
             .await
             .map_err(|error| AcpError::invalid_params().data(error))?;
-        let runtime =
-            build_host_runtime_with_mcp(model, &request.cwd, self.tool_policy.clone(), mcp);
+        let runtime = build_host_runtime_with_mcp(
+            model,
+            &request.cwd,
+            self.tool_policy.clone(),
+            &self.structure_home,
+            mcp,
+        );
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
         manager
             .restore_session(

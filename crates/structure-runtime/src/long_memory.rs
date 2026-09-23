@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -112,7 +112,7 @@ pub struct FileArchiveStore {
 impl FileArchiveStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, LongMemoryError> {
         let root = root.into();
-        fs::create_dir_all(&root).map_err(|error| {
+        create_private_archive_dir(&root).map_err(|error| {
             LongMemoryError::storage(format!(
                 "failed to create file archive {}: {error}",
                 root.display()
@@ -146,7 +146,7 @@ impl LongMemoryStore for FileArchiveStore {
         };
         let path = self.archive_path(&memory_id)?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
+            create_private_archive_dir(parent).map_err(|error| {
                 LongMemoryError::storage(format!(
                     "failed to create archive directory {}: {error}",
                     parent.display()
@@ -163,10 +163,14 @@ impl LongMemoryStore for FileArchiveStore {
         let nonce = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp_path = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         let write_result = (|| {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp_path)?;
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp_path)?;
             file.write_all(&bytes)?;
             file.sync_all()?;
             fs::hard_link(&temp_path, &path)
@@ -246,6 +250,21 @@ impl LongMemoryStore for FileArchiveStore {
         matches.truncate(limit);
         Ok(matches)
     }
+}
+
+fn create_private_archive_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        builder.mode(0o700);
+        builder.create(path)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    builder.create(path)?;
+    Ok(())
 }
 
 /// SQLite archive with an idempotent primary-key contract.
@@ -859,6 +878,32 @@ mod tests {
             LongMemoryErrorKind::Conflict
         );
         fs::remove_dir_all(root).expect("test archive cleanup succeeds");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_archive_keeps_evidence_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_test_path("private-archive");
+        let mut store = FileArchiveStore::open(&root).expect("file archive opens");
+        store
+            .put_archive(
+                "m/tool/read/evidence.json",
+                "private evidence".to_owned(),
+                "sha256:private".to_owned(),
+            )
+            .expect("archive persists");
+        assert_eq!(
+            fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let path = root.join("m/tool/read/evidence.json");
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

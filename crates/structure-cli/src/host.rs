@@ -21,7 +21,10 @@ pub use structure_runner::LocalRunnerPolicy;
 use structure_runner::{
     LocalRunner, RunnerEnvironment, RunnerError, ToolExecutionRequest, ToolExecutionResult,
 };
-use structure_runtime::{CoreRuntime, HistoryProjection, RuntimeArchiveStore, ShortMemoryPolicy};
+use structure_runtime::{
+    CoreRuntime, RuntimeArchiveStore, RuntimeCompactionStrategy, ShortMemoryPolicy,
+    memory_read_definition, memory_search_definition,
+};
 use structure_session::IdAllocator;
 
 /// A run cap generous enough for a real coding task, short enough that a
@@ -252,27 +255,22 @@ pub fn workspace_id_for(cwd: &Path) -> structure_protocol::WorkspaceId {
     structure_protocol::WorkspaceId::new(format!("ws-{:.16}", format!("{digest:x}")))
 }
 
-/// Build a [`HostRuntime`] fixed to the CLI profile: compaction disabled
-/// (an in-memory archive backs it only because `CoreRuntime` requires one,
-/// not because anything is ever compacted into it -- FBGC does not activate
-/// on a high-cache provider at `cached_input_cost_bps = 0` anyway, and a
-/// CLI must not write archive files into the user's project), exact-transcript
-/// history so a second turn sees the first one's tool calls without a
-/// `command.output` Event wedged into it, a longer step budget than
+/// Build a [`HostRuntime`] fixed to the CLI profile: provider-safe Policy
+/// history with file-backed archival under the Structure home, a longer step budget than
 /// `CoreRuntime::new`'s default with its no-progress guard disabled (cost is
 /// bounded by the step count, and the user can cancel at any time), and the
-/// tool list this exact policy both advertises and will execute -- never the
-/// runtime's own unrelated built-in default, which still includes
-/// `memory_search`/`memory_read`/`runtime_complete`.
+/// tool list this exact policy both advertises and will execute.
 pub fn build_host_runtime(
     model: HostModel,
     runner_root: &Path,
     tool_policy: LocalRunnerPolicy,
+    structure_home: &Path,
 ) -> HostRuntime {
     build_host_runtime_with_mcp(
         model,
         runner_root,
         tool_policy,
+        structure_home,
         crate::mcp::McpTools::default(),
     )
 }
@@ -281,22 +279,28 @@ pub fn build_host_runtime_with_mcp(
     model: HostModel,
     runner_root: &Path,
     tool_policy: LocalRunnerPolicy,
+    structure_home: &Path,
     mcp: crate::mcp::McpTools,
 ) -> HostRuntime {
     let mut tools = structure_runner::tool_definitions(&tool_policy);
+    tools.push(memory_search_definition());
+    tools.push(memory_read_definition());
     tools.extend_from_slice(mcp.definitions());
     let runner = HostRunner {
         local: LocalRunner::with_policy(runner_root, tool_policy),
         mcp,
     };
+    let archive_root = structure_home
+        .join("runtime-memory")
+        .join(workspace_id_for(runner_root).to_string());
     let mut runtime = CoreRuntime::with_memory_configuration(
         model,
         runner,
         ShortMemoryPolicy::default(),
         false,
-        RuntimeArchiveStore::Memory,
+        RuntimeArchiveStore::File { root: archive_root },
     );
-    runtime.set_history_projection(HistoryProjection::ExactTranscript);
+    runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
     runtime.set_tools(tools);
     runtime.set_max_model_steps_per_run(MAX_MODEL_STEPS_PER_RUN);
     runtime.set_max_model_steps_without_progress(usize::MAX);
@@ -307,7 +311,7 @@ pub fn build_host_runtime_with_mcp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use structure_runtime::RuntimeCompactionStrategy;
+    use structure_runtime::HistoryProjection;
 
     fn args(model: Option<&str>, api_type: Option<&str>, base_url: Option<&str>) -> HostConfigArgs {
         HostConfigArgs {
@@ -414,15 +418,21 @@ mod tests {
             HostModel::Scripted(ScriptedModel::default()),
             &root,
             LocalRunnerPolicy::coding(),
+            &root.join("state"),
         );
 
         assert_eq!(
             runtime.compaction_strategy(),
-            RuntimeCompactionStrategy::Disabled
+            RuntimeCompactionStrategy::FileBackedGc
         );
+        assert_eq!(runtime.history_projection(), HistoryProjection::Policy);
         assert_eq!(
-            runtime.history_projection(),
-            HistoryProjection::ExactTranscript
+            runtime.archive_store(),
+            &RuntimeArchiveStore::File {
+                root: root
+                    .join("state/runtime-memory")
+                    .join(workspace_id_for(&root).to_string()),
+            }
         );
         assert_eq!(runtime.max_model_steps_per_run(), MAX_MODEL_STEPS_PER_RUN);
         assert_eq!(runtime.max_model_steps_without_progress(), usize::MAX);
@@ -430,10 +440,8 @@ mod tests {
         assert!(runtime.system_instructions()[0].contains(&root.display().to_string()));
         assert!(runtime.system_instructions()[0].contains(std::env::consts::OS));
 
-        // The tool list is exactly what this policy defines, not the
-        // runtime's own unrelated built-in default (read_file, write_file,
-        // memory_search, memory_read, runtime_complete): a coding CLI must
-        // not offer memory tools or runtime_complete at all.
+        // The CLI advertises recovery tools but does not expose the
+        // unrelated runtime_complete control tool.
         let names: Vec<&str> = runtime
             .tools()
             .iter()
@@ -449,9 +457,10 @@ mod tests {
                 "write_file",
                 "edit_files",
                 "delete_file",
+                "memory_search",
+                "memory_read",
             ]
         );
-        assert!(!names.contains(&"memory_search"));
         assert!(!names.contains(&"runtime_complete"));
 
         std::fs::remove_dir_all(root).expect("cleanup");
@@ -464,6 +473,7 @@ mod tests {
             HostModel::Scripted(ScriptedModel::default()),
             &root,
             LocalRunnerPolicy::read_only(),
+            &root.join("state"),
         );
         assert!(!runtime.tools().iter().any(|tool| tool.name == "shell"));
         std::fs::remove_dir_all(root).expect("cleanup");

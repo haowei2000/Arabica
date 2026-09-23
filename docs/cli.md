@@ -75,6 +75,15 @@ log; `/exit` or `/quit` ends the terminal process. `--continue` restores the mos
 recent session in the current directory, and `--resume <ID>` restores a
 specific one (`structure sessions list` shows IDs).
 
+CLI and ACP sessions use the runtime's file-backed context projection. Older
+eligible evidence may be archived under
+`$STRUCTURE_HOME/runtime-memory/<workspace-id>/` (default
+`~/.structure/runtime-memory/`); archives are never written into the project.
+The archive stores exact runtime events for `memory_search` and `memory_read`
+to recover when needed. The original session event log remains intact.
+Archival is subject to the runtime's cost gate, so a short conversation may
+produce no archive files.
+
 ```bash
 structure
 structure --continue
@@ -96,6 +105,7 @@ Read-only tools run without a prompt. File changes require a terminal
 approval (`y` once, `a` for the session, `n` once, or `v` for the session).
 The TUI shows the complete tool arguments in a focused permission view; use
 Up/Down or PageUp/PageDown to inspect long content before deciding.
+`memory_search` and `memory_read` are read-only recovery tools.
 Shell is available only with `--allow-shell` and also requires approval.
 `--read-only` excludes mutating tools and cannot be combined with
 `--allow-shell`. Ctrl-C cancels a running turn; at the input prompt it exits.

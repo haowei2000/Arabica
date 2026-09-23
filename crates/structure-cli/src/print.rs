@@ -278,7 +278,7 @@ async fn run_task(
     workspace_id: WorkspaceId,
     resumed: Option<StoredSession>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
-    let runtime: HostRuntime = build_host_runtime(model, runner_root, policy);
+    let runtime: HostRuntime = build_host_runtime(model, runner_root, policy, &structure_home);
     let mut manager = SessionManager::with_ids(runtime, Box::new(crate::host::UuidIds));
 
     let (session_id, store) = match resumed {

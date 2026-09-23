@@ -35,7 +35,14 @@ mod option_id {
 /// for every exploratory `read_file` a coding turn makes.
 pub fn default_policy() -> ToolPermissionPolicy {
     let mut by_tool = BTreeMap::new();
-    for tool in ["read_file", "list_dir", "grep", "find_files"] {
+    for tool in [
+        "read_file",
+        "list_dir",
+        "grep",
+        "find_files",
+        "memory_search",
+        "memory_read",
+    ] {
         by_tool.insert(tool.to_owned(), ToolPermissionRule::Allow);
     }
     ToolPermissionPolicy {
