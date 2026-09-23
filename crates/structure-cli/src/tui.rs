@@ -24,6 +24,7 @@ use structure_runtime::{
 };
 use structure_session::{DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver};
 
+use crate::context;
 use crate::host::workspace_id_for;
 use crate::interactive::{self, InteractiveOptions, InteractiveSession};
 
@@ -47,6 +48,25 @@ struct PermissionView {
     tool: String,
     details: String,
     scroll: u16,
+}
+
+struct ContextView {
+    text: String,
+    scroll: u16,
+}
+
+impl ContextView {
+    fn handle_scroll(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
+            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::Home => self.scroll = 0,
+            KeyCode::End => self.scroll = u16::MAX,
+            _ => {}
+        }
+    }
 }
 
 impl PermissionView {
@@ -93,6 +113,7 @@ struct App {
     busy: bool,
     show_thinking: bool,
     permission: Option<PermissionView>,
+    context: Option<ContextView>,
     status: String,
     model: String,
     thinking: String,
@@ -452,7 +473,7 @@ fn render(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title(editor_title))
         .wrap(Wrap { trim: false });
     frame.render_widget(input, sections[2]);
-    if !app.busy && app.permission.is_none() {
+    if !app.busy && app.permission.is_none() && app.context.is_none() {
         let before = &app.input[..app.cursor];
         let row = cursor_row.saturating_sub(first_row) as u16;
         let column = Line::from(before.rsplit('\n').next().unwrap_or("")).width() as u16;
@@ -508,6 +529,29 @@ fn render(frame: &mut Frame, app: &App) {
                 "↑/↓ or PgUp/PgDn: inspect arguments\n[y] Allow once  [a] Allow for session\n[n] Deny once   [v] Deny for session",
             )
             .style(Style::default().fg(Color::Yellow)),
+            sections[1],
+        );
+    }
+    if let Some(context) = &app.context {
+        frame.render_widget(ratatui::widgets::Clear, area);
+        let popup = ratatui::layout::Rect {
+            x: area.x + 1,
+            y: area.y + 1,
+            width: area.width - 2,
+            height: area.height - 2,
+        };
+        let block = Block::default().borders(Borders::ALL).title(" Context ");
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+        let details = Paragraph::new(context.text.as_str()).wrap(Wrap { trim: false });
+        let total = details.line_count(sections[0].width.max(1));
+        let max_scroll = total.saturating_sub(sections[0].height as usize);
+        let scroll = (context.scroll as usize).min(max_scroll) as u16;
+        frame.render_widget(details.scroll((scroll, 0)), sections[0]);
+        frame.render_widget(
+            Paragraph::new("↑/↓ PgUp/PgDn Home/End scroll · Esc or q closes")
+                .style(Style::default().fg(Color::Yellow)),
             sections[1],
         );
     }
@@ -665,8 +709,12 @@ fn command(session: &mut InteractiveSession, app: &mut App, text: &str) -> bool 
         return true;
     }
     match text {
-        "/help" => app.push(Kind::Info, "/help  /exit  /session  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
+        "/help" => app.push(Kind::Info, "/help  /exit  /session  /context  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
         "/session" => app.push(Kind::Info, format!("session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}", session.session_id, session.runner_root.display(), session.config.model, session.config.api_type, session.read_only, session.allow_shell)),
+        "/context" => match context::report(session) {
+            Ok(text) => app.context = Some(ContextView { text, scroll: 0 }),
+            Err(error) => app.push(Kind::Error, format!("context: {error}")),
+        },
         _ if text.starts_with("/model ") => {
             let model = text.trim_start_matches("/model ").trim();
             if model.is_empty() { app.push(Kind::Error, "usage: /model <name>"); }
@@ -848,6 +896,19 @@ async fn run_inner(
                 .recv()
                 .await
                 .ok_or("terminal input closed")??;
+            if app.context.is_some() {
+                if let InputEvent::Key(key) = key
+                    && key.kind == KeyEventKind::Press
+                {
+                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                        app.context = None;
+                    } else if let Some(context) = app.context.as_mut() {
+                        context.handle_scroll(key.code);
+                    }
+                }
+                draw(&mut terminal, &app)?;
+                continue;
+            }
             match handle_editor(&mut app, key) {
                 EditorAction::None => None,
                 EditorAction::Submit(text) => Some(text),
@@ -947,6 +1008,28 @@ mod tests {
             .collect::<String>();
         assert!(output.contains("[y] Allow once"));
         assert!(output.contains("[v] Deny for session"));
+    }
+
+    #[test]
+    fn context_view_keeps_controls_visible_when_scrolled() {
+        let app = App {
+            context: Some(ContextView {
+                text: format!("LAST MODEL REQUEST · ACTUAL\n{}", "batch\n".repeat(100)),
+                scroll: u16::MAX,
+            }),
+            ..App::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let output = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(output.contains("Esc or q closes"));
+        assert!(output.contains("batch"));
     }
 
     #[test]

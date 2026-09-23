@@ -13,6 +13,7 @@
 pub mod acp;
 pub mod auth;
 pub mod config;
+mod context;
 pub mod host;
 pub mod interactive;
 pub mod mcp;

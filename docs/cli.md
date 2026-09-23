@@ -96,7 +96,12 @@ scrolls the transcript, Ctrl+T shows or hides thinking, and Escape cancels a
 running turn. Ctrl+C exits at the editor and cancels a running turn. Messages
 typed during a run are queued for the next turn. The TUI restores the terminal
 screen on exit. `/help` lists commands. `/session` shows the current session and
-model; `/model <name>` and `/thinking <off|on|low|medium|high>` change the
+model. `/context` opens a scrollable view of the last recorded model request,
+provider-reported token usage, a policy preview for the next turn, and the
+workspace archive count. The preview excludes the next message and FileBackedGC
+admission; it is not a token estimate. Escape or `q` closes the view. The
+archive count covers the workspace, not just the current session. `/model <name>` and
+`/thinking <off|on|low|medium|high>` change the
 provider for the next prompt and persist those choices for this workspace. Chat
 Completions supports `off` and `on`; Responses supports `off`, `low`, `medium`,
 and `high`. The model name must be supported by the configured endpoint.
