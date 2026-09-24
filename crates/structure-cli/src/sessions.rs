@@ -56,6 +56,12 @@ fn list(all: bool) -> i32 {
     0
 }
 
+/// One stored session formatted for display, plus its id for pickers.
+pub(crate) struct SessionEntry {
+    pub(crate) id: String,
+    pub(crate) line: String,
+}
+
 /// One formatted line per stored session, most recently active first --
 /// what `structure sessions list` prints and what the terminal `/sessions`
 /// command shows. Empty when nothing is stored.
@@ -63,11 +69,30 @@ pub(crate) fn listing_lines(
     structure_home: &std::path::Path,
     scope: Option<&structure_protocol::WorkspaceId>,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    Ok(listing_entries(structure_home, scope)?
+        .into_iter()
+        .map(|entry| entry.line)
+        .collect())
+}
+
+/// The same listings as [`listing_lines`], keeping each session's id
+/// alongside its formatted line so an interactive picker can act on the
+/// selection.
+pub(crate) fn listing_entries(
+    structure_home: &std::path::Path,
+    scope: Option<&structure_protocol::WorkspaceId>,
+) -> Result<Vec<SessionEntry>, Box<dyn std::error::Error>> {
     let listings = FileSessionStore::list_sessions(structure_home, scope)?;
     let now_ms = now_ms();
     Ok(listings
-        .iter()
-        .map(|listing| format_listing(listing, scope.is_none(), now_ms))
+        .into_iter()
+        .map(|listing| {
+            let id = listing.header.id.to_string();
+            SessionEntry {
+                id,
+                line: format_listing(&listing, scope.is_none(), now_ms),
+            }
+        })
         .collect())
 }
 

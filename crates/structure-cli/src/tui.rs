@@ -59,6 +59,22 @@ struct ContextView {
     scroll: u16,
 }
 
+/// The `/resume` picker: stored sessions, one selection at a time.
+struct SessionPicker {
+    entries: Vec<crate::sessions::SessionEntry>,
+    selected: usize,
+}
+
+impl SessionPicker {
+    fn move_selection(&mut self, up: bool) {
+        if up {
+            self.selected = self.selected.saturating_sub(1);
+        } else {
+            self.selected = (self.selected + 1).min(self.entries.len() - 1);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CompletionView {
     replace_start: usize,
@@ -350,6 +366,7 @@ struct App {
     show_thinking: bool,
     permission: Option<PermissionView>,
     context: Option<ContextView>,
+    picker: Option<SessionPicker>,
     completion: Option<CompletionView>,
     file_index: Option<Vec<String>>,
     models: Vec<String>,
@@ -869,6 +886,47 @@ fn render(frame: &mut Frame, app: &App) {
             sections[1],
         );
     }
+    if let Some(picker) = &app.picker {
+        frame.render_widget(ratatui::widgets::Clear, area);
+        // A centered popup, most of the width so long id + cwd lines fit.
+        let width = (area.width * 7 / 10)
+            .clamp(40, area.width.saturating_sub(2))
+            .max(20);
+        let height = (picker.entries.len() as u16 + 4).min(area.height.saturating_sub(2).max(6));
+        let popup = ratatui::layout::Rect {
+            x: area.x + (area.width.saturating_sub(width)) / 2,
+            y: area.y + (area.height.saturating_sub(height)) / 2,
+            width: width.min(area.width),
+            height,
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Resume session ");
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+        let rows = picker
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                if index == picker.selected {
+                    Line::styled(
+                        format!("▶ {}", entry.line),
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    )
+                } else {
+                    Line::from(format!("  {}", entry.line))
+                }
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(rows), sections[0]);
+        frame.render_widget(
+            Paragraph::new("↑/↓ or wheel: choose · Enter: resume · Esc cancels")
+                .style(Style::default().fg(Color::Yellow)),
+            sections[1],
+        );
+    }
 }
 
 fn draw(terminal: &mut DefaultTerminal, app: &App) -> io::Result<()> {
@@ -928,7 +986,13 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         MouseEventKind::ScrollDown => false,
         _ => return false,
     };
-    if let Some(context) = app.context.as_mut() {
+    if let Some(picker) = app.picker.as_mut() {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => picker.move_selection(true),
+            MouseEventKind::ScrollDown => picker.move_selection(false),
+            _ => {}
+        }
+    } else if let Some(context) = app.context.as_mut() {
         context.scroll = if up {
             context.scroll.saturating_sub(WHEEL_STEP)
         } else {
@@ -1302,6 +1366,48 @@ async fn run_inner(
                 draw(&mut terminal, &app)?;
                 continue;
             }
+            if app.picker.is_some() {
+                if let InputEvent::Key(key) = key
+                    && key.kind == KeyEventKind::Press
+                {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => app.picker = None,
+                        KeyCode::Up => {
+                            if let Some(picker) = app.picker.as_mut() {
+                                picker.move_selection(true);
+                            }
+                        }
+                        KeyCode::Down => {
+                            if let Some(picker) = app.picker.as_mut() {
+                                picker.move_selection(false);
+                            }
+                        }
+                        KeyCode::Enter | KeyCode::Tab => {
+                            let id = app
+                                .picker
+                                .as_ref()
+                                .and_then(|picker| picker.entries.get(picker.selected))
+                                .map(|entry| entry.id.clone())
+                                .expect("picker is open with at least one entry");
+                            app.picker = None;
+                            match session.switch_to(&id).await {
+                                Ok(next) => {
+                                    session = next;
+                                    app.refresh_config(&session);
+                                    app.push(
+                                        Kind::Info,
+                                        format!("session: {}", session.session_id),
+                                    );
+                                }
+                                Err(error) => app.push(Kind::Error, error.to_string()),
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                draw(&mut terminal, &app)?;
+                continue;
+            }
             if app.context.is_some() {
                 if let InputEvent::Key(key) = key
                     && key.kind == KeyEventKind::Press
@@ -1336,13 +1442,17 @@ async fn run_inner(
                 } else if text == "/resume" || text.starts_with("/resume ") {
                     let id = text["/resume".len()..].trim();
                     if id.is_empty() {
-                        // `/resume` alone: show what can be resumed
-                        // instead of a bare usage line.
-                        match session.session_list() {
-                            Ok(lines) if lines.is_empty() => {
+                        // `/resume` alone: open the picker.
+                        match session.session_list_entries() {
+                            Ok(entries) if entries.is_empty() => {
                                 app.push(Kind::Info, "no sessions found");
                             }
-                            Ok(lines) => app.push(Kind::Info, lines.join("\n")),
+                            Ok(entries) => {
+                                app.picker = Some(SessionPicker {
+                                    entries,
+                                    selected: 0,
+                                });
+                            }
                             Err(error) => app.push(Kind::Error, error.to_string()),
                         }
                     } else {
@@ -1404,6 +1514,29 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::empty(),
         }
+    }
+
+    #[test]
+    fn picker_selection_saturates_at_both_ends() {
+        let mut picker = SessionPicker {
+            entries: vec![
+                crate::sessions::SessionEntry {
+                    id: "a".to_owned(),
+                    line: "a".to_owned(),
+                },
+                crate::sessions::SessionEntry {
+                    id: "b".to_owned(),
+                    line: "b".to_owned(),
+                },
+            ],
+            selected: 0,
+        };
+        picker.move_selection(true);
+        assert_eq!(picker.selected, 0, "up at the top stays put");
+        picker.move_selection(false);
+        assert_eq!(picker.selected, 1);
+        picker.move_selection(false);
+        assert_eq!(picker.selected, 1, "down at the bottom stays put");
     }
 
     #[test]

@@ -368,7 +368,19 @@ impl InteractiveSession {
     /// `/sessions`: the stored sessions for this workspace, formatted the
     /// same way `structure sessions list` prints them.
     pub(crate) fn session_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        crate::sessions::listing_lines(
+        Ok(self
+            .session_list_entries()?
+            .into_iter()
+            .map(|entry| entry.line)
+            .collect())
+    }
+
+    /// The same listings as [`Self::session_list`], keeping each session's
+    /// id so `/resume`'s picker can act on the selection.
+    pub(crate) fn session_list_entries(
+        &self,
+    ) -> Result<Vec<crate::sessions::SessionEntry>, Box<dyn std::error::Error>> {
+        crate::sessions::listing_entries(
             &self.structure_home,
             Some(&workspace_id_for(&self.runner_root)),
         )
@@ -639,26 +651,64 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
         }
         if text == "/resume" || text.starts_with("/resume ") {
             let id = text["/resume".len()..].trim();
-            if id.is_empty() {
-                // `/resume` alone: show what can be resumed instead of a
-                // bare usage line.
-                match session.session_list() {
-                    Ok(lines) if lines.is_empty() => println!("no sessions found"),
-                    Ok(lines) => {
-                        for line in &lines {
-                            println!("{line}");
+            let id =
+                if id.is_empty() {
+                    // `/resume` alone: list resumable sessions and pick one.
+                    // A line number, a unique id prefix, or an exact id works;
+                    // an empty line cancels.
+                    let entries = match session.session_list_entries() {
+                        Ok(entries) => entries,
+                        Err(error) => {
+                            eprintln!("error: {error}");
+                            continue;
+                        }
+                    };
+                    if entries.is_empty() {
+                        println!("no sessions found");
+                        continue;
+                    }
+                    for (index, entry) in entries.iter().enumerate() {
+                        println!("{:>3}. {}", index + 1, entry.line);
+                    }
+                    prompt("resume: number or id (Enter cancels)> ");
+                    let answer = match lines.recv().await {
+                        Some(Ok(line)) => line.trim().to_owned(),
+                        _ => String::new(),
+                    };
+                    if answer.is_empty() {
+                        continue;
+                    }
+                    match answer.parse::<usize>().ok().and_then(|number| {
+                        number.checked_sub(1).and_then(|index| entries.get(index))
+                    }) {
+                        Some(entry) => entry.id.clone(),
+                        None => {
+                            let mut matches = entries
+                                .iter()
+                                .filter(|entry| entry.id.starts_with(&answer))
+                                .collect::<Vec<_>>();
+                            if matches.len() > 1 {
+                                eprintln!("'{}' matches more than one session", answer);
+                                continue;
+                            }
+                            match matches.pop() {
+                                Some(entry) => entry.id.clone(),
+                                None => {
+                                    eprintln!("no session matches '{}'", answer);
+                                    continue;
+                                }
+                            }
                         }
                     }
-                    Err(error) => eprintln!("error: {error}"),
+                } else {
+                    id.to_owned()
+                };
+            match session.switch_to(&id).await {
+                Ok(next) => {
+                    session = next;
+                    println!("session: {}", session.session_id);
                 }
-            } else {
-                match session.switch_to(id).await {
-                    Ok(next) => {
-                        session = next;
-                        println!("session: {}", session.session_id);
-                    }
-                    Err(error) => eprintln!("error: {error}"),
-                }
+                Err(error) => eprintln!("error: {error}"),
             }
             continue;
         }
