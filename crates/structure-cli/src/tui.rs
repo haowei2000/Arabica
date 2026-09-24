@@ -137,6 +137,188 @@ fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     lines
 }
 
+/// In-process mirror of what we have committed to the scrollback: every
+/// row we printed, grouped into blocks (one user message, one tool line,
+/// one diff, one thinking summary...). Powers the up/down block
+/// navigation: the terminal cannot repaint true scrollback, but the
+/// bottom-pinned viewport fixes a known screen origin, so blocks that are
+/// still on screen can be redrawn with a highlight.
+#[derive(Default)]
+struct Transcript {
+    lines: Vec<Line<'static>>,
+    blocks: Vec<(usize, usize)>,
+}
+
+impl Transcript {
+    fn push_block(&mut self, lines: Vec<Line<'static>>) {
+        let start = self.lines.len();
+        self.lines.extend(lines);
+        self.blocks.push((start, self.lines.len()));
+    }
+}
+
+/// Commits one block: prints the rows above the viewport and records them.
+fn commit_lines(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    lines: Vec<Line<'static>>,
+) -> io::Result<()> {
+    insert_lines(terminal, lines.clone())?;
+    transcript.push_block(lines);
+    Ok(())
+}
+
+/// Screen y of committed line index `i`, given the viewport is pinned to
+/// the bottom: negative means the row has scrolled off the screen.
+fn screen_row(line_index: usize, total_lines: usize, rows: u16) -> i32 {
+    let viewport_top = i32::from(rows.saturating_sub(VIEWPORT_LINES));
+    viewport_top - (total_lines - line_index - 1) as i32 - 1
+}
+
+fn ratatui_color(color: ratatui::style::Color) -> crossterm::style::Color {
+    use crossterm::style::Color as C;
+    match color {
+        ratatui::style::Color::Reset => C::Reset,
+        ratatui::style::Color::Black => C::Black,
+        ratatui::style::Color::Red => C::DarkRed,
+        ratatui::style::Color::Green => C::DarkGreen,
+        ratatui::style::Color::Yellow => C::DarkYellow,
+        ratatui::style::Color::Blue => C::DarkBlue,
+        ratatui::style::Color::Magenta => C::DarkMagenta,
+        ratatui::style::Color::Cyan => C::DarkCyan,
+        ratatui::style::Color::Gray => C::Grey,
+        ratatui::style::Color::DarkGray => C::DarkGrey,
+        ratatui::style::Color::LightRed => C::Red,
+        ratatui::style::Color::LightGreen => C::Green,
+        ratatui::style::Color::LightYellow => C::Yellow,
+        ratatui::style::Color::LightBlue => C::Blue,
+        ratatui::style::Color::LightMagenta => C::Magenta,
+        ratatui::style::Color::LightCyan => C::Cyan,
+        ratatui::style::Color::White => C::White,
+        ratatui::style::Color::Indexed(value) => C::AnsiValue(value),
+        ratatui::style::Color::Rgb(r, g, b) => C::Rgb { r, g, b },
+    }
+}
+
+/// Moves the block highlight up or down across blocks that are still on
+/// screen. Only repaints the previous (unhighlighted) and next
+/// (highlighted) blocks.
+fn navigate_blocks(
+    terminal: &mut DefaultTerminal,
+    transcript: &Transcript,
+    app: &mut App,
+    up: bool,
+) -> io::Result<()> {
+    let (_, rows) = crossterm::terminal::size()?;
+    let total = transcript.lines.len();
+    let visible: Vec<usize> = transcript
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, span)| span.1 > 0 && screen_row(span.1 - 1, total, rows) >= 0)
+        .map(|(index, _)| index)
+        .collect();
+    if visible.is_empty() {
+        return Ok(());
+    }
+    let next = match app.highlighted {
+        None => {
+            if up {
+                *visible.last().expect("visible is not empty")
+            } else {
+                // Down from nothing starts at the oldest visible block.
+                visible[0]
+            }
+        }
+        Some(current) => {
+            match visible.iter().position(|&block| block == current) {
+                Some(position) => {
+                    if up {
+                        visible[position.saturating_sub(1)]
+                    } else {
+                        visible[(position + 1).min(visible.len() - 1)]
+                    }
+                }
+                // The highlighted block scrolled off screen; restart at the tail.
+                None => *visible.last().expect("visible is not empty"),
+            }
+        }
+    };
+    if let Some(current) = app.highlighted
+        && current != next
+    {
+        repaint_block(transcript, current, false)?;
+    }
+    app.highlighted = Some(next);
+    let _ = terminal;
+    repaint_block(transcript, next, true)
+}
+
+/// Clears the block highlight, restoring the block's original colors.
+fn clear_highlight(transcript: &Transcript, app: &mut App) -> io::Result<()> {
+    if let Some(current) = app.highlighted.take() {
+        repaint_block(transcript, current, false)?;
+    }
+    Ok(())
+}
+
+/// Redraws one block in place on the current screen, with or without the
+/// navigation highlight (reverse video). Rows that have scrolled off are
+/// skipped; rows of a block partially off-screen still repaint their
+/// visible tail. Assumes the viewport is at the bottom (the user has not
+/// scrolled the pane with terminal-native scrolling) -- that assumption is
+/// inherent to any scrollback repainting, including Claude Code's.
+fn repaint_block(transcript: &Transcript, block: usize, highlighted: bool) -> io::Result<()> {
+    use crossterm::style::{Attribute, Print, SetAttribute, SetForegroundColor};
+    use crossterm::{QueueableCommand, cursor::MoveTo};
+    let (width, rows) = crossterm::terminal::size()?;
+    let (start, end) = match transcript.blocks.get(block) {
+        Some(span) => *span,
+        None => return Ok(()),
+    };
+    let total = transcript.lines.len();
+    let mut stdout = io::stdout();
+    stdout.queue(MoveTo(0, 0))?;
+    let mut pending_rows: Vec<(u16, &Line)> = Vec::new();
+    for i in start..end {
+        let y = screen_row(i, total, rows);
+        if y >= 0 && y < i32::from(rows) {
+            pending_rows.push((y as u16, &transcript.lines[i]));
+        }
+    }
+    io::stdout().sync_update(|stdout| {
+        for (y, line) in pending_rows {
+            let mut column = 0u16;
+            stdout.queue(MoveTo(0, y))?;
+            if highlighted {
+                stdout.queue(SetAttribute(Attribute::Reverse))?;
+            }
+            for span in &line.spans {
+                stdout.queue(SetForegroundColor(ratatui_color(
+                    span.style.fg.unwrap_or(ratatui::style::Color::Reset),
+                )))?;
+                for ch in span.content.chars() {
+                    if column >= width {
+                        break;
+                    }
+                    stdout.queue(Print(ch))?;
+                    column += char_width(ch) as u16;
+                }
+            }
+            if highlighted {
+                stdout.queue(SetAttribute(Attribute::NoReverse))?;
+            }
+            stdout.queue(SetAttribute(Attribute::Reset))?;
+            // Clear any remainder of the row.
+            stdout.queue(Print(" ".repeat(width.saturating_sub(column) as usize)))?;
+        }
+        Ok::<(), io::Error>(())
+    })??;
+    // Park the cursor back inside the viewport input row.
+    let _ = MoveTo(0, 0);
+    Ok(())
+}
+
 /// Writes styled rows into the scrollback above the viewport. Ratatui's
 /// inline `insert_before` takes a buffer-drawing closure, so spans are
 /// painted cell by cell (with the same width approximation used for
@@ -168,34 +350,59 @@ fn insert_lines(terminal: &mut DefaultTerminal, lines: Vec<Line<'static>>) -> io
     })?
 }
 /// Convenience wrapper: plain paragraph rows with one style.
-fn print_block(terminal: &mut DefaultTerminal, text: &str, style: Style) -> io::Result<()> {
+fn print_block(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+    style: Style,
+) -> io::Result<()> {
     let width = terminal_area_width(terminal);
     let lines = wrap_styled(text, width, style);
-    insert_lines(terminal, lines)
+    commit_lines(terminal, transcript, lines)
 }
 
 /// One assistant text block: no prefix, just the words, terminal width.
-fn print_text(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, theme::base())
+fn print_text(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
+    print_block(terminal, transcript, text, theme::base())
 }
 
-fn print_dim(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, theme::muted())
+fn print_dim(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
+    print_block(terminal, transcript, text, theme::muted())
 }
 
 /// Tool-call lines and permission prompts: the "something is happening"
 /// color, distinct from prose and from results.
-fn print_tool(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, theme::tool())
+fn print_tool(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
+    print_block(terminal, transcript, text, theme::tool())
 }
 
 /// Results and products: completions, file summaries, command output.
-fn print_artifact(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, theme::artifact())
+fn print_artifact(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
+    print_block(terminal, transcript, text, theme::artifact())
 }
 
-fn print_error(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, theme::error())
+fn print_error(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
+    print_block(terminal, transcript, text, theme::error())
 }
 
 fn terminal_area_width(terminal: &DefaultTerminal) -> usize {
@@ -206,7 +413,11 @@ fn terminal_area_width(terminal: &DefaultTerminal) -> usize {
 }
 
 /// A user's message, prefixed so it stands out in the scrollback.
-fn print_user(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+fn print_user(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
     let width = terminal_area_width(terminal).saturating_sub(2);
     let mut lines = Vec::new();
     for (index, raw) in wrap_styled(text, width.max(1), Style::default())
@@ -223,7 +434,7 @@ fn print_user(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
         lines.push(Line::from(spans));
     }
     lines.push(Line::raw(String::new()));
-    insert_lines(terminal, lines)
+    commit_lines(terminal, transcript, lines)
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +777,23 @@ struct App {
     /// Session ids behind the pending `/resume` listing, in display order.
     pick_entries: Option<Vec<String>>,
     file_index: Option<Vec<String>>,
+    /// Selected row of the inline permission chooser while a decision is
+    /// pending (0..4: allow once / allow session / deny once / deny session).
+    permission_choice: usize,
+    /// Block currently highlighted by up/down navigation, if any.
+    highlighted: Option<usize>,
+    /// Set while a permission decision is pending: the tool label shown in
+    /// the viewport chooser.
+    permission_prompt: Option<String>,
 }
+
+/// The permission chooser's options, in navigation order.
+const PERMISSION_OPTIONS: [&str; 4] = [
+    "Allow once",
+    "Allow always",
+    "Deny once",
+    "Deny for session",
+];
 
 impl Default for App {
     fn default() -> Self {
@@ -585,6 +812,9 @@ impl Default for App {
             resume_pick: false,
             pick_entries: None,
             file_index: None,
+            permission_choice: 0,
+            highlighted: None,
+            permission_prompt: None,
         }
     }
 }
@@ -906,6 +1136,45 @@ fn render_viewport(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(Line::from(candidates)), sections[0]);
     }
 
+    if let Some(prompt) = &app.permission_prompt {
+        // Permission chooser: option row replaces the input; the hint row
+        // explains navigation. Up/down + Enter, or the y/a/n/v shortcuts.
+        frame.render_widget(
+            Paragraph::new(Line::styled(prompt.clone(), theme::tool())),
+            sections[0],
+        );
+        let mut options: Vec<Span> = vec![Span::raw(" ")];
+        for (index, label) in PERMISSION_OPTIONS.iter().enumerate() {
+            let label = if index == app.permission_choice {
+                format!(" [{label}] ")
+            } else {
+                format!("  {label}  ")
+            };
+            let style = if index == app.permission_choice {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                theme::muted()
+            };
+            options.push(Span::styled(label, style));
+        }
+        frame.render_widget(Paragraph::new(Line::from(options)), sections[1]);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                " ↑/↓ choose · Enter confirm · y/a/n/v shortcut",
+                theme::muted(),
+            )),
+            sections[2],
+        );
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                " Waiting for permission".to_owned(),
+                theme::muted(),
+            )),
+            sections[3],
+        );
+        return;
+    }
+
     // Row 1: the input line with a blinking-free cursor.
     let last_line = app.input[app.input[..app.cursor.min(app.input.len())]
         .rfind('\n')
@@ -998,10 +1267,14 @@ fn committable_prefix(live: &str) -> usize {
 }
 
 /// Flushes any unterminated streaming line into the scrollback.
-fn flush_live(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+fn flush_live(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    app: &mut App,
+) -> io::Result<()> {
     if !app.live.is_empty() {
         let text = std::mem::take(&mut app.live);
-        print_text(terminal, &text)?;
+        print_text(terminal, transcript, &text)?;
     }
     Ok(())
 }
@@ -1010,10 +1283,19 @@ fn flush_live(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 /// on its first line. Called when real output, a tool call, or the end of
 /// the turn arrives -- thinking stays together instead of one row per
 /// delta.
-fn flush_reasoning(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+fn flush_reasoning(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    app: &mut App,
+) -> io::Result<()> {
     if !app.live_reasoning.is_empty() {
         let text = std::mem::take(&mut app.live_reasoning);
-        print_dim(terminal, &format!("· {text}"))?;
+        if app.verbose {
+            print_dim(terminal, transcript, &format!("· {text}"))?;
+        } else {
+            let words = text.split_whitespace().count();
+            print_dim(terminal, transcript, &format!("· thinking · {words} words"))?;
+        }
     }
     Ok(())
 }
@@ -1031,13 +1313,14 @@ async fn run_turn(
     session: &mut InteractiveSession,
     app: &mut App,
     terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
     keys: &mut tokio::sync::mpsc::UnboundedReceiver<io::Result<InputEvent>>,
     text: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     app.busy = true;
     app.status = "Working".to_owned();
     app.refresh_completion();
-    print_user(terminal, &text)?;
+    print_user(terminal, transcript, &text)?;
     draw(terminal, app)?;
 
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1081,7 +1364,7 @@ async fn run_turn(
             Some(update) = ui_rx.recv() => {
                 match update {
                     UiEvent::Text(text) => {
-                        flush_reasoning(terminal, app)?;
+                        flush_reasoning(terminal, transcript, app)?;
                         app.live.push_str(&text);
                         // Completed lines go straight to the scrollback,
                         // except while a code fence is open: those lines
@@ -1093,28 +1376,28 @@ async fn run_turn(
                                 break;
                             };
                             let line: String = app.live.drain(..newline + 1).collect();
-                            print_text(terminal, line.trim_end_matches('\n'))?;
+                            print_text(terminal, transcript, line.trim_end_matches('\n'))?;
                         }
                     }
                     UiEvent::Reasoning(text) => {
                         if app.show_thinking {
-                            flush_live(terminal, app)?;
+                            flush_live(terminal, transcript, app)?;
                             app.live_reasoning.push_str(&text);
                         }
                     }
                     UiEvent::ToolStart { name, summary } => {
-                        flush_reasoning(terminal, app)?;
-                        flush_live(terminal, app)?;
+                        flush_reasoning(terminal, transcript, app)?;
+                        flush_live(terminal, transcript, app)?;
                         if summary.is_empty() {
-                            print_tool(terminal, &format!("⏺ {name}"))?;
+                            print_tool(terminal, transcript, &format!("⏺ {name}"))?;
                         } else {
-                            print_tool(terminal, &format!("⏺ {name} · {summary}"))?;
+                            print_tool(terminal, transcript, &format!("⏺ {name} · {summary}"))?;
                         }
                     }
                     UiEvent::ToolDone { call_id, name, is_error } => {
-                        flush_live(terminal, app)?;
+                        flush_live(terminal, transcript, app)?;
                         if is_error {
-                            print_error(terminal, &format!("  ✗ {name} failed"))?;
+                            print_error(terminal, transcript, &format!("  ✗ {name} failed"))?;
                         } else if let Some(checkpoint) = checkpoint_for(&write_journal, &call_id) {
                             let max_lines = if app.verbose {
                                 usize::MAX
@@ -1127,22 +1410,23 @@ async fn run_turn(
                         } else {
                             // No file movement to show: a quiet result line
                             // confirms the call landed.
-                            print_artifact(terminal, &format!("  ✓ {name}"))?;
+                            print_artifact(terminal, transcript, &format!("  ✓ {name}"))?;
                         }
                     }
                 }
                 draw(terminal, app)?;
             }
             Some(request) = permission_rx.recv(), if pending.is_none() => {
-                flush_reasoning(terminal, app)?;
-                flush_live(terminal, app)?;
+                flush_reasoning(terminal, transcript, app)?;
+                flush_live(terminal, transcript, app)?;
                 let details = permission_details(&request.call.name, &request.call.arguments);
-                print_tool(terminal, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
+                print_tool(terminal, transcript, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
                 if !details.is_empty() {
-                    print_dim(terminal, &details)?;
+                    print_dim(terminal, transcript, &details)?;
                 }
-                print_block(terminal, "  Allow? [y]es / [a]lways / [n]o / ne[v]er", theme::tool())?;
                 app.status = "Waiting for permission".to_owned();
+                app.permission_choice = 0;
+                app.permission_prompt = Some(format!("Allow {}?", request.call.name));
                 pending = Some(request);
                 draw(terminal, app)?;
             }
@@ -1150,11 +1434,38 @@ async fn run_turn(
                 let key = key?;
                 if pending.is_some() {
                     if let InputEvent::Key(key) = key && key.kind == KeyEventKind::Press {
-                        if let Some(decision) = permission_decision(key) {
+                        let decision = match key.code {
+                            KeyCode::Up => {
+                                app.permission_choice =
+                                    (app.permission_choice + PERMISSION_OPTIONS.len() - 1)
+                                        % PERMISSION_OPTIONS.len();
+                                None
+                            }
+                            KeyCode::Down => {
+                                app.permission_choice =
+                                    (app.permission_choice + 1) % PERMISSION_OPTIONS.len();
+                                None
+                            }
+                            KeyCode::Enter => Some(match app.permission_choice {
+                                1 => PermissionDecision::allow_for_session(),
+                                2 => PermissionDecision::deny_once(),
+                                3 => PermissionDecision {
+                                    outcome: ToolPermissionOutcome::Denied,
+                                    scope: ToolPermissionScope::Session,
+                                    source: ToolPermissionSource::User,
+                                },
+                                _ => PermissionDecision::allow_once(),
+                            }),
+                            _ => permission_decision(key),
+                        };
+                        if let Some(decision) = decision {
                             let _ = pending.take().expect("permission pending").reply.send(decision);
+                            app.permission_prompt = None;
+                            app.permission_choice = 0;
                             app.status = "Working".to_owned();
                         } else if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                             let _ = pending.take().expect("permission pending").reply.send(PermissionDecision::deny_once());
+                            app.permission_prompt = None;
                             cancellation.cancel();
                         }
                     }
@@ -1186,8 +1497,8 @@ async fn run_turn(
             app.live_reasoning.push_str(&text);
         }
     }
-    flush_reasoning(terminal, app)?;
-    flush_live(terminal, app)?;
+    flush_reasoning(terminal, transcript, app)?;
+    flush_live(terminal, transcript, app)?;
     app.busy = false;
     app.permission_cleanup();
     match result {
@@ -1197,11 +1508,11 @@ async fn run_turn(
                 match event.event {
                     Event::RunFailed { message } => {
                         app.status = "Failed".to_owned();
-                        print_error(terminal, &format!("✗ {message}"))?;
+                        print_error(terminal, transcript, &format!("✗ {message}"))?;
                     }
                     Event::RunCancelled => {
                         app.status = "Cancelled".to_owned();
-                        print_dim(terminal, "run cancelled")?;
+                        print_dim(terminal, transcript, "run cancelled")?;
                     }
                     _ => {}
                 }
@@ -1209,7 +1520,7 @@ async fn run_turn(
         }
         Err(error) => {
             app.status = "Failed".to_owned();
-            print_error(terminal, &error.to_string())?;
+            print_error(terminal, transcript, &error.to_string())?;
         }
     }
     println!(); // blank line after each turn
@@ -1369,6 +1680,7 @@ fn command(
     session: &mut InteractiveSession,
     app: &mut App,
     terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
     text: &str,
 ) -> bool {
     if matches!(text, "/exit" | "/quit") {
@@ -1378,12 +1690,14 @@ fn command(
         "/help" => {
             let _ = print_dim(
                 terminal,
+                transcript,
                 "/help  /exit  /session  /sessions  /resume [id]  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
             );
         }
         "/session" => {
             let _ = print_dim(
                 terminal,
+                transcript,
                 &format!(
                     "session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}",
                     session.session_id,
@@ -1398,6 +1712,7 @@ fn command(
         "/model" => {
             let _ = print_dim(
                 terminal,
+                transcript,
                 &format!(
                     "current model: {}\nusage: /model <name>",
                     session.config.model
@@ -1405,39 +1720,48 @@ fn command(
             );
         }
         "/thinking" => {
-            let _ = print_dim(terminal, "usage: /thinking <off|on|low|medium|high>");
+            let _ = print_dim(
+                terminal,
+                transcript,
+                "usage: /thinking <off|on|low|medium|high>",
+            );
         }
         "/diff" => {
-            let _ = print_block(terminal, &session.write_report(), Style::default());
+            let _ = print_block(
+                terminal,
+                transcript,
+                &session.write_report(),
+                Style::default(),
+            );
         }
         "/undo" => {
             let message = session.undo_last_write();
-            let _ = print_artifact(terminal, &message);
+            let _ = print_artifact(terminal, transcript, &message);
         }
         "/context" => match context::report(session) {
             Ok(report) => {
-                let _ = print_block(terminal, &report, Style::default().fg(Color::DarkGray));
+                let _ = print_block(terminal, transcript, &report, theme::muted());
             }
             Err(error) => {
-                let _ = print_error(terminal, &format!("context: {error}"));
+                let _ = print_error(terminal, transcript, &format!("context: {error}"));
             }
         },
         "/sessions" => match session.session_list() {
             Ok(lines) if lines.is_empty() => {
-                let _ = print_dim(terminal, "no sessions found");
+                let _ = print_dim(terminal, transcript, "no sessions found");
             }
             Ok(lines) => {
-                let _ = print_dim(terminal, &lines.join("\n"));
+                let _ = print_dim(terminal, transcript, &lines.join("\n"));
             }
             Err(error) => {
-                let _ = print_error(terminal, &error.to_string());
+                let _ = print_error(terminal, transcript, &error.to_string());
             }
         },
         "/resume" => {
             // List sessions and let the next input pick one.
             match session.session_list_entries() {
                 Ok(entries) if entries.is_empty() => {
-                    let _ = print_dim(terminal, "no sessions found");
+                    let _ = print_dim(terminal, transcript, "no sessions found");
                 }
                 Ok(entries) => {
                     let listing = entries
@@ -1448,27 +1772,28 @@ fn command(
                         .join("\n");
                     let _ = print_dim(
                         terminal,
+                        transcript,
                         &format!("{listing}\nresume: type a number or id prefix"),
                     );
                     app.resume_pick = true;
                     app.pick_entries = Some(entries.into_iter().map(|entry| entry.id).collect());
                 }
                 Err(error) => {
-                    let _ = print_error(terminal, &error.to_string());
+                    let _ = print_error(terminal, transcript, &error.to_string());
                 }
             }
         }
         _ if text.starts_with("/model ") => {
             let model = text.trim_start_matches("/model ").trim();
             if model.is_empty() {
-                let _ = print_error(terminal, "usage: /model <name>");
+                let _ = print_error(terminal, transcript, "usage: /model <name>");
             } else {
                 match session.change_model(model) {
                     Ok(()) => {
-                        let _ = print_tool(terminal, &format!("model: {model}"));
+                        let _ = print_tool(terminal, transcript, &format!("model: {model}"));
                     }
                     Err(error) => {
-                        let _ = print_error(terminal, &error.to_string());
+                        let _ = print_error(terminal, transcript, &error.to_string());
                     }
                 }
             }
@@ -1477,15 +1802,15 @@ fn command(
             let level = text.trim_start_matches("/thinking ").trim();
             match session.change_thinking(level) {
                 Ok(()) => {
-                    let _ = print_tool(terminal, &format!("thinking: {level}"));
+                    let _ = print_tool(terminal, transcript, &format!("thinking: {level}"));
                 }
                 Err(error) => {
-                    let _ = print_error(terminal, &error.to_string());
+                    let _ = print_error(terminal, transcript, &error.to_string());
                 }
             }
         }
         _ => {
-            let _ = print_error(terminal, &format!("unknown command: {text}"));
+            let _ = print_error(terminal, transcript, &format!("unknown command: {text}"));
         }
     }
     false
@@ -1495,7 +1820,11 @@ fn command(
 // Entry points
 // ---------------------------------------------------------------------------
 
-fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -> io::Result<()> {
+fn print_history(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    session: &InteractiveSession,
+) -> io::Result<()> {
     let workspace = workspace_id_for(&session.runner_root);
     let stored = match FileSessionStore::read_session(
         &session.structure_home,
@@ -1509,7 +1838,7 @@ fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -
     for envelope in stored.events {
         match envelope.event {
             Event::MessageAccepted { content } => {
-                print_user(terminal, &content)?;
+                print_user(terminal, transcript, &content)?;
                 turns += 1;
             }
             Event::ModelResponseItem {
@@ -1525,7 +1854,7 @@ fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -
                     })
                     .collect::<String>();
                 if !text.is_empty() {
-                    print_text(terminal, &text)?;
+                    print_text(terminal, transcript, &text)?;
                 }
             }
             Event::ToolCallRequested {
@@ -1533,11 +1862,12 @@ fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -
             } => {
                 print_tool(
                     terminal,
+                    transcript,
                     &format!("⏺ {name} · {}", tool_summary(&name, &arguments)),
                 )?;
             }
             Event::ToolCallCompleted { name, is_error, .. } if is_error => {
-                print_error(terminal, &format!("  ✗ {name} failed"))?;
+                print_error(terminal, transcript, &format!("  ✗ {name} failed"))?;
             }
             _ => {}
         }
@@ -1545,6 +1875,7 @@ fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -
     if turns > 0 {
         print_dim(
             terminal,
+            transcript,
             &format!("— resumed session, {turns} earlier messages —"),
         )?;
     }
@@ -1587,7 +1918,8 @@ async fn run_inner(
         },
     )?;
 
-    print_history(&mut terminal, &session)?;
+    let mut transcript = Transcript::default();
+    print_history(&mut terminal, &mut transcript, &session)?;
     app.file_index = Some(workspace_files(&session.runner_root));
     draw(&mut terminal, &app)?;
 
@@ -1601,6 +1933,26 @@ async fn run_inner(
                 .recv()
                 .await
                 .ok_or("terminal input closed")??;
+            if let InputEvent::Key(key) = &key
+                && key.kind == KeyEventKind::Press
+                && app.input.is_empty()
+                && app.completion.is_none()
+                && !app.busy
+                && matches!(key.code, KeyCode::Up | KeyCode::Down)
+            {
+                navigate_blocks(
+                    &mut terminal,
+                    &transcript,
+                    &mut app,
+                    key.code == KeyCode::Up,
+                )?;
+                draw(&mut terminal, &app)?;
+                continue;
+            }
+            // Any other key drops the block highlight.
+            if app.highlighted.is_some() {
+                clear_highlight(&transcript, &mut app)?;
+            }
             match handle_editor(&mut app, key) {
                 EditorAction::None => None,
                 EditorAction::Submit(text) => Some(text),
@@ -1622,17 +1974,33 @@ async fn run_inner(
                         Ok(next_session) => {
                             session = next_session;
                             app = App::new(&session);
-                            print_tool(&mut terminal, &format!("session: {}", session.session_id))?;
+                            print_tool(
+                                &mut terminal,
+                                &mut transcript,
+                                &format!("session: {}", session.session_id),
+                            )?;
                         }
-                        Err(error) => print_error(&mut terminal, &error.to_string())?,
+                        Err(error) => {
+                            print_error(&mut terminal, &mut transcript, &error.to_string())?
+                        }
                     },
-                    None => print_error(&mut terminal, &format!("no session matches '{trimmed}'"))?,
+                    None => print_error(
+                        &mut terminal,
+                        &mut transcript,
+                        &format!("no session matches '{trimmed}'"),
+                    )?,
                 }
                 draw(&mut terminal, &app)?;
                 continue;
             }
             if text.starts_with('/') {
-                if command(&mut session, &mut app, &mut terminal, &text) {
+                if command(
+                    &mut session,
+                    &mut app,
+                    &mut terminal,
+                    &mut transcript,
+                    &text,
+                ) {
                     break;
                 }
             } else if !text.trim().is_empty() {
@@ -1640,6 +2008,7 @@ async fn run_inner(
                     &mut session,
                     &mut app,
                     &mut terminal,
+                    &mut transcript,
                     &mut keys.receiver,
                     text,
                 )
