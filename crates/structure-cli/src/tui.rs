@@ -1394,7 +1394,7 @@ fn render_viewport(frame: &mut Frame, app: &App) {
     // always visible exactly where the user is looking.
     frame.render_widget(
         Paragraph::new(Line::styled(
-            " Enter send · Shift+Enter newline · Ctrl+O verbose · Ctrl+T thinking · /help",
+            " Enter send · Shift+Enter newline · ↑↓ blocks · Enter/⌘C-style copy · Ctrl+O verbose · /help",
             theme::muted(),
         )),
         sections[2],
@@ -2236,7 +2236,9 @@ async fn run_inner(
                 && let InputEvent::Key(key) = &key
                 && key.kind == KeyEventKind::Press
                 && app.highlighted.is_some()
-                && matches!(key.code, KeyCode::Enter | KeyCode::Char('c'))
+                && (matches!(key.code, KeyCode::Enter | KeyCode::Char('c'))
+                    || (key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)))
             {
                 let block = app.highlighted.expect("checked above");
                 let copied = copy_block_to_clipboard(&transcript, block)?;
