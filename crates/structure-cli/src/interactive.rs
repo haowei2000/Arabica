@@ -637,10 +637,20 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
             }
             continue;
         }
-        if let Some(id) = text.strip_prefix("/resume ") {
-            let id = id.trim();
+        if text == "/resume" || text.starts_with("/resume ") {
+            let id = text["/resume".len()..].trim();
             if id.is_empty() {
-                eprintln!("usage: /resume <id>  (see /sessions)");
+                // `/resume` alone: show what can be resumed instead of a
+                // bare usage line.
+                match session.session_list() {
+                    Ok(lines) if lines.is_empty() => println!("no sessions found"),
+                    Ok(lines) => {
+                        for line in &lines {
+                            println!("{line}");
+                        }
+                    }
+                    Err(error) => eprintln!("error: {error}"),
+                }
             } else {
                 match session.switch_to(id).await {
                     Ok(next) => {

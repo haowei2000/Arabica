@@ -1333,10 +1333,18 @@ async fn run_inner(
                         Ok(lines) => app.push(Kind::Info, lines.join("\n")),
                         Err(error) => app.push(Kind::Error, error.to_string()),
                     }
-                } else if let Some(id) = text.strip_prefix("/resume ") {
-                    let id = id.trim();
+                } else if text == "/resume" || text.starts_with("/resume ") {
+                    let id = text["/resume".len()..].trim();
                     if id.is_empty() {
-                        app.push(Kind::Error, "usage: /resume <id>  (see /sessions)");
+                        // `/resume` alone: show what can be resumed
+                        // instead of a bare usage line.
+                        match session.session_list() {
+                            Ok(lines) if lines.is_empty() => {
+                                app.push(Kind::Info, "no sessions found");
+                            }
+                            Ok(lines) => app.push(Kind::Info, lines.join("\n")),
+                            Err(error) => app.push(Kind::Error, error.to_string()),
+                        }
                     } else {
                         match session.switch_to(id).await {
                             Ok(next) => {
