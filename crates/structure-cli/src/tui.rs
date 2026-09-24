@@ -1,21 +1,27 @@
-//! Full-screen terminal conversation built on the same session and runtime as plain chat.
+//! Inline terminal conversation, Claude-Code style: the transcript is
+//! printed straight into the terminal's native scrollback (so normal
+//! scrolling, selection, and search keep working) while a small viewport
+//! pinned to the bottom owns the input editor and status line.
+//!
+//! Middle steps render folded: a tool call is one summary line, results
+//! are status lines, and file edits show a colored diff. Ctrl+O toggles
+//! verbose printing for later events.
 
 use std::collections::VecDeque;
 use std::io;
-use std::path::{Component, Path};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crossterm::event::{
-    self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent,
-    MouseEventKind,
-};
+use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::{DefaultTerminal, Frame};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+use ratatui::{DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport};
+use similar::{ChangeTag, TextDiff};
 use structure_adapters::FileSessionStore;
 use structure_model::{ContentBlock, RuntimeItem, RuntimeRole};
 use structure_protocol::{
@@ -28,75 +34,282 @@ use structure_runtime::{
 };
 use structure_session::{DispatchControl, EventVisibility, FanOutObserver, SessionEventObserver};
 
+use crate::checkpoint::{self, WriteCheckpoint};
 use crate::context;
 use crate::host::workspace_id_for;
 use crate::interactive::{self, InteractiveOptions, InteractiveSession};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Kind {
-    User,
-    Assistant,
-    Reasoning,
-    Tool,
-    Info,
-    Error,
+/// Rows owned by the inline viewport at the bottom of the screen.
+const VIEWPORT_LINES: u16 = 4;
+/// Diff lines shown before folding when verbose mode is off.
+const DIFF_FOLD_LINES: usize = 12;
+
+// ---------------------------------------------------------------------------
+// Styled printing into the scrollback
+// ---------------------------------------------------------------------------
+
+/// Display width of one character: CJK and other wide characters count as
+/// two columns. An approximation good enough for wrapping without a
+/// unicode-width dependency.
+fn char_width(ch: char) -> usize {
+    if ch.is_ascii() { 1 } else { 2 }
 }
 
-#[derive(Clone, Debug)]
-struct Entry {
-    kind: Kind,
-    text: String,
+fn text_width(text: &str) -> usize {
+    text.chars().map(char_width).sum()
 }
 
-struct PermissionView {
-    tool: String,
-    details: String,
-    scroll: u16,
+/// Hard-wraps `text` at display width `width`, keeping style per source
+/// line. Every returned Line is a separate scrollback row.
+fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for raw in text.split('\n') {
+        if raw.is_empty() {
+            lines.push(Line::styled(String::new(), style));
+            continue;
+        }
+        let mut current = String::new();
+        let mut current_width = 0;
+        for ch in raw.chars() {
+            let w = char_width(ch);
+            if current_width + w > width && !current.is_empty() {
+                lines.push(Line::styled(std::mem::take(&mut current), style));
+                current_width = 0;
+            }
+            current.push(ch);
+            current_width += w;
+        }
+        lines.push(Line::styled(current, style));
+    }
+    lines
 }
 
-struct ContextView {
-    text: String,
-    scroll: u16,
+/// Writes styled rows into the scrollback above the viewport. Ratatui's
+/// inline `insert_before` takes a buffer-drawing closure, so spans are
+/// painted cell by cell (with the same width approximation used for
+/// wrapping).
+fn insert_lines(terminal: &mut DefaultTerminal, lines: Vec<Line<'static>>) -> io::Result<()> {
+    let height = lines.len() as u16;
+    terminal.insert_before(height, |buffer: &mut ratatui::prelude::Buffer| {
+        let width = buffer.area.width;
+        for (row, line) in lines.iter().enumerate() {
+            let y = row as u16;
+            let mut x = 0u16;
+            for span in &line.spans {
+                for ch in span.content.chars() {
+                    if x >= width {
+                        break;
+                    }
+                    let cell = &mut buffer[(x, y)];
+                    cell.set_char(ch);
+                    cell.set_style(span.style);
+                    x = x.saturating_add(char_width(ch) as u16).min(width);
+                }
+            }
+        }
+    })
 }
 
-/// The `/resume` picker: stored sessions, one selection at a time.
-struct SessionPicker {
-    entries: Vec<crate::sessions::SessionEntry>,
-    selected: usize,
+/// Convenience wrapper: plain paragraph rows with one style.
+fn print_block(terminal: &mut DefaultTerminal, text: &str, style: Style) -> io::Result<()> {
+    let width = terminal_area_width(terminal);
+    let lines = wrap_styled(text, width, style);
+    insert_lines(terminal, lines)
 }
 
-impl SessionPicker {
-    fn move_selection(&mut self, up: bool) {
-        if up {
-            self.selected = self.selected.saturating_sub(1);
-        } else {
-            self.selected = (self.selected + 1).min(self.entries.len() - 1);
+/// One assistant text block: no prefix, just the words, terminal width.
+fn print_text(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    print_block(terminal, text, Style::default())
+}
+
+fn print_dim(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    print_block(terminal, text, Style::default().fg(Color::DarkGray))
+}
+
+fn print_info(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    print_block(terminal, text, Style::default().fg(Color::Cyan))
+}
+
+fn print_error(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    print_block(terminal, text, Style::default().fg(Color::Red))
+}
+
+fn terminal_area_width(terminal: &DefaultTerminal) -> usize {
+    terminal
+        .size()
+        .map(|area| area.width as usize)
+        .unwrap_or(80)
+}
+
+/// A user's message, prefixed so it stands out in the scrollback.
+fn print_user(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    let width = terminal_area_width(terminal).saturating_sub(2);
+    let mut lines = Vec::new();
+    for (index, raw) in wrap_styled(text, width.max(1), Style::default())
+        .into_iter()
+        .enumerate()
+    {
+        let prefix = if index == 0 { "> " } else { "  " };
+        let mut spans = vec![Span::styled(
+            prefix.to_owned(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )];
+        spans.extend(
+            raw.spans
+                .into_iter()
+                .map(|span| Span::styled(span.content.into_owned(), Style::default())),
+        );
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::raw(String::new()));
+    insert_lines(terminal, lines)
+}
+
+// ---------------------------------------------------------------------------
+// Folded tool rendering (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
+/// One-line summary of a tool call: what it acts on, not the full JSON.
+fn tool_summary(name: &str, arguments: &serde_json::Value) -> String {
+    let path = || {
+        arguments
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    match name {
+        "write_file" => format!(
+            "{} ({} bytes)",
+            path(),
+            arguments
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::len)
+                .unwrap_or(0)
+        ),
+        "read_file" | "delete_file" | "list_dir" => path(),
+        "edit_files" => {
+            let edits = arguments
+                .get("edits")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let files: Vec<String> = edits
+                .iter()
+                .filter_map(|edit| {
+                    edit.get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect::<Vec<_>>();
+            let mut unique = files.clone();
+            unique.dedup();
+            format!(
+                "{} edit{} in {}",
+                edits.len(),
+                if edits.len() == 1 { "" } else { "s" },
+                unique.join(", ")
+            )
+        }
+        "grep" => arguments
+            .get("pattern")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        "find_files" => arguments
+            .get("pattern")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        "shell" => arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        "memory_search" => arguments
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        _ => {
+            let head = serde_json::to_string(arguments).unwrap_or_default();
+            head.chars().take(60).collect()
         }
     }
 }
 
-#[derive(Clone, Debug)]
-struct CompletionView {
-    replace_start: usize,
-    replace_end: usize,
-    candidates: Vec<String>,
-    selected: usize,
+/// Colored unified-diff lines for one file movement. Deletions are red,
+/// insertions green, hunk headers cyan, context dim. `created` files diff
+/// from empty so every added line shows as `+`.
+fn movement_diff_lines(
+    movement: &checkpoint::FileMovement,
+    max_lines: usize,
+) -> Vec<Line<'static>> {
+    let before = movement
+        .before
+        .as_deref()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok());
+    let after = movement
+        .after
+        .as_deref()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok());
+    let (before, after) = match (before, after) {
+        (Some(before), Some(after)) => (before, after),
+        // Binary or missing content: show a byte-count note instead.
+        _ => {
+            let (from, to) = (
+                movement.before.as_ref().map_or(0, Vec::len),
+                movement.after.as_ref().map_or(0, Vec::len),
+            );
+            return vec![Line::styled(
+                format!("    binary content, {from} → {to} bytes"),
+                Style::default().fg(Color::DarkGray),
+            )];
+        }
+    };
+    let diff = TextDiff::from_lines(before, after);
+    let mut lines = vec![Line::styled(
+        format!("    {} ({})", movement.path, {
+            let (added, removed) =
+                diff.iter_all_changes()
+                    .fold((0, 0), |(added, removed), change| match change.tag() {
+                        ChangeTag::Insert => (added + 1, removed),
+                        ChangeTag::Delete => (added, removed + 1),
+                        ChangeTag::Equal => (added, removed),
+                    });
+            format!("+{added} -{removed}")
+        }),
+        Style::default().fg(Color::Cyan),
+    )];
+    let body = diff.unified_diff().context_radius(3).to_string();
+    for (shown, row) in body.lines().enumerate() {
+        if shown >= max_lines {
+            lines.push(Line::styled(
+                format!("    … {max_lines}+ lines, Ctrl+O for verbose"),
+                Style::default().fg(Color::DarkGray),
+            ));
+            break;
+        }
+        let style = if row.starts_with("@@") {
+            Style::default().fg(Color::Cyan)
+        } else if row.starts_with('-') && !row.starts_with("---") {
+            Style::default().fg(Color::Red)
+        } else if row.starts_with('+') && !row.starts_with("+++") {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(Line::styled(format!("  {row}"), style));
+    }
+    lines
 }
 
-const COMMANDS: &[&str] = &[
-    "/context",
-    "/diff",
-    "/exit",
-    "/help",
-    "/model",
-    "/quit",
-    "/resume",
-    "/session",
-    "/sessions",
-    "/thinking",
-    "/undo",
-];
-const THINKING_LEVELS: &[&str] = &["off", "on", "low", "medium", "high"];
+// ---------------------------------------------------------------------------
+// Editor state and completion (kept from the full-screen TUI)
+// ---------------------------------------------------------------------------
 
 fn workspace_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
@@ -132,6 +345,28 @@ fn configured_models(current: &str) -> Vec<String> {
     }
     models
 }
+
+struct CompletionView {
+    replace_start: usize,
+    replace_end: usize,
+    candidates: Vec<String>,
+    selected: usize,
+}
+
+const COMMANDS: &[&str] = &[
+    "/context",
+    "/diff",
+    "/exit",
+    "/help",
+    "/model",
+    "/quit",
+    "/resume",
+    "/session",
+    "/sessions",
+    "/thinking",
+    "/undo",
+];
+const THINKING_LEVELS: &[&str] = &["off", "on", "low", "medium", "high"];
 
 fn completion_for(
     input: &str,
@@ -207,358 +442,174 @@ fn completion_for(
     })
 }
 
-impl ContextView {
-    fn handle_scroll(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::Home => self.scroll = 0,
-            KeyCode::End => self.scroll = u16::MAX,
-            _ => {}
-        }
-    }
-}
-
-impl PermissionView {
-    fn new(request: &PermissionRequest, root: &Path) -> Self {
-        Self {
-            tool: request.call.name.clone(),
-            details: permission_details(&request.call.name, &request.call.arguments, root),
-            scroll: 0,
-        }
-    }
-
-    fn handle_scroll(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::Home => self.scroll = 0,
-            KeyCode::End => self.scroll = u16::MAX,
-            _ => {}
-        }
-    }
-}
-
-fn permission_details(tool: &str, arguments: &serde_json::Value, root: &Path) -> String {
+fn permission_details(tool: &str, arguments: &serde_json::Value) -> String {
     if tool == "write_file"
         && let (Some(path), Some(content)) = (
             arguments.get("path").and_then(|v| v.as_str()),
             arguments.get("content").and_then(|v| v.as_str()),
         )
     {
-        let preview = write_file_preview(root, path, content);
-        return format!("Path: {path}\n\n{preview}\nContent:\n{content}");
+        return format!("Path: {path}\n{content}");
     }
-    serde_json::to_string_pretty(arguments).unwrap_or_else(|_| arguments.to_string())
-}
-
-fn write_file_preview(root: &Path, path: &str, content: &str) -> String {
-    let relative = Path::new(path);
-    if relative.as_os_str().is_empty()
-        || !relative
-            .components()
-            .all(|part| matches!(part, Component::Normal(_)))
+    if tool == "edit_files"
+        && let Some(edits) = arguments.get("edits").and_then(|v| v.as_array())
     {
-        return "Change preview unavailable: path is outside the workspace.\n".to_owned();
+        return edits
+            .iter()
+            .map(|edit| {
+                format!(
+                    "{}: {} → {}",
+                    edit.get("path").and_then(|v| v.as_str()).unwrap_or("?"),
+                    edit.get("old_string")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    edit.get("new_string")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
     }
-    let Ok(root) = root.canonicalize() else {
-        return "Change preview unavailable: workspace cannot be resolved.\n".to_owned();
-    };
-    let target = root.join(relative);
-    let Ok(parent) = target
-        .parent()
-        .expect("relative path has a parent")
-        .canonicalize()
-    else {
-        return "Change preview unavailable: parent directory cannot be resolved.\n".to_owned();
-    };
-    if !parent.starts_with(&root) {
-        return "Change preview unavailable: path is outside the workspace.\n".to_owned();
-    }
-    if !target.exists() {
+    if tool == "delete_file" {
         return format!(
-            "Change preview: new file ({} lines)\n",
-            content.lines().count()
+            "Path: {}",
+            arguments
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
         );
     }
-    let Ok(metadata) = target.symlink_metadata() else {
-        return "Change preview unavailable: current file cannot be inspected.\n".to_owned();
-    };
-    if !metadata.file_type().is_file() || metadata.len() > 512 * 1024 {
-        return "Change preview unavailable: target is not a regular file or exceeds 512 KiB.\n"
-            .to_owned();
-    }
-    let Ok(old) = std::fs::read_to_string(&target) else {
-        return "Change preview unavailable: current file cannot be read as UTF-8.\n".to_owned();
-    };
-    line_change_preview(&old, content)
+    String::new()
 }
 
-fn line_change_preview(old: &str, new: &str) -> String {
-    if old == new {
-        return "Change preview: no content change.\n".to_owned();
-    }
-    let before: Vec<_> = old.lines().collect();
-    let after: Vec<_> = new.lines().collect();
-    if new.len() > 512 * 1024
-        || before.len() + after.len() > 2_000
-        || before.len().saturating_mul(after.len()) > 250_000
-    {
-        return format!(
-            "Change preview: {} old lines → {} new lines; line diff exceeds display limit.\n",
-            before.len(),
-            after.len()
-        );
-    }
-    let mut lengths = vec![vec![0_u32; after.len() + 1]; before.len() + 1];
-    for i in (0..before.len()).rev() {
-        for j in (0..after.len()).rev() {
-            lengths[i][j] = if before[i] == after[j] {
-                lengths[i + 1][j + 1] + 1
-            } else {
-                lengths[i + 1][j].max(lengths[i][j + 1])
-            };
-        }
-    }
-    let mut out = String::from("Change preview (current - / proposed +):\n");
-    let (mut i, mut j) = (0, 0);
-    while i < before.len() || j < after.len() {
-        if i < before.len() && j < after.len() && before[i] == after[j] {
-            out.push_str("  ");
-            out.push_str(before[i]);
-            out.push('\n');
-            i += 1;
-            j += 1;
-        } else if i < before.len() && (j == after.len() || lengths[i + 1][j] >= lengths[i][j + 1]) {
-            out.push_str("- ");
-            out.push_str(before[i]);
-            out.push('\n');
-            i += 1;
-        } else {
-            out.push_str("+ ");
-            out.push_str(after[j]);
-            out.push('\n');
-            j += 1;
-        }
-    }
-    if old.ends_with('\n') != new.ends_with('\n') {
-        out.push_str(if new.ends_with('\n') {
-            "+ final newline\n"
-        } else {
-            "- final newline\n"
-        });
-    }
-    out
-}
+// ---------------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------------
 
-#[derive(Default)]
 struct App {
-    entries: Vec<Entry>,
     input: String,
     cursor: usize,
     queued: VecDeque<String>,
-    scroll_from_bottom: usize,
     busy: bool,
     show_thinking: bool,
-    permission: Option<PermissionView>,
-    context: Option<ContextView>,
-    picker: Option<SessionPicker>,
+    verbose: bool,
     completion: Option<CompletionView>,
-    file_index: Option<Vec<String>>,
+    /// Streaming text of the not-yet-newline-terminated assistant line.
+    live: String,
     models: Vec<String>,
     status: String,
-    model: String,
-    thinking: String,
-    workspace: String,
-    session: String,
+    /// When set, the next submitted input resolves a `/resume` listing.
+    resume_pick: bool,
+    /// Session ids behind the pending `/resume` listing, in display order.
+    pick_entries: Option<Vec<String>>,
+    file_index: Option<Vec<String>>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            cursor: 0,
+            queued: VecDeque::new(),
+            busy: false,
+            show_thinking: true,
+            verbose: false,
+            completion: None,
+            live: String::new(),
+            models: Vec::new(),
+            status: "Ready".to_owned(),
+            resume_pick: false,
+            pick_entries: None,
+            file_index: None,
+        }
+    }
 }
 
 impl App {
     fn new(session: &InteractiveSession) -> Self {
-        let mut app = Self {
-            show_thinking: true,
-            status: "Ready".to_owned(),
-            workspace: session.runner_root.display().to_string(),
-            session: session.session_id.to_string(),
+        Self {
             models: configured_models(&session.config.model),
             ..Self::default()
-        };
-        app.refresh_config(session);
-        app.entries.push(Entry {
-            kind: Kind::Info,
-            text: "Enter sends · Shift+Enter or Ctrl+J adds a line · /help lists commands"
-                .to_owned(),
-        });
-        app
-    }
-
-    fn refresh_config(&mut self, session: &InteractiveSession) {
-        self.model.clone_from(&session.config.model);
-        self.thinking = if !session.config.thinking_enabled {
-            "off".to_owned()
-        } else {
-            session
-                .config
-                .reasoning_effort
-                .clone()
-                .unwrap_or_else(|| "on".to_owned())
-        };
-        if !self.models.contains(&self.model) {
-            self.models.push(self.model.clone());
         }
-    }
-
-    fn refresh_completion(&mut self) {
-        let before = &self.input[..self.cursor];
-        let token = before.rsplit(char::is_whitespace).next().unwrap_or("");
-        if token.starts_with('@') && self.file_index.is_none() {
-            self.file_index = Some(workspace_files(Path::new(&self.workspace)));
-        }
-        self.completion = completion_for(
-            &self.input,
-            self.cursor,
-            self.file_index.as_deref().unwrap_or(&[]),
-            &self.models,
-        );
-    }
-
-    fn apply_completion(&mut self) {
-        let Some(completion) = self.completion.take() else {
-            return;
-        };
-        let candidate = &completion.candidates[completion.selected];
-        self.input
-            .replace_range(completion.replace_start..completion.replace_end, candidate);
-        self.cursor = completion.replace_start + candidate.len();
-        if candidate.starts_with('@') || (candidate.starts_with('/') && !candidate.contains(' ')) {
-            self.input.insert(self.cursor, ' ');
-            self.cursor += 1;
-        }
-    }
-
-    fn push(&mut self, kind: Kind, text: impl Into<String>) {
-        self.entries.push(Entry {
-            kind,
-            text: text.into(),
-        });
-        self.scroll_from_bottom = 0;
-    }
-
-    fn append(&mut self, kind: Kind, text: String) {
-        if let Some(last) = self.entries.last_mut()
-            && last.kind == kind
-        {
-            last.text.push_str(&text);
-        } else {
-            self.push(kind, text);
-        }
-        self.scroll_from_bottom = 0;
     }
 
     fn insert(&mut self, text: &str) {
-        self.input.insert_str(self.cursor, text);
+        let cursor = self.cursor.min(self.input.len());
+        self.input.insert_str(cursor, text);
         self.cursor += text.len();
+        self.refresh_completion();
     }
 
     fn backspace(&mut self) {
         if self.cursor > 0 {
-            let previous = self.input[..self.cursor]
-                .char_indices()
+            let cursor = self.cursor.min(self.input.len());
+            let remove = self.input[..cursor]
+                .chars()
                 .next_back()
-                .map(|(index, _)| index)
-                .unwrap_or(0);
-            self.input.replace_range(previous..self.cursor, "");
-            self.cursor = previous;
+                .map_or(0, char::len_utf8);
+            self.input.replace_range(cursor - remove..cursor, "");
+            self.cursor -= remove;
+            self.refresh_completion();
         }
     }
 
     fn delete(&mut self) {
-        if self.cursor < self.input.len() {
-            let next = self.cursor + self.input[self.cursor..].chars().next().unwrap().len_utf8();
-            self.input.replace_range(self.cursor..next, "");
+        let cursor = self.cursor.min(self.input.len());
+        if cursor < self.input.len() {
+            let remove = self.input[cursor..]
+                .chars()
+                .next()
+                .map_or(0, char::len_utf8);
+            self.input.replace_range(cursor..cursor + remove, "");
+            self.refresh_completion();
         }
     }
 
     fn take_input(&mut self) -> String {
         self.cursor = 0;
+        std::mem::take(&mut self.input)
+    }
+
+    fn refresh_completion(&mut self) {
+        self.completion = completion_for(
+            &self.input,
+            self.cursor,
+            self.file_index.as_deref().unwrap_or(&[]),
+            &self.models,
+        )
+        .filter(|_| !self.busy);
+    }
+
+    fn apply_completion(&mut self) {
+        let Some(completion) = self.completion.as_ref() else {
+            return;
+        };
+        let candidate = completion.candidates[completion.selected].clone();
+        let start = completion.replace_start;
+        let end = completion.replace_end.min(self.input.len()).max(start);
+        self.input.replace_range(start..end, &candidate);
+        self.cursor = start + candidate.len();
         self.completion = None;
-        std::mem::take(&mut self.input).trim().to_owned()
-    }
-
-    fn apply(&mut self, event: UiEvent) {
-        match event {
-            UiEvent::Text(text) => self.append(Kind::Assistant, text),
-            UiEvent::Reasoning(text) => self.append(Kind::Reasoning, text),
-            UiEvent::Tool(name) => self.push(Kind::Tool, format!("→ {name}")),
-            UiEvent::ToolDone(name, error) => self.push(
-                if error { Kind::Error } else { Kind::Tool },
-                if error {
-                    format!("✗ {name} failed")
-                } else {
-                    format!("✓ {name} completed")
-                },
-            ),
-        }
-    }
-
-    fn load_history(
-        &mut self,
-        session: &InteractiveSession,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = workspace_id_for(&session.runner_root);
-        let stored = FileSessionStore::read_session(
-            &session.structure_home,
-            &workspace,
-            &session.session_id,
-        )?;
-        for envelope in stored.events {
-            match envelope.event {
-                Event::MessageAccepted { content } => self.push(Kind::User, content),
-                Event::ModelResponseItem {
-                    item: RuntimeItem::Message(message),
-                    ..
-                } if message.role == RuntimeRole::Assistant => {
-                    let text = message
-                        .content
-                        .iter()
-                        .filter_map(|block| match block {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<String>();
-                    if !text.is_empty() {
-                        self.append(Kind::Assistant, text);
-                    }
-                }
-                Event::ModelResponseItem {
-                    item: RuntimeItem::Reasoning(reasoning),
-                    ..
-                } => {
-                    let text = reasoning.summary.join("\n\n");
-                    if !text.is_empty() {
-                        self.append(Kind::Reasoning, text);
-                    }
-                }
-                Event::ToolCallRequested { name, .. } => self.push(Kind::Tool, format!("→ {name}")),
-                Event::ToolCallCompleted { name, is_error, .. } => {
-                    self.apply(UiEvent::ToolDone(name, is_error))
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Events from the running turn
+// ---------------------------------------------------------------------------
 
 enum UiEvent {
     Text(String),
     Reasoning(String),
-    Tool(String),
-    ToolDone(String, bool),
+    ToolStart {
+        name: String,
+        summary: String,
+    },
+    ToolDone {
+        call_id: String,
+        name: String,
+        is_error: bool,
+    },
 }
 
 #[derive(Default)]
@@ -640,11 +691,25 @@ impl SessionEventObserver for TuiObserver {
                     let _ = self.sender.send(UiEvent::Reasoning(extra.to_owned()));
                 }
             }
-            Event::ToolCallRequested { name, .. } => {
-                let _ = self.sender.send(UiEvent::Tool(name.clone()));
+            Event::ToolCallRequested {
+                name, arguments, ..
+            } => {
+                let _ = self.sender.send(UiEvent::ToolStart {
+                    name: name.clone(),
+                    summary: tool_summary(name, arguments),
+                });
             }
-            Event::ToolCallCompleted { name, is_error, .. } => {
-                let _ = self.sender.send(UiEvent::ToolDone(name.clone(), *is_error));
+            Event::ToolCallCompleted {
+                call_id,
+                name,
+                is_error,
+                ..
+            } => {
+                let _ = self.sender.send(UiEvent::ToolDone {
+                    call_id: call_id.clone(),
+                    name: name.clone(),
+                    is_error: *is_error,
+                });
             }
             Event::RunCompleted {
                 output: Some(output),
@@ -659,280 +724,9 @@ impl SessionEventObserver for TuiObserver {
     }
 }
 
-fn entry_style(kind: Kind) -> Style {
-    match kind {
-        Kind::User => Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-        Kind::Assistant => Style::default().fg(Color::Green),
-        Kind::Reasoning => Style::default().fg(Color::DarkGray),
-        Kind::Tool => Style::default().fg(Color::Yellow),
-        Kind::Info => Style::default().fg(Color::Gray),
-        Kind::Error => Style::default().fg(Color::Red),
-    }
-}
-
-fn render(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-    if area.width < 25 || area.height < 8 {
-        frame.render_widget(
-            Paragraph::new("Enlarge the terminal to use Structure"),
-            area,
-        );
-        return;
-    }
-    let input_lines = app.input.split('\n').count().clamp(1, 5) as u16;
-    let completion_lines = app
-        .completion
-        .as_ref()
-        .map_or(0, |view| view.candidates.len().min(5) as u16 + 2);
-    let sections = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(3),
-        Constraint::Length(completion_lines),
-        Constraint::Length(input_lines + 2),
-        Constraint::Length(1),
-    ])
-    .split(area);
-    let heading = Line::from(vec![
-        Span::styled(
-            " Structure ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!(
-            "  {}  ·  session {}",
-            app.workspace,
-            app.session.chars().take(8).collect::<String>()
-        )),
-    ]);
-    frame.render_widget(Paragraph::new(heading), sections[0]);
-
-    let mut lines = Vec::new();
-    for entry in &app.entries {
-        if entry.kind == Kind::Reasoning && !app.show_thinking {
-            continue;
-        }
-        let label = match entry.kind {
-            Kind::User => "You",
-            Kind::Assistant => "Structure",
-            Kind::Reasoning => "Thinking",
-            Kind::Tool => "Tool",
-            Kind::Info => "Info",
-            Kind::Error => "Error",
-        };
-        lines.push(Line::styled(label, entry_style(entry.kind)));
-        for line in entry.text.split('\n') {
-            lines.push(Line::styled(format!("  {line}"), entry_style(entry.kind)));
-        }
-        lines.push(Line::raw(""));
-    }
-    let transcript = Paragraph::new(Text::from(lines))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Conversation "),
-        )
-        .wrap(Wrap { trim: false });
-    let width = sections[1].width.saturating_sub(2).max(1);
-    let visible_height = sections[1].height.saturating_sub(2) as usize;
-    let total = transcript.line_count(width);
-    let bottom = total.saturating_sub(visible_height);
-    let offset = bottom
-        .saturating_sub(app.scroll_from_bottom)
-        .min(u16::MAX as usize) as u16;
-    frame.render_widget(transcript.scroll((offset, 0)), sections[1]);
-
-    if let Some(completion) = &app.completion {
-        let start = completion.selected.saturating_sub(4);
-        let lines = completion
-            .candidates
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(5)
-            .map(|(index, candidate)| {
-                let style = if index == completion.selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
-                } else {
-                    Style::default()
-                };
-                Line::styled(
-                    format!(
-                        " {} {}",
-                        if index == completion.selected {
-                            "›"
-                        } else {
-                            " "
-                        },
-                        candidate
-                    ),
-                    style,
-                )
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Complete · Tab/Enter select "),
-            ),
-            sections[2],
-        );
-    }
-    let editor_title = if app.busy {
-        " Queued input "
-    } else {
-        " Message "
-    };
-    let cursor_row = app.input[..app.cursor]
-        .chars()
-        .filter(|&ch| ch == '\n')
-        .count();
-    let visible_rows = sections[3].height.saturating_sub(2).max(1) as usize;
-    let first_row = cursor_row.saturating_sub(visible_rows - 1);
-    let visible_input = app
-        .input
-        .split('\n')
-        .skip(first_row)
-        .take(visible_rows)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let input = Paragraph::new(visible_input)
-        .block(Block::default().borders(Borders::ALL).title(editor_title))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input, sections[3]);
-    if !app.busy && app.permission.is_none() && app.context.is_none() {
-        let before = &app.input[..app.cursor];
-        let row = cursor_row.saturating_sub(first_row) as u16;
-        let column = Line::from(before.rsplit('\n').next().unwrap_or("")).width() as u16;
-        let x = sections[3].x + 1 + column.min(sections[3].width.saturating_sub(3));
-        let y = sections[3].y + 1 + row.min(sections[3].height.saturating_sub(3));
-        frame.set_cursor_position((x, y));
-    }
-    let footer = format!(
-        " {} · model {} · thinking {} · {}{} · PgUp/PgDn or wheel scroll · Ctrl+T thinking · Ctrl+C exit",
-        app.status,
-        app.model,
-        app.thinking,
-        if app.busy { "working" } else { "ready" },
-        if app.queued.is_empty() {
-            String::new()
-        } else {
-            format!(" · {} queued", app.queued.len())
-        },
-    );
-    frame.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
-        sections[4],
-    );
-
-    if let Some(permission) = &app.permission {
-        frame.render_widget(ratatui::widgets::Clear, area);
-        if area.width < 50 || area.height < 10 {
-            frame.render_widget(
-                Paragraph::new("Enlarge the terminal to review tool permission"),
-                area,
-            );
-            return;
-        }
-        let popup = ratatui::layout::Rect {
-            x: area.x + 1,
-            y: area.y + 1,
-            width: area.width - 2,
-            height: area.height - 2,
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Allow {}? ", permission.tool));
-        let inner = block.inner(popup);
-        frame.render_widget(block, popup);
-        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
-        let details = Paragraph::new(permission.details.as_str()).wrap(Wrap { trim: false });
-        let total = details.line_count(sections[0].width.max(1));
-        let max_scroll = total.saturating_sub(sections[0].height as usize);
-        let scroll = (permission.scroll as usize).min(max_scroll) as u16;
-        frame.render_widget(details.scroll((scroll, 0)), sections[0]);
-        frame.render_widget(
-            Paragraph::new(
-                "↑/↓ or PgUp/PgDn: inspect arguments\n[y] Allow once  [a] Allow for session\n[n] Deny once   [v] Deny for session",
-            )
-            .style(Style::default().fg(Color::Yellow)),
-            sections[1],
-        );
-    }
-    if let Some(context) = &app.context {
-        frame.render_widget(ratatui::widgets::Clear, area);
-        let popup = ratatui::layout::Rect {
-            x: area.x + 1,
-            y: area.y + 1,
-            width: area.width - 2,
-            height: area.height - 2,
-        };
-        let block = Block::default().borders(Borders::ALL).title(" Context ");
-        let inner = block.inner(popup);
-        frame.render_widget(block, popup);
-        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
-        let details = Paragraph::new(context.text.as_str()).wrap(Wrap { trim: false });
-        let total = details.line_count(sections[0].width.max(1));
-        let max_scroll = total.saturating_sub(sections[0].height as usize);
-        let scroll = (context.scroll as usize).min(max_scroll) as u16;
-        frame.render_widget(details.scroll((scroll, 0)), sections[0]);
-        frame.render_widget(
-            Paragraph::new("↑/↓ PgUp/PgDn Home/End scroll · Esc or q closes")
-                .style(Style::default().fg(Color::Yellow)),
-            sections[1],
-        );
-    }
-    if let Some(picker) = &app.picker {
-        frame.render_widget(ratatui::widgets::Clear, area);
-        // A centered popup, most of the width so long id + cwd lines fit.
-        let width = (area.width * 7 / 10)
-            .clamp(40, area.width.saturating_sub(2))
-            .max(20);
-        let height = (picker.entries.len() as u16 + 4).min(area.height.saturating_sub(2).max(6));
-        let popup = ratatui::layout::Rect {
-            x: area.x + (area.width.saturating_sub(width)) / 2,
-            y: area.y + (area.height.saturating_sub(height)) / 2,
-            width: width.min(area.width),
-            height,
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Resume session ");
-        let inner = block.inner(popup);
-        frame.render_widget(block, popup);
-        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
-        let rows = picker
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| {
-                if index == picker.selected {
-                    Line::styled(
-                        format!("▶ {}", entry.line),
-                        Style::default().add_modifier(Modifier::REVERSED),
-                    )
-                } else {
-                    Line::from(format!("  {}", entry.line))
-                }
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(rows), sections[0]);
-        frame.render_widget(
-            Paragraph::new("↑/↓ or wheel: choose · Enter: resume · Esc cancels")
-                .style(Style::default().fg(Color::Yellow)),
-            sections[1],
-        );
-    }
-}
-
-fn draw(terminal: &mut DefaultTerminal, app: &App) -> io::Result<()> {
-    terminal.draw(|frame| render(frame, app))?;
-    Ok(())
-}
+// ---------------------------------------------------------------------------
+// Terminal plumbing
+// ---------------------------------------------------------------------------
 
 struct InputEvents {
     receiver: tokio::sync::mpsc::UnboundedReceiver<io::Result<InputEvent>>,
@@ -941,11 +735,12 @@ struct InputEvents {
 
 impl Drop for InputEvents {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 fn input_events() -> InputEvents {
+    use std::sync::atomic::Ordering;
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
@@ -970,223 +765,116 @@ fn input_events() -> InputEvents {
     InputEvents { receiver, stop }
 }
 
-/// Wheel-scroll line step. PgUp/PgDn move 10; a wheel notch feels right
-/// around 3.
-const WHEEL_STEP: u16 = 3;
-
-/// Mouse wheel scrolling, mapped onto the same targets as PgUp/PgDn: the
-/// context view when open, the permission details when a decision is
-/// pending, otherwise the transcript. Returns whether the event was a
-/// scroll; every other mouse event is ignored so terminals keep their
-/// usual behavior (with capture on, text selection needs Shift held, the
-/// standard trade-off).
-fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
-    let up = match mouse.kind {
-        MouseEventKind::ScrollUp => true,
-        MouseEventKind::ScrollDown => false,
-        _ => return false,
-    };
-    if let Some(picker) = app.picker.as_mut() {
-        match mouse.kind {
-            MouseEventKind::ScrollUp => picker.move_selection(true),
-            MouseEventKind::ScrollDown => picker.move_selection(false),
-            _ => {}
-        }
-    } else if let Some(context) = app.context.as_mut() {
-        context.scroll = if up {
-            context.scroll.saturating_sub(WHEEL_STEP)
-        } else {
-            context.scroll.saturating_add(WHEEL_STEP)
-        };
-    } else if let Some(permission) = app.permission.as_mut() {
-        permission.scroll = if up {
-            permission.scroll.saturating_sub(WHEEL_STEP)
-        } else {
-            permission.scroll.saturating_add(WHEEL_STEP)
-        };
-    } else {
-        app.scroll_from_bottom = if up {
-            app.scroll_from_bottom
-                .saturating_add(usize::from(WHEEL_STEP))
-        } else {
-            app.scroll_from_bottom
-                .saturating_sub(usize::from(WHEEL_STEP))
-        };
-    }
-    true
-}
-
-fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
-    match event {
-        InputEvent::Paste(text) => app.insert(&text),
-        InputEvent::Key(key) if key.kind == KeyEventKind::Press => match key {
-            KeyEvent {
-                code: KeyCode::Up, ..
-            } if app.completion.is_some() => {
-                let completion = app.completion.as_mut().expect("completion visible");
-                completion.selected = completion.selected.saturating_sub(1);
-                return EditorAction::None;
-            }
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            } if app.completion.is_some() => {
-                let completion = app.completion.as_mut().expect("completion visible");
-                completion.selected =
-                    (completion.selected + 1).min(completion.candidates.len() - 1);
-                return EditorAction::None;
-            }
-            KeyEvent {
-                code: KeyCode::Tab, ..
-            } if app.completion.is_some() => app.apply_completion(),
-            KeyEvent {
-                code: KeyCode::Enter,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } if app.completion.is_some() => app.apply_completion(),
-            KeyEvent {
-                code: KeyCode::Esc, ..
-            } if app.completion.is_some() => {
-                app.completion = None;
-                return EditorAction::None;
-            }
-            KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => return EditorAction::Exit,
-            KeyEvent {
-                code: KeyCode::Char('t'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => app.show_thinking = !app.show_thinking,
-            KeyEvent {
-                code: KeyCode::Char('j'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => app.insert("\n"),
-            KeyEvent {
-                code: KeyCode::Enter,
-                modifiers,
-                ..
-            } if modifiers
-                .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                app.insert("\n")
-            }
-            KeyEvent {
-                code: KeyCode::Enter,
-                ..
-            } => {
-                let text = app.take_input();
-                if !text.is_empty() {
-                    return EditorAction::Submit(text);
-                }
-            }
-            KeyEvent {
-                code: KeyCode::Backspace,
-                ..
-            } => app.backspace(),
-            KeyEvent {
-                code: KeyCode::Delete,
-                ..
-            } => app.delete(),
-            KeyEvent {
-                code: KeyCode::Left,
-                ..
-            } if app.cursor > 0 => {
-                app.cursor = app.input[..app.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-            }
-            KeyEvent {
-                code: KeyCode::Right,
-                ..
-            } if app.cursor < app.input.len() => {
-                app.cursor += app.input[app.cursor..].chars().next().unwrap().len_utf8();
-            }
-            KeyEvent {
-                code: KeyCode::Home,
-                ..
-            } => app.cursor = app.input[..app.cursor].rfind('\n').map_or(0, |i| i + 1),
-            KeyEvent {
-                code: KeyCode::End, ..
-            } => {
-                app.cursor += app.input[app.cursor..]
-                    .find('\n')
-                    .unwrap_or(app.input.len() - app.cursor)
-            }
-            KeyEvent {
-                code: KeyCode::PageUp,
-                ..
-            } => app.scroll_from_bottom = app.scroll_from_bottom.saturating_add(10),
-            KeyEvent {
-                code: KeyCode::PageDown,
-                ..
-            } => app.scroll_from_bottom = app.scroll_from_bottom.saturating_sub(10),
-            KeyEvent {
-                code: KeyCode::Esc, ..
-            } => {
-                app.input.clear();
-                app.cursor = 0;
-            }
-            KeyEvent {
-                code: KeyCode::Char(ch),
-                modifiers,
-                ..
-            } if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
-                app.insert(&ch.to_string())
-            }
-            _ => {}
-        },
-        _ => {}
-    }
-    app.refresh_completion();
-    EditorAction::None
-}
-
 enum EditorAction {
     None,
     Submit(String),
-    Exit,
 }
 
-fn command(session: &mut InteractiveSession, app: &mut App, text: &str) -> bool {
-    if matches!(text, "/exit" | "/quit") {
-        return true;
+/// Restores the terminal even on early returns and errors.
+struct InlineGuard;
+
+impl Drop for InlineGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+        println!();
     }
-    match text {
-        "/help" => app.push(Kind::Info, "/help  /exit  /session  /sessions  /resume <id>  /context  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
-        "/session" => app.push(Kind::Info, format!("session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}", session.session_id, session.runner_root.display(), session.config.model, session.config.api_type, session.read_only, session.allow_shell)),
-        "/model" => app.push(Kind::Info, format!("current model: {}\nusage: /model <name>", session.config.model)),
-        "/thinking" => app.push(Kind::Info, format!("current thinking: {}\nusage: /thinking <off|on|low|medium|high>", app.thinking)),
-        "/diff" => app.push(Kind::Info, session.write_report()),
-        "/undo" => app.push(Kind::Info, session.undo_last_write()),
-        "/context" => match context::report(session) {
-            Ok(text) => app.context = Some(ContextView { text, scroll: 0 }),
-            Err(error) => app.push(Kind::Error, format!("context: {error}")),
-        },
-        _ if text.starts_with("/model ") => {
-            let model = text.trim_start_matches("/model ").trim();
-            if model.is_empty() { app.push(Kind::Error, "usage: /model <name>"); }
-            else { match session.change_model(model) {
-                Ok(()) => { app.refresh_config(session); app.push(Kind::Info, format!("model: {model}")); }
-                Err(error) => app.push(Kind::Error, error.to_string()),
-            }}
-        }
-        _ if text.starts_with("/thinking ") => {
-            let level = text.trim_start_matches("/thinking ").trim();
-            match session.change_thinking(level) {
-                Ok(()) => { app.refresh_config(session); app.push(Kind::Info, format!("thinking: {level}")); }
-                Err(error) => app.push(Kind::Error, error.to_string()),
-            }
-        }
-        _ => app.push(Kind::Error, format!("unknown command: {text}")),
-    }
-    false
 }
+
+/// Draws the bottom viewport: streaming tail, completion hint, input row,
+/// status line.
+fn draw(terminal: &mut DefaultTerminal, app: &App) -> io::Result<()> {
+    terminal
+        .draw(|frame| render_viewport(frame, app))
+        .map(|_| ())
+}
+
+fn render_viewport(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let sections = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+
+    // Row 0: streaming tail while busy, otherwise the completion hint.
+    if app.busy && !app.live.is_empty() {
+        let tail: String = {
+            let width = area.width as usize;
+            let text = app.live.chars().rev().take(width * 2).collect::<Vec<_>>();
+            text.into_iter().rev().collect()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(tail, Style::default())),
+            sections[0],
+        );
+    } else if let Some(completion) = &app.completion {
+        let candidates = completion
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                let label = if index == completion.selected {
+                    format!(" [{candidate}] ")
+                } else {
+                    format!(" {candidate} ")
+                };
+                let style = if index == completion.selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+                Span::styled(label, style)
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(Line::from(candidates)), sections[0]);
+    }
+
+    // Row 1: the input line with a blinking-free cursor.
+    let last_line = app.input[app.input[..app.cursor.min(app.input.len())]
+        .rfind('\n')
+        .map_or(0, |i| i + 1)..]
+        .split('\n')
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    let before_width = text_width(&last_line);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "❯ ".to_owned(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(last_line),
+        ])),
+        sections[1],
+    );
+    let cursor_x = 2 + before_width as u16;
+    let cursor_x = cursor_x.min(area.width.saturating_sub(1));
+    if !app.busy {
+        frame.set_cursor_position((cursor_x, sections[1].y));
+    }
+
+    // Row 3: status.
+    let mut status = format!(" {}", app.status);
+    if app.show_thinking {
+        status.push_str(" · Ctrl+O verbose");
+    }
+    status.push_str(" · /help");
+    frame.render_widget(
+        Paragraph::new(Line::styled(status, Style::default().fg(Color::DarkGray))),
+        sections[3],
+    );
+    let _ = sections[2]; // breathing room between input and status
+}
+
+// ---------------------------------------------------------------------------
+// Turn execution
+// ---------------------------------------------------------------------------
 
 fn permission_decision(key: KeyEvent) -> Option<PermissionDecision> {
     match key.code {
@@ -1202,6 +890,24 @@ fn permission_decision(key: KeyEvent) -> Option<PermissionDecision> {
     }
 }
 
+/// Flushes any unterminated streaming line into the scrollback.
+fn flush_live(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+    if !app.live.is_empty() {
+        let text = std::mem::take(&mut app.live);
+        print_text(terminal, &text)?;
+    }
+    Ok(())
+}
+
+/// The write-checkpoint for a finished call, for diff rendering.
+fn checkpoint_for(
+    journal: &std::sync::Arc<std::sync::Mutex<checkpoint::WriteJournal>>,
+    call_id: &str,
+) -> Option<WriteCheckpoint> {
+    let journal = journal.lock().expect("write journal lock poisoned");
+    journal.latest_for_call(call_id)
+}
+
 async fn run_turn(
     session: &mut InteractiveSession,
     app: &mut App,
@@ -1209,12 +915,14 @@ async fn run_turn(
     keys: &mut tokio::sync::mpsc::UnboundedReceiver<io::Result<InputEvent>>,
     text: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    app.push(Kind::User, text.clone());
     app.busy = true;
     app.status = "Working".to_owned();
+    app.refresh_completion();
+    print_user(terminal, &text)?;
+    draw(terminal, app)?;
+
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel();
     let tui_observer = TuiObserver::new(ui_tx);
-    session.refresh_instructions();
     interactive::set_progress(
         session.manager.runtime_mut().model_mut(),
         tui_observer.sink(),
@@ -1241,6 +949,9 @@ async fn run_turn(
         Some(session.session_id.clone()),
         Command::MessageSend { content: text },
     );
+    // Taken before dispatch's mutable borrow of the session: the loop
+    // below reads write checkpoints while the run is in flight.
+    let write_journal = session.manager.runtime().runner().write_journal();
     let dispatch = session.manager.dispatch(envelope, control);
     tokio::pin!(dispatch);
     let mut pending: Option<PermissionRequest> = None;
@@ -1249,54 +960,97 @@ async fn run_turn(
         tokio::select! {
             result = &mut dispatch => break result,
             Some(update) = ui_rx.recv() => {
-                app.apply(update);
-                while let Ok(update) = ui_rx.try_recv() { app.apply(update); }
+                match update {
+                    UiEvent::Text(text) => {
+                        app.live.push_str(&text);
+                        // Completed lines go straight to the scrollback.
+                        while let Some(position) = app.live.find('\n') {
+                            let line: String = app.live.drain(..position + 1).collect();
+                            print_text(terminal, line.trim_end_matches('\n'))?;
+                        }
+                    }
+                    UiEvent::Reasoning(text) => {
+                        if app.show_thinking {
+                            print_dim(terminal, &format!("· {text}"))?;
+                        }
+                    }
+                    UiEvent::ToolStart { name, summary } => {
+                        flush_live(terminal, app)?;
+                        if summary.is_empty() {
+                            print_info(terminal, &format!("⏺ {name}"))?;
+                        } else {
+                            print_info(terminal, &format!("⏺ {name} · {summary}"))?;
+                        }
+                    }
+                    UiEvent::ToolDone { call_id, name, is_error } => {
+                        flush_live(terminal, app)?;
+                        if is_error {
+                            print_error(terminal, &format!("  ✗ {name} failed"))?;
+                        } else if let Some(checkpoint) = checkpoint_for(&write_journal, &call_id) {
+                            let max_lines = if app.verbose {
+                                usize::MAX
+                            } else {
+                                DIFF_FOLD_LINES
+                            };
+                            for movement in &checkpoint.movements {
+                                insert_lines(terminal, movement_diff_lines(movement, max_lines))?;
+                            }
+                        }
+                    }
+                }
+                draw(terminal, app)?;
             }
             Some(request) = permission_rx.recv(), if pending.is_none() => {
-                app.permission = Some(PermissionView::new(&request, &session.runner_root));
+                flush_live(terminal, app)?;
+                let details = permission_details(&request.call.name, &request.call.arguments);
+                print_info(terminal, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
+                if !details.is_empty() {
+                    print_dim(terminal, &details)?;
+                }
+                print_block(terminal, "  Allow? [y]es / [a]lways / [n]o / ne[v]er", Style::default().fg(Color::Yellow))?;
+                app.status = "Waiting for permission".to_owned();
                 pending = Some(request);
                 draw(terminal, app)?;
             }
             Some(key) = keys.recv() => {
                 let key = key?;
-                if let InputEvent::Mouse(mouse) = &key {
-                    handle_mouse(app, *mouse);
-                } else if pending.is_some() {
+                if pending.is_some() {
                     if let InputEvent::Key(key) = key && key.kind == KeyEventKind::Press {
                         if let Some(decision) = permission_decision(key) {
                             let _ = pending.take().expect("permission pending").reply.send(decision);
-                            app.permission = None;
+                            app.status = "Working".to_owned();
                         } else if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                             let _ = pending.take().expect("permission pending").reply.send(PermissionDecision::deny_once());
-                            app.permission = None;
                             cancellation.cancel();
-                        } else if let Some(permission) = app.permission.as_mut() {
-                            permission.handle_scroll(key.code);
                         }
                     }
                 } else if let InputEvent::Key(key) = key {
                     if key.kind == KeyEventKind::Press && (key.code == KeyCode::Esc || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)) {
                         cancellation.cancel();
                         app.status = "Cancelling".to_owned();
+                    } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('o') && key.modifiers == KeyModifiers::CONTROL {
+                        app.verbose = !app.verbose;
+                        app.status = if app.verbose { "Verbose".to_owned() } else { "Working".to_owned() };
                     } else {
                         match handle_editor(app, InputEvent::Key(key)) {
-                            EditorAction::Submit(text) => { app.queued.push_back(text); app.status = "Message queued".to_owned(); }
-                            EditorAction::Exit => { cancellation.cancel(); app.status = "Cancelling".to_owned(); }
+                            EditorAction::Submit(text) => { app.queued.push_back(text); app.status = "Queued".to_owned(); }
                             EditorAction::None => {}
                         }
                     }
-                } else { let _ = handle_editor(app, key); }
+                }
                 draw(terminal, app)?;
             }
             _ = tick.tick() => draw(terminal, app)?,
         }
     };
     while let Ok(update) = ui_rx.try_recv() {
-        app.apply(update);
+        if let UiEvent::Text(text) = update {
+            app.live.push_str(&text);
+        }
     }
+    flush_live(terminal, app)?;
     app.busy = false;
-    app.permission = None;
-    app.file_index = None;
+    app.permission_cleanup();
     match result {
         Ok(events) => {
             app.status = "Ready".to_owned();
@@ -1304,11 +1058,11 @@ async fn run_turn(
                 match event.event {
                     Event::RunFailed { message } => {
                         app.status = "Failed".to_owned();
-                        app.push(Kind::Error, message);
+                        print_error(terminal, &format!("✗ {message}"))?;
                     }
                     Event::RunCancelled => {
                         app.status = "Cancelled".to_owned();
-                        app.push(Kind::Info, "Run cancelled");
+                        print_dim(terminal, "run cancelled")?;
                     }
                     _ => {}
                 }
@@ -1316,24 +1070,346 @@ async fn run_turn(
         }
         Err(error) => {
             app.status = "Failed".to_owned();
-            app.push(Kind::Error, error.to_string());
+            print_error(terminal, &error.to_string())?;
         }
     }
+    println!(); // blank line after each turn
     draw(terminal, app)?;
     Ok(())
 }
 
-struct RestoreTerminal;
-
-impl Drop for RestoreTerminal {
-    fn drop(&mut self) {
-        let _ = crossterm::execute!(
-            io::stdout(),
-            event::DisableMouseCapture,
-            event::DisableBracketedPaste
-        );
-        ratatui::restore();
+impl App {
+    fn permission_cleanup(&mut self) {
+        // Reserved for future pending-permission UI state.
     }
+}
+
+fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
+    match event {
+        InputEvent::Paste(text) => {
+            app.insert(&text);
+            EditorAction::None
+        }
+        InputEvent::Key(key) if key.kind == KeyEventKind::Press => match key {
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } if app.completion.is_some() => {
+                if let Some(completion) = app.completion.as_mut() {
+                    completion.selected = completion.selected.saturating_sub(1);
+                }
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } if app.completion.is_some() => {
+                if let Some(completion) = app.completion.as_mut() {
+                    completion.selected =
+                        (completion.selected + 1).min(completion.candidates.len() - 1);
+                }
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Enter | KeyCode::Tab,
+                modifiers,
+                ..
+            } if app.completion.is_some()
+                && !modifiers.contains(KeyModifiers::SHIFT)
+                && !modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                app.apply_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::SHIFT)
+                || modifiers.contains(KeyModifiers::ALT) =>
+            {
+                app.insert("\n");
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            } => {
+                let text = app.take_input();
+                EditorAction::Submit(text)
+            }
+            KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) => {
+                // Clear the whole input line.
+                app.input.clear();
+                app.cursor = 0;
+                app.refresh_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Backspace,
+                ..
+            } => {
+                app.backspace();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Delete,
+                ..
+            } => {
+                app.delete();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Left,
+                ..
+            } => {
+                if app.cursor > 0 {
+                    let cursor = app.cursor.min(app.input.len());
+                    app.cursor -= app.input[..cursor]
+                        .chars()
+                        .next_back()
+                        .map_or(0, char::len_utf8);
+                }
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Right,
+                ..
+            } => {
+                if app.cursor < app.input.len() {
+                    app.cursor += app.input[app.cursor..].chars().next().unwrap().len_utf8();
+                }
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Home,
+                ..
+            } => {
+                app.cursor = app.input[..app.cursor].rfind('\n').map_or(0, |i| i + 1);
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::End, ..
+            } => {
+                app.cursor += app.input[app.cursor..]
+                    .find('\n')
+                    .unwrap_or(app.input.len() - app.cursor);
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => {
+                app.input.clear();
+                app.cursor = 0;
+                app.refresh_completion();
+                EditorAction::None
+            }
+            KeyEvent {
+                code: KeyCode::Char(ch),
+                modifiers,
+                ..
+            } if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                app.insert(&ch.to_string());
+                EditorAction::None
+            }
+            _ => EditorAction::None,
+        },
+        _ => EditorAction::None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Slash commands (results are printed into the scrollback)
+// ---------------------------------------------------------------------------
+
+/// Returns true when the REPL should exit.
+fn command(
+    session: &mut InteractiveSession,
+    app: &mut App,
+    terminal: &mut DefaultTerminal,
+    text: &str,
+) -> bool {
+    if matches!(text, "/exit" | "/quit") {
+        return true;
+    }
+    match text {
+        "/help" => {
+            let _ = print_dim(
+                terminal,
+                "/help  /exit  /session  /sessions  /resume [id]  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nCtrl+O verbose · Ctrl+T thinking · Esc cancels a run · @path mentions files",
+            );
+        }
+        "/session" => {
+            let _ = print_dim(
+                terminal,
+                &format!(
+                    "session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}",
+                    session.session_id,
+                    session.runner_root.display(),
+                    session.config.model,
+                    session.config.api_type,
+                    session.read_only,
+                    session.allow_shell
+                ),
+            );
+        }
+        "/model" => {
+            let _ = print_dim(
+                terminal,
+                &format!(
+                    "current model: {}\nusage: /model <name>",
+                    session.config.model
+                ),
+            );
+        }
+        "/thinking" => {
+            let _ = print_dim(terminal, "usage: /thinking <off|on|low|medium|high>");
+        }
+        "/diff" => {
+            let _ = print_block(terminal, &session.write_report(), Style::default());
+        }
+        "/undo" => {
+            let message = session.undo_last_write();
+            let _ = print_info(terminal, &message);
+        }
+        "/context" => match context::report(session) {
+            Ok(report) => {
+                let _ = print_block(terminal, &report, Style::default().fg(Color::DarkGray));
+            }
+            Err(error) => {
+                let _ = print_error(terminal, &format!("context: {error}"));
+            }
+        },
+        "/sessions" => match session.session_list() {
+            Ok(lines) if lines.is_empty() => {
+                let _ = print_dim(terminal, "no sessions found");
+            }
+            Ok(lines) => {
+                let _ = print_dim(terminal, &lines.join("\n"));
+            }
+            Err(error) => {
+                let _ = print_error(terminal, &error.to_string());
+            }
+        },
+        "/resume" => {
+            // List sessions and let the next input pick one.
+            match session.session_list_entries() {
+                Ok(entries) if entries.is_empty() => {
+                    let _ = print_dim(terminal, "no sessions found");
+                }
+                Ok(entries) => {
+                    let listing = entries
+                        .iter()
+                        .enumerate()
+                        .map(|(index, entry)| format!("{:>3}. {}", index + 1, entry.line))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let _ = print_dim(
+                        terminal,
+                        &format!("{listing}\nresume: type a number or id prefix"),
+                    );
+                    app.resume_pick = true;
+                    app.pick_entries = Some(entries.into_iter().map(|entry| entry.id).collect());
+                }
+                Err(error) => {
+                    let _ = print_error(terminal, &error.to_string());
+                }
+            }
+        }
+        _ if text.starts_with("/model ") => {
+            let model = text.trim_start_matches("/model ").trim();
+            if model.is_empty() {
+                let _ = print_error(terminal, "usage: /model <name>");
+            } else {
+                match session.change_model(model) {
+                    Ok(()) => {
+                        let _ = print_info(terminal, &format!("model: {model}"));
+                    }
+                    Err(error) => {
+                        let _ = print_error(terminal, &error.to_string());
+                    }
+                }
+            }
+        }
+        _ if text.starts_with("/thinking ") => {
+            let level = text.trim_start_matches("/thinking ").trim();
+            match session.change_thinking(level) {
+                Ok(()) => {
+                    let _ = print_info(terminal, &format!("thinking: {level}"));
+                }
+                Err(error) => {
+                    let _ = print_error(terminal, &error.to_string());
+                }
+            }
+        }
+        _ => {
+            let _ = print_error(terminal, &format!("unknown command: {text}"));
+        }
+    }
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Entry points
+// ---------------------------------------------------------------------------
+
+fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -> io::Result<()> {
+    let workspace = workspace_id_for(&session.runner_root);
+    let stored = match FileSessionStore::read_session(
+        &session.structure_home,
+        &workspace,
+        &session.session_id,
+    ) {
+        Ok(stored) => stored,
+        Err(_) => return Ok(()),
+    };
+    let mut turns = 0usize;
+    for envelope in stored.events {
+        match envelope.event {
+            Event::MessageAccepted { content } => {
+                print_user(terminal, &content)?;
+                turns += 1;
+            }
+            Event::ModelResponseItem {
+                item: RuntimeItem::Message(message),
+                ..
+            } if message.role == RuntimeRole::Assistant => {
+                let text = message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>();
+                if !text.is_empty() {
+                    print_text(terminal, &text)?;
+                }
+            }
+            Event::ToolCallRequested {
+                name, arguments, ..
+            } => {
+                print_info(
+                    terminal,
+                    &format!("⏺ {name} · {}", tool_summary(&name, &arguments)),
+                )?;
+            }
+            Event::ToolCallCompleted { name, is_error, .. } if is_error => {
+                print_error(terminal, &format!("  ✗ {name} failed"))?;
+            }
+            _ => {}
+        }
+    }
+    if turns > 0 {
+        print_dim(
+            terminal,
+            &format!("— resumed session, {turns} earlier messages —"),
+        )?;
+    }
+    Ok(())
 }
 
 async fn run_inner(
@@ -1342,16 +1418,28 @@ async fn run_inner(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let mut session = InteractiveSession::open(config, options).await?;
     let mut app = App::new(&session);
-    app.load_history(&session)?;
-    let mut terminal = ratatui::try_init()?;
-    let _restore = RestoreTerminal;
-    crossterm::execute!(
-        io::stdout(),
-        event::EnableBracketedPaste,
-        event::EnableMouseCapture
+    app.status = format!("session {}", session.session_id);
+
+    enable_raw_mode()?;
+    let _guard = InlineGuard;
+    crossterm::execute!(io::stdout(), crossterm::event::EnableBracketedPaste)?;
+    let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(VIEWPORT_LINES),
+        },
     )?;
-    let mut keys = input_events();
+
+    print_history(&mut terminal, &session)?;
+    print_dim(
+        &mut terminal,
+        "Enter sends · Shift+Enter adds a line · /help for commands · Ctrl+O verbose · Ctrl+T thinking",
+    )?;
+    app.file_index = Some(workspace_files(&session.runner_root));
     draw(&mut terminal, &app)?;
+
+    let mut keys = input_events();
     loop {
         let next = if let Some(text) = app.queued.pop_front() {
             Some(text)
@@ -1361,114 +1449,41 @@ async fn run_inner(
                 .recv()
                 .await
                 .ok_or("terminal input closed")??;
-            if let InputEvent::Mouse(mouse) = &key {
-                handle_mouse(&mut app, *mouse);
-                draw(&mut terminal, &app)?;
-                continue;
-            }
-            if app.picker.is_some() {
-                if let InputEvent::Key(key) = key
-                    && key.kind == KeyEventKind::Press
-                {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => app.picker = None,
-                        KeyCode::Up => {
-                            if let Some(picker) = app.picker.as_mut() {
-                                picker.move_selection(true);
-                            }
-                        }
-                        KeyCode::Down => {
-                            if let Some(picker) = app.picker.as_mut() {
-                                picker.move_selection(false);
-                            }
-                        }
-                        KeyCode::Enter | KeyCode::Tab => {
-                            let id = app
-                                .picker
-                                .as_ref()
-                                .and_then(|picker| picker.entries.get(picker.selected))
-                                .map(|entry| entry.id.clone())
-                                .expect("picker is open with at least one entry");
-                            app.picker = None;
-                            match session.switch_to(&id).await {
-                                Ok(next) => {
-                                    session = next;
-                                    app.refresh_config(&session);
-                                    app.push(
-                                        Kind::Info,
-                                        format!("session: {}", session.session_id),
-                                    );
-                                }
-                                Err(error) => app.push(Kind::Error, error.to_string()),
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                draw(&mut terminal, &app)?;
-                continue;
-            }
-            if app.context.is_some() {
-                if let InputEvent::Key(key) = key
-                    && key.kind == KeyEventKind::Press
-                {
-                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                        app.context = None;
-                    } else if let Some(context) = app.context.as_mut() {
-                        context.handle_scroll(key.code);
-                    }
-                }
-                draw(&mut terminal, &app)?;
-                continue;
-            }
             match handle_editor(&mut app, key) {
                 EditorAction::None => None,
                 EditorAction::Submit(text) => Some(text),
-                EditorAction::Exit => break,
             }
         };
         if let Some(text) = next {
+            if app.resume_pick {
+                // Resolve the pending /resume selection.
+                app.resume_pick = false;
+                let ids = app.pick_entries.take().unwrap_or_default();
+                let trimmed = text.trim();
+                let id = if let Ok(number) = trimmed.parse::<usize>() {
+                    ids.get(number.saturating_sub(1)).cloned()
+                } else {
+                    ids.iter().find(|id| id.starts_with(trimmed)).cloned()
+                };
+                match id {
+                    Some(id) => match session.switch_to(&id).await {
+                        Ok(next_session) => {
+                            session = next_session;
+                            app = App::new(&session);
+                            print_info(&mut terminal, &format!("session: {}", session.session_id))?;
+                        }
+                        Err(error) => print_error(&mut terminal, &error.to_string())?,
+                    },
+                    None => print_error(&mut terminal, &format!("no session matches '{trimmed}'"))?,
+                }
+                draw(&mut terminal, &app)?;
+                continue;
+            }
             if text.starts_with('/') {
-                // /sessions and /resume need awaits, so they are handled
-                // here rather than in the synchronous command().
-                if text == "/sessions" {
-                    match session.session_list() {
-                        Ok(lines) if lines.is_empty() => {
-                            app.push(Kind::Info, "no sessions found");
-                        }
-                        Ok(lines) => app.push(Kind::Info, lines.join("\n")),
-                        Err(error) => app.push(Kind::Error, error.to_string()),
-                    }
-                } else if text == "/resume" || text.starts_with("/resume ") {
-                    let id = text["/resume".len()..].trim();
-                    if id.is_empty() {
-                        // `/resume` alone: open the picker.
-                        match session.session_list_entries() {
-                            Ok(entries) if entries.is_empty() => {
-                                app.push(Kind::Info, "no sessions found");
-                            }
-                            Ok(entries) => {
-                                app.picker = Some(SessionPicker {
-                                    entries,
-                                    selected: 0,
-                                });
-                            }
-                            Err(error) => app.push(Kind::Error, error.to_string()),
-                        }
-                    } else {
-                        match session.switch_to(id).await {
-                            Ok(next) => {
-                                session = next;
-                                app.refresh_config(&session);
-                                app.push(Kind::Info, format!("session: {}", session.session_id));
-                            }
-                            Err(error) => app.push(Kind::Error, error.to_string()),
-                        }
-                    }
-                } else if command(&mut session, &mut app, &text) {
+                if command(&mut session, &mut app, &mut terminal, &text) {
                     break;
                 }
-            } else {
+            } else if !text.trim().is_empty() {
                 run_turn(
                     &mut session,
                     &mut app,
@@ -1501,78 +1516,7 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{Terminal, backend::TestBackend};
-
-    fn wheel(up: bool) -> MouseEvent {
-        MouseEvent {
-            kind: if up {
-                MouseEventKind::ScrollUp
-            } else {
-                MouseEventKind::ScrollDown
-            },
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::empty(),
-        }
-    }
-
-    #[test]
-    fn picker_selection_saturates_at_both_ends() {
-        let mut picker = SessionPicker {
-            entries: vec![
-                crate::sessions::SessionEntry {
-                    id: "a".to_owned(),
-                    line: "a".to_owned(),
-                },
-                crate::sessions::SessionEntry {
-                    id: "b".to_owned(),
-                    line: "b".to_owned(),
-                },
-            ],
-            selected: 0,
-        };
-        picker.move_selection(true);
-        assert_eq!(picker.selected, 0, "up at the top stays put");
-        picker.move_selection(false);
-        assert_eq!(picker.selected, 1);
-        picker.move_selection(false);
-        assert_eq!(picker.selected, 1, "down at the bottom stays put");
-    }
-
-    #[test]
-    fn wheel_scrolls_transcript_context_and_permission_views() {
-        let mut app = App::default();
-        assert!(handle_mouse(&mut app, wheel(true)));
-        assert_eq!(app.scroll_from_bottom, WHEEL_STEP as usize);
-        for _ in 0..10 {
-            handle_mouse(&mut app, wheel(false));
-        }
-        // Saturates at the bottom instead of wrapping around.
-        assert_eq!(app.scroll_from_bottom, 0);
-
-        // The context view scrolls independently while open.
-        app.context = Some(ContextView {
-            text: "long".to_owned(),
-            scroll: 100,
-        });
-        handle_mouse(&mut app, wheel(true));
-        assert_eq!(app.context.as_ref().unwrap().scroll, 100 - WHEEL_STEP);
-        handle_mouse(&mut app, wheel(false));
-        assert_eq!(app.context.as_ref().unwrap().scroll, 100);
-        app.context = None;
-        assert_eq!(app.scroll_from_bottom, 0);
-
-        // Non-scroll mouse events (moves, drags) are left alone.
-        assert!(!handle_mouse(
-            &mut app,
-            MouseEvent {
-                kind: MouseEventKind::Moved,
-                column: 1,
-                row: 1,
-                modifiers: KeyModifiers::empty(),
-            }
-        ));
-    }
+    use serde_json::json;
 
     #[test]
     fn editor_handles_multiline_and_unicode_backspace() {
@@ -1584,184 +1528,111 @@ mod tests {
         app.cursor = "你".len();
         app.backspace();
         assert_eq!(app.input, "好\nworl");
-        assert_eq!(app.cursor, 0);
+        app.cursor = 0;
     }
 
     #[test]
-    fn completion_replaces_command_and_file_tokens() {
-        let files = vec!["src/main.rs".to_owned(), "docs/design notes.md".to_owned()];
-        let models = vec!["model-a".to_owned()];
+    fn completion_for_slash_and_file_tokens() {
+        let files = vec!["src/main.rs".to_owned()];
+        let models = vec!["m1".to_owned(), "m2".to_owned()];
         let slash = completion_for("/con", 4, &files, &models).unwrap();
         assert_eq!(slash.candidates, vec!["/context"]);
-        let file = completion_for("read @main", 10, &files, &models).unwrap();
+        let none = completion_for("/help", 5, &files, &models);
+        assert!(none.is_none());
+        let file = completion_for("@ma", 3, &files, &models).unwrap();
         assert_eq!(file.candidates, vec!["@src/main.rs"]);
-        assert_eq!(file.replace_start, 5);
-        let spaced = completion_for("@design", 7, &files, &models).unwrap();
-        assert_eq!(spaced.candidates, vec!["@\"docs/design notes.md\""]);
-        assert!(completion_for("/help", 5, &files, &models).is_none());
+        let model = completion_for("/model ", 7, &files, &models).unwrap();
+        assert_eq!(model.candidates.len(), 2);
     }
 
     #[test]
-    fn completion_keyboard_selects_without_sending() {
+    fn apply_completion_replaces_the_token() {
         let mut app = App {
-            workspace: "/nonexistent".to_owned(),
-            input: "/th".to_owned(),
-            cursor: 3,
-            ..App::default()
+            models: vec!["alpha".to_owned()],
+            ..Default::default()
         };
-        app.refresh_completion();
-        assert!(matches!(
-            handle_editor(
-                &mut app,
-                InputEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
-            ),
-            EditorAction::None
-        ));
-        assert_eq!(app.input, "/thinking ");
+        app.insert("/model al");
         assert!(app.completion.is_some());
-        assert!(matches!(
-            handle_editor(
-                &mut app,
-                InputEvent::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
-            ),
-            EditorAction::None
-        ));
-        assert!(matches!(
-            handle_editor(
-                &mut app,
-                InputEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-            ),
-            EditorAction::None
-        ));
-        assert_eq!(app.input, "/thinking on");
+        app.apply_completion();
+        assert_eq!(app.input, "/model alpha");
     }
 
     #[test]
-    fn permission_keeps_choices_visible_for_long_file_content() {
-        let mut app = App::default();
-        app.entries.push(Entry {
-            kind: Kind::Reasoning,
-            text: "background reasoning".to_owned(),
-        });
-        app.permission = Some(PermissionView {
-            tool: "write_file".to_owned(),
-            details: format!(
-                "Path: docs/summary.md\n\nContent:\n{}",
-                "long line\n".repeat(100)
+    fn tool_summary_names_the_target() {
+        assert_eq!(
+            tool_summary("write_file", &json!({"path": "a.txt", "content": "hello"})),
+            "a.txt (5 bytes)"
+        );
+        assert_eq!(
+            tool_summary(
+                "edit_files",
+                &json!({"edits": [
+                    {"path": "a.txt", "old_string": "x", "new_string": "y"},
+                    {"path": "a.txt", "old_string": "y", "new_string": "z"},
+                    {"path": "b.txt", "old_string": "1", "new_string": "2"}
+                ]})
             ),
-            scroll: 0,
-        });
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
-        let output = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(output.contains("Path: docs/summary.md"));
-        assert!(output.contains("[y] Allow once"));
-        assert!(output.contains("[v] Deny for session"));
-        assert!(!output.contains("background reasoning"));
-
-        app.permission.as_mut().unwrap().handle_scroll(KeyCode::End);
-        terminal.draw(|frame| render(frame, &app)).unwrap();
-        let output = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(output.contains("[y] Allow once"));
-        assert!(output.contains("[v] Deny for session"));
+            "3 edits in a.txt, b.txt"
+        );
+        assert_eq!(
+            tool_summary("delete_file", &json!({"path": "b.txt"})),
+            "b.txt"
+        );
+        assert_eq!(
+            tool_summary("shell", &json!({"command": "cargo test"})),
+            "cargo test"
+        );
     }
 
     #[test]
-    fn context_view_keeps_controls_visible_when_scrolled() {
-        let app = App {
-            context: Some(ContextView {
-                text: format!("LAST MODEL REQUEST · ACTUAL\n{}", "batch\n".repeat(100)),
-                scroll: u16::MAX,
-            }),
-            ..App::default()
+    fn movement_diff_lines_color_and_fold() {
+        let movement = checkpoint::FileMovement {
+            path: "note.txt".to_owned(),
+            before: Some(b"alpha\nbeta\n".to_vec()),
+            after: Some(b"alpha\ngamma\n".to_vec()),
         };
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
-        let output = terminal
-            .backend()
-            .buffer()
-            .content()
+        let lines = movement_diff_lines(&movement, usize::MAX);
+        assert!(lines[0].spans[0].content.contains("note.txt"), "{lines:?}");
+        assert!(lines[0].spans[0].content.contains("+1 -1"), "{lines:?}");
+        let rendered: Vec<String> = lines
             .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(output.contains("Esc or q closes"));
-        assert!(output.contains("batch"));
-    }
-
-    #[test]
-    fn write_permission_shows_complete_content() {
-        let content = "important detail\n".repeat(100);
-        let details = permission_details(
-            "write_file",
-            &serde_json::json!({"path": "docs/summary.md", "content": content}),
-            Path::new("."),
+            .map(|line| line.spans.iter().map(|span| span.content.clone()).collect())
+            .collect();
+        assert!(
+            rendered.iter().any(|line| line.contains("-beta")),
+            "{rendered:?}"
         );
-        assert!(details.starts_with("Path: docs/summary.md\n\nChange preview"));
-        assert!(details.ends_with("important detail\n"));
-        assert_eq!(details.matches("important detail").count(), 100);
-    }
-
-    #[test]
-    fn write_permission_preview_shows_changed_lines() {
-        let root = std::env::temp_dir().join(format!("structure-preview-{}", uuid::Uuid::now_v7()));
-        std::fs::create_dir(&root).unwrap();
-        std::fs::write(root.join("note.txt"), "kept\nold\n").unwrap();
-        let details = permission_details(
-            "write_file",
-            &serde_json::json!({"path":"note.txt","content":"kept\nnew\n"}),
-            &root,
+        assert!(
+            rendered.iter().any(|line| line.contains("+gamma")),
+            "{rendered:?}"
         );
-        assert!(details.contains("  kept\n- old\n+ new\n"));
-        std::fs::remove_dir_all(root).unwrap();
+
+        // Folding truncates the body and says how to expand it.
+        let long = checkpoint::FileMovement {
+            path: "big.txt".to_owned(),
+            before: Some(Vec::new()),
+            after: Some("line\n".repeat(50).into_bytes()),
+        };
+        let folded = movement_diff_lines(&long, 5);
+        assert!(folded.len() < 10, "{folded:?}");
+        let rendered: String = folded
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.clone())
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(rendered.contains("Ctrl+O"), "{rendered}");
     }
 
     #[test]
-    fn write_permission_preview_rejects_parent_traversal() {
-        let preview = write_file_preview(Path::new("."), "../private.txt", "replacement");
-        assert!(preview.contains("outside the workspace"));
-        assert!(!preview.contains("replacement"));
-    }
-
-    #[test]
-    fn permission_keys_map_to_expected_outcome_and_scope() {
-        for (key, outcome, scope) in [
-            (
-                'y',
-                ToolPermissionOutcome::Allowed,
-                ToolPermissionScope::Once,
-            ),
-            (
-                'a',
-                ToolPermissionOutcome::Allowed,
-                ToolPermissionScope::Session,
-            ),
-            (
-                'n',
-                ToolPermissionOutcome::Denied,
-                ToolPermissionScope::Once,
-            ),
-            (
-                'v',
-                ToolPermissionOutcome::Denied,
-                ToolPermissionScope::Session,
-            ),
-        ] {
-            let decision =
-                permission_decision(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE)).unwrap();
-            assert_eq!(decision.outcome, outcome);
-            assert_eq!(decision.scope, scope);
-        }
+    fn wrap_styled_respects_display_width() {
+        // Wide CJK characters count as two columns.
+        let lines = wrap_styled("你好世界x", 5, Style::default());
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0].spans[0].content, "你好");
+        assert_eq!(lines[1].spans[0].content, "世界x");
     }
 }

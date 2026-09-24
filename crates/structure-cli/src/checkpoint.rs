@@ -66,6 +66,16 @@ impl WriteJournal {
         self.checkpoints.push(checkpoint);
     }
 
+    /// The most recent checkpoint produced by the call with `call_id`, for
+    /// rendering a finished write's diff.
+    pub(crate) fn latest_for_call(&self, call_id: &str) -> Option<WriteCheckpoint> {
+        self.checkpoints
+            .iter()
+            .rev()
+            .find(|checkpoint| checkpoint.call_id == call_id)
+            .cloned()
+    }
+
     /// Test-only: production paths report emptiness through `report` and
     /// `undo_last` instead of asking directly.
     #[cfg(test)]
