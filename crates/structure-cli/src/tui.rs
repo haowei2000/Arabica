@@ -1458,6 +1458,23 @@ async fn run_inner(
 
     enable_raw_mode()?;
     let _guard = InlineGuard;
+    // Pin the input box to the bottom of the screen, the way Claude Code
+    // does: clear, then anchor the inline viewport to the bottommost rows
+    // by placing the cursor there before the viewport is created (ratatui
+    // anchors an inline viewport to the current cursor row). New output
+    // scrolls in above it from then on.
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+        crossterm::cursor::MoveTo(0, 0),
+    )?;
+    let rows = crossterm::terminal::size()?.1;
+    if rows > VIEWPORT_LINES {
+        crossterm::execute!(
+            io::stdout(),
+            crossterm::cursor::MoveTo(0, rows - VIEWPORT_LINES),
+        )?;
+    }
     crossterm::execute!(io::stdout(), crossterm::event::EnableBracketedPaste)?;
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::with_options(
