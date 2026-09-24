@@ -73,7 +73,12 @@ mod theme {
     }
 
     pub(crate) fn tool() -> Style {
-        Style::default().fg(Color::Magenta)
+        Style::default().fg(Color::Yellow)
+    }
+
+    /// A finished tool call: green check.
+    pub(crate) fn tool_ok() -> Style {
+        Style::default().fg(Color::Green)
     }
 
     pub(crate) fn muted() -> Style {
@@ -198,6 +203,74 @@ fn ratatui_color(color: ratatui::style::Color) -> crossterm::style::Color {
         ratatui::style::Color::Indexed(value) => C::AnsiValue(value),
         ratatui::style::Color::Rgb(r, g, b) => C::Rgb { r, g, b },
     }
+}
+
+/// Minimal standard base64 encoder for OSC 52 clipboard payloads.
+fn base64(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(triple >> 18) as usize & 0x3f] as char);
+        out.push(ALPHABET[(triple >> 12) as usize & 0x3f] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(triple >> 6) as usize & 0x3f] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[triple as usize & 0x3f] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Copies a highlighted block's plain text to the system clipboard via
+/// OSC 52 -- the same channel Codex CLI uses. Works in iTerm2, Ghostty,
+/// kitty, WezTerm, and Alacritty (some need clipboard access enabled);
+/// Terminal.app ignores it. Returns the copied line count.
+fn copy_block_to_clipboard(transcript: &Transcript, block: usize) -> io::Result<usize> {
+    use std::io::Write;
+    let (start, end) = match transcript.blocks.get(block) {
+        Some(span) => *span,
+        None => return Ok(0),
+    };
+    let text = transcript.lines[start..end]
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let encoded = base64(text.as_bytes());
+    // OSC 52: the terminal itself writes the payload into the system
+    // clipboard. `c` selects the clipboard buffer.
+    write!(io::stdout(), "\x1b]52;c;{encoded}\x07")?;
+    Ok(end - start)
+}
+
+/// Replaces a one-row block's line in place (the running ⏺ line flipping
+/// to ✓/✗). Returns `false` when the block is not a single row -- the
+/// caller then prints the status as its own row instead. Row counts never
+/// change, so every other block's coordinates stay valid.
+fn flip_tool_line(transcript: &mut Transcript, block: usize, line: Line<'static>) -> bool {
+    let (start, end) = match transcript.blocks.get(block) {
+        Some(span) => *span,
+        None => return false,
+    };
+    if end - start != 1 {
+        return false;
+    }
+    transcript.lines[start] = line;
+    true
 }
 
 /// Moves the block highlight up or down across blocks that are still on
@@ -785,6 +858,10 @@ struct App {
     /// Set while a permission decision is pending: the tool label shown in
     /// the viewport chooser.
     permission_prompt: Option<String>,
+    /// The transcript block of the currently-running tool line, so its
+    /// completion flips that same line to ✓/✗ instead of printing a second
+    /// row.
+    running_tool: Option<usize>,
 }
 
 /// The permission chooser's options, in navigation order.
@@ -815,6 +892,7 @@ impl Default for App {
             permission_choice: 0,
             highlighted: None,
             permission_prompt: None,
+            running_tool: None,
         }
     }
 }
@@ -1388,16 +1466,36 @@ async fn run_turn(
                     UiEvent::ToolStart { name, summary } => {
                         flush_reasoning(terminal, transcript, app)?;
                         flush_live(terminal, transcript, app)?;
-                        if summary.is_empty() {
-                            print_tool(terminal, transcript, &format!("⏺ {name}"))?;
+                        let line = if summary.is_empty() {
+                            format!("⏺ {name}")
                         } else {
-                            print_tool(terminal, transcript, &format!("⏺ {name} · {summary}"))?;
-                        }
+                            format!("⏺ {name} · {summary}")
+                        };
+                        print_tool(terminal, transcript, &line)?;
+                        app.running_tool = Some(transcript.blocks.len() - 1);
                     }
                     UiEvent::ToolDone { call_id, name, is_error } => {
+                        flush_reasoning(terminal, transcript, app)?;
                         flush_live(terminal, transcript, app)?;
+                        // Flip the running ⏺ line in place to ✓/✗ when it
+                        // is still a single recorded row; otherwise print
+                        // the status as its own row.
+                        let status_line = if is_error {
+                            Line::styled(format!("✗ {name}"), theme::removed())
+                        } else {
+                            Line::styled(format!("✓ {name}"), theme::tool_ok())
+                        };
+                        let mut printed_status = false;
+                        if let Some(block) = app.running_tool.take()
+                            && flip_tool_line(transcript, block, status_line.clone())
+                        {
+                            repaint_block(transcript, block, false)?;
+                            printed_status = true;
+                        }
                         if is_error {
-                            print_error(terminal, transcript, &format!("  ✗ {name} failed"))?;
+                            if !printed_status {
+                                commit_lines(terminal, transcript, vec![status_line])?;
+                            }
                         } else if let Some(checkpoint) = checkpoint_for(&write_journal, &call_id) {
                             let max_lines = if app.verbose {
                                 usize::MAX
@@ -1405,9 +1503,13 @@ async fn run_turn(
                                 DIFF_FOLD_LINES
                             };
                             for movement in &checkpoint.movements {
-                                insert_lines(terminal, movement_diff_lines(movement, max_lines))?;
+                                commit_lines(
+                                    terminal,
+                                    transcript,
+                                    movement_diff_lines(movement, max_lines),
+                                )?;
                             }
-                        } else {
+                        } else if !printed_status {
                             // No file movement to show: a quiet result line
                             // confirms the call landed.
                             print_artifact(terminal, transcript, &format!("  ✓ {name}"))?;
@@ -1949,6 +2051,26 @@ async fn run_inner(
                 draw(&mut terminal, &app)?;
                 continue;
             }
+            // With a block highlighted, Enter or c copies it; other keys
+            // just drop the highlight.
+            if app.input.is_empty()
+                && app.completion.is_none()
+                && !app.busy
+                && let InputEvent::Key(key) = &key
+                && key.kind == KeyEventKind::Press
+                && app.highlighted.is_some()
+                && matches!(key.code, KeyCode::Enter | KeyCode::Char('c'))
+            {
+                let block = app.highlighted.expect("checked above");
+                let copied = copy_block_to_clipboard(&transcript, block)?;
+                print_dim(
+                    &mut terminal,
+                    &mut transcript,
+                    &format!("  ⧉ copied {copied} lines (OSC 52)"),
+                )?;
+                draw(&mut terminal, &app)?;
+                continue;
+            }
             // Any other key drops the block highlight.
             if app.highlighted.is_some() {
                 clear_highlight(&transcript, &mut app)?;
@@ -2062,6 +2184,39 @@ mod tests {
 
         // Indented fence delimiters still count.
         assert_eq!(committable_prefix("  ```\nbody\n"), "  ```\n".len());
+    }
+
+    #[test]
+    fn base64_encodes_the_standard_alphabet() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn flip_tool_line_replaces_single_row_blocks_only() {
+        let mut transcript = Transcript::default();
+        transcript.push_block(vec![Line::styled(
+            "⏺ read_file a.txt".to_owned(),
+            theme::tool(),
+        )]);
+        transcript.push_block(vec![Line::raw("diff line 1"), Line::raw("diff line 2")]);
+        assert!(flip_tool_line(
+            &mut transcript,
+            0,
+            Line::styled("✓ read_file a.txt".to_owned(), theme::tool_ok())
+        ));
+        assert_eq!(transcript.lines[0].spans[0].content, "✓ read_file a.txt");
+        // Multi-row blocks are refused so row counts stay stable.
+        assert!(!flip_tool_line(&mut transcript, 1, Line::raw("nope")));
+        assert_eq!(transcript.lines[1].spans[0].content, "diff line 1");
+        assert!(!flip_tool_line(
+            &mut transcript,
+            99,
+            Line::raw("out of range")
+        ));
     }
 
     #[test]
