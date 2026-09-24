@@ -236,6 +236,8 @@ impl AcpState {
             mcp,
         );
         let mut manager = SessionManager::with_ids(runtime, Box::new(UuidIds));
+        let instructions_sha256 =
+            crate::instructions::sha256(manager.runtime().system_instructions());
         let envelope = CommandEnvelope::new(
             CommandId::new(uuid::Uuid::now_v7().to_string()),
             None,
@@ -267,7 +269,7 @@ impl AcpState {
                 workspace_id: &workspace_id,
                 cwd: &request.cwd,
                 profile: None,
-                instructions_sha256: None,
+                instructions_sha256: Some(&instructions_sha256),
             },
         )
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
@@ -871,6 +873,12 @@ fn handle_prompt(
         entry.cwd.clone(),
     ));
     let progress = acp_observer.progress_sink();
+    // Re-read the workspace `AGENTS.md` files so a file edited mid-session
+    // reaches this turn's model request, matching terminal chat's per-turn
+    // refresh.
+    guard
+        .runtime_mut()
+        .set_system_instructions(crate::host::system_instructions(&entry.cwd));
     let model = guard.runtime_mut().model_mut();
     match model {
         HostModel::Api(_) => {

@@ -15,6 +15,7 @@ pub mod auth;
 pub mod config;
 mod context;
 pub mod host;
+mod instructions;
 pub mod interactive;
 pub mod mcp;
 pub mod print;

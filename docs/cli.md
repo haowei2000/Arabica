@@ -63,6 +63,23 @@ in the project: a malicious repository could otherwise redirect model calls
 and capture the real API key. ACP retains its environment-and-flag resolution
 and its per-session model and thinking controls.
 
+## Project instructions
+
+Every surface (terminal chat, `structure acp`, `structure -p`) sends the
+same project instructions to the model. An `AGENTS.md` file in the workspace
+root is loaded as a standing system instruction, annotated with its source
+path so the model request records where the text came from. When the session
+directory sits deeper than the workspace root, `AGENTS.md` files along the
+way apply too, root first: the deepest file is rendered last and takes
+precedence when two files disagree. Missing, unreadable, or non-UTF-8 files
+are skipped silently.
+
+Instructions are re-read before each turn (each ACP prompt, each terminal
+message, each `-p` invocation), so editing `AGENTS.md` mid-session reaches
+the next model request. New session files record an `instructions_sha256`
+header field -- a hash of the instructions in effect at creation, for
+tooling that wants a cheap "did the effective instructions change" signal.
+
 ## Interactive terminal
 
 Run `structure` (or `structure chat`) in a project directory to start a

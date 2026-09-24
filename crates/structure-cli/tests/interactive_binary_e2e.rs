@@ -350,3 +350,128 @@ async fn saved_auth_starts_chat_without_an_api_key_environment_variable() {
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_dir_all(home).ok();
 }
+
+/// The mock server's shared state: captured request bodies, plus the
+/// workspace root so the first response can edit its `AGENTS.md`.
+type Captured = Arc<Mutex<(Vec<Value>, Option<PathBuf>)>>;
+
+#[tokio::test]
+async fn agents_md_reaches_the_model_and_edits_apply_next_turn() {
+    // Rewrites AGENTS.md while serving the first request, so the second
+    // turn proves instructions are re-read per turn, not once at startup.
+    async fn completion(State(state): State<Captured>, Json(body): Json<Value>) -> Json<Value> {
+        let mut state = state.lock().await;
+        if state.0.is_empty()
+            && let Some(root) = &state.1
+        {
+            std::fs::write(
+                root.join("AGENTS.md"),
+                "Edited instruction: run the gold suite.\n",
+            )
+            .unwrap();
+        }
+        state.0.push(body);
+        drop(state);
+        Json(
+            json!({"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}),
+        )
+    }
+    let state = Arc::new(Mutex::new((Vec::new(), None::<PathBuf>)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", post(completion))
+        .with_state(Arc::clone(&state));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let root = temp_dir("agents-md-root");
+    let home = temp_dir("agents-md-home");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("AGENTS.md"),
+        "Original instruction: keep tests green.\n",
+    )
+    .unwrap();
+    state.lock().await.1 = Some(root.clone());
+    let result = run_binary(&root, &home, address, "first\nsecond\n/exit\n").await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let requests = std::mem::take(&mut state.lock().await.0);
+    assert_eq!(requests.len(), 2);
+    let first_system: Vec<&str> = system_message_contents(&requests[0]);
+    assert!(
+        first_system
+            .iter()
+            .any(|content| content.contains("Project instructions from AGENTS.md at AGENTS.md:")),
+        "{first_system:?}"
+    );
+    assert!(
+        first_system
+            .iter()
+            .any(|content| content.contains("Original instruction: keep tests green.")),
+        "{first_system:?}"
+    );
+    let second_system: Vec<&str> = system_message_contents(&requests[1]);
+    assert!(
+        second_system
+            .iter()
+            .any(|content| content.contains("Edited instruction: run the gold suite.")),
+        "{second_system:?}"
+    );
+    assert!(
+        !second_system
+            .iter()
+            .any(|content| content.contains("Original instruction: keep tests green.")),
+        "{second_system:?}"
+    );
+    // The session header records a hash of the instructions in effect at
+    // creation time, not a second copy of the prompt text.
+    let header = session_file_header(&home);
+    let hash = header["instructions_sha256"].as_str().unwrap();
+    assert_eq!(hash.len(), 64, "{hash}");
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "{hash}");
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}
+
+fn system_message_contents(request: &Value) -> Vec<&str> {
+    request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .filter_map(|message| message["content"].as_str())
+        .collect()
+}
+
+/// Reads the single session file's header line under `home`, the way
+/// `structure sessions list` does.
+fn session_file_header(home: &std::path::Path) -> Value {
+    fn walk(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+            {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(home, &mut found);
+    assert_eq!(found.len(), 1, "expected exactly one session file");
+    let first_line = std::fs::read_to_string(&found[0])
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    serde_json::from_str(&first_line).unwrap()
+}

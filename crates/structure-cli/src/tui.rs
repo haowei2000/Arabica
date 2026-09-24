@@ -1101,6 +1101,7 @@ async fn run_turn(
     app.status = "Working".to_owned();
     let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel();
     let tui_observer = TuiObserver::new(ui_tx);
+    session.refresh_instructions();
     interactive::set_progress(
         session.manager.runtime_mut().model_mut(),
         tui_observer.sink(),

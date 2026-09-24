@@ -262,6 +262,8 @@ impl InteractiveSession {
             build_host_runtime(model, &runner_root, tool_policy, &structure_home),
             Box::new(UuidIds),
         );
+        let instructions_sha256 =
+            crate::instructions::sha256(manager.runtime().system_instructions());
         let (session_id, store) = match resumed {
             Some(stored) => {
                 let session_id = stored.header.id.clone();
@@ -315,7 +317,7 @@ impl InteractiveSession {
                         workspace_id: &workspace_id,
                         cwd: &runner_root,
                         profile: None,
-                        instructions_sha256: None,
+                        instructions_sha256: Some(&instructions_sha256),
                     },
                 )?);
                 store.observe(event, EventVisibility::Client);
@@ -332,6 +334,15 @@ impl InteractiveSession {
             read_only: options.read_only,
             allow_shell: options.allow_shell,
         })
+    }
+
+    /// Re-read the workspace `AGENTS.md` files so the next turn's model
+    /// request reflects edits made since the session opened. Both terminal
+    /// surfaces call this before dispatching a turn.
+    pub(crate) fn refresh_instructions(&mut self) {
+        self.manager
+            .runtime_mut()
+            .set_system_instructions(crate::host::system_instructions(&self.runner_root));
     }
 
     pub(crate) fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -367,6 +378,7 @@ impl InteractiveSession {
         lines: &mut tokio::sync::mpsc::UnboundedReceiver<std::io::Result<String>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let terminal = TerminalObserver::new();
+        self.refresh_instructions();
         set_progress(self.manager.runtime_mut().model_mut(), terminal.sink());
         let observer: Arc<dyn SessionEventObserver> = Arc::new(FanOutObserver::new(vec![
             Arc::clone(&self.store) as Arc<dyn SessionEventObserver>,

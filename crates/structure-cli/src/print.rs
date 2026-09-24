@@ -280,6 +280,7 @@ async fn run_task(
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
     let runtime: HostRuntime = build_host_runtime(model, runner_root, policy, &structure_home);
     let mut manager = SessionManager::with_ids(runtime, Box::new(crate::host::UuidIds));
+    let instructions_sha256 = crate::instructions::sha256(manager.runtime().system_instructions());
 
     let (session_id, store) = match resumed {
         Some(stored) => {
@@ -332,7 +333,7 @@ async fn run_task(
                     workspace_id: &workspace_id,
                     cwd: runner_root,
                     profile: None,
-                    instructions_sha256: None,
+                    instructions_sha256: Some(&instructions_sha256),
                 },
             )?;
             // dispatch's own return value already has this Event; nothing

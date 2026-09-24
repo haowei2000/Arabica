@@ -114,12 +114,12 @@ pub struct NewSession<'a> {
     /// (`P2-4`). `None` until then; a host without profiles yet has nothing
     /// honest to put here.
     pub profile: Option<&'a str>,
-    /// A hash of the system instructions in effect, once project
-    /// instructions (`P2-5`, `AGENTS.md` discovery) exist to hash. `None`
-    /// until then. The full text is never stored here -- it is already
-    /// exact in the `model.request.prepared` Event; this is a cheap
-    /// "did the effective instructions change" signal for tooling, not a
-    /// second copy of the prompt.
+    /// A hash of the system instructions in effect at session creation:
+    /// `structure-cli` fills this from its `AGENTS.md` discovery; hosts
+    /// without project instructions pass `None`. The full text is never
+    /// stored here -- it is already exact in the `model.request.prepared`
+    /// Event; this is a cheap "did the effective instructions change"
+    /// signal for tooling, not a second copy of the prompt.
     pub instructions_sha256: Option<&'a str>,
 }
 

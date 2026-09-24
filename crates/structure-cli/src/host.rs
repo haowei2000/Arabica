@@ -246,6 +246,18 @@ pub fn coding_system_instructions(root: &Path) -> String {
     )
 }
 
+/// The standing instructions for a CLI run: the fixed coding preamble from
+/// [`coding_system_instructions`], then any `AGENTS.md` discovered in the
+/// workspace (`instructions.rs`), each annotated with the file it came from.
+/// Every build site calls this, and terminal chat plus ACP re-call it before
+/// each turn, so all three surfaces send the same instructions and a file
+/// edited mid-session reaches the next model request.
+pub fn system_instructions(root: &Path) -> Vec<String> {
+    let mut instructions = vec![coding_system_instructions(root)];
+    instructions.extend(crate::instructions::rendered(root, root));
+    instructions
+}
+
 /// Derives a stable [`structure_protocol::WorkspaceId`] from a working
 /// directory: the same `cwd` always maps to the same id, distinct `cwd`s
 /// (almost certainly) do not collide, and the id never leaks the path
@@ -307,7 +319,7 @@ pub fn build_host_runtime_with_mcp(
     runtime.set_tools(tools);
     runtime.set_max_model_steps_per_run(MAX_MODEL_STEPS_PER_RUN);
     runtime.set_max_model_steps_without_progress(usize::MAX);
-    runtime.set_system_instructions(vec![coding_system_instructions(runner_root)]);
+    runtime.set_system_instructions(system_instructions(runner_root));
     runtime
 }
 
@@ -466,6 +478,26 @@ mod tests {
         );
         assert!(!names.contains(&"runtime_complete"));
 
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn build_host_runtime_includes_discovered_project_instructions() {
+        let root = temp_root("agents-md");
+        std::fs::write(root.join("AGENTS.md"), "Never edit generated files.\n")
+            .expect("instruction file is written");
+        let runtime = build_host_runtime(
+            HostModel::Scripted(ScriptedModel::default()),
+            &root,
+            LocalRunnerPolicy::coding(),
+            &root.join("state"),
+        );
+        let instructions = runtime.system_instructions();
+        assert_eq!(instructions.len(), 2);
+        assert!(
+            instructions[1].starts_with("Project instructions from AGENTS.md at AGENTS.md:\n\n")
+        );
+        assert!(instructions[1].contains("Never edit generated files."));
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
