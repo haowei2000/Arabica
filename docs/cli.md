@@ -242,6 +242,39 @@ variables) plus the `env` entries supplied by the ACP client; it does not
 inherit the model provider's API key. HTTP requests use the headers in the
 client's server configuration.
 
+### User-configured MCP servers
+
+Terminal chat and `-p` read MCP servers from the user config file
+(`$STRUCTURE_HOME/config.toml`, default `~/.structure/config.toml`), so the
+same servers work in the terminal without an editor client supplying them:
+
+```toml
+[[mcp]]
+name = "docs"
+command = "/usr/local/bin/docs-mcp"   # stdio transport
+args = ["--verbose"]
+
+[mcp.env]
+DOCS_TOKEN = "..."                    # credentials require chmod 600
+
+[[mcp]]
+name = "search"
+url = "https://mcp.example.test/mcp"  # streamable HTTP transport
+
+[mcp.headers]
+Authorization = "Bearer ..."
+```
+
+Exactly one of `command` (stdio) or `url` (HTTP) selects the transport.
+ACP clients can supply servers too; when a client and the config file
+declare the same name, the client's entry wins. A server that fails to
+connect is reported on stderr and skipped -- one broken entry does not take
+the session down. Diagnostics name the server and the failure, never a
+credential value. Every MCP tool call goes through the same permission
+prompt (terminal) or `session/request_permission` (ACP) as the other
+surface, and server configuration, especially `env` and `headers` values,
+is never written to the session log.
+
 ### ACP verification
 
 `cargo test -p structure-cli` covers a real `structure acp` subprocess with

@@ -590,3 +590,92 @@ async fn undo_refuses_to_overwrite_a_users_later_edit() {
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_dir_all(home).ok();
 }
+
+#[tokio::test]
+async fn a_user_config_mcp_server_is_discovered_approved_and_executed() {
+    // The standalone stdio MCP fixture the ACP round-trip test also uses:
+    // an `echo` tool that records a marker file the env var names.
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_server.rs");
+    let root = temp_dir("config-mcp-root");
+    let home = temp_dir("config-mcp-home");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let server_binary = root.join(format!("mcp-server{}", std::env::consts::EXE_SUFFIX));
+    let compile = std::process::Command::new("rustc")
+        .args(["--edition=2024", "-o"])
+        .arg(&server_binary)
+        .arg(&fixture)
+        .output()
+        .expect("rustc is available to compile the MCP fixture");
+    assert!(
+        compile.status.success(),
+        "MCP fixture compilation failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let marker = root.join("mcp-result.txt");
+    let config_path = home.join("config.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            "[[mcp]]\nname = 'fixture'\ncommand = '{}'\n\n[mcp.env]\nMCP_TEST_MARKER = '{}'\n",
+            server_binary.display(),
+            marker.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    // First request: call the configured MCP tool. Second: report done.
+    async fn completion(Json(body): Json<Value>) -> Json<Value> {
+        let has_tool_result = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["role"] == "tool");
+        if has_tool_result {
+            Json(
+                json!({"choices":[{"message":{"role":"assistant","content":"mcp done"},"finish_reason":"stop"}]}),
+            )
+        } else {
+            Json(
+                json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"mcp__fixture__echo","arguments":"{\"value\":\"through config\"}"}}]},"finish_reason":"tool_calls"}]}),
+            )
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().route("/v1/chat/completions", post(completion)),
+        )
+        .await
+        .unwrap();
+    });
+    let result = run_binary(&root, &home, address, "use the tool\ny\n/exit\n").await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("mcp done"), "{stdout}");
+    // The fixture wrote its marker, proving the configured stdio server
+    // actually executed the call.
+    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("fixture records its marker");
+    assert!(recorded.contains("through config"), "{recorded}");
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}

@@ -23,7 +23,7 @@ use structure_session::{
 
 use crate::config::{save_workspace_settings, set_thinking};
 use crate::host::{
-    HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds, build_host_runtime,
+    HostModel, HostRuntime, LocalRunnerPolicy, ScriptedModel, UuidIds, build_host_runtime_with_mcp,
     workspace_id_for,
 };
 use crate::print::{self, Resume};
@@ -258,8 +258,17 @@ impl InteractiveSession {
         if options.allow_shell {
             tool_policy = tool_policy.with_tool(LocalTool::Shell);
         }
+        // MCP servers come from the user config file, shared with `-p` and
+        // ACP through the same client and permission logic. A broken one is
+        // reported and skipped rather than failing the session.
+        let (mcp, mcp_diagnostics) = crate::mcp::connect_configured(&runner_root, &structure_home)
+            .await
+            .map_err(|error| format!("mcp configuration: {error}"))?;
+        for diagnostic in mcp_diagnostics {
+            eprintln!("structure: {diagnostic}");
+        }
         let mut manager = SessionManager::with_ids(
-            build_host_runtime(model, &runner_root, tool_policy, &structure_home),
+            build_host_runtime_with_mcp(model, &runner_root, tool_policy, &structure_home, mcp),
             Box::new(UuidIds),
         );
         let instructions_sha256 =
