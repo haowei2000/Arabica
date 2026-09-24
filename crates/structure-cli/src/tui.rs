@@ -497,6 +497,9 @@ struct App {
     completion: Option<CompletionView>,
     /// Streaming text of the not-yet-newline-terminated assistant line.
     live: String,
+    /// Streaming thinking for the current step, folded into one dim block
+    /// once real output starts.
+    live_reasoning: String,
     models: Vec<String>,
     status: String,
     /// When set, the next submitted input resolves a `/resume` listing.
@@ -517,6 +520,7 @@ impl Default for App {
             verbose: false,
             completion: None,
             live: String::new(),
+            live_reasoning: String::new(),
             models: Vec::new(),
             status: "Ready".to_owned(),
             resume_pick: false,
@@ -800,16 +804,27 @@ fn render_viewport(frame: &mut Frame, app: &App) {
     .split(area);
 
     // Row 0: streaming tail while busy, otherwise the completion hint.
-    if app.busy && !app.live.is_empty() {
+    // Thinking streams dim; assistant text streams bright.
+    let streaming: Option<(&String, Style)> = if !app.live.is_empty() {
+        Some((&app.live, Style::default()))
+    } else if !app.live_reasoning.is_empty() {
+        Some((&app.live_reasoning, Style::default().fg(Color::DarkGray)))
+    } else {
+        None
+    };
+    if let Some((source, style)) = streaming {
         let tail: String = {
             let width = area.width as usize;
-            let text = app.live.chars().rev().take(width * 2).collect::<Vec<_>>();
-            text.into_iter().rev().collect()
+            source
+                .chars()
+                .rev()
+                .take(width * 2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect()
         };
-        frame.render_widget(
-            Paragraph::new(Line::styled(tail, Style::default())),
-            sections[0],
-        );
+        frame.render_widget(Paragraph::new(Line::styled(tail, style)), sections[0]);
     } else if let Some(completion) = &app.completion {
         let candidates = completion
             .candidates
@@ -899,6 +914,18 @@ fn flush_live(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
     Ok(())
 }
 
+/// Flushes the accumulated thinking block as one dim paragraph, prefixed
+/// on its first line. Called when real output, a tool call, or the end of
+/// the turn arrives -- thinking stays together instead of one row per
+/// delta.
+fn flush_reasoning(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+    if !app.live_reasoning.is_empty() {
+        let text = std::mem::take(&mut app.live_reasoning);
+        print_dim(terminal, &format!("· {text}"))?;
+    }
+    Ok(())
+}
+
 /// The write-checkpoint for a finished call, for diff rendering.
 fn checkpoint_for(
     journal: &std::sync::Arc<std::sync::Mutex<checkpoint::WriteJournal>>,
@@ -962,6 +989,7 @@ async fn run_turn(
             Some(update) = ui_rx.recv() => {
                 match update {
                     UiEvent::Text(text) => {
+                        flush_reasoning(terminal, app)?;
                         app.live.push_str(&text);
                         // Completed lines go straight to the scrollback.
                         while let Some(position) = app.live.find('\n') {
@@ -971,10 +999,12 @@ async fn run_turn(
                     }
                     UiEvent::Reasoning(text) => {
                         if app.show_thinking {
-                            print_dim(terminal, &format!("· {text}"))?;
+                            flush_live(terminal, app)?;
+                            app.live_reasoning.push_str(&text);
                         }
                     }
                     UiEvent::ToolStart { name, summary } => {
+                        flush_reasoning(terminal, app)?;
                         flush_live(terminal, app)?;
                         if summary.is_empty() {
                             print_info(terminal, &format!("⏺ {name}"))?;
@@ -1001,6 +1031,7 @@ async fn run_turn(
                 draw(terminal, app)?;
             }
             Some(request) = permission_rx.recv(), if pending.is_none() => {
+                flush_reasoning(terminal, app)?;
                 flush_live(terminal, app)?;
                 let details = permission_details(&request.call.name, &request.call.arguments);
                 print_info(terminal, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
@@ -1046,8 +1077,13 @@ async fn run_turn(
     while let Ok(update) = ui_rx.try_recv() {
         if let UiEvent::Text(text) = update {
             app.live.push_str(&text);
+        } else if app.show_thinking
+            && let UiEvent::Reasoning(text) = update
+        {
+            app.live_reasoning.push_str(&text);
         }
     }
+    flush_reasoning(terminal, app)?;
     flush_live(terminal, app)?;
     app.busy = false;
     app.permission_cleanup();
