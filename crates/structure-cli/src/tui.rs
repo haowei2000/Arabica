@@ -18,7 +18,7 @@ use crossterm::SynchronizedUpdate as _;
 use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport};
@@ -44,6 +44,58 @@ use crate::interactive::{self, InteractiveOptions, InteractiveSession};
 const VIEWPORT_LINES: u16 = 4;
 /// Diff lines shown before folding when verbose mode is off.
 const DIFF_FOLD_LINES: usize = 12;
+
+// ---------------------------------------------------------------------------
+// Theme: semantic color roles for the transcript
+//
+// Every role uses named ANSI colors (or Color::Reset, the terminal's own
+// foreground), never hardcoded RGB, so the terminal's configured theme
+// maps them and light/dark terminals both stay readable. Roles:
+//   base     — assistant prose (inherits the terminal foreground)
+//   user     — the user's own messages
+//   tool     — tool-call lines and permission prompts (distinct at a glance)
+//   muted    — thinking, hints, status bar, folded output (recedes)
+//   added / removed — diff insertions and deletions
+//   artifact — results and products: ✓ completions, file summaries
+//   error    — failures
+// ---------------------------------------------------------------------------
+mod theme {
+    use ratatui::style::{Color, Modifier, Style};
+
+    pub(crate) fn base() -> Style {
+        Style::default().fg(Color::Reset)
+    }
+
+    pub(crate) fn user() -> Style {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub(crate) fn tool() -> Style {
+        Style::default().fg(Color::Magenta)
+    }
+
+    pub(crate) fn muted() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    pub(crate) fn added() -> Style {
+        Style::default().fg(Color::Green)
+    }
+
+    pub(crate) fn removed() -> Style {
+        Style::default().fg(Color::Red)
+    }
+
+    pub(crate) fn artifact() -> Style {
+        Style::default().fg(Color::Cyan)
+    }
+
+    pub(crate) fn error() -> Style {
+        Style::default().fg(Color::Red)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Styled printing into the scrollback
@@ -124,19 +176,26 @@ fn print_block(terminal: &mut DefaultTerminal, text: &str, style: Style) -> io::
 
 /// One assistant text block: no prefix, just the words, terminal width.
 fn print_text(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, Style::default())
+    print_block(terminal, text, theme::base())
 }
 
 fn print_dim(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, Style::default().fg(Color::DarkGray))
+    print_block(terminal, text, theme::muted())
 }
 
-fn print_info(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, Style::default().fg(Color::Cyan))
+/// Tool-call lines and permission prompts: the "something is happening"
+/// color, distinct from prose and from results.
+fn print_tool(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    print_block(terminal, text, theme::tool())
+}
+
+/// Results and products: completions, file summaries, command output.
+fn print_artifact(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
+    print_block(terminal, text, theme::artifact())
 }
 
 fn print_error(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
-    print_block(terminal, text, Style::default().fg(Color::Red))
+    print_block(terminal, text, theme::error())
 }
 
 fn terminal_area_width(terminal: &DefaultTerminal) -> usize {
@@ -155,12 +214,7 @@ fn print_user(terminal: &mut DefaultTerminal, text: &str) -> io::Result<()> {
         .enumerate()
     {
         let prefix = if index == 0 { "> " } else { "  " };
-        let mut spans = vec![Span::styled(
-            prefix.to_owned(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut spans = vec![Span::styled(prefix.to_owned(), theme::user())];
         spans.extend(
             raw.spans
                 .into_iter()
@@ -271,7 +325,7 @@ fn movement_diff_lines(
             );
             return vec![Line::styled(
                 format!("    binary content, {from} → {to} bytes"),
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             )];
         }
     };
@@ -287,25 +341,25 @@ fn movement_diff_lines(
                     });
             format!("+{added} -{removed}")
         }),
-        Style::default().fg(Color::Cyan),
+        theme::artifact(),
     )];
     let body = diff.unified_diff().context_radius(3).to_string();
     for (shown, row) in body.lines().enumerate() {
         if shown >= max_lines {
             lines.push(Line::styled(
                 format!("    … {max_lines}+ lines, Ctrl+O for verbose"),
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             ));
             break;
         }
         let style = if row.starts_with("@@") {
-            Style::default().fg(Color::Cyan)
+            theme::muted()
         } else if row.starts_with('-') && !row.starts_with("---") {
-            Style::default().fg(Color::Red)
+            theme::removed()
         } else if row.starts_with('+') && !row.starts_with("+++") {
-            Style::default().fg(Color::Green)
+            theme::added()
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme::muted()
         };
         lines.push(Line::styled(format!("  {row}"), style));
     }
@@ -813,7 +867,7 @@ fn render_viewport(frame: &mut Frame, app: &App) {
     let streaming: Option<(&String, Style)> = if !app.live.is_empty() {
         Some((&app.live, Style::default()))
     } else if !app.live_reasoning.is_empty() {
-        Some((&app.live_reasoning, Style::default().fg(Color::DarkGray)))
+        Some((&app.live_reasoning, theme::muted()))
     } else {
         None
     };
@@ -863,12 +917,7 @@ fn render_viewport(frame: &mut Frame, app: &App) {
     let before_width = text_width(&last_line);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(
-                "❯ ".to_owned(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("❯ ".to_owned(), theme::user()),
             Span::raw(last_line),
         ])),
         sections[1],
@@ -884,7 +933,7 @@ fn render_viewport(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Paragraph::new(Line::styled(
             " Enter send · Shift+Enter newline · Ctrl+O verbose · Ctrl+T thinking · /help",
-            Style::default().fg(Color::DarkGray),
+            theme::muted(),
         )),
         sections[2],
     );
@@ -892,7 +941,7 @@ fn render_viewport(frame: &mut Frame, app: &App) {
     // Row 3: status.
     let status = format!(" {}", app.status);
     frame.render_widget(
-        Paragraph::new(Line::styled(status, Style::default().fg(Color::DarkGray))),
+        Paragraph::new(Line::styled(status, theme::muted())),
         sections[3],
     );
 }
@@ -1057,9 +1106,9 @@ async fn run_turn(
                         flush_reasoning(terminal, app)?;
                         flush_live(terminal, app)?;
                         if summary.is_empty() {
-                            print_info(terminal, &format!("⏺ {name}"))?;
+                            print_tool(terminal, &format!("⏺ {name}"))?;
                         } else {
-                            print_info(terminal, &format!("⏺ {name} · {summary}"))?;
+                            print_tool(terminal, &format!("⏺ {name} · {summary}"))?;
                         }
                     }
                     UiEvent::ToolDone { call_id, name, is_error } => {
@@ -1075,6 +1124,10 @@ async fn run_turn(
                             for movement in &checkpoint.movements {
                                 insert_lines(terminal, movement_diff_lines(movement, max_lines))?;
                             }
+                        } else {
+                            // No file movement to show: a quiet result line
+                            // confirms the call landed.
+                            print_artifact(terminal, &format!("  ✓ {name}"))?;
                         }
                     }
                 }
@@ -1084,11 +1137,11 @@ async fn run_turn(
                 flush_reasoning(terminal, app)?;
                 flush_live(terminal, app)?;
                 let details = permission_details(&request.call.name, &request.call.arguments);
-                print_info(terminal, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
+                print_tool(terminal, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
                 if !details.is_empty() {
                     print_dim(terminal, &details)?;
                 }
-                print_block(terminal, "  Allow? [y]es / [a]lways / [n]o / ne[v]er", Style::default().fg(Color::Yellow))?;
+                print_block(terminal, "  Allow? [y]es / [a]lways / [n]o / ne[v]er", theme::tool())?;
                 app.status = "Waiting for permission".to_owned();
                 pending = Some(request);
                 draw(terminal, app)?;
@@ -1359,7 +1412,7 @@ fn command(
         }
         "/undo" => {
             let message = session.undo_last_write();
-            let _ = print_info(terminal, &message);
+            let _ = print_artifact(terminal, &message);
         }
         "/context" => match context::report(session) {
             Ok(report) => {
@@ -1412,7 +1465,7 @@ fn command(
             } else {
                 match session.change_model(model) {
                     Ok(()) => {
-                        let _ = print_info(terminal, &format!("model: {model}"));
+                        let _ = print_tool(terminal, &format!("model: {model}"));
                     }
                     Err(error) => {
                         let _ = print_error(terminal, &error.to_string());
@@ -1424,7 +1477,7 @@ fn command(
             let level = text.trim_start_matches("/thinking ").trim();
             match session.change_thinking(level) {
                 Ok(()) => {
-                    let _ = print_info(terminal, &format!("thinking: {level}"));
+                    let _ = print_tool(terminal, &format!("thinking: {level}"));
                 }
                 Err(error) => {
                     let _ = print_error(terminal, &error.to_string());
@@ -1478,7 +1531,7 @@ fn print_history(terminal: &mut DefaultTerminal, session: &InteractiveSession) -
             Event::ToolCallRequested {
                 name, arguments, ..
             } => {
-                print_info(
+                print_tool(
                     terminal,
                     &format!("⏺ {name} · {}", tool_summary(&name, &arguments)),
                 )?;
@@ -1569,7 +1622,7 @@ async fn run_inner(
                         Ok(next_session) => {
                             session = next_session;
                             app = App::new(&session);
-                            print_info(&mut terminal, &format!("session: {}", session.session_id))?;
+                            print_tool(&mut terminal, &format!("session: {}", session.session_id))?;
                         }
                         Err(error) => print_error(&mut terminal, &error.to_string())?,
                     },
