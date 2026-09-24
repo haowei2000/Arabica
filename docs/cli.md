@@ -80,6 +80,15 @@ the next model request. New session files record an `instructions_sha256`
 header field -- a hash of the instructions in effect at creation, for
 tooling that wants a cheap "did the effective instructions change" signal.
 
+### Streaming
+
+Terminal chat streams model output as it arrives for the
+`open_ai_chat_completions` and `anthropic_messages` API types: assistant
+text appears incrementally, thinking output streams to the thinking view,
+and `-p`/ACP receive progress through the same path. Other API types
+currently fall back to one-shot completion and print the answer once it is
+complete.
+
 ## Interactive terminal
 
 Run `structure` (or `structure chat`) in a project directory to start a

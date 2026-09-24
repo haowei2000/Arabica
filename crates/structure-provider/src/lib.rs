@@ -311,6 +311,9 @@ impl ApiModelProvider {
             Self::OpenAiChatCompletions(adapter) => {
                 adapter.complete_with_progress(request, progress).await
             }
+            Self::AnthropicMessages(adapter) => {
+                adapter.complete_with_progress(request, progress).await
+            }
             _ => self.complete(request).await,
         }
     }
@@ -1245,6 +1248,122 @@ impl ModelProvider for AnthropicModelProvider {
     }
 }
 
+impl AnthropicModelProvider {
+    /// Streaming variant of [`ModelProvider::complete`]: the same request
+    /// with `"stream": true`, decoded incrementally. Text and thinking
+    /// deltas are emitted through `progress` as they arrive, and the
+    /// accumulated blocks are assembled into exactly the response JSON
+    /// [`anthropic_response`] decodes, so both paths share one decoder.
+    pub async fn complete_with_progress(
+        &mut self,
+        request: ModelRunRequest,
+        progress: &ModelProgressSink,
+    ) -> Result<ModelRunResult, ProviderError> {
+        let run_id = request.run_id.clone();
+        self.active_runs.insert(run_id.clone());
+        let mut prepared = compile_runtime_request(&request, &self.config.model);
+        prepared.generation.max_output_tokens = self.config.max_tokens;
+        let result = async {
+            let mut wire = self.encode(&prepared)?;
+            wire["stream"] = json!(true);
+            let body = serde_json::to_vec(&wire).map_err(|error| {
+                ProviderError::new(format!("Anthropic request serialization failed: {error}"))
+            })?;
+            let captured = self.capture(&run_id, &body)?;
+            let mut response = self
+                .client
+                .post(self.endpoint())
+                .header("x-api-key", &self.config.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .send()
+                .await
+                .map_err(|error| {
+                    ProviderError::new(format!("Anthropic request failed: {error}"))
+                })?;
+            let status = response.status();
+            if !status.is_success() {
+                let bytes = response.bytes().await.map_err(|error| {
+                    ProviderError::new(format!("Anthropic response failed: {error}"))
+                })?;
+                let value: Value = serde_json::from_slice(&bytes).map_err(|error| {
+                    ProviderError::new(format!("invalid Anthropic response: {error}"))
+                })?;
+                return Err(ProviderError::new(format!(
+                    "Anthropic endpoint rejected request: {}",
+                    value
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                )));
+            }
+            let mut raw = Vec::new();
+            let mut pending = Vec::new();
+            let mut state = AnthropicStreamState::default();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| ProviderError::new(format!("Anthropic stream failed: {error}")))?
+            {
+                raw.extend_from_slice(&chunk);
+                pending.extend_from_slice(&chunk);
+                while let Some((end, delimiter)) = sse_event_boundary(&pending) {
+                    let event = pending.drain(..end + delimiter).collect::<Vec<_>>();
+                    parse_anthropic_stream_event(&event[..end], &mut state, progress)?;
+                }
+            }
+            if !pending.is_empty() {
+                parse_anthropic_stream_event(&pending, &mut state, progress)?;
+            }
+            let assembled = state.finish()?;
+            if let Some(directory) = captured {
+                let assembled_bytes = serde_json::to_vec(&assembled).map_err(|error| {
+                    ProviderError::new(format!("Anthropic response serialization failed: {error}"))
+                })?;
+                std::fs::write(directory.join("response.raw"), &assembled_bytes)
+                    .map_err(raw_exchange_error)?;
+                write_json_file(
+                    &directory.join("response.json"),
+                    &RawExchangeResponse {
+                        status: status.as_u16(),
+                        received_at_unix_ms: unix_time_ms(),
+                        response_bytes: raw.len(),
+                    },
+                )?;
+            }
+            let decoded = anthropic_response(assembled)?;
+            let final_output = decoded
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RuntimeItem::Message(message) if message.role == RuntimeRole::Assistant => {
+                        Some(
+                            message
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<String>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .find(|text| !text.is_empty());
+            Ok(ModelRunResult {
+                final_output,
+                prepared_request: Some(prepared.clone()),
+                response: Some(decoded),
+            })
+        }
+        .await;
+        self.active_runs.remove(&run_id);
+        result.map_err(|error| error.with_prepared_request(prepared))
+    }
+}
+
 fn anthropic_request(
     request: &RuntimeRequest,
     max_tokens: u32,
@@ -1339,6 +1458,194 @@ fn anthropic_response(value: Value) -> Result<RuntimeResponse, ProviderError> {
         },
         provider_state: None,
     })
+}
+
+/// Accumulates one Anthropic SSE stream into the non-streaming response
+/// JSON shape [`anthropic_response`] decodes: content blocks are rebuilt
+/// from `content_block_start` + `content_block_delta` events, usage and
+/// stop reason from `message_start`/`message_delta`.
+#[derive(Default)]
+struct AnthropicStreamState {
+    blocks: Vec<Value>,
+    stop_reason: Option<String>,
+    usage: Value,
+    saw_message_stop: bool,
+}
+
+impl AnthropicStreamState {
+    fn finish(self) -> Result<Value, ProviderError> {
+        if !self.saw_message_stop {
+            return Err(ProviderError::new(
+                "Anthropic stream ended before message_stop",
+            ));
+        }
+        let mut blocks = self.blocks;
+        for block in &mut blocks {
+            // tool_use blocks arrive as accumulated JSON fragments.
+            if block.get("type").and_then(Value::as_str) == Some("tool_use")
+                && let Some(partial) = block.get("__partial_json").and_then(Value::as_str)
+            {
+                let input: Value = if partial.trim().is_empty() {
+                    json!({})
+                } else {
+                    serde_json::from_str(partial).map_err(|error| {
+                        ProviderError::new(format!("invalid Anthropic tool_use input: {error}"))
+                    })?
+                };
+                block["input"] = input;
+            }
+            block
+                .as_object_mut()
+                .expect("streamed blocks are objects")
+                .remove("__partial_json");
+        }
+        Ok(json!({
+            "content": blocks,
+            "stop_reason": self.stop_reason,
+            "usage": self.usage,
+        }))
+    }
+}
+
+/// Feeds one SSE event into the stream state, emitting progress for text
+/// and thinking deltas. Returns when the event ends the stream
+/// (`message_stop`), mirroring [`parse_chat_stream_event`]'s contract.
+fn parse_anthropic_stream_event(
+    event: &[u8],
+    state: &mut AnthropicStreamState,
+    progress: &ModelProgressSink,
+) -> Result<(), ProviderError> {
+    let event = std::str::from_utf8(event)
+        .map_err(|error| ProviderError::new(format!("Anthropic stream is not UTF-8: {error}")))?;
+    let data = event
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.is_empty() {
+        return Ok(());
+    }
+    let value: Value = serde_json::from_str(&data)
+        .map_err(|error| ProviderError::new(format!("invalid Anthropic stream event: {error}")))?;
+    match value.get("type").and_then(Value::as_str) {
+        Some("message_start") => {
+            state.usage = value
+                .pointer("/message/usage")
+                .cloned()
+                .filter(|usage| usage.is_object())
+                .unwrap_or_else(|| json!({}));
+        }
+        Some("content_block_start") => {
+            let index = value
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| ProviderError::new("Anthropic stream block has no index"))?
+                as usize;
+            let block = value
+                .get("content_block")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            state.grow_to(index)?;
+            state.blocks[index] = block;
+        }
+        Some("content_block_delta") => {
+            let index = value
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| ProviderError::new("Anthropic stream delta has no index"))?
+                as usize;
+            let delta = value.get("delta").cloned().unwrap_or_else(|| json!({}));
+            state.grow_to(index)?;
+            let block = &mut state.blocks[index];
+            match delta.get("type").and_then(Value::as_str) {
+                Some("text_delta") => {
+                    let text = delta
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    block["text"] = json!(format!(
+                        "{}{text}",
+                        block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                    ));
+                    if !text.is_empty() {
+                        progress.emit(ModelProgress::Message(text.to_owned()));
+                    }
+                }
+                Some("thinking_delta") => {
+                    let text = delta
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    block["thinking"] = json!(format!(
+                        "{}{text}",
+                        block
+                            .get("thinking")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                    ));
+                    if !text.is_empty() {
+                        progress.emit(ModelProgress::Reasoning(text.to_owned()));
+                    }
+                }
+                Some("input_json_delta") => {
+                    let partial = delta
+                        .get("partial_json")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    block["__partial_json"] = json!(format!(
+                        "{}{partial}",
+                        block
+                            .get("__partial_json")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Some("message_delta") => {
+            if let Some(reason) = value.pointer("/delta/stop_reason").and_then(Value::as_str) {
+                state.stop_reason = Some(reason.to_owned());
+            }
+            if let Some(output) = value.pointer("/usage/output_tokens") {
+                state.usage["output_tokens"] = output.clone();
+            }
+        }
+        Some("message_stop") => {
+            state.saw_message_stop = true;
+        }
+        Some("error") => {
+            return Err(ProviderError::new(format!(
+                "Anthropic stream failed: {}",
+                value
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown error")
+            )));
+        }
+        // ping and unknown event types carry no content.
+        _ => {}
+    }
+    Ok(())
+}
+
+impl AnthropicStreamState {
+    fn grow_to(&mut self, index: usize) -> Result<(), ProviderError> {
+        if index >= self.blocks.len() {
+            if index > self.blocks.len() {
+                return Err(ProviderError::new(
+                    "Anthropic stream blocks arrived out of order",
+                ));
+            }
+            self.blocks.push(json!({}));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -2455,6 +2762,22 @@ impl ModelProvider for EchoModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_request() -> ModelRunRequest {
+        ModelRunRequest {
+            system_instructions: Vec::new(),
+            session_id: SessionId::new("s"),
+            run_id: RunId::new("r"),
+            input: "test".into(),
+            short_memory: vec![],
+            run_memory: vec![],
+            long_memory: vec![],
+            tools: vec![],
+            tool_choice: ToolChoice::Auto,
+            continuation: vec![],
+            disclosure: DisclosureLevel::Detail,
+        }
+    }
     #[test]
     fn experiment_controls_are_explicit_and_validated() {
         let request = ModelRunRequest {
@@ -3501,6 +3824,131 @@ mod tests {
             serde_json::to_string(&ApiType::GeminiGenerateContent).expect("API type serializes"),
             "\"gemini_generate_content\""
         );
+    }
+
+    #[tokio::test]
+    async fn anthropic_streaming_emits_progress_and_matches_the_nonstreaming_shape() {
+        use axum::http::HeaderValue;
+        use axum::response::Response;
+
+        const SSE: &str = "event: message_start\n\
+            data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":1}}}\n\
+            \n\
+            event: content_block_start\n\
+            data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\
+            \n\
+            event: content_block_delta\n\
+            data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"pondering\"}}\n\
+            \n\
+            event: content_block_delta\n\
+            data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\
+            \n\
+            event: content_block_delta\n\
+            data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\
+            \n\
+            event: content_block_stop\n\
+            data: {\"type\":\"content_block_stop\",\"index\":0}\n\
+            \n\
+            event: message_delta\n\
+            data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\
+            \n\
+            event: message_stop\n\
+            data: {\"type\":\"message_stop\"}\n\
+            \n";
+
+        let sse = SSE.to_owned();
+        let app = axum::Router::new().route(
+            "/v1/messages",
+            axum::routing::post(move || {
+                let sse = axum::body::Body::from(sse.clone());
+                async move {
+                    let mut response = Response::new(sse);
+                    response.headers_mut().insert(
+                        axum::http::header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    response
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let progresses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_progresses = std::sync::Arc::clone(&progresses);
+        let sink = ModelProgressSink::new(move |progress: ModelProgress| {
+            sink_progresses.lock().unwrap().push(match progress {
+                ModelProgress::Start => "start".to_owned(),
+                ModelProgress::Message(text) => format!("message:{text}"),
+                ModelProgress::Reasoning(text) => format!("reasoning:{text}"),
+            });
+        });
+        let provider = AnthropicModelProvider::new(
+            AnthropicProviderConfig::new("test-key", format!("http://{address}"), "test-model")
+                .unwrap(),
+        );
+        let mut provider = ApiModelProvider::AnthropicMessages(provider);
+        let result = provider
+            .complete_with_progress(sample_request(), &sink)
+            .await
+            .expect("streamed completion succeeds");
+        assert_eq!(result.final_output.as_deref(), Some("Hello"));
+        let response = result.response.expect("response is decoded");
+        assert_eq!(response.finish_reason, Some(FinishReason::Stop));
+        assert_eq!(response.usage.input_tokens, 12);
+        assert_eq!(response.usage.output_tokens, 7);
+        assert_eq!(response.usage.cached_input_tokens, 3);
+        assert_eq!(response.usage.cache_creation_input_tokens, 1);
+        let progress = progresses.lock().unwrap();
+        assert_eq!(
+            *progress,
+            vec![
+                "start".to_owned(),
+                "reasoning:pondering".to_owned(),
+                "message:Hel".to_owned(),
+                "message:lo".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn anthropic_stream_parser_assembles_tool_use_and_ignores_pings() {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_state = std::sync::Arc::clone(&state);
+        let sink = ModelProgressSink::new(move |progress: ModelProgress| {
+            if let ModelProgress::Message(text) = progress {
+                sink_state.lock().unwrap().push(text);
+            }
+        });
+        let mut stream_state = AnthropicStreamState::default();
+        let events: &[&str] = &[
+            r#"data: {"type":"ping"}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"calling "}}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"read_file"}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"a.txt\"}"}}"#,
+            r#"data: {"type":"content_block_stop","index":1}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        ];
+        for event in events {
+            parse_anthropic_stream_event(event.as_bytes(), &mut stream_state, &sink)
+                .expect("event parses");
+        }
+        let value = stream_state.finish().expect("stream assembles");
+        let text = value["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "calling ");
+        let call = &value["content"][1];
+        assert_eq!(call["name"], "read_file");
+        assert_eq!(call["input"]["path"], "a.txt");
+        assert_eq!(value["stop_reason"], "tool_use");
+        assert_eq!(value["usage"]["output_tokens"], 9);
+        // The internal partial-json key never leaks into the assembled
+        // response.
+        assert!(call.get("__partial_json").is_none());
+        assert_eq!(*state.lock().unwrap(), vec!["calling ".to_owned()]);
     }
 
     #[test]
