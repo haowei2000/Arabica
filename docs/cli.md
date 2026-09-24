@@ -132,7 +132,9 @@ send. File suggestions insert a path reference for the agent to inspect with
 its read tool; they do not inline the file contents. The file index refreshes
 after each turn. Enter sends, Shift+Enter or Ctrl+J inserts a line, PageUp/PageDown
 scrolls the transcript, Ctrl+T shows or hides thinking, and Escape cancels a
-running turn. Ctrl+C exits at the editor and cancels a running turn. Messages
+running turn. PageUp/PageDown and the mouse wheel scroll by 10 and 3 lines
+respectively; mouse capture is on while the TUI runs, so text selection in
+most terminals needs Shift held, the usual trade-off. Ctrl+C exits at the editor and cancels a running turn. Messages
 typed during a run are queued for the next turn. The TUI restores the terminal
 screen on exit. `/help` lists commands. `/session` shows the current session and
 model. `/diff` reports the agent's net file changes this session, as unified

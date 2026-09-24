@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent,
+    MouseEventKind,
+};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -793,7 +796,7 @@ fn render(frame: &mut Frame, app: &App) {
         frame.set_cursor_position((x, y));
     }
     let footer = format!(
-        " {} · model {} · thinking {} · {}{} · PgUp/PgDn scroll · Ctrl+T thinking · Ctrl+C exit",
+        " {} · model {} · thinking {} · {}{} · PgUp/PgDn or wheel scroll · Ctrl+T thinking · Ctrl+C exit",
         app.status,
         app.model,
         app.thinking,
@@ -907,6 +910,46 @@ fn input_events() -> InputEvents {
         }
     });
     InputEvents { receiver, stop }
+}
+
+/// Wheel-scroll line step. PgUp/PgDn move 10; a wheel notch feels right
+/// around 3.
+const WHEEL_STEP: u16 = 3;
+
+/// Mouse wheel scrolling, mapped onto the same targets as PgUp/PgDn: the
+/// context view when open, the permission details when a decision is
+/// pending, otherwise the transcript. Returns whether the event was a
+/// scroll; every other mouse event is ignored so terminals keep their
+/// usual behavior (with capture on, text selection needs Shift held, the
+/// standard trade-off).
+fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
+    let up = match mouse.kind {
+        MouseEventKind::ScrollUp => true,
+        MouseEventKind::ScrollDown => false,
+        _ => return false,
+    };
+    if let Some(context) = app.context.as_mut() {
+        context.scroll = if up {
+            context.scroll.saturating_sub(WHEEL_STEP)
+        } else {
+            context.scroll.saturating_add(WHEEL_STEP)
+        };
+    } else if let Some(permission) = app.permission.as_mut() {
+        permission.scroll = if up {
+            permission.scroll.saturating_sub(WHEEL_STEP)
+        } else {
+            permission.scroll.saturating_add(WHEEL_STEP)
+        };
+    } else {
+        app.scroll_from_bottom = if up {
+            app.scroll_from_bottom
+                .saturating_add(usize::from(WHEEL_STEP))
+        } else {
+            app.scroll_from_bottom
+                .saturating_sub(usize::from(WHEEL_STEP))
+        };
+    }
+    true
 }
 
 fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
@@ -1152,7 +1195,9 @@ async fn run_turn(
             }
             Some(key) = keys.recv() => {
                 let key = key?;
-                if pending.is_some() {
+                if let InputEvent::Mouse(mouse) = &key {
+                    handle_mouse(app, *mouse);
+                } else if pending.is_some() {
                     if let InputEvent::Key(key) = key && key.kind == KeyEventKind::Press {
                         if let Some(decision) = permission_decision(key) {
                             let _ = pending.take().expect("permission pending").reply.send(decision);
@@ -1218,7 +1263,11 @@ struct RestoreTerminal;
 
 impl Drop for RestoreTerminal {
     fn drop(&mut self) {
-        let _ = crossterm::execute!(io::stdout(), event::DisableBracketedPaste);
+        let _ = crossterm::execute!(
+            io::stdout(),
+            event::DisableMouseCapture,
+            event::DisableBracketedPaste
+        );
         ratatui::restore();
     }
 }
@@ -1232,7 +1281,11 @@ async fn run_inner(
     app.load_history(&session)?;
     let mut terminal = ratatui::try_init()?;
     let _restore = RestoreTerminal;
-    crossterm::execute!(io::stdout(), event::EnableBracketedPaste)?;
+    crossterm::execute!(
+        io::stdout(),
+        event::EnableBracketedPaste,
+        event::EnableMouseCapture
+    )?;
     let mut keys = input_events();
     draw(&mut terminal, &app)?;
     loop {
@@ -1244,6 +1297,11 @@ async fn run_inner(
                 .recv()
                 .await
                 .ok_or("terminal input closed")??;
+            if let InputEvent::Mouse(mouse) = &key {
+                handle_mouse(&mut app, *mouse);
+                draw(&mut terminal, &app)?;
+                continue;
+            }
             if app.context.is_some() {
                 if let InputEvent::Key(key) = key
                     && key.kind == KeyEventKind::Press
@@ -1326,6 +1384,54 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
 mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
+
+    fn wheel(up: bool) -> MouseEvent {
+        MouseEvent {
+            kind: if up {
+                MouseEventKind::ScrollUp
+            } else {
+                MouseEventKind::ScrollDown
+            },
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
+    #[test]
+    fn wheel_scrolls_transcript_context_and_permission_views() {
+        let mut app = App::default();
+        assert!(handle_mouse(&mut app, wheel(true)));
+        assert_eq!(app.scroll_from_bottom, WHEEL_STEP as usize);
+        for _ in 0..10 {
+            handle_mouse(&mut app, wheel(false));
+        }
+        // Saturates at the bottom instead of wrapping around.
+        assert_eq!(app.scroll_from_bottom, 0);
+
+        // The context view scrolls independently while open.
+        app.context = Some(ContextView {
+            text: "long".to_owned(),
+            scroll: 100,
+        });
+        handle_mouse(&mut app, wheel(true));
+        assert_eq!(app.context.as_ref().unwrap().scroll, 100 - WHEEL_STEP);
+        handle_mouse(&mut app, wheel(false));
+        assert_eq!(app.context.as_ref().unwrap().scroll, 100);
+        app.context = None;
+        assert_eq!(app.scroll_from_bottom, 0);
+
+        // Non-scroll mouse events (moves, drags) are left alone.
+        assert!(!handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 1,
+                row: 1,
+                modifiers: KeyModifiers::empty(),
+            }
+        ));
+    }
 
     #[test]
     fn editor_handles_multiline_and_unicode_backspace() {
