@@ -679,3 +679,145 @@ async fn a_user_config_mcp_server_is_discovered_approved_and_executed() {
     std::fs::remove_dir_all(root).ok();
     std::fs::remove_dir_all(home).ok();
 }
+
+#[tokio::test]
+async fn resume_switches_sessions_inside_one_terminal_run() {
+    async fn completion(
+        State(requests): State<Arc<Mutex<Vec<Value>>>>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let mut requests = requests.lock().await;
+        requests.push(body);
+        Json(
+            json!({"choices":[{"message":{"role":"assistant","content":format!("answer {}", requests.len())},"finish_reason":"stop"}]}),
+        )
+    }
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", post(completion))
+        .with_state(Arc::clone(&requests));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let root = temp_dir("resume-root");
+    let home = temp_dir("resume-home");
+    std::fs::create_dir_all(&root).unwrap();
+    // Session A: one turn. Session B: one more turn.
+    let first = run_binary(&root, &home, address, "from a\n/exit\n").await;
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let second = run_binary(&root, &home, address, "from b\n/exit\n").await;
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    // The oldest session file in this workspace is A. The binary resolves
+    // its cwd canonically (macOS /var -> /private/var), so the id must be
+    // computed from the canonical path.
+    let canonical_root = std::fs::canonicalize(&root).unwrap();
+    let workspace_dir = home
+        .join("sessions")
+        .join(structure_cli::host::workspace_id_for(&canonical_root).to_string());
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&workspace_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    files.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap()
+    });
+    assert_eq!(files.len(), 2, "two sessions expected");
+    let session_a = files[0].file_stem().unwrap().to_string_lossy().to_string();
+    // In one run: /sessions lists both, /resume <A> switches, and the next
+    // turn continues A's history.
+    let third = run_binary(
+        &root,
+        &home,
+        address,
+        &format!("/sessions\n/resume {session_a}\nstill here\n/exit\n"),
+    )
+    .await;
+    assert!(
+        third.status.success(),
+        "{}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&third.stdout);
+    assert!(
+        stdout
+            .lines()
+            .filter(|line| line.contains("session: "))
+            .count()
+            >= 1,
+        "switch reports the new session id: {stdout}"
+    );
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 3);
+    // The turn after /resume must carry session A's earlier exchange.
+    let messages = captured[2]["messages"].as_array().unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message["content"].as_str() == Some("from a")),
+        "resumed history missing: {}",
+        serde_json::to_string(&captured[2]).unwrap()
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message["content"].as_str() == Some("answer 1")),
+        "resumed history missing: {}",
+        serde_json::to_string(&captured[2]).unwrap()
+    );
+    // And must not carry session B's.
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message["content"].as_str() == Some("from b")),
+        "session B leaked into A: {}",
+        serde_json::to_string(&captured[2]).unwrap()
+    );
+    drop(captured);
+    // The session that /resume switched away from (B, the second-oldest
+    // file) was suspended cleanly and still resumes by explicit id. (It is
+    // no longer the most recent session -- the switch itself touched A --
+    // so --continue would rightly pick A, not B.)
+    let session_b = files[1].file_stem().unwrap().to_string_lossy().to_string();
+    let resumed_b = run_binary_with_args(
+        &root,
+        &home,
+        address,
+        "back to b\n/exit\n",
+        &["--resume", &session_b],
+    )
+    .await;
+    assert!(
+        resumed_b.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed_b.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&resumed_b.stdout).contains("answer 4"),
+        "resume should continue B: {}",
+        String::from_utf8_lossy(&resumed_b.stdout)
+    );
+    let final_requests = requests.lock().await;
+    assert!(
+        final_requests[3]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["content"].as_str() == Some("from b")),
+        "--resume must pick up B's history"
+    );
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}

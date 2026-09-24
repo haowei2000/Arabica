@@ -345,6 +345,57 @@ impl InteractiveSession {
         })
     }
 
+    /// Mark this session suspended in its store so a later `--resume`,
+    /// `/resume`, or ACP `session/load` can pick it back up cleanly.
+    pub(crate) async fn suspend(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let envelope = CommandEnvelope::new(
+            CommandId::new(uuid::Uuid::now_v7().to_string()),
+            Some(self.session_id.clone()),
+            Command::SessionSuspend,
+        );
+        self.manager
+            .dispatch(
+                envelope,
+                DispatchControl {
+                    observer: Some(Arc::clone(&self.store) as Arc<dyn SessionEventObserver>),
+                    ..DispatchControl::default()
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// `/sessions`: the stored sessions for this workspace, formatted the
+    /// same way `structure sessions list` prints them.
+    pub(crate) fn session_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        crate::sessions::listing_lines(
+            &self.structure_home,
+            Some(&workspace_id_for(&self.runner_root)),
+        )
+    }
+
+    /// `/resume <id>`: open `id` in this workspace, then suspend the
+    /// session it replaces. The new session is opened before the old one
+    /// is suspended, so an unknown id leaves the current session
+    /// untouched. On success the caller replaces its session with the
+    /// returned one.
+    pub(crate) async fn switch_to(
+        &mut self,
+        id: &str,
+    ) -> Result<InteractiveSession, Box<dyn std::error::Error>> {
+        let next = InteractiveSession::open(
+            self.config.clone(),
+            InteractiveOptions {
+                allow_shell: self.allow_shell,
+                read_only: self.read_only,
+                resume: Resume::Id(id.to_owned()),
+            },
+        )
+        .await?;
+        self.suspend().await?;
+        Ok(next)
+    }
+
     /// Re-read the workspace `AGENTS.md` files so the next turn's model
     /// request reflects edits made since the session opened. Both terminal
     /// surfaces call this before dispatching a turn.
@@ -551,7 +602,7 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
         }
         if text == "/help" {
             println!(
-                "/help  /exit  /session  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>"
+                "/help  /exit  /session  /sessions  /resume <id>  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>"
             );
             continue;
         }
@@ -572,6 +623,33 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
         }
         if text == "/undo" {
             println!("{}", session.undo_last_write());
+            continue;
+        }
+        if text == "/sessions" {
+            match session.session_list() {
+                Ok(lines) if lines.is_empty() => println!("no sessions found"),
+                Ok(lines) => {
+                    for line in &lines {
+                        println!("{line}");
+                    }
+                }
+                Err(error) => eprintln!("error: {error}"),
+            }
+            continue;
+        }
+        if let Some(id) = text.strip_prefix("/resume ") {
+            let id = id.trim();
+            if id.is_empty() {
+                eprintln!("usage: /resume <id>  (see /sessions)");
+            } else {
+                match session.switch_to(id).await {
+                    Ok(next) => {
+                        session = next;
+                        println!("session: {}", session.session_id);
+                    }
+                    Err(error) => eprintln!("error: {error}"),
+                }
+            }
             continue;
         }
         if let Some(model) = text.strip_prefix("/model ") {

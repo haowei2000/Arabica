@@ -90,7 +90,11 @@ redirected, the simple line-based interface remains available. `--plain`
 selects that interface explicitly. Each prompt uses the same session and event
 log; `/exit` or `/quit` ends the terminal process. `--continue` restores the most
 recent session in the current directory, and `--resume <ID>` restores a
-specific one (`structure sessions list` shows IDs).
+specific one (`structure sessions list` shows IDs). Inside a running terminal
+chat, `/sessions` lists this workspace's stored sessions and `/resume <id>`
+switches to one in place: the new session opens first (an unknown id leaves
+the current session untouched), the previous one is suspended, and the next
+message continues the resumed session's history.
 
 CLI and ACP sessions use the runtime's file-backed context projection. Older
 eligible evidence may be archived under

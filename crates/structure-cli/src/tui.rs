@@ -71,7 +71,9 @@ const COMMANDS: &[&str] = &[
     "/help",
     "/model",
     "/quit",
+    "/resume",
     "/session",
+    "/sessions",
     "/thinking",
     "/undo",
 ];
@@ -1049,7 +1051,7 @@ fn command(session: &mut InteractiveSession, app: &mut App, text: &str) -> bool 
         return true;
     }
     match text {
-        "/help" => app.push(Kind::Info, "/help  /exit  /session  /context  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
+        "/help" => app.push(Kind::Info, "/help  /exit  /session  /sessions  /resume <id>  /context  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
         "/session" => app.push(Kind::Info, format!("session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}", session.session_id, session.runner_root.display(), session.config.model, session.config.api_type, session.read_only, session.allow_shell)),
         "/model" => app.push(Kind::Info, format!("current model: {}\nusage: /model <name>", session.config.model)),
         "/thinking" => app.push(Kind::Info, format!("current thinking: {}\nusage: /thinking <off|on|low|medium|high>", app.thinking)),
@@ -1263,7 +1265,31 @@ async fn run_inner(
         };
         if let Some(text) = next {
             if text.starts_with('/') {
-                if command(&mut session, &mut app, &text) {
+                // /sessions and /resume need awaits, so they are handled
+                // here rather than in the synchronous command().
+                if text == "/sessions" {
+                    match session.session_list() {
+                        Ok(lines) if lines.is_empty() => {
+                            app.push(Kind::Info, "no sessions found");
+                        }
+                        Ok(lines) => app.push(Kind::Info, lines.join("\n")),
+                        Err(error) => app.push(Kind::Error, error.to_string()),
+                    }
+                } else if let Some(id) = text.strip_prefix("/resume ") {
+                    let id = id.trim();
+                    if id.is_empty() {
+                        app.push(Kind::Error, "usage: /resume <id>  (see /sessions)");
+                    } else {
+                        match session.switch_to(id).await {
+                            Ok(next) => {
+                                session = next;
+                                app.refresh_config(&session);
+                                app.push(Kind::Info, format!("session: {}", session.session_id));
+                            }
+                            Err(error) => app.push(Kind::Error, error.to_string()),
+                        }
+                    }
+                } else if command(&mut session, &mut app, &text) {
                     break;
                 }
             } else {

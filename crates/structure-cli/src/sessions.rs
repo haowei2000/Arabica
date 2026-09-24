@@ -39,23 +39,36 @@ fn list(all: bool) -> i32 {
     let workspace_id = crate::host::workspace_id_for(&runner_root);
     let scope = if all { None } else { Some(&workspace_id) };
 
-    let listings = match FileSessionStore::list_sessions(&structure_home, scope) {
-        Ok(listings) => listings,
+    let lines = match listing_lines(&structure_home, scope) {
+        Ok(lines) => lines,
         Err(error) => {
             eprintln!("error: {error}");
             return 1;
         }
     };
-    if listings.is_empty() {
+    if lines.is_empty() {
         println!("no sessions found");
         return 0;
     }
-
-    let now_ms = now_ms();
-    for listing in &listings {
-        println!("{}", format_listing(listing, all, now_ms));
+    for line in &lines {
+        println!("{line}");
     }
     0
+}
+
+/// One formatted line per stored session, most recently active first --
+/// what `structure sessions list` prints and what the terminal `/sessions`
+/// command shows. Empty when nothing is stored.
+pub(crate) fn listing_lines(
+    structure_home: &std::path::Path,
+    scope: Option<&structure_protocol::WorkspaceId>,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let listings = FileSessionStore::list_sessions(structure_home, scope)?;
+    let now_ms = now_ms();
+    Ok(listings
+        .iter()
+        .map(|listing| format_listing(listing, scope.is_none(), now_ms))
+        .collect())
 }
 
 fn now_ms() -> u64 {
