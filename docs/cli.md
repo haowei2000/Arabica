@@ -81,6 +81,10 @@ eligible evidence may be archived under
 `~/.structure/runtime-memory/`); archives are never written into the project.
 The archive stores exact runtime events for `memory_search` and `memory_read`
 to recover when needed. The original session event log remains intact.
+Archive preparation runs on a background worker while model requests continue.
+A request uses only archives completed by an earlier worker pass; pending
+batches remain in full context. `/context` shows whether preparation is still
+running and reports the last error observed at a model-step boundary.
 Archival is subject to the runtime's cost gate, so a short conversation may
 produce no archive files.
 

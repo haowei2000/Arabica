@@ -303,6 +303,7 @@ pub fn build_host_runtime_with_mcp(
         RuntimeArchiveStore::File { root: archive_root },
     );
     runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
+    runtime.set_async_file_backed_gc(true);
     runtime.set_tools(tools);
     runtime.set_max_model_steps_per_run(MAX_MODEL_STEPS_PER_RUN);
     runtime.set_max_model_steps_without_progress(usize::MAX);

@@ -76,6 +76,7 @@ impl Default for AppState {
             local_file_archive_store(),
         );
         runtime.set_compaction_strategy(RuntimeCompactionStrategy::FileBackedGc);
+        runtime.set_async_file_backed_gc(true);
         Self {
             sessions: Arc::new(Mutex::new(SessionManager::new(runtime))),
             events,
@@ -138,6 +139,7 @@ impl AppState {
             local_file_archive_store(),
         );
         runtime.set_compaction_strategy(compaction_strategy);
+        runtime.set_async_file_backed_gc(true);
         runtime.set_pointer_gc_effort(pgc_effort);
         runtime.set_pointer_gc_continuation_probability_bps(pgc_continuation_probability_bps);
         let (events, _) = broadcast::channel(512);

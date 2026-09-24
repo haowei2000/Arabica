@@ -22,12 +22,25 @@ pub(crate) fn report(session: &InteractiveSession) -> Result<String, Box<dyn Err
         .long_memory(&workspace)
         .map(LongMemoryStore::archive_count)
         .transpose()?;
-    Ok(format_report(
+    let mut report = format_report(
         &stored.events,
         runtime.short_memory_policy(),
         runtime.compaction_strategy(),
         archives,
-    ))
+    );
+    report.push_str(if runtime.async_file_backed_gc_completed() {
+        "Background archive preparation: finished; checked at next model step\n"
+    } else if runtime.async_file_backed_gc_pending() {
+        "Background archive preparation: running\n"
+    } else {
+        "Background archive preparation: idle\n"
+    });
+    if let Some(error) = runtime.async_file_backed_gc_error() {
+        report.push_str(&format!(
+            "Last observed archive preparation error: {error}\n"
+        ));
+    }
+    Ok(report)
 }
 
 fn format_report(
