@@ -1644,7 +1644,8 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
         }
         InputEvent::Key(key) if key.kind == KeyEventKind::Press => match key {
             KeyEvent {
-                code: KeyCode::Up, ..
+                code: KeyCode::Up | KeyCode::Left,
+                ..
             } if app.completion.is_some() => {
                 if let Some(completion) = app.completion.as_mut() {
                     completion.selected = completion.selected.saturating_sub(1);
@@ -1652,7 +1653,7 @@ fn handle_editor(app: &mut App, event: InputEvent) -> EditorAction {
                 EditorAction::None
             }
             KeyEvent {
-                code: KeyCode::Down,
+                code: KeyCode::Down | KeyCode::Right,
                 ..
             } if app.completion.is_some() => {
                 if let Some(completion) = app.completion.as_mut() {
