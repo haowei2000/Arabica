@@ -66,12 +66,14 @@ struct CompletionView {
 
 const COMMANDS: &[&str] = &[
     "/context",
+    "/diff",
     "/exit",
     "/help",
     "/model",
     "/quit",
     "/session",
     "/thinking",
+    "/undo",
 ];
 const THINKING_LEVELS: &[&str] = &["off", "on", "low", "medium", "high"];
 
@@ -1047,10 +1049,12 @@ fn command(session: &mut InteractiveSession, app: &mut App, text: &str) -> bool 
         return true;
     }
     match text {
-        "/help" => app.push(Kind::Info, "/help  /exit  /session  /context  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
+        "/help" => app.push(Kind::Info, "/help  /exit  /session  /context  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>\nEnter sends; Shift+Enter or Ctrl+J adds a line. Esc cancels a run. PageUp/PageDown scroll. Ctrl+T toggles thinking."),
         "/session" => app.push(Kind::Info, format!("session: {}\nworkspace: {}\nmodel: {}\nprovider: {}\nread only: {}\nshell: {}", session.session_id, session.runner_root.display(), session.config.model, session.config.api_type, session.read_only, session.allow_shell)),
         "/model" => app.push(Kind::Info, format!("current model: {}\nusage: /model <name>", session.config.model)),
         "/thinking" => app.push(Kind::Info, format!("current thinking: {}\nusage: /thinking <off|on|low|medium|high>", app.thinking)),
+        "/diff" => app.push(Kind::Info, session.write_report()),
+        "/undo" => app.push(Kind::Info, session.undo_last_write()),
         "/context" => match context::report(session) {
             Ok(text) => app.context = Some(ContextView { text, scroll: 0 }),
             Err(error) => app.push(Kind::Error, format!("context: {error}")),

@@ -21,6 +21,7 @@ crossterm = "0.29"
 ignore.workspace = true
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
 serde.workspace = true
+similar.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 toml.workspace = true

@@ -475,3 +475,118 @@ fn session_file_header(home: &std::path::Path) -> Value {
         .to_owned();
     serde_json::from_str(&first_line).unwrap()
 }
+
+#[tokio::test]
+async fn undo_reverts_the_agents_most_recent_write() {
+    async fn completion(Json(body): Json<Value>) -> Json<Value> {
+        let has_tool_result = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["role"] == "tool");
+        if has_tool_result {
+            Json(
+                json!({"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}),
+            )
+        } else {
+            Json(
+                json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"note.txt\",\"content\":\"agent content\"}"}}]},"finish_reason":"tool_calls"}]}),
+            )
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().route("/v1/chat/completions", post(completion)),
+        )
+        .await
+        .unwrap();
+    });
+    let root = temp_dir("undo-root");
+    let home = temp_dir("undo-home");
+    std::fs::create_dir_all(&root).unwrap();
+    let result = run_binary(
+        &root,
+        &home,
+        address,
+        "write note\ny\n/undo\n/diff\n/exit\n",
+    )
+    .await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("Reverted write_file: note.txt"), "{stdout}");
+    assert!(
+        stdout.contains("No agent file changes recorded"),
+        "/diff after /undo should show nothing: {stdout}"
+    );
+    // The agent created the file, so undoing removes it again.
+    assert!(!root.join("note.txt").exists());
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}
+
+#[tokio::test]
+async fn undo_refuses_to_overwrite_a_users_later_edit() {
+    // Serves the write call, then -- while the turn wraps up -- edits the
+    // file the way a user would between prompts.
+    async fn completion(
+        State(state): State<Arc<Mutex<Option<PathBuf>>>>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let has_tool_result = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["role"] == "tool");
+        if has_tool_result {
+            if let Some(root) = state.lock().await.clone() {
+                std::fs::write(root.join("note.txt"), "user content\n").unwrap();
+            }
+            Json(
+                json!({"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}),
+            )
+        } else {
+            Json(
+                json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"note.txt\",\"content\":\"agent content\"}"}}]},"finish_reason":"tool_calls"}]}),
+            )
+        }
+    }
+    let state = Arc::new(Mutex::new(None::<PathBuf>));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", post(completion))
+        .with_state(Arc::clone(&state));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let root = temp_dir("undo-conflict-root");
+    let home = temp_dir("undo-conflict-home");
+    std::fs::create_dir_all(&root).unwrap();
+    *state.lock().await = Some(root.clone());
+    let result = run_binary(&root, &home, address, "write note\ny\n/undo\n/exit\n").await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains("changed on disk since the agent last wrote it"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("nothing was overwritten"), "{stdout}");
+    // The user's edit survives untouched.
+    assert_eq!(
+        std::fs::read_to_string(root.join("note.txt")).unwrap(),
+        "user content\n"
+    );
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(home).ok();
+}

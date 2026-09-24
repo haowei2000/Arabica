@@ -122,7 +122,16 @@ scrolls the transcript, Ctrl+T shows or hides thinking, and Escape cancels a
 running turn. Ctrl+C exits at the editor and cancels a running turn. Messages
 typed during a run are queued for the next turn. The TUI restores the terminal
 screen on exit. `/help` lists commands. `/session` shows the current session and
-model. `/context` opens a scrollable view of the last recorded model request,
+model. `/diff` reports the agent's net file changes this session, as unified
+diffs, and marks files that have changed on disk since the agent's last write.
+`/undo` reverts the agent's most recent write call (`write_file`, `edit_files`,
+or `delete_file`; one `edit_files` call counts as one change even when it edits
+several files). Undo is all-or-nothing per call: when any file it touched no
+longer matches what the call left behind -- because you edited it, for example
+-- nothing is reverted, the file is left untouched, and the checkpoint stays
+for a later retry. Only the local write tools are checkpointed: writes made by
+MCP tools are not undoable, and the journal lives in process memory, so a
+resumed session starts with an empty one. `/context` opens a scrollable view of the last recorded model request,
 provider-reported token usage, a policy preview for the next turn, and the
 workspace archive count. The preview excludes the next message and FileBackedGC
 admission; it is not a token estimate. Escape or `q` closes the view. The

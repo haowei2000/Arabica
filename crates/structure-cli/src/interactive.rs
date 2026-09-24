@@ -345,6 +345,42 @@ impl InteractiveSession {
             .set_system_instructions(crate::host::system_instructions(&self.runner_root));
     }
 
+    /// `/diff`: the agent's net file changes this session, as recorded by
+    /// the runner's write checkpoints.
+    pub(crate) fn write_report(&self) -> String {
+        self.manager
+            .runtime()
+            .runner()
+            .write_journal()
+            .lock()
+            .expect("write journal lock poisoned")
+            .report(&self.runner_root)
+    }
+
+    /// `/undo`: revert the most recent agent write call. Refuses -- and
+    /// touches nothing -- when a file it changed has moved on on disk, so
+    /// user edits are never overwritten.
+    pub(crate) fn undo_last_write(&self) -> String {
+        let journal = self.manager.runtime().runner().write_journal();
+        let mut journal = journal.lock().expect("write journal lock poisoned");
+        match journal.undo_last(&self.runner_root) {
+            crate::checkpoint::UndoOutcome::NothingToDo => {
+                "No agent file changes to undo.".to_owned()
+            }
+            crate::checkpoint::UndoOutcome::Reverted { tool, paths } => {
+                format!("Reverted {tool}: {}", paths.join(", "))
+            }
+            crate::checkpoint::UndoOutcome::Conflict { path } => format!(
+                "{path} changed on disk since the agent last wrote it; nothing was \
+                 overwritten. Put the file back to the agent's content, then /undo \
+                 again."
+            ),
+            crate::checkpoint::UndoOutcome::Failed(message) => {
+                format!("could not revert: {message}")
+            }
+        }
+    }
+
     pub(crate) fn change_model(&mut self, model: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut next = self.config.clone();
         next.model = model.to_owned();
@@ -505,7 +541,9 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
             return 0;
         }
         if text == "/help" {
-            println!("/help  /exit  /session  /model <name>  /thinking <off|on|low|medium|high>");
+            println!(
+                "/help  /exit  /session  /diff  /undo  /model <name>  /thinking <off|on|low|medium|high>"
+            );
             continue;
         }
         if text == "/session" {
@@ -517,6 +555,14 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
                 session.read_only,
                 session.allow_shell
             );
+            continue;
+        }
+        if text == "/diff" {
+            print!("{}", session.write_report());
+            continue;
+        }
+        if text == "/undo" {
+            println!("{}", session.undo_last_write());
             continue;
         }
         if let Some(model) = text.strip_prefix("/model ") {
