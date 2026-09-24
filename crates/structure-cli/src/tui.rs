@@ -819,6 +819,7 @@ enum UiEvent {
         call_id: String,
         name: String,
         is_error: bool,
+        result: String,
     },
 }
 
@@ -912,6 +913,7 @@ impl SessionEventObserver for TuiObserver {
             Event::ToolCallCompleted {
                 call_id,
                 name,
+                result,
                 is_error,
                 ..
             } => {
@@ -919,6 +921,7 @@ impl SessionEventObserver for TuiObserver {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     is_error: *is_error,
+                    result: result.clone(),
                 });
             }
             Event::RunCompleted {
@@ -1389,7 +1392,12 @@ async fn run_turn(
                         print_tool(transcript, &line);
                         app.running_tool = Some(transcript.blocks.len() - 1);
                     }
-                    UiEvent::ToolDone { call_id, name, is_error } => {
+                    UiEvent::ToolDone {
+                        call_id,
+                        name,
+                        is_error,
+                        result,
+                    } => {
                         flush_reasoning(transcript, app);
                         flush_live(transcript, app);
                         // Flip the running ⏺ line in place to ✓/✗ when it
@@ -1424,6 +1432,33 @@ async fn run_turn(
                             // No file movement to show: a quiet result line
                             // confirms the call landed.
                             print_artifact(transcript, &format!("  ✓ {name}"));
+                        }
+                        // Result preview under the status line, unless the
+                        // result is trivial or a diff already told the story.
+                        let already_shown = checkpoint_for(&write_journal, &call_id).is_some();
+                        let preview = result.trim();
+                        if !preview.is_empty()
+                            && !already_shown
+                            && preview != "ok"
+                            && !preview.starts_with("wrote ")
+                        {
+                            let max_chars = if app.verbose {
+                                8_000
+                            } else {
+                                400
+                            };
+                            let mut excerpt: String = preview.chars().take(max_chars).collect();
+                            if preview.chars().count() > max_chars {
+                                let total_lines = preview.lines().count();
+                                excerpt.push_str(&format!(
+                                    "\n  … truncated, {total_lines} lines total (Ctrl+O verbose)"
+                                ));
+                            }
+                            print_block(
+                                transcript,
+                                &format!("  {excerpt}"),
+                                theme::muted(),
+                            );
                         }
                     }
                 }
