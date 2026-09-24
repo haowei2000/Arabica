@@ -14,6 +14,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crossterm::SynchronizedUpdate as _;
 use crossterm::event::{self, Event as InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Constraint, Layout};
@@ -87,29 +88,33 @@ fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
 /// Writes styled rows into the scrollback above the viewport. Ratatui's
 /// inline `insert_before` takes a buffer-drawing closure, so spans are
 /// painted cell by cell (with the same width approximation used for
-/// wrapping).
+/// wrapping). The whole insert is fenced in a synchronized-update pair
+/// (`CSI ?2026`) so the terminal applies the scroll and the composer
+/// repaint atomically -- Codex CLI and Claude Code do the same; terminals
+/// without support recover via the spec's timeout.
 fn insert_lines(terminal: &mut DefaultTerminal, lines: Vec<Line<'static>>) -> io::Result<()> {
-    let height = lines.len() as u16;
-    terminal.insert_before(height, |buffer: &mut ratatui::prelude::Buffer| {
-        let width = buffer.area.width;
-        for (row, line) in lines.iter().enumerate() {
-            let y = row as u16;
-            let mut x = 0u16;
-            for span in &line.spans {
-                for ch in span.content.chars() {
-                    if x >= width {
-                        break;
+    io::stdout().sync_update(|_stdout| {
+        let height = lines.len() as u16;
+        terminal.insert_before(height, |buffer: &mut ratatui::prelude::Buffer| {
+            let width = buffer.area.width;
+            for (row, line) in lines.iter().enumerate() {
+                let y = row as u16;
+                let mut x = 0u16;
+                for span in &line.spans {
+                    for ch in span.content.chars() {
+                        if x >= width {
+                            break;
+                        }
+                        let cell = &mut buffer[(x, y)];
+                        cell.set_char(ch);
+                        cell.set_style(span.style);
+                        x = x.saturating_add(char_width(ch) as u16).min(width);
                     }
-                    let cell = &mut buffer[(x, y)];
-                    cell.set_char(ch);
-                    cell.set_style(span.style);
-                    x = x.saturating_add(char_width(ch) as u16).min(width);
                 }
             }
-        }
-    })
+        })
+    })?
 }
-
 /// Convenience wrapper: plain paragraph rows with one style.
 fn print_block(terminal: &mut DefaultTerminal, text: &str, style: Style) -> io::Result<()> {
     let width = terminal_area_width(terminal);
@@ -905,6 +910,39 @@ fn permission_decision(key: KeyEvent) -> Option<PermissionDecision> {
     }
 }
 
+/// The number of bytes of `live` that are safe to commit to the scrollback:
+/// every complete line before the opening line of an unmatched ``` code
+/// fence. Lines inside an open fence hold back until the fence closes, so
+/// a half-streamed block never renders as garbled text (the Codex/pi/
+/// Gemini streaming approach). Always a line boundary; `0` when nothing is
+/// committable.
+fn committable_prefix(live: &str) -> usize {
+    let Some(last_newline) = live.rfind('\n') else {
+        return 0;
+    };
+    let complete = &live[..last_newline + 1];
+    let mut in_fence = false;
+    let mut open_fence_end = 0;
+    let mut offset = 0;
+    for line in complete.split_inclusive('\n') {
+        let line_len = line.len();
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            if in_fence {
+                // Hold everything after this delimiter line until the
+                // fence closes.
+                open_fence_end = offset + line_len;
+            }
+        }
+        offset += line_len;
+    }
+    if in_fence {
+        open_fence_end
+    } else {
+        complete.len()
+    }
+}
+
 /// Flushes any unterminated streaming line into the scrollback.
 fn flush_live(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
     if !app.live.is_empty() {
@@ -991,9 +1029,16 @@ async fn run_turn(
                     UiEvent::Text(text) => {
                         flush_reasoning(terminal, app)?;
                         app.live.push_str(&text);
-                        // Completed lines go straight to the scrollback.
-                        while let Some(position) = app.live.find('\n') {
-                            let line: String = app.live.drain(..position + 1).collect();
+                        // Completed lines go straight to the scrollback,
+                        // except while a code fence is open: those lines
+                        // hold back until the fence closes, so a half-
+                        // streamed block never renders as broken text.
+                        loop {
+                            let end = committable_prefix(&app.live);
+                            let Some(newline) = app.live[..end].find('\n') else {
+                                break;
+                            };
+                            let line: String = app.live.drain(..newline + 1).collect();
                             print_text(terminal, line.trim_end_matches('\n'))?;
                         }
                     }
@@ -1570,6 +1615,31 @@ pub async fn run(config: ApiProviderConfig, options: InteractiveOptions) -> i32 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn committable_prefix_holds_back_open_fences() {
+        // Plain prose: every complete line commits immediately.
+        assert_eq!(
+            committable_prefix("hello\nworld\npartial"),
+            "hello\nworld\n".len()
+        );
+        assert_eq!(committable_prefix("no newline yet"), 0);
+
+        // A fence opens: prose before it commits, everything after holds.
+        let text = "Look:\n```rust\nfn main() {}\nstill inside\n";
+        assert_eq!(committable_prefix(text), "Look:\n```rust\n".len());
+
+        // Once the fence closes, everything commits again.
+        let closed = "Look:\n```rust\ncode\n```\nafter\nmore\n";
+        assert_eq!(committable_prefix(closed), closed.len());
+
+        // Two fences on and off.
+        let twice = "```\na\n```\ntext\n```\nb\n";
+        assert_eq!(committable_prefix(twice), "```\na\n```\ntext\n```\n".len());
+
+        // Indented fence delimiters still count.
+        assert_eq!(committable_prefix("  ```\nbody\n"), "  ```\n".len());
+    }
 
     #[test]
     fn editor_handles_multiline_and_unicode_backspace() {
