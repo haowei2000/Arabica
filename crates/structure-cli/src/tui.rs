@@ -1124,28 +1124,59 @@ fn render_fullscreen(frame: &mut Frame, app: &App, transcript: &Transcript) {
             })
             .collect::<Vec<_>>();
         frame.render_widget(Paragraph::new(Line::from(candidates)), sections[2]);
-    } else if app.busy {
-        let streaming: Option<(&String, Style)> = if !app.live.is_empty() {
-            Some((&app.live, theme::base()))
-        } else if !app.live_reasoning.is_empty() {
-            Some((&app.live_reasoning, theme::muted()))
-        } else {
-            None
+    } else if app.busy && !app.live.is_empty() {
+        // Assistant text streams here; thinking streams inside the
+        // history pane below.
+        let tail: String = {
+            let width = sections[2].width as usize;
+            app.live
+                .chars()
+                .rev()
+                .take(width * 2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect()
         };
-        if let Some((source, style)) = streaming {
-            let tail: String = {
-                let width = sections[2].width as usize;
-                source
-                    .chars()
-                    .rev()
-                    .take(width * 2)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect()
-            };
-            frame.render_widget(Paragraph::new(Line::styled(tail, style)), sections[2]);
-        }
+        frame.render_widget(
+            Paragraph::new(Line::styled(tail, theme::base())),
+            sections[2],
+        );
+    }
+
+    // Streaming thinking grows inside the history pane: its tail renders
+    // as the pane's bottom rows, dim, before being folded into a summary
+    // block on flush.
+    if app.busy && !app.live_reasoning.is_empty() {
+        let width = sections[0].width.max(1) as usize;
+        let pane_rows = sections[0].height as usize;
+        let tail: String = {
+            let budget = width
+                .saturating_mul(pane_rows.saturating_sub(offset))
+                .max(width);
+            app.live_reasoning
+                .chars()
+                .rev()
+                .take(budget * 2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect()
+        };
+        let wrapped: Vec<Line> = wrap_styled(&tail, width, theme::muted())
+            .into_iter()
+            .take(pane_rows.saturating_sub(offset))
+            .collect();
+        let pane = sections[0];
+        let tail_rows = wrapped.len() as u16;
+        let tail_area = ratatui::layout::Rect {
+            x: pane.x,
+            y: pane.y + pane.height.saturating_sub(tail_rows),
+            width: pane.width,
+            height: tail_rows,
+        };
+        frame.render_widget(ratatui::widgets::Clear, tail_area);
+        frame.render_widget(Paragraph::new(wrapped), tail_area);
     }
 
     // ---- input row ----
@@ -1935,16 +1966,14 @@ async fn run_inner(
             // them (handled below); scrolling moves the history pane while
             // the input stays pinned. Any typed character snaps back to
             // the bottom.
-            if app.input.is_empty()
-                && app.completion.is_none()
-                && !app.busy
+            if !app.busy
+                && app.permission_prompt.is_none()
                 && let InputEvent::Key(key) = &key
                 && key.kind == KeyEventKind::Press
                 && matches!(key.code, KeyCode::Up | KeyCode::Down)
+                && (app.completion.is_none() || app.input.is_empty())
             {
                 // Block-granularity scrolling: move one block per press.
-                let (start, end) = (transcript.lines.len(), usize::MAX);
-                let _ = (start, end);
                 navigate_blocks(&transcript, &mut app, key.code == KeyCode::Up);
                 draw(&mut terminal, &app, &transcript)?;
                 continue;
