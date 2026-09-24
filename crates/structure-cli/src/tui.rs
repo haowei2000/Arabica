@@ -879,17 +879,22 @@ fn render_viewport(frame: &mut Frame, app: &App) {
         frame.set_cursor_position((cursor_x, sections[1].y));
     }
 
+    // Row 2: the key hints, pinned under the input line so they are
+    // always visible exactly where the user is looking.
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            " Enter send · Shift+Enter newline · Ctrl+O verbose · Ctrl+T thinking · /help",
+            Style::default().fg(Color::DarkGray),
+        )),
+        sections[2],
+    );
+
     // Row 3: status.
-    let mut status = format!(" {}", app.status);
-    if app.show_thinking {
-        status.push_str(" · Ctrl+O verbose");
-    }
-    status.push_str(" · /help");
+    let status = format!(" {}", app.status);
     frame.render_widget(
         Paragraph::new(Line::styled(status, Style::default().fg(Color::DarkGray))),
         sections[3],
     );
-    let _ = sections[2]; // breathing room between input and status
 }
 
 // ---------------------------------------------------------------------------
@@ -1530,10 +1535,6 @@ async fn run_inner(
     )?;
 
     print_history(&mut terminal, &session)?;
-    print_dim(
-        &mut terminal,
-        "Enter sends · Shift+Enter adds a line · /help for commands · Ctrl+O verbose · Ctrl+T thinking",
-    )?;
     app.file_index = Some(workspace_files(&session.runner_root));
     draw(&mut terminal, &app)?;
 
