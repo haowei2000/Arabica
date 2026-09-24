@@ -152,6 +152,10 @@ fn wrap_styled(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
 struct Transcript {
     lines: Vec<Line<'static>>,
     blocks: Vec<(usize, usize)>,
+    /// Whole-screen scrolls performed while navigating past the top of the
+    /// visible area (DECSTBM scrolling, Codex-style). Every committed row's
+    /// real screen position is shifted up by this many lines.
+    scroll_offset: usize,
 }
 
 impl Transcript {
@@ -175,9 +179,9 @@ fn commit_lines(
 
 /// Screen y of committed line index `i`, given the viewport is pinned to
 /// the bottom: negative means the row has scrolled off the screen.
-fn screen_row(line_index: usize, total_lines: usize, rows: u16) -> i32 {
+fn screen_row(line_index: usize, total_lines: usize, rows: u16, scroll_offset: usize) -> i32 {
     let viewport_top = i32::from(rows.saturating_sub(VIEWPORT_LINES));
-    viewport_top - (total_lines - line_index - 1) as i32 - 1
+    viewport_top - (total_lines - line_index - 1) as i32 - 1 - scroll_offset as i32
 }
 
 fn ratatui_color(color: ratatui::style::Color) -> crossterm::style::Color {
@@ -273,12 +277,73 @@ fn flip_tool_line(transcript: &mut Transcript, block: usize, line: Line<'static>
     true
 }
 
+/// Scrolls the whole screen up one line via a DECSTBM scroll region (the
+/// bottom-edge newline trick; `CSI S` would discard rows in xterm.js and
+/// friends). Used when block navigation walks past the top of the screen.
+fn scroll_screen(up: bool) -> io::Result<()> {
+    use std::io::Write as _;
+    let (_, rows) = crossterm::terminal::size()?;
+    let bottom = rows; // 1-based
+    let mut out = io::stdout();
+    write!(out, "\x1b[1;{bottom}r")?;
+    if up {
+        // The newline is functional: at the bottom of the scroll
+        // region it makes the terminal scroll one line.
+        write!(out, "\x1b[{bottom};1H")?;
+        out.write_all(b"\n")?;
+    } else {
+        write!(out, "\x1b[1;1H\x1bM")?;
+    }
+    write!(out, "\x1b[r")?;
+    out.flush()
+}
+
+/// Redraws every committed row that is on screen, keeping the current
+/// highlight. Called after a whole-screen scroll, which moves every row.
+fn repaint_visible(transcript: &Transcript) -> io::Result<()> {
+    use crossterm::style::{Attribute, Print, SetAttribute, SetForegroundColor};
+    use crossterm::{QueueableCommand, cursor::MoveTo};
+    let (width, rows) = crossterm::terminal::size()?;
+    let total = transcript.lines.len();
+    let visible: Vec<(u16, usize)> = (0..total)
+        .filter_map(|i| {
+            let y = screen_row(i, total, rows, transcript.scroll_offset);
+            (y >= 0 && y < i32::from(rows)).then_some((y as u16, i))
+        })
+        .collect();
+    io::stdout().sync_update(|stdout| {
+        for (y, i) in visible {
+            let line = &transcript.lines[i];
+            let mut column = 0u16;
+            stdout.queue(MoveTo(0, y))?;
+            for span in &line.spans {
+                stdout.queue(SetForegroundColor(ratatui_color(
+                    span.style.fg.unwrap_or(ratatui::style::Color::Reset),
+                )))?;
+                for ch in span.content.chars() {
+                    if column >= width {
+                        break;
+                    }
+                    stdout.queue(Print(ch))?;
+                    column += char_width(ch) as u16;
+                }
+            }
+            stdout.queue(SetAttribute(Attribute::Reset))?;
+            stdout.queue(Print(" ".repeat(width.saturating_sub(column) as usize)))?;
+        }
+        Ok::<(), io::Error>(())
+    })??;
+    Ok(())
+}
+
 /// Moves the block highlight up or down across blocks that are still on
-/// screen. Only repaints the previous (unhighlighted) and next
+/// screen. Walking past the top scrolls the whole screen up one line
+/// (and back down when returning), so the whole transcript stays
+/// navigable. Only repaints the previous (unhighlighted) and next
 /// (highlighted) blocks.
 fn navigate_blocks(
     terminal: &mut DefaultTerminal,
-    transcript: &Transcript,
+    transcript: &mut Transcript,
     app: &mut App,
     up: bool,
 ) -> io::Result<()> {
@@ -288,7 +353,9 @@ fn navigate_blocks(
         .blocks
         .iter()
         .enumerate()
-        .filter(|(_, span)| span.1 > 0 && screen_row(span.1 - 1, total, rows) >= 0)
+        .filter(|(_, span)| {
+            span.1 > 0 && screen_row(span.1 - 1, total, rows, transcript.scroll_offset) >= 0
+        })
         .map(|(index, _)| index)
         .collect();
     if visible.is_empty() {
@@ -317,14 +384,45 @@ fn navigate_blocks(
             }
         }
     };
+    // Walking past the visible top scrolls the screen up (exposing older
+    // rows); walking back to the bottom scrolls back down. After the
+    // scroll every row has moved, so repaint the whole visible area.
+    let at_top = visible.first() == Some(&next) && next == app.highlighted.unwrap_or(usize::MAX);
+    let at_bottom = visible.last() == Some(&next) && next == app.highlighted.unwrap_or(0);
+    let scrolled = if up
+        && at_top
+        && transcript.lines.len()
+            > visible
+                .iter()
+                .map(|b| transcript.blocks[*b].0)
+                .min()
+                .unwrap_or(usize::MAX)
+    {
+        scroll_screen(true)?;
+        transcript.scroll_offset += 1;
+        true
+    } else if !up && at_bottom && transcript.scroll_offset > 0 {
+        scroll_screen(false)?;
+        transcript.scroll_offset -= 1;
+        true
+    } else {
+        false
+    };
     if let Some(current) = app.highlighted
         && current != next
     {
         repaint_block(transcript, current, false)?;
     }
     app.highlighted = Some(next);
-    let _ = terminal;
-    repaint_block(transcript, next, true)
+    if scrolled {
+        // Every row moved; repaint the screen, then re-apply the highlight.
+        repaint_visible(transcript)?;
+        repaint_block(transcript, next, true)?;
+    } else {
+        let _ = terminal;
+        repaint_block(transcript, next, true)?;
+    }
+    Ok(())
 }
 
 /// Clears the block highlight, restoring the block's original colors.
@@ -354,7 +452,7 @@ fn repaint_block(transcript: &Transcript, block: usize, highlighted: bool) -> io
     stdout.queue(MoveTo(0, 0))?;
     let mut pending_rows: Vec<(u16, &Line)> = Vec::new();
     for i in start..end {
-        let y = screen_row(i, total, rows);
+        let y = screen_row(i, total, rows, transcript.scroll_offset);
         if y >= 0 && y < i32::from(rows) {
             pending_rows.push((y as u16, &transcript.lines[i]));
         }
@@ -1522,7 +1620,12 @@ async fn run_turn(
                 flush_reasoning(terminal, transcript, app)?;
                 flush_live(terminal, transcript, app)?;
                 let details = permission_details(&request.call.name, &request.call.arguments);
-                print_tool(terminal, transcript, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
+                if app.running_tool.is_none() {
+                    // The observer's ⏺ line already announced this call;
+                    // only print one when there is none to flip later.
+                    print_tool(terminal, transcript, &format!("⏺ {} · {}", request.call.name, tool_summary(&request.call.name, &request.call.arguments)))?;
+                    app.running_tool = Some(transcript.blocks.len() - 1);
+                }
                 if !details.is_empty() {
                     print_dim(terminal, transcript, &details)?;
                 }
@@ -2045,7 +2148,7 @@ async fn run_inner(
             {
                 navigate_blocks(
                     &mut terminal,
-                    &transcript,
+                    &mut transcript,
                     &mut app,
                     key.code == KeyCode::Up,
                 )?;
