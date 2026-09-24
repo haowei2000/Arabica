@@ -164,6 +164,14 @@ impl Transcript {
         self.lines.extend(lines);
         self.blocks.push((start, self.lines.len()));
     }
+
+    /// Drops every recorded row and block, for `/resume` switching to a
+    /// different session whose history is replayed from its own store.
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.blocks.clear();
+        self.scroll_offset = 0;
+    }
 }
 
 /// Commits one block: prints the rows above the viewport and records them.
@@ -557,6 +565,15 @@ fn print_tool(
     text: &str,
 ) -> io::Result<()> {
     print_block(terminal, transcript, text, theme::tool())
+}
+
+/// A finished tool status line (green ✓).
+fn print_tool_ok(
+    terminal: &mut DefaultTerminal,
+    transcript: &mut Transcript,
+    text: &str,
+) -> io::Result<()> {
+    print_block(terminal, transcript, text, theme::tool_ok())
 }
 
 /// Results and products: completions, file summaries, command output.
@@ -2040,10 +2057,29 @@ fn print_history(
         Ok(stored) => stored,
         Err(_) => return Ok(()),
     };
+    // Assistant responses arrive as many delta events; buffer each turn's
+    // text so a reply renders as one paragraph, not one block per delta.
+    // Thinking folds to a word-count summary, matching live rendering.
     let mut turns = 0usize;
+    let mut pending_text = String::new();
+    let mut pending_reasoning_words = 0usize;
+    let mut pending_reasoning = false;
     for envelope in stored.events {
         match envelope.event {
             Event::MessageAccepted { content } => {
+                if !pending_text.is_empty() {
+                    let text = std::mem::take(&mut pending_text);
+                    print_text(terminal, transcript, text.trim())?;
+                }
+                if pending_reasoning {
+                    print_dim(
+                        terminal,
+                        transcript,
+                        &format!("· thinking · {pending_reasoning_words} words"),
+                    )?;
+                    pending_reasoning = false;
+                    pending_reasoning_words = 0;
+                }
                 print_user(terminal, transcript, &content)?;
                 turns += 1;
             }
@@ -2051,38 +2087,75 @@ fn print_history(
                 item: RuntimeItem::Message(message),
                 ..
             } if message.role == RuntimeRole::Assistant => {
-                let text = message
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<String>();
-                if !text.is_empty() {
-                    print_text(terminal, transcript, &text)?;
+                for block in &message.content {
+                    if let ContentBlock::Text { text } = block {
+                        pending_text.push_str(text);
+                    }
                 }
+            }
+            Event::ModelResponseItem {
+                item: RuntimeItem::Reasoning(reasoning),
+                ..
+            } => {
+                pending_reasoning_words += reasoning.summary.join(" ").split_whitespace().count();
+                pending_reasoning = true;
             }
             Event::ToolCallRequested {
                 name, arguments, ..
             } => {
+                if !pending_text.is_empty() {
+                    let text = std::mem::take(&mut pending_text);
+                    print_text(terminal, transcript, text.trim())?;
+                }
+                if pending_reasoning {
+                    print_dim(
+                        terminal,
+                        transcript,
+                        &format!("· thinking · {pending_reasoning_words} words"),
+                    )?;
+                    pending_reasoning = false;
+                    pending_reasoning_words = 0;
+                }
                 print_tool(
                     terminal,
                     transcript,
-                    &format!("⏺ {name} · {}", tool_summary(&name, &arguments)),
+                    &format!("\u{23fa} {name} \u{b7} {}", tool_summary(&name, &arguments)),
                 )?;
             }
-            Event::ToolCallCompleted { name, is_error, .. } if is_error => {
-                print_error(terminal, transcript, &format!("  ✗ {name} failed"))?;
+            Event::ToolCallCompleted { name, is_error, .. } => {
+                if is_error {
+                    print_error(terminal, transcript, &format!("\u{2717} {name}"))?;
+                } else {
+                    print_tool_ok(terminal, transcript, &format!("\u{2713} {name}"))?;
+                }
+            }
+            Event::ModelResponseCompleted { .. } => {
+                if !pending_text.is_empty() {
+                    let text = std::mem::take(&mut pending_text);
+                    print_text(terminal, transcript, text.trim())?;
+                }
+                if pending_reasoning {
+                    print_dim(
+                        terminal,
+                        transcript,
+                        &format!("· thinking · {pending_reasoning_words} words"),
+                    )?;
+                    pending_reasoning = false;
+                    pending_reasoning_words = 0;
+                }
             }
             _ => {}
         }
+    }
+    if !pending_text.is_empty() {
+        let text = std::mem::take(&mut pending_text);
+        print_text(terminal, transcript, text.trim())?;
     }
     if turns > 0 {
         print_dim(
             terminal,
             transcript,
-            &format!("— resumed session, {turns} earlier messages —"),
+            &format!("\u{2014} resumed session, {turns} earlier messages \u{2014}"),
         )?;
     }
     Ok(())
@@ -2200,11 +2273,13 @@ async fn run_inner(
                         Ok(next_session) => {
                             session = next_session;
                             app = App::new(&session);
+                            transcript.clear();
                             print_tool(
                                 &mut terminal,
                                 &mut transcript,
                                 &format!("session: {}", session.session_id),
                             )?;
+                            print_history(&mut terminal, &mut transcript, &session)?;
                         }
                         Err(error) => {
                             print_error(&mut terminal, &mut transcript, &error.to_string())?
